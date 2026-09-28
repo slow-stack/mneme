@@ -334,8 +334,8 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     maxTokens: config.sleepMaxTokens ?? 2048,
     ...(withEffort && sleepEffort ? { reasoningEffort: sleepEffort } : {}),
     messages: [
-      { role: "system", content: [{ type: "text", text: conflictPrompt }], source: { kind: "plugin", plugin: "dsh-mneme" } },
-      { role: "user", content: [{ type: "text", text: listText }], source: { kind: "plugin", plugin: "dsh-mneme" } }
+      { role: "system", content: [{ type: "text", text: conflictPrompt }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
+      { role: "user", content: [{ type: "text", text: listText }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
     ]
   }, reportUsage, (reason) => { conflictStreamFailure = describeStreamFailure(reason); }));
   };
@@ -496,8 +496,8 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
     maxTokens: config.sleepMaxTokens ?? 2048,
     ...(withEffort && sleepEffort ? { reasoningEffort: sleepEffort } : {}),
     messages: [
-      { role: "system", content: [{ type: "text", text: STR.prompts.pattern[language].replace("N", String(maxPatterns)) }], source: { kind: "plugin", plugin: "dsh-mneme" } },
-      { role: "user", content: [{ type: "text", text: listText }], source: { kind: "plugin", plugin: "dsh-mneme" } }
+      { role: "system", content: [{ type: "text", text: STR.prompts.pattern[language].replace("N", String(maxPatterns)) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
+      { role: "user", content: [{ type: "text", text: listText }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
     ]
   }, reportUsage, (reason) => { patternStreamFailure = describeStreamFailure(reason); }));
   };

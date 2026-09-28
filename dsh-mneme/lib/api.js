@@ -380,7 +380,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           {
             role: "user",
             content: [{ type: "text", text: "Reply with exactly one word: ok" }],
-            source: { kind: "plugin", plugin: "dsh-mneme" }
+            source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" }
           }
         ]
       })) {

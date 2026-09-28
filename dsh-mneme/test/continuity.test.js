@@ -147,7 +147,7 @@ test("#249 N3：pre-step 双落点——压缩边缘落提案并往末尾追加�
   assert.equal(decision.messages.length, 1, "压缩边缘 → 追加一条");
   const message = decision.messages[0];
   assert.equal(message.source.plugin, "dsh-mneme");
-  assert.equal(message.source.kind, "plugin", "插件来源会被蒸馏管线跳过，注入物不会变成记忆（也不会自我蒸馏）");
+  assert.equal(message.source.kind, "plugin:dsh-mneme", "插件来源会被蒸馏管线跳过，注入物不会变成记忆（也不会自我蒸馏）；裸 kind: \"plugin\" 被 V4 写入准入拒收（issue #326）");
   assert.ok(message.content[0].text.startsWith(CONTINUITY_NOTICE_PREFIX));
   assert.ok(message.content[0].text.includes("current_work: 把 N3 实现完"));
   const proposal = store.getContinuityProposal("s1", KIND);

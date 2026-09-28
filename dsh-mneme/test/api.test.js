@@ -1427,7 +1427,8 @@ test("POST /api/dsh-mneme/test-model succeeds and reports reply + latency", asyn
   // 0.1.6-alpha.1 起被官方 API 整单拒绝（「messages: at least one message
   // is required」），探测按钮会 502。
   assert.equal(MOCK_LLM.lastOptions.messages[0].role, "user");
-  assert.equal(MOCK_LLM.lastOptions.messages[0].source?.kind, "plugin");
+  // issue #326：kind 必须是生产者自有值，裸 "plugin" 被 DSH 0.1.7 的 V4 写入准入拒绝。
+  assert.equal(MOCK_LLM.lastOptions.messages[0].source?.kind, "plugin:dsh-mneme");
   assert.equal("reasoningEffort" in MOCK_LLM.lastOptions, false, "no effort configured -> field omitted");
 });
 

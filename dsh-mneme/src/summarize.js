@@ -220,7 +220,7 @@ function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, th
   }, undefined);
   return {
     messages: lines.length
-      ? [createUserMessage({ content: [{ type: "text", text: trimTranscript(lines.join("\n"), maxChars) }], source: { kind: "plugin", plugin: "dsh-mneme" } })]
+      ? [createUserMessage({ content: [{ type: "text", text: trimTranscript(lines.join("\n"), maxChars) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } })]
       : [],
     hasEvents: events.length > 0,
     lastSeq
@@ -495,7 +495,7 @@ export function createSummarizer(ctx, service, config, deps = {}) {
         model: route.model,
         purpose: "summarization",
         messages: [
-          { role: "system", content: [{ type: "text", text: config.codingRetrospect ? STR.prompts.codingSummary[langOf(config)] : STR.prompts.summary[langOf(config)] }], source: { kind: "plugin", plugin: "dsh-mneme" } },
+          { role: "system", content: [{ type: "text", text: config.codingRetrospect ? STR.prompts.codingSummary[langOf(config)] : STR.prompts.summary[langOf(config)] }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
           ...messages
         ],
         signal: controller.signal

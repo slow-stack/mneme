@@ -422,8 +422,8 @@ async function generateNarratives({ ctx, service, config, route, language, effor
       maxTokens: config.dreamMaxTokens ?? 2048,
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
-        { role: "system", content: [{ type: "text", text: STR.prompts.narrative[language] }], source: { kind: "plugin", plugin: "dsh-mneme" } },
-        { role: "user", content: [{ type: "text", text: listing }], source: { kind: "plugin", plugin: "dsh-mneme" } }
+        { role: "system", content: [{ type: "text", text: STR.prompts.narrative[language] }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
+        { role: "user", content: [{ type: "text", text: listing }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
       ]
     }, reportUsage, (reason) => { streamFailure = describeStreamFailure(reason); }));
   };
@@ -1100,8 +1100,8 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       maxTokens: config.dreamMaxTokens ?? 4096,
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
-        { role: "system", content: [{ type: "text", text: consolidationPrompt }], source: { kind: "plugin", plugin: "dsh-mneme" } },
-        { role: "user", content: [{ type: "text", text: listText }], source: { kind: "plugin", plugin: "dsh-mneme" } }
+        { role: "system", content: [{ type: "text", text: consolidationPrompt }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
+        { role: "user", content: [{ type: "text", text: listText }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
       ]
     }, reportUsage, (reason) => { streamFailure = describeStreamFailure(reason); }));
     };
@@ -1335,8 +1335,8 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       maxTokens: config.dreamMaxTokens ?? 2048,
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
-        { role: "system", content: [{ type: "text", text: STR.prompts.dreamSummary[language] }], source: { kind: "plugin", plugin: "dsh-mneme" } },
-        { role: "user", content: [{ type: "text", text: summaryInputs.map((m) => `- ${m.title}: ${m.content}`).join("\n") }], source: { kind: "plugin", plugin: "dsh-mneme" } }
+        { role: "system", content: [{ type: "text", text: STR.prompts.dreamSummary[language] }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
+        { role: "user", content: [{ type: "text", text: summaryInputs.map((m) => `- ${m.title}: ${m.content}`).join("\n") }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
       ]
     }, reportUsage, (reason) => { summaryStreamFailure = describeStreamFailure(reason); }));
     };
