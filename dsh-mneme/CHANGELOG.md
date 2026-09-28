@@ -4,13 +4,20 @@
 
 ## 🐛 修复
 
-- （待填）
-
-## [Unreleased]
+- **V4 写入准入兼容（issue #326，PR #327）**：全部 16 处会话消息写入点（蒸馏、注入续接、巩固、
+  睡眠、实体抽取、连通性探测）的 `source.kind` 从裸 `"plugin"` 改为生产者自有 kind
+  `"plugin:dsh-mneme"`（`plugin` 字段保留）。DSH 0.1.7-alpha.1 起的 V4 写入校验把
+  kind 缺失/空串/恰好等于 `"plugin"` 的消息整条拒绝
+  （`format v4 message requires a producer-owned source kind`）：0.8.8 在新版宿主上
+  压缩边缘触发时当前轮直接报错（continuity 注入点，实测见 #326），且该次抢救因边缘
+  消费即删不会重试；其余 LLM 管线写入点同批统一，防宿主后续收紧时扩大受害面。
+  读侧过滤（`kind === undefined || kind === "user"` 白名单）不受影响，历史库里的旧形状
+  事件无需迁移。新增静态形状锁（`test/llm-message-source.test.js`）防止新增写入点回退
+  到裸 kind。
 
 ## 🆕 新增
 
-- **面板状态页与设置页重排版**：状态页九张卡拆成「库内一览 / 后台运转」两个扫读分组，
+- **面板状态页与设置页重排版（PR #328）**：状态页九张卡拆成「库内一览 / 后台运转」两个扫读分组，
   多指标卡片（记忆分类 / 实体分类 / 记忆复用 / 注入预览）从「·」串联的说明长句改成一行
   一条的指标行（label 左、数值右），热度分布卡改三档堆叠条 + 分档计数——原「热门数」
   大数字易误读成总量；注入预览的 `maxItems=` / `threshold=` 裸键名改白话标签。
@@ -21,13 +28,15 @@
   （feature_flags 仍是启动时合并，见 `src/index.js`）。意见与反馈入口重做：图标行 +
   副标说明 + 版本 footer（兼当「关于」收尾）。补 `memory.tab.summary` 中文标签
   （此前状态卡直接漏出英文 "summary"）。
-- **状态卡网格排布规整化**：概览区三卡改 `auto-fit` 恒铺满（行尾不再留洞）；「记忆复用 /
+- **状态卡网格排布规整化（PR #328）**：概览区三卡改 `auto-fit` 恒铺满（行尾不再留洞）；「记忆复用 /
   注入预览」在宽容器下各跨两列补齐引擎区的奇数行，跨列仅在 ≥2 列容器生效
   （container query 守卫，单列下撤掉避免隐式轨道撑爆布局）；向量卡在 2 列档位跨满整行。
-- **面板星形全线统一**：详情抽屉编辑态的重要度下拉（文本星号，角尖锐且无法与 SVG 星
+- **面板星形全线统一（PR #328）**：详情抽屉编辑态的重要度下拉（文本星号，角尖锐且无法与 SVG 星
   同形）改为 SVG 星形按钮行（实心/描边与查看态同一规则，radiogroup + 逐星 aria-label）；
   重要度筛选 chip、图谱侧卡提及数、注入预览的行内星号统一走共享 `StarGlyph`
   （同一份 Lucide 路径）。`test/client.test.js` 星形守卫同步收紧为「全文零文本星号」。
+
+## [Unreleased]
 
 ## [0.8.8] - 2026-09-27
 
@@ -118,77 +127,6 @@
 - **仓库更名 slow-stack/dsh-mneme → slow-stack/mneme**（讨论 #300 拍板，PR #303）：旧链
   GitHub 自动 301，协作者零操作；源码内活引用（徽章图片源、package.json 元数据、运行时
   issue 链接等 30 处）同步清扫。npm scope `@modusensus/` 不随仓库改名而变。
-
-## [Unreleased]
-
-## 🐛 修复
-
-- **V4 写入准入兼容（issue #326）**：全部 16 处会话消息写入点（蒸馏、注入续接、巩固、
-  睡眠、实体抽取、连通性探测）的 `source.kind` 从裸 `"plugin"` 改为生产者自有 kind
-  `"plugin:dsh-mneme"`（`plugin` 字段保留）。DSH 0.1.7-alpha.1 起的 V4 写入校验把
-  kind 缺失/空串/恰好等于 `"plugin"` 的消息整条拒绝
-  （`format v4 message requires a producer-owned source kind`），0.8.8 在新版宿主上
-  注入、蒸馏与实体抽取会静默失效。读侧过滤（`kind === undefined || kind === "user"`
-  白名单）不受影响，历史库里的旧形状事件无需迁移。新增静态形状锁
-  （`test/llm-message-source.test.js`）防止新增写入点回退到裸 kind。
-
-## 🧹 清理
-
-- **双 README 重复徽章行去重**：9-24 合并提交（37e77f1，解 #275 车道与 main 的冲突）把 tests 徽章行与中英 `npm test` 命令注释各复制了一份，根 README 三处、包内 README 两处重复；`badge:sync` 的全文正则替换只会把重复行一起刷新、永不自愈，此番手工去重（各留一行）。
-
-- **GitHub issue 模板三件套（PR #321）**：`.github/ISSUE_TEMPLATE/` 新增 bug.yml / feature.yml（YAML forms，双语，环境字段对齐历史高质量报告）与 config.yml（空白 issue 关闭，使用问题引导 Discussions，安全漏洞引导私密通告）；feature 模板内置实现口径自查项与 AI 辅助披露项，把仓库闸门前置到提案阶段。
-
-## 🆕 新增
-
-- **autoDream 连续失败退避（issue #292，#135 派生）**：新增 opt-in 键
-  `autoDreamFailureBackoff`（默认关 = 行为与此前逐字节一致）。#89 的最小间隔闸对失败
-  run 也生效，但间隔恒定——恒定失败的模型（#135 空体面）会按固定节奏连发刷爆配额；
-  开启后调度器对连续失败做指数退避：有效最小间隔 = `dreamMinIntervalMinutes` ×
-  2^连续失败数（封顶 30 分钟，只拦增长、不把用户配得更大的基数压小），成功一次清零
-  恢复基数。基数取 `dreamMinIntervalMinutes`：基数为 0 时无闸可翻倍，本键不自己产生
-  间隔。计数是调度器内存变量、宿主重启归零（跨重启的冷却由 #291 的 lastRunAt 持久化
-  负责，两不重叠）；被退避推迟的触发没有任何调用发生，也不写审计行（与 #89 间隔内
-  跳过同口径）。settings 白名单注册（面板可启停）。新增回归 5 条
-  （`test/dream-failure-backoff.test.js`，注入时钟，同 dream-peak-hours 房型）。
-
-- **配置说明一页（issue #290）**：新增 [docs/CONFIGURATION.md](docs/CONFIGURATION.md)，
-  以 `src/config.js` schema 为唯一正本逐键过（147 键全覆盖）：按功能面分组（全局与
-  存储 / scope 隔离 / 蒸馏 / 注入 / 巩固 / 睡眠 / 反思与冲突 / 实体 / 检索 / 热度 /
-  API 与工具面 / 运行时），每键给默认值、作用与开启后果/冲突；lightMode 联动键显式
-  标注（文末附 `LIGHT_MODE_OFF` 完整清单），opt-in 默认关的键可见即知，与 settings.js
-  白名单的对应关系在页首一句话交代。两个 README 的文档索引各加一行链接。
-
-- **巩固错峰队列（issue #239 第 4 项镜像到 dream，PR #320）**：`dreamPeakHours`（与
-  `summarizePeakHours` 同一份时段语法：逗号分隔、支持跨零点、星期前缀 `mon-fri`）+
-  `dreamPeakMaxDeferMinutes`（默认 120）。命中高峰时巩固不调模型——登记一行
-  `status='skipped'` / `error_message='peak-hours'` 审计并择时补跑；baseline 刻意不刷新
-  （阈值继续累积，非高峰一次大 run 比多次小 run 省）；被上限截断后到点仍处高峰则照跑，
-  长高峰不会把巩固饿死；任一写法非法整串按「未配置」处理——宁可不省也不误停。时段解析
-  三件套（`parsePeakSpec` / `isInPeakWindow` / `nextOffPeakAt`）抽到零依赖模块
-  `src/peak-hours.js`，summarize 侧 import + re-export 兼容调用方零改动——#316 之后
-  summarize 反向依赖 dream（`withEffortFallback`），dream 再 import summarize 会成真
-  循环（PR #320 review 发现并顺手修复，原注释「无循环依赖」为过时事实）。新增回归
-  （`test/dream-peak-hours.test.js`，注入时钟，同 summarize 侧房型）。
-
-- **蒸馏思考强度设置项（issue #315）**：蒸馏（会话总结提炼）LLM 新增 `summarizeReasoningEffort`（`off`/`low`/`medium`/`high`/`none`，默认 `none` = 不发送字段、服务商默认生效，行为与此前一致）。思考型模型蒸馏时推理会烧光输出预算、总结为空或截断（#9 同款失败面，此前仅巩固/睡眠/实体抽取三链路有档位控制），配 `off`/`low` 可封顶推理。档位被模型拒收时自动去掉字段重试一次（与巩固/睡眠同一降级策略，`withEffortFallback` 共享、拒收判别式 `EFFORT_REJECT_RE` 提为单一来源）；面板「功能开关 → 自动总结」下新增档位下拉（opt-in 语义与实体抽取 `entityExtractionReasoning` 对齐，settings 白名单注册）。新增回归 5 条（`test/summarize-reasoning-effort.test.js`）。
-
-- **压缩边缘双落点（issue #249 N3）**：上下文即将被宿主压缩前抢救「正在做什么」，新增
-  opt-in 键 `continuityRescueEnabled`（注入父开关 `autoInject` 的子项，默认关；`lightMode`
-  强制关）。**必须是双落点**：①落一条连续性提案到新表 `continuity_proposals`（脱离对话
-  独立存活）；②把同一份快照追加成序列末尾的插件消息——宿主的压缩摘要器**只看对话里的
-  内容**，只放系统提示段等于白写。触发不自定阈值，直接订阅宿主真的压缩
-  （`compaction/start|summary|end`）：压缩插件在自己那一步先压缩再 `return next()`，所以
-  我们在 `agent/pre-step` 拿到结果时边缘已落库，而返回的 `decision.messages` 由宿主以
-  `surfaceOp: "append"` 追加，晚于压缩的 `replace`——落点天然在压缩之后。三字段
-  （`current_work` / `next_step` / `open_questions`）用确定性抽取、**全程不调模型**：
-  最近一条真实 `user/message` 取头部 200 字符、最近一条 `assistant/message` 取尾部 200
-  字符（下一步活在末尾那句里），`open_questions` 判不出就留白（注入文本里如实标 `none`，
-  不编造）。提案行按 `(session_id, kind)` 唯一键落「同一会话同一类只留一条」：再次触发是
-  刷新而不是新增，`status`/`edge_seq` 就地支撑 #249 §8 要求的触发率与采纳率统计；**队列满
-  则弃新**（200 条，不淘汰旧行——旧行是别的会话还没转正的工作状态）。注入按「统一前缀 +
-  全文」判重，同文本不追加第二次（没有 in-memory 改写钩子，这是形态上限）。宿主若无压缩前
-  时机则**降级为持久规则**（写进 `memory_save` 描述交给 agent 自判），不算失败、不要求宿主
-  加接口。新增回归 14 条（`test/continuity.test.js`），新文档见 [docs/CONTINUITY.md](docs/CONTINUITY.md)。
 
 ## [0.8.6] - 2026-09-23
 
