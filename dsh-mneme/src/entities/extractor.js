@@ -150,8 +150,8 @@ export async function extractEntities(memory, { store, config, callLLM, logger }
     const userText = buildUserMessage(memory.content);
 
     const messages = [
-      { role: "system", content: [{ type: "text", text: systemPrompt }], source: { kind: "plugin", plugin: "dsh-mneme" } },
-      { role: "user", content: [{ type: "text", text: userText }], source: { kind: "plugin", plugin: "dsh-mneme" } }
+      { role: "system", content: [{ type: "text", text: systemPrompt }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
+      { role: "user", content: [{ type: "text", text: userText }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
     ];
 
     // Issue #109: optional provider/model override + reasoning effort are

@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createDreamScheduler } from "../src/dream.js";
@@ -14,12 +17,15 @@ import { createVectorIndex } from "../src/vector-index.js";
 // 阶段就抛 "Cannot read properties of undefined (reading 'kind')"，四条 LLM 管线
 // （dream / sleep / summarize / entity extraction）全军覆没、耗时 0ms。
 // 这里用同等严格的桩驱动真实管线，任何新加的消息漏了 source 都会失败。
+// issue #326：kind 值必须是生产者自有 kind "plugin:dsh-mneme"——DSH 0.1.7 起的
+// V4 写入准入把裸 "plugin"（含缺失/空串）一并拒绝，注入/蒸馏会整条报
+// "format v4 message requires a producer-owned source kind"。
 function assertMessageSources(options) {
   for (const message of options.messages ?? []) {
     assert.equal(
       message.source?.kind,
-      "plugin",
-      `LLM 消息缺 source（provider 会抛 TypeError）: ${message.role} / ${String(message.content?.[0]?.text ?? "").slice(0, 40)}`
+      "plugin:dsh-mneme",
+      `LLM 消息缺 source 或 kind 不是生产者自有值（V4 会拒收）: ${message.role} / ${String(message.content?.[0]?.text ?? "").slice(0, 40)}`
     );
   }
 }
@@ -174,4 +180,28 @@ test("entity extraction: messages handed to the llm adapter carry source", async
 
   assert.equal(calls.length, 1, "extraction called the LLM adapter");
   store.close();
+});
+
+// ---------------------------------------------------------------- shape lock
+
+// issue #326 形状锁：任何新增的会话写入点再用裸 kind: "plugin"（V4 写入准入从
+// DSH 0.1.7 起会整条拒绝）都直接红灯。静态 grep 锁而非运行时枚举，是因为写入点
+// 散在 6 个文件 16 处，运行时桩只覆盖 LLM 管线、盖不住 api.js 的连通性探针。
+test("no writer emits the rejected bare kind: \"plugin\" (issue #326)", () => {
+  const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src");
+  const offenders = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".js")) offenders.push(...scanSource(readFileSync(full, "utf8"), full));
+    }
+  };
+  const scanSource = (text, file) =>
+    text.split("\n").reduce(
+      (acc, line, i) => (/kind:\s*["'`]plugin["'`]/.test(line) ? [...acc, `${file}:${i + 1}`] : acc),
+      []
+    );
+  walk(srcDir);
+  assert.deepEqual(offenders, [], `裸 kind: "plugin" 会被 V4 写入准入拒绝，改用生产者自有 kind（如 "plugin:dsh-mneme"）: ${offenders.join(", ")}`);
 });

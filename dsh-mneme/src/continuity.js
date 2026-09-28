@@ -205,7 +205,7 @@ export function createContinuityRescue(ctx, store) {
       ...decision,
       messages: [
         ...messages,
-        createUserMessage({ content: [{ type: "text", text }], source: { kind: "plugin", plugin: "dsh-mneme" } })
+        createUserMessage({ content: [{ type: "text", text }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } })
       ]
     };
   });

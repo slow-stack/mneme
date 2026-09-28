@@ -115,6 +115,17 @@
 
 ## [Unreleased]
 
+## 🐛 修复
+
+- **V4 写入准入兼容（issue #326）**：全部 16 处会话消息写入点（蒸馏、注入续接、巩固、
+  睡眠、实体抽取、连通性探测）的 `source.kind` 从裸 `"plugin"` 改为生产者自有 kind
+  `"plugin:dsh-mneme"`（`plugin` 字段保留）。DSH 0.1.7-alpha.1 起的 V4 写入校验把
+  kind 缺失/空串/恰好等于 `"plugin"` 的消息整条拒绝
+  （`format v4 message requires a producer-owned source kind`），0.8.8 在新版宿主上
+  注入、蒸馏与实体抽取会静默失效。读侧过滤（`kind === undefined || kind === "user"`
+  白名单）不受影响，历史库里的旧形状事件无需迁移。新增静态形状锁
+  （`test/llm-message-source.test.js`）防止新增写入点回退到裸 kind。
+
 ## 🧹 清理
 
 - **双 README 重复徽章行去重**：9-24 合并提交（37e77f1，解 #275 车道与 main 的冲突）把 tests 徽章行与中英 `npm test` 命令注释各复制了一份，根 README 三处、包内 README 两处重复；`badge:sync` 的全文正则替换只会把重复行一起刷新、永不自愈，此番手工去重（各留一行）。
