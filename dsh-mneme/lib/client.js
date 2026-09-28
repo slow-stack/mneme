@@ -129,7 +129,10 @@ window.__ModuleLoader__.load({
       check: [["path", { d: "M20 6 9 17l-5-5" }]],
       inbox: [["polyline", { points: "22 12 16 12 14 15 10 15 8 12 2 12" }], ["path", { d: "M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" }]],
       activity: [["path", { d: "M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" }]],
-      flame: [["path", { d: "M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" }]]
+      flame: [["path", { d: "M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" }]],
+      // 意见与反馈入口的行首图标（Lucide 数据，同上 ISC 惯例内联）
+      bug: [["path", { d: "m8 2 1.88 1.88" }], ["path", { d: "M14.12 3.88 16 2" }], ["path", { d: "M9 7.13v-1a3.003 3.003 0 1 1 6 0v1" }], ["path", { d: "M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6" }], ["path", { d: "M12 20v-9" }], ["path", { d: "M6.53 9C4.6 8.8 3 7.1 3 5" }], ["path", { d: "M6 13H2" }], ["path", { d: "M3 21c0-2.1 1.7-3.9 3.8-4" }], ["path", { d: "M20.97 5c0 2.1-1.6 3.8-3.5 4" }], ["path", { d: "M22 13h-4" }], ["path", { d: "M17.2 17c2.1.1 3.8 1.9 3.8 4" }]],
+      mail: [["rect", { width: "20", height: "16", x: "2", y: "4", rx: "2" }], ["path", { d: "m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" }]]
     };
     const Icon = ({ name, size = 16, className }) => {
       const parts = ICON_PATHS[name];
@@ -233,7 +236,13 @@ window.__ModuleLoader__.load({
         "memory.tab.project": "项目",
         "memory.tab.decision": "决策",
         "memory.tab.history": "历史",
+        "memory.tab.summary": "小结",
         "memory.settings.title": "记忆库设置",
+        "memory.settings.group.personal": "个性化",
+        "memory.settings.group.engine": "记忆引擎",
+        "memory.settings.group.search": "搜索",
+        "memory.settings.group.connect": "连接与安全",
+        "memory.settings.group.help": "帮助",
         "memory.settings.profile": "用户画像",
         "memory.settings.profileHint": "写一段自我介绍（角色、背景、偏好），Agent 每轮对话都会自动带上。",
         "memory.settings.profileSave": "保存画像",
@@ -338,22 +347,25 @@ window.__ModuleLoader__.load({
         "memory.settings.apiTokenPlaceholder": "留空 = 不鉴权（默认）",
         "memory.settings.apiTokenSave": "保存 Token",
         "memory.settings.apiTokenSaved": "Token 已保存",
-        "memory.settings.feedback.title": "帮助与反馈",
-        "memory.settings.feedback.desc": "遇到问题？先看看仓库已有的 issue，或直接把情况反馈过来：",
-        "memory.settings.feedback.newIssue": "GitHub 新建 issue（自动带上环境信息）",
-        "memory.settings.feedback.email": "邮件反馈（work@modusensus.space）",
-        "memory.settings.feedback.browse": "浏览仓库已知问题",
+        "memory.settings.feedback.title": "意见与反馈",
+        "memory.settings.feedback.desc": "遇到问题？直接告诉我们，或先看看有没有人遇到过：",
+        "memory.settings.feedback.newIssue": "在 GitHub 上反馈问题",
+        "memory.settings.feedback.newIssue.sub": "自动带上插件版本与环境信息",
+        "memory.settings.feedback.email": "邮件反馈",
+        "memory.settings.feedback.email.sub": "work@modusensus.space",
+        "memory.settings.feedback.browse": "浏览已知问题",
+        "memory.settings.feedback.browse.sub": "先搜搜，省一份重复 issue",
         "memory.settings.feedback.hint": "反馈前先搜搜是否已有相同问题，能省一份重复的 issue～",
         "memory.settings.version.outdated": "🆕 有新版本 {v}（当前运行 {c}）",
         "memory.settings.version.outdatedHint": "若安装时指定过版本号，常规升级不会跨大/小版本（pnpm 钉子）——请重新安装或在升级命令加 --latest；npm 已发布而市场暂未收录属正常（约 1 天延迟）。",
         "memory.settings.mode.title": "运行模式",
-        "memory.settings.mode.desc": "轻量模式只保留核心的记忆读写与自动注入（关闭 autoDream 巩固、实体抽取、语义搜索等高级功能），适合只想「记住偏好」的轻量使用；标准模式开启全部功能。",
+        "memory.settings.mode.desc": "轻量模式只保留核心能力：记忆读写、自动注入、热记忆；巩固、实体抽取、语义搜索等全部关闭，适合低配机器或只想「记住偏好」的场景。标准模式开启全部功能。",
         "memory.settings.mode.light": "轻量",
         "memory.settings.mode.standard": "标准",
         "memory.settings.mode.savedHint": "已保存，重启 DSH 后生效",
         "memory.settings.mode.offList": "已关闭：巩固（autoDream）· 实体抽取 · 语义搜索",
         "memory.settings.extapi.title": "外部访问 API",
-        "memory.settings.extapi.desc": "独立 HTTP 服务，供其他插件 / CLI / 桌面工具读写记忆，默认绑定 127.0.0.1。重启 DSH 后生效。",
+        "memory.settings.extapi.desc": "开放一个本机接口，让其他工具（插件、命令行、桌面应用）也能读写这份记忆库，默认只允许本机连接。改动保存后重启 DSH 生效。",
         "memory.settings.extapi.enabled": "启用",
         "memory.settings.extapi.disabled": "停用",
         "memory.settings.extapi.address": "地址",
@@ -368,11 +380,11 @@ window.__ModuleLoader__.load({
         "memory.tab.constraint": "工程约束",
         "memory.tab.document": "文档",
         "memory.features.title": "功能开关",
-        "memory.features.desc": "按需启停后端能力，改动保存后重启 DSH 生效。",
-        "memory.features.group.core": "核心",
-        "memory.features.group.enhance": "记忆增强",
+        "memory.features.desc": "控制插件在后台做哪些事。改动即时保存，重启 DSH 后生效。",
+        "memory.features.group.core": "基础",
+        "memory.features.group.enhance": "检索与增强",
         "memory.features.group.dream": "巩固与睡眠",
-        "memory.features.group.scope": "作用域隔离",
+        "memory.features.group.scope": "多会话隔离",
         "memory.features.group.advanced": "高级",
         "memory.features.advancedToggle": "高级（注入策略 · 反思 · 实验项）",
         "memory.features.restartHint": "重启 DSH 后生效",
@@ -380,9 +392,9 @@ window.__ModuleLoader__.load({
         "memory.features.autoInject": "自动注入",
         "memory.features.autoInject.hint": "每轮对话自动携带相关记忆",
         "memory.features.injectGuidanceEnabled": "能力说明",
-        "memory.features.injectGuidanceEnabled.hint": "在工具描述与一次性提示段里说明怎么用记忆（何时查、何时写、拿不准就不做）",
+        "memory.features.injectGuidanceEnabled.hint": "教 Agent 怎么用记忆：什么时候该查、什么时候该写、拿不准就不动",
         "memory.features.continuityRescueEnabled": "压缩边缘抢救",
-        "memory.features.continuityRescueEnabled.hint": "上下文即将被精简前，落一条连续性快照（正在做什么 / 下一步 / 未决问题）并追加到对话末尾，让它活过这次压缩",
+        "memory.features.continuityRescueEnabled.hint": "长对话被压缩前，先存一份「正在做什么 / 下一步 / 未决问题」的快照，让关键上下文活过压缩",
         "memory.features.parentOff": "父开关关闭时不生效",
         "memory.features.autoSummarize": "自动总结",
         "memory.features.autoSummarize.hint": "对话结束自动提炼记忆条目",
@@ -403,18 +415,18 @@ window.__ModuleLoader__.load({
         "memory.features.summarizeReasoningEffort.low": "低",
         "memory.features.summarizeReasoningEffort.medium": "中",
         "memory.features.summarizeReasoningEffort.high": "高",
-        "memory.features.summarizeReasoningEffort.hint": "思考型模型建议选低档或关闭思考，避免推理烧光输出预算导致总结失败；改后重启 DSH 生效",
-        "memory.features.entityExtractionModelHint": "Provider/模型留空 = 跟随主对话模型；思考强度 none = 服务商默认",
+        "memory.features.summarizeReasoningEffort.hint": "思考型模型建议选「低」或「关闭思考」，避免推理占满输出导致总结失败",
+        "memory.features.entityExtractionModelHint": "Provider / 模型留空 = 跟随主对话模型；思考强度选「跟随默认」= 服务商默认",
         "memory.features.codingRetrospect": "编码记忆蒸馏",
-        "memory.features.codingRetrospect.hint": "用完整转录（含工具调用与报错）提炼踩坑、约束与被否决方案",
+        "memory.features.codingRetrospect.hint": "回顾写代码的完整过程（含报错与工具调用），沉淀踩坑、约束和被否决的方案",
         "memory.features.rerankEnabled": "结果重排",
         "memory.features.rerankEnabled.hint": "本地重排模型对召回结果精排，更慢更准",
         "memory.features.heatEnabled": "热度衰减",
-        "memory.features.heatEnabled.hint": "按遗忘曲线给记忆降温：久未访问热度越低，参与注入排序与睡眠降级判定",
+        "memory.features.heatEnabled.hint": "像遗忘曲线一样给记忆降温：越久没用到排得越靠后，不占注入名额",
         "memory.features.documentMemoryEnabled": "document 型记忆",
-        "memory.features.documentMemoryEnabled.hint": "agent 产长文档入库为指针行：注册校验（文件存在 + evidence 求交）、摘要 + 路径落库、去重与 supersede 记账；全文归 agent 按需读，注入只带摘要行（默认关）",
+        "memory.features.documentMemoryEnabled.hint": "Agent 写的长文档只在记忆里放一张「摘要卡」：正文仍由 Agent 保管、按需读取，注入时只带摘要，不占上下文",
         "memory.features.resilientModelDownload": "模型下载断点续传",
-        "memory.features.resilientModelDownload.hint": "模型文件下载中断后从已下载部分续传并自动重试，失败会记录中断位置；关闭后回到一次性下载",
+        "memory.features.resilientModelDownload.hint": "模型下载中断后从断点续传并自动重试；关闭则回到一次性下载",
         "memory.features.searchSemanticDedup": "语义去重",
         "memory.features.searchSemanticDedup.hint": "搜索结果中意思相近的条目只保留一条",
         "memory.features.autoDream": "记忆巩固",
@@ -444,13 +456,13 @@ window.__ModuleLoader__.load({
         "memory.features.conflictFreezeEnabled": "冲突冻结",
         "memory.features.conflictFreezeEnabled.hint": "巩固发现互相矛盾的记忆时先冻结待确认",
         "memory.features.scopeEnabled": "作用域标注",
-        "memory.features.scopeEnabled.hint": "按会话身份（agent/工作区）给新记忆打归属标注；重启 DSH 后生效",
+        "memory.features.scopeEnabled.hint": "新记忆自动记下来自哪个会话（Agent / 工作区），供隔离与检索过滤使用",
         "memory.features.strictScope": "严格隔离",
-        "memory.features.strictScope.hint": "检索与注入硬过滤，只对显式声明的归属生效：显式收窄到他者作用域的记忆不可见；载体自动标注只降权保留可见（真正的物理隔离请用 sensitivity）。重启 DSH 后生效",
+        "memory.features.strictScope.hint": "开启后，其他会话明确设为私有的记忆对你完全不可见；关闭时仍可见、只是排到后面。要做到彻底隔离，请用条目的「敏感度」字段",
         "memory.features.trustEpistemicWeighting": "可信度加权",
         "memory.features.trustEpistemicWeighting.hint": "按来源可信度调整召回排序（实验性）",
         "memory.features.reflectionFailureTracking": "反思失败追踪",
-        "memory.features.reflectionFailureTracking.hint": "记录巩固决策的失败样本供后续改进",
+        "memory.features.reflectionFailureTracking.hint": "记录巩固失败的案例供后续改进（诊断用）",
         "memory.features.embedRoute": "语义检索路线",
         "memory.features.embedProvider": "Embedding 提供方",
         "memory.features.embedProvider.openai": "OpenAI 兼容接口",
@@ -466,9 +478,9 @@ window.__ModuleLoader__.load({
         "memory.features.dreamModel": "巩固用模型名",
         "memory.features.dreamModelHint": "留空 = 跟随主对话模型；只影响记忆巩固（autoDream）用的模型",
         "memory.features.dreamPeakHours": "高峰时段（不做梦）",
-        "memory.features.dreamPeakHours.hint": "空 = 关闭。逗号分隔、可带星期前缀、支持跨零点，如 09:00-18:00 或 mon-fri 08:00-12:00,14:00-18:00。命中时段不调模型，顺延到最近的高峰结束时刻补跑（最多顺延 dreamPeakMaxDeferMinutes 分钟，避免长高峰把巩固饿死）",
+        "memory.features.dreamPeakHours.hint": "设置忙碌时段，巩固会避开这些时间、事后补跑。写法：09:00-18:00，多段用逗号分隔，可带星期（如 mon-fri 08:00-12:00），支持跨零点；留空 = 不限制",
         "memory.features.summarizePeakHours": "高峰时段（不蒸馏）",
-        "memory.features.summarizePeakHours.hint": "空 = 关闭。与上方巩固侧同一份时段语法；命中时蒸馏顺延到非高峰、窗口累积后一次蒸",
+        "memory.features.summarizePeakHours.hint": "与巩固侧同一份写法；蒸馏会避开这些时段，窗口先攒着、非高峰一次蒸完",
         "memory.features.sleepProvider": "睡眠 Provider",
         "memory.features.sleepModel": "睡眠模型",
         "memory.features.sleepModelHint": "留空 = 用巩固模型或当前模型；建议选非思考模型",
@@ -479,7 +491,7 @@ window.__ModuleLoader__.load({
         "memory.features.modelTestFail": "测试失败",
         "memory.features.modelTestHint": "真实发起一次最小巩固调用，验证 Provider/模型连通与 effort 支持",
         "memory.features.routeStaleMark": "（不在可用列表）",
-        "memory.features.routeStaleHint": "不在当前可用列表，多为切换 Provider 后的旧值：请改选，或点「测试连通性」当场验证；改动保存后重启 DSH 生效。",
+        "memory.features.routeStaleHint": "该值不在当前可用列表（常见于切换过 Provider）：请重新选择，或点「测试连通性」当场验证",
         "memory.explorer.viewCards": "卡片",
         "memory.explorer.viewTimeline": "时间线",
         "memory.explorer.viewAria": "视图切换",
@@ -537,11 +549,14 @@ window.__ModuleLoader__.load({
         "memory.status.conflicts": "待确认冲突",
         "memory.status.conflictsHint": "冻结的矛盾记忆，等待人工确认",
         "memory.status.injectSuppressed": "极简模式下注入按宿主设计关闭",
-        "memory.status.injectSuppressedHint": "当前会话使用 minimal 预设，记忆注入 / 用户画像 / hot memory 不送达模型（宿主设计，非插件缺陷）。解法：切换标准模式，或在 ~/.dsh/settings.yaml 设 agent-presets.default: standard；过渡方案：把画像与规则写入 AGENTS.md",
+        "memory.status.injectSuppressedHint": "当前会话使用 minimal 预设：记忆注入 / 用户画像 / 热记忆不会送达模型（宿主设计，非插件缺陷）。切到标准模式，或在 ~/.dsh/settings.yaml 设 agent-presets.default: standard；过渡方案：把画像与规则写进 AGENTS.md",
         "memory.status.injectPreview": "注入预览",
         "memory.status.injectPreviewNone": "暂无预览——尚未发生注入（新会话或注入已关闭）",
-        "memory.status.injectPreview.chars": "总体积 {chars} 字符",
+        "memory.status.injectPreview.chars": "总体积",
         "memory.status.injectPreview.charsUnit": " 字符",
+        "memory.status.injectPreview.maxItems": "注入上限",
+        "memory.status.injectPreview.threshold": "相关性门槛",
+        "memory.status.injectPreview.scope": "会话归属",
         "memory.status.injectPreview.query": "查询「{query}…」",
         "memory.status.injectPreview.hot": "hot memory",
         "memory.status.injectPreview.adaptiveOn": "自适应条数",
@@ -580,11 +595,19 @@ window.__ModuleLoader__.load({
         "memory.status.consolidatedEmpty": "autoDream / autoSummarize 沉淀的记忆会出现在这里",
         "memory.status.archivedMemories": "已归档的记忆",
         "memory.status.heatDistribution": "热度分布",
-        "memory.status.heatHint": "热门（≥66%）{hot} · 温热（33–66%）{warm} · 冷却（<33%）{cold}，样本为最近 {sample} 条",
+        "memory.status.heat.hot": "热门（≥66%）",
+        "memory.status.heat.warm": "温热（33–66%）",
+        "memory.status.heat.cold": "冷却（<33%）",
+        "memory.status.heat.sample": "按最近 {sample} 条采样",
         "memory.status.recallStats": "记忆复用",
-        "memory.status.recallHint": "复用率 {rate} · 僵尸 {zombie}/{active}（豁免 {exempt}）· 30 天回执 {runs} 次 · Top：{top}",
-        "memory.status.recallInject": "注入 {runs} 轮 {count} 条，槽位填充 {fill}%",
-        "memory.status.recallArchive": "归档 {total} 行（{add}/天），精确重复可压掉 {compress} 行",
+        "memory.status.recall.zombie": "僵尸记忆",
+        "memory.status.recall.exempt": "豁免",
+        "memory.status.recall.runs": "30 天回执",
+        "memory.status.recall.top": "常被召回",
+        "memory.status.recall.inject": "注入",
+        "memory.status.recall.archive": "归档",
+        "memory.status.recallInject": "{runs} 轮 · {count} 条 · 槽位 {fill}%",
+        "memory.status.recallArchive": "{total} 行 · +{add}/天 · 可压掉 {compress}",
         "memory.status.viewAll": "查看全部",
         "memory.status.depositedCount": "沉淀的记忆（{n}）",
         "memory.status.archivedCount": "已归档的记忆（{n}）",
@@ -606,7 +629,7 @@ window.__ModuleLoader__.load({
         "memory.status.vectorInitHint": "embedder 不可达，正在重试",
         "memory.status.vectorRuntimeMissing": "缺少本地推理运行时",
         "memory.status.vectorRuntimeHint": "本地推理运行时未就绪（{status}）",
-        "memory.status.vectorRuntimeCost": "本地向量化要额外一份本地推理运行时（transformers + onnxruntime 闭包，解包后数百 MB）。下面的按钮会先尝试收编本机已有的那份（同盘则硬链接，不占额外空间），没有再按固定清单从 npm 取回（逐个校验 sha512）。也可以直接让 agent 处理，或在终端里自己跑：node scripts/mneme-runtime.mjs status / adopt [--from <node_modules>] / verify（详见 docs/LOCAL_MODEL.md §2.5）。",
+        "memory.status.vectorRuntimeCost": "本地向量化需要额外一份本地推理运行时（解包后数百 MB）。下面的按钮会优先收编本机已有的那份（同盘硬链接、不占额外空间），没有再从 npm 下载并逐个校验。也可以让 Agent 代劳，或在终端自己跑：node scripts/mneme-runtime.mjs status / adopt / verify（见 docs/LOCAL_MODEL.md）",
         "memory.runtime.title": "本地推理运行时",
         "memory.runtime.available": "已就绪",
         "memory.runtime.missing": "未就绪 —— 只有用本地嵌入（embedProvider: local）时才需要它",
@@ -622,6 +645,8 @@ window.__ModuleLoader__.load({
       "memory.status.vectorUnconfigured": "未配置",
       "memory.status.vectorUnconfiguredHint": "未填 embedding 端点/模型或未启用，语义召回不可用",
       "memory.status.vectorDegradedHint": "已索引 0 / {m} 条，语义召回实际不可用",
+        "memory.status.sec.overview": "库内一览",
+        "memory.status.sec.engine": "后台运转",
         "memory.status.llm": "LLM 消耗",
         "memory.status.llmCalls": "近 7 天 · {n} 次调用",
         "memory.status.error": "加载失败"
@@ -634,7 +659,13 @@ window.__ModuleLoader__.load({
         "memory.tab.project": "Projects",
         "memory.tab.decision": "Decisions",
         "memory.tab.history": "History",
+        "memory.tab.summary": "Summaries",
         "memory.settings.title": "Memory Settings",
+        "memory.settings.group.personal": "Personalization",
+        "memory.settings.group.engine": "Memory engine",
+        "memory.settings.group.search": "Search",
+        "memory.settings.group.connect": "Connections & safety",
+        "memory.settings.group.help": "Help",
         "memory.settings.profile": "User Profile",
         "memory.settings.profileHint": "Describe yourself once — the agent reads it every turn.",
         "memory.settings.profileSave": "Save Profile",
@@ -739,22 +770,25 @@ window.__ModuleLoader__.load({
         "memory.settings.apiTokenPlaceholder": "Empty = no auth (default)",
         "memory.settings.apiTokenSave": "Save Token",
         "memory.settings.apiTokenSaved": "Token saved",
-        "memory.settings.feedback.title": "Help & feedback",
-        "memory.settings.feedback.desc": "Stuck? Search the existing issues, or tell us what happened:",
-        "memory.settings.feedback.newIssue": "Open a GitHub issue (environment info prefilled)",
-        "memory.settings.feedback.email": "Email feedback (work@modusensus.space)",
+        "memory.settings.feedback.title": "Feedback",
+        "memory.settings.feedback.desc": "Something off? Tell us directly, or check if someone hit it first:",
+        "memory.settings.feedback.newIssue": "Report on GitHub",
+        "memory.settings.feedback.newIssue.sub": "Plugin version & environment prefilled",
+        "memory.settings.feedback.email": "Email us",
+        "memory.settings.feedback.email.sub": "work@modusensus.space",
         "memory.settings.feedback.browse": "Browse known issues",
+        "memory.settings.feedback.browse.sub": "Check if it's already reported",
         "memory.settings.feedback.hint": "Search for an existing issue first — it saves a duplicate.",
         "memory.settings.version.outdated": "🆕 New version {v} available (running {c})",
         "memory.settings.version.outdatedHint": "If the plugin was installed with a pinned version, regular upgrades never cross minor/major lines — reinstall or pass --latest. A fresh npm release may take about a day to appear in the market.",
         "memory.settings.mode.title": "Runtime mode",
-        "memory.settings.mode.desc": "Light mode keeps only the core memory read/write and auto-injection (autoDream consolidation, entity extraction and semantic search are off) — for light use where you just want preferences remembered. Standard mode enables everything.",
+        "memory.settings.mode.desc": "Light mode keeps the core loop only: memory read/write, auto-injection and hot memory — consolidation, entity extraction and semantic search are all off. For modest machines or when you just want preferences remembered. Standard mode enables everything.",
         "memory.settings.mode.light": "Light",
         "memory.settings.mode.standard": "Standard",
         "memory.settings.mode.savedHint": "Saved. Takes effect after restarting DSH",
         "memory.settings.mode.offList": "Off: consolidation (autoDream) · entity extraction · semantic search",
         "memory.settings.extapi.title": "External API",
-        "memory.settings.extapi.desc": "A standalone HTTP service for other plugins / CLIs / desktop tools to read and write memories, bound to 127.0.0.1 by default. Takes effect after restarting DSH.",
+        "memory.settings.extapi.desc": "Opens a local API so other tools (plugins, CLIs, desktop apps) can also read and write this memory store; binds to localhost only by default. Changes take effect after restarting DSH.",
         "memory.settings.extapi.enabled": "Enable",
         "memory.settings.extapi.disabled": "Disable",
         "memory.settings.extapi.address": "Address",
@@ -769,11 +803,11 @@ window.__ModuleLoader__.load({
         "memory.tab.constraint": "Constraints",
         "memory.tab.document": "Documents",
         "memory.features.title": "Features",
-        "memory.features.desc": "Toggle backend capabilities. Changes take effect after restarting DSH.",
-        "memory.features.group.core": "Core",
-        "memory.features.group.enhance": "Enhancement",
-        "memory.features.group.dream": "Consolidation",
-        "memory.features.group.scope": "Scope isolation",
+        "memory.features.desc": "Choose what the plugin does in the background. Changes are saved immediately and take effect after restarting DSH.",
+        "memory.features.group.core": "Basics",
+        "memory.features.group.enhance": "Search & enrichment",
+        "memory.features.group.dream": "Consolidation & sleep",
+        "memory.features.group.scope": "Multi-session isolation",
         "memory.features.group.advanced": "Advanced",
         "memory.features.advancedToggle": "Advanced (injection · reflection · experimental)",
         "memory.features.restartHint": "Takes effect after restarting DSH",
@@ -781,9 +815,9 @@ window.__ModuleLoader__.load({
         "memory.features.autoInject": "Auto injection",
         "memory.features.autoInject.hint": "Carry relevant memories into every turn",
         "memory.features.injectGuidanceEnabled": "Capability guide",
-        "memory.features.injectGuidanceEnabled.hint": "Explain how to use memory (when to search, when to save, when to do nothing) in tool descriptions plus a one-time prompt section",
+        "memory.features.injectGuidanceEnabled.hint": "Teach the agent how to use memory: when to search, when to save, when to leave things alone",
         "memory.features.continuityRescueEnabled": "Compaction-edge rescue",
-        "memory.features.continuityRescueEnabled.hint": "Before context compaction, record a continuity snapshot (current work / next step / open questions) and append it near the end of the conversation so it survives the compaction",
+        "memory.features.continuityRescueEnabled.hint": "Before a long conversation gets compacted, store a snapshot of what's in progress / next steps / open questions so key context survives the compaction",
         "memory.features.parentOff": "Inactive while auto injection is off",
         "memory.features.autoSummarize": "Auto summarization",
         "memory.features.autoSummarize.hint": "Distill memory entries when a conversation ends",
@@ -804,18 +838,18 @@ window.__ModuleLoader__.load({
         "memory.features.summarizeReasoningEffort.low": "Low",
         "memory.features.summarizeReasoningEffort.medium": "Medium",
         "memory.features.summarizeReasoningEffort.high": "High",
-        "memory.features.summarizeReasoningEffort.hint": "Prefer low or No reasoning for thinking models so reasoning cannot drain the output budget; takes effect after a DSH restart",
-        "memory.features.entityExtractionModelHint": "Provider / model empty = follow the main conversation model; reasoning none = provider default",
+        "memory.features.summarizeReasoningEffort.hint": "For thinking models, prefer Low or No reasoning so thinking cannot fill the output budget and break summaries",
+        "memory.features.entityExtractionModelHint": "Provider / model empty = follow the main conversation model; reasoning \"Follow default\" = provider default",
         "memory.features.codingRetrospect": "Coding retrospection",
-        "memory.features.codingRetrospect.hint": "Distill pitfalls, constraints and rejected solutions from full transcripts (tools and errors included)",
+        "memory.features.codingRetrospect.hint": "Review the full coding session (tools and errors included) and distill pitfalls, constraints and rejected solutions",
         "memory.features.rerankEnabled": "Reranking",
         "memory.features.rerankEnabled.hint": "Rerank recalled results with a local model — slower, more precise",
         "memory.features.heatEnabled": "Heat decay",
-        "memory.features.heatEnabled.hint": "Decay memory heat since last access; feeds injection ranking and sleep demotion",
+        "memory.features.heatEnabled.hint": "Cool memories down like a forgetting curve: the longer unused, the lower they rank — they stop taking injection slots",
         "memory.features.documentMemoryEnabled": "Document memory",
-        "memory.features.documentMemoryEnabled.hint": "Register agent-authored documents as pointer rows: existence + evidence validation, summary + path stored, dedupe + supersede bookkeeping; the full text stays agent-owned and is read on demand; injection carries the summary row only (off by default)",
+        "memory.features.documentMemoryEnabled.hint": "Long agent-authored documents are stored as a \"summary card\" only: the full text stays agent-owned and is read on demand, so injection carries the summary without filling the context",
         "memory.features.resilientModelDownload": "Resumable model downloads",
-        "memory.features.resilientModelDownload.hint": "Resume model file downloads from received bytes and retry on failure; failures log where they stopped",
+        "memory.features.resilientModelDownload.hint": "Resume model downloads from where they stopped and retry automatically; off = one-shot downloads",
         "memory.features.searchSemanticDedup": "Semantic dedup",
         "memory.features.searchSemanticDedup.hint": "Keep one entry when search hits near-duplicates",
         "memory.features.autoDream": "Memory consolidation",
@@ -845,13 +879,13 @@ window.__ModuleLoader__.load({
         "memory.features.conflictFreezeEnabled": "Conflict freezing",
         "memory.features.conflictFreezeEnabled.hint": "Freeze contradictory memories for confirmation during consolidation",
         "memory.features.scopeEnabled": "Scope tagging",
-        "memory.features.scopeEnabled.hint": "Stamp new memories with the writing session's identity (agent/workspace); takes effect after restarting DSH",
+        "memory.features.scopeEnabled.hint": "New memories record which session (agent / workspace) they came from, for isolation and filtered recall",
         "memory.features.strictScope": "Strict isolation",
-        "memory.features.strictScope.hint": "Hard-filter search and injection for EXPLICITLY declared scopes only: memories explicitly narrowed to other agents/workspaces become invisible; auto carrier labels are demoted but stay visible (use sensitivity for true physical isolation). Takes effect after restarting DSH",
+        "memory.features.strictScope.hint": "When on, memories explicitly made private by other sessions become fully invisible; when off they stay visible but rank lower. For true isolation use a memory's sensitivity field",
         "memory.features.trustEpistemicWeighting": "Credibility weighting",
         "memory.features.trustEpistemicWeighting.hint": "Adjust recall ranking by source credibility (experimental)",
         "memory.features.reflectionFailureTracking": "Reflection failure tracking",
-        "memory.features.reflectionFailureTracking.hint": "Record failed consolidation decisions for later improvement",
+        "memory.features.reflectionFailureTracking.hint": "Record failed consolidation cases for later improvement (diagnostics)",
         "memory.features.embedRoute": "Semantic search route",
         "memory.features.embedProvider": "Embedding provider",
         "memory.features.embedProvider.openai": "OpenAI-compatible API",
@@ -867,9 +901,9 @@ window.__ModuleLoader__.load({
         "memory.features.dreamModel": "Consolidation model",
         "memory.features.dreamModelHint": "Leave empty to follow the main conversation model; only affects autoDream consolidation",
         "memory.features.dreamPeakHours": "Peak hours (no dreaming)",
-        "memory.features.dreamPeakHours.hint": "Empty = off. Comma-separated windows, optional weekday prefix, midnight-crossing allowed — e.g. 09:00-18:00 or mon-fri 08:00-12:00,14:00-18:00. Inside these windows no LLM call is made; the run is deferred to the nearest peak-end (capped by dreamPeakMaxDeferMinutes so an all-day peak cannot starve consolidation)",
+        "memory.features.dreamPeakHours.hint": "Busy hours for the machine; consolidation avoids them and catches up afterwards. Syntax: 09:00-18:00, several windows comma-separated, weekday prefix allowed (mon-fri 08:00-12:00), midnight-crossing allowed; empty = no limit",
         "memory.features.summarizePeakHours": "Peak hours (no distillation)",
-        "memory.features.summarizePeakHours.hint": "Empty = off. Same window syntax as the consolidation side above; inside a peak, distillation is deferred and the window accumulates for one bigger run",
+        "memory.features.summarizePeakHours.hint": "Same syntax as the consolidation side above; distillation avoids these windows and accumulates the material for one run off-peak",
         "memory.features.sleepProvider": "Sleep provider",
         "memory.features.sleepModel": "Sleep model",
         "memory.features.sleepModelHint": "Leave empty to reuse the consolidation model; a non-reasoning model is recommended",
@@ -880,7 +914,7 @@ window.__ModuleLoader__.load({
         "memory.features.modelTestFail": "Test failed",
         "memory.features.modelTestHint": "Fires one minimal consolidation call to verify provider/model connectivity and effort support",
         "memory.features.routeStaleMark": " (not in list)",
-        "memory.features.routeStaleHint": "Not in the currently available list, often a leftover from a provider switch: reselect, or run a connectivity test to verify now; changes take effect after restarting DSH.",
+        "memory.features.routeStaleHint": "This value is not in the currently available list (often a leftover from switching providers): reselect, or run a connectivity test to verify now",
         "memory.explorer.viewCards": "Cards",
         "memory.explorer.viewTimeline": "Timeline",
         "memory.explorer.viewAria": "Switch view",
@@ -938,11 +972,14 @@ window.__ModuleLoader__.load({
         "memory.status.conflicts": "Pending conflicts",
         "memory.status.conflictsHint": "Frozen contradictory memories awaiting confirmation",
         "memory.status.injectSuppressed": "Injection disabled by host minimal preset",
-        "memory.status.injectSuppressedHint": "This session uses the minimal preset: memory injection / user profile / hot memory never reach the model (by host design, not a plugin defect). Fix: switch to standard mode, or set agent-presets.default: standard in ~/.dsh/settings.yaml. Interim: put profile and rules in AGENTS.md",
+        "memory.status.injectSuppressedHint": "This session uses the minimal preset: memory injection / profile / hot memory never reach the model (by host design, not a plugin defect). Switch to standard mode, or set agent-presets.default: standard in ~/.dsh/settings.yaml. Interim: put profile and rules in AGENTS.md",
         "memory.status.injectPreview": "Injection preview",
         "memory.status.injectPreviewNone": "No preview yet — no injection has happened (new session or injection off)",
-        "memory.status.injectPreview.chars": "total {chars} chars",
+        "memory.status.injectPreview.chars": "Total",
         "memory.status.injectPreview.charsUnit": " chars",
+        "memory.status.injectPreview.maxItems": "Max items",
+        "memory.status.injectPreview.threshold": "Relevance floor",
+        "memory.status.injectPreview.scope": "Session scope",
         "memory.status.injectPreview.query": "query \"{query}…\"",
         "memory.status.injectPreview.hot": "hot memory",
         "memory.status.injectPreview.adaptiveOn": "adaptive budget",
@@ -981,11 +1018,19 @@ window.__ModuleLoader__.load({
         "memory.status.consolidatedEmpty": "Memories deposited by autoDream / autoSummarize appear here",
         "memory.status.archivedMemories": "Archived memories",
         "memory.status.heatDistribution": "Heat distribution",
-        "memory.status.heatHint": "hot (≥66%) {hot} · warm (33–66%) {warm} · cooled (<33%) {cold}, sampled from the latest {sample}",
+        "memory.status.heat.hot": "Hot (≥66%)",
+        "memory.status.heat.warm": "Warm (33–66%)",
+        "memory.status.heat.cold": "Cooled (<33%)",
+        "memory.status.heat.sample": "Sampled from the latest {sample}",
         "memory.status.recallStats": "Recall reuse",
-        "memory.status.recallHint": "reuse {rate} · zombie {zombie}/{active} (exempt {exempt}) · {runs} runs in 30d · top: {top}",
-        "memory.status.recallInject": "injected {runs} turns · {count} items ({fill}% slots)",
-        "memory.status.recallArchive": "archived {total} rows (+{add}/day) · {compress} exactly-duplicate rows compressible",
+        "memory.status.recall.zombie": "Zombie memories",
+        "memory.status.recall.exempt": "exempt",
+        "memory.status.recall.runs": "Receipts (30d)",
+        "memory.status.recall.top": "Most recalled",
+        "memory.status.recall.inject": "Injected",
+        "memory.status.recall.archive": "Archived",
+        "memory.status.recallInject": "{runs} turns · {count} items · {fill}% slots",
+        "memory.status.recallArchive": "{total} rows · +{add}/day · {compress} compressible",
         "memory.status.viewAll": "View all",
         "memory.status.depositedCount": "Deposited memories ({n})",
         "memory.status.archivedCount": "Archived memories ({n})",
@@ -1007,7 +1052,7 @@ window.__ModuleLoader__.load({
         "memory.status.vectorInitHint": "embedder unreachable, retrying",
         "memory.status.vectorRuntimeMissing": "Local inference runtime missing",
         "memory.status.vectorRuntimeHint": "Local inference runtime not ready ({status})",
-        "memory.status.vectorRuntimeCost": "Local vectorization needs an extra local inference runtime (the transformers + onnxruntime closure, hundreds of MB unpacked). The button below first tries to adopt an existing copy on this machine (hardlinked when on the same volume, so no extra disk), and otherwise fetches it from npm against a pinned manifest (every tarball checked against its sha512). You can also just ask the agent, or run it yourself: node scripts/mneme-runtime.mjs status / adopt [--from <node_modules>] / verify (see docs/LOCAL_MODEL.md §2.5).",
+        "memory.status.vectorRuntimeCost": "Local vectorization needs an extra local inference runtime (hundreds of MB unpacked). The button below first adopts an existing copy on this machine (hardlinked on the same volume, no extra disk) and otherwise fetches it from npm with per-file checksums. You can also just ask the agent, or run it yourself: node scripts/mneme-runtime.mjs status / adopt / verify (see docs/LOCAL_MODEL.md)",
         "memory.runtime.title": "Local inference runtime",
         "memory.runtime.available": "ready",
         "memory.runtime.missing": "not ready — only needed when you use local embedding (embedProvider: local)",
@@ -1023,6 +1068,8 @@ window.__ModuleLoader__.load({
       "memory.status.vectorUnconfigured": "Not configured",
       "memory.status.vectorUnconfiguredHint": "No embedding endpoint/model configured — semantic recall is off",
       "memory.status.vectorDegradedHint": "Indexed 0 / {m} items — semantic recall is effectively unavailable",
+        "memory.status.sec.overview": "Library",
+        "memory.status.sec.engine": "Background activity",
         "memory.status.llm": "LLM Usage",
         "memory.status.llmCalls": "Last 7 days · {n} calls",
         "memory.status.error": "Failed to load"
@@ -1202,8 +1249,8 @@ window.__ModuleLoader__.load({
       // --- settings: quiet stacked sections, one concern per section ---
       ".mneme-set{flex:1;min-height:0;overflow-y:auto;padding:8px 24px 48px;box-sizing:border-box}",
       ".mneme-set-inner{max-width:720px;margin:0 auto}",
-      ".mneme-set-sec{padding:20px 0 24px;border-bottom:1px solid var(--dsw-alias-border-l2)}",
-      ".mneme-set-sec:last-child{border-bottom:none}",
+      // 设置页各节一律用 boxed 卡（.mneme-set-card）+ 分组标题（.mneme-set-grouphead）：
+      // 旧的「无框 set-sec + 有框 set-card」混排是版面杂乱的一半来源
       ".mneme-set-title{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary);margin-bottom:4px}",
       ".mneme-set-desc{font-size:13px;line-height:19px;color:var(--dsw-alias-label-tertiary);margin-bottom:14px}",
       ".mneme-set-input{box-sizing:border-box;width:100%;height:34px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:13px;outline:none;margin-bottom:10px;transition:border-color .12s,box-shadow .12s}",
@@ -1271,7 +1318,6 @@ window.__ModuleLoader__.load({
       ".mneme-numinput:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-state-business-primary) 15%,transparent)}",
       // 字符串开关的输入框（provider/model 等）与其子块容器
       ".mneme-strinput{box-sizing:border-box;width:240px;max-width:60%;height:30px;padding:0 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:13px;outline:none;text-align:left;transition:border-color .12s,box-shadow .12s}",
-      ".mneme-feed-link{display:block;color:var(--dsw-alias-brand,var(--dsw-alias-label-primary));text-decoration:none;font-size:13px;line-height:20px;padding:4px 2px;border-radius:6px;transition:opacity .12s}.mneme-feed-link:hover{opacity:.8;text-decoration:underline}",
       ".mneme-strinput:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-state-business-primary) 15%,transparent)}",
       ".mneme-featsub{margin:2px 0 8px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;display:flex;flex-direction:column;gap:6px}",
       ".mneme-featsub .mneme-featnum{padding:6px 0;border-bottom:none}",
@@ -1378,8 +1424,30 @@ window.__ModuleLoader__.load({
       ".mneme-xemptyico{display:block;margin:0 auto 6px;opacity:.7}",
       // --- status sub-view: responsive stat-card grid (auto-fill, ~220px min) ---
       ".mneme-status{flex:1;min-height:0;overflow-y:auto;padding:20px 24px 40px;box-sizing:border-box}",
-      ".mneme-statusgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;max-width:1000px;margin:0 auto}",
-      ".mneme-statuscard{min-width:0;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:14px}",
+      ".mneme-statusgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;max-width:1000px;margin:0 auto 12px}",
+      ".mneme-statusgrid:last-of-type{margin-bottom:0}",
+      // 状态页分组标题（库内一览 / 后台运转）：只做扫读锚点，压得比卡片标题低
+      ".mneme-statushead{max-width:1000px;margin:0 auto 10px;font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-label-tertiary)}",
+      ".mneme-statusgrid+.mneme-statushead{margin-top:26px}",
+      ".mneme-statuscard{min-width:0;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px 16px 14px}",
+      // 指标行：一行一指标（label 左 / 数值右），取代「·」串联的说明长句——
+      // 拥挤感的根源是把多指标压进一段会换行的散文
+      ".mneme-statrows{margin-top:10px;display:flex;flex-direction:column;gap:4px}",
+      ".mneme-statrow{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:12px;line-height:17px;color:var(--dsw-alias-label-tertiary)}",
+      ".mneme-statrow>span:first-child{flex:none;white-space:nowrap}",
+      ".mneme-statrow .mneme-heatdot{align-self:center}",
+      ".mneme-statrowval{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}",
+      ".mneme-statfoot{margin-top:8px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-dimmed)}",
+      // 热度分布条：三档占比一图看清，行标只补数字
+      ".mneme-heatbar{display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:12px;background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-heatbar-seg{min-width:2px}",
+      ".mneme-heatbar-hot{background:var(--dsw-alias-state-warning,#d97706)}",
+      ".mneme-heatbar-warm{background:var(--dsw-alias-label-tertiary)}",
+      ".mneme-heatbar-cold{background:var(--dsw-alias-label-dimmed)}",
+      ".mneme-heatdot{flex:none;width:8px;height:8px;border-radius:50%}",
+      ".mneme-heatdot--hot{background:var(--dsw-alias-state-warning,#d97706)}",
+      ".mneme-heatdot--warm{background:var(--dsw-alias-label-tertiary)}",
+      ".mneme-heatdot--cold{background:var(--dsw-alias-label-dimmed)}",
       // --- 状态页工作台：让用户看见插件在干活（动态/沉淀/归档） ---
       ".mneme-wbhead{margin:28px auto 10px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);max-width:1000px;display:flex;align-items:baseline;justify-content:space-between;gap:8px}",
       ".mneme-wblist{max-width:1000px;display:flex;flex-direction:column;gap:6px}",
@@ -1402,9 +1470,23 @@ window.__ModuleLoader__.load({
       // --- settings cards: boxed cards for the runtime-mode and external-API
       // sections — each card owns its fetch/PUT state, so it renders as a
       // self-contained unit inside the stacked settings view ---
-      ".mneme-set-card{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:14px;margin-bottom:12px}",
+      ".mneme-set-card{border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px;margin-bottom:10px}",
+      // 设置页分组标题（个性化 / 记忆引擎 / 搜索 / 连接与安全 / 帮助）：
+      // 先给「这一段在管什么」，卡片才是具体选项
+      ".mneme-set-grouphead{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-label-tertiary);margin:24px 0 10px}",
+      ".mneme-set-grouphead:first-child{margin-top:8px}",
       ".mneme-set-token{font-family:monospace;font-size:12px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);word-break:break-all;user-select:all}",
-      ".mneme-set-hint{font-size:12px;color:var(--dsw-alias-label-tertiary)}"
+      ".mneme-set-hint{font-size:12px;color:var(--dsw-alias-label-tertiary)}",
+      // --- 意见与反馈：图标行 + 版本 footer，收在设置页末尾当「关于」用 ---
+      ".mneme-feedlist{display:flex;flex-direction:column;gap:4px}",
+      ".mneme-feedrow{display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border-radius:10px;text-decoration:none;transition:background .12s}",
+      ".mneme-feedrow:hover{background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-feedico{flex:none;width:28px;height:28px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}",
+      ".mneme-feedrow:hover .mneme-feedico{background:var(--dsw-alias-interactive-bg-active)}",
+      ".mneme-feedtext{display:flex;flex-direction:column;gap:1px;min-width:0}",
+      ".mneme-feedname{font-size:13px;line-height:18px;font-weight:500;color:var(--dsw-alias-label-primary)}",
+      ".mneme-feedsub{font-size:12px;line-height:17px;color:var(--dsw-alias-label-tertiary)}",
+      ".mneme-set-foot{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:12px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l1);font-size:12px;color:var(--dsw-alias-label-tertiary)}"
     ].join("\n");
     if (typeof document !== "undefined" && document.querySelector(`style[data-plugin-css="${CSS_TAG}"]`) === null) {
       const tag = document.createElement("style");
@@ -2435,6 +2517,14 @@ window.__ModuleLoader__.load({
       const mailHref = "mailto:work@modusensus.space?subject="
         + encodeURIComponent(`[dsh-mneme 反馈] ${pkgVersion} / ${platformLabel()}`)
         + "&body=" + encodeURIComponent(feedbackBody);
+      // 反馈行：图标 + 主标题 + 一句副标；锚点属性由调用点给（保持 href 字面量可被测试锁住）
+      const feedRow = (iconName, label, sub, anchorProps) => h("a", {
+        className: "mneme-feedrow", ...anchorProps
+      },
+        h("span", { className: "mneme-feedico", "aria-hidden": "true" }, h(Icon, { name: iconName, size: 14 })),
+        h("span", { className: "mneme-feedtext" },
+          h("span", { className: "mneme-feedname" }, label),
+          h("span", { className: "mneme-feedsub" }, sub)));
 
       // Runtime mode + external API — two independent fetches: one failing
       // endpoint only errors its own card, never the other one.
@@ -2643,7 +2733,7 @@ window.__ModuleLoader__.load({
         // 版本自检横幅 — 仅 outdated 时渲染（up-to-date/ahead/unknown/失败
         // 全部零渲染）。钉子警示：安装时指定过版本号的 profile 会被 pnpm
         // 挡住常规升级（#174 报障者的实际成因）；市场收录新发布约有 1 天延迟。
-        updateInfo && h("section", { className: "mneme-set-sec" },
+        updateInfo && h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" },
             t("memory.settings.version.outdated")
               .replace("{v}", updateInfo.latest)
@@ -2651,8 +2741,10 @@ window.__ModuleLoader__.load({
           ),
           h("div", { className: "mneme-featsubhint" }, t("memory.settings.version.outdatedHint"))
         ),
+        // —— 个性化：画像 / 规则 / 自定义指令（Agent 怎么对你） ——
+        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.personal")),
         // 用户画像 — who the agent is talking to
-        h("section", { className: "mneme-set-sec" },
+        h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.profile")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.profileHint")),
           h("textarea", {
@@ -2667,7 +2759,7 @@ window.__ModuleLoader__.load({
           )
         ),
         // 规则 — numbered rows, hover reveals the delete affordance
-        h("section", { className: "mneme-set-sec" },
+        h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.rules")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.rulesHint")),
           rules.length === 0 && h("div", { className: "mneme-xempty" }, t("memory.settings.empty")),
@@ -2696,7 +2788,7 @@ window.__ModuleLoader__.load({
           )
         ),
         // 自定义指令 — slash commands as titled rows
-        h("section", { className: "mneme-set-sec" },
+        h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.commands")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.commandsHint")),
           commands.length === 0 && h("div", { className: "mneme-xempty" }, t("memory.settings.empty")),
@@ -2726,9 +2818,8 @@ window.__ModuleLoader__.load({
             )
           )
         ),
-        // 功能开关 — 0.7.13/0.7.14 后端能力的前端总闸（codingRetrospect、
-        // 智能调速器参数、实体抽取、巩固等）；重启 DSH 后生效。
-        h(FeaturesCard, { t }),
+        // —— 记忆引擎：运行模式（粗粒度）在前，功能开关（细粒度）紧随 ——
+        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.engine")),
         // 运行模式 — light vs standard chip radios; each click PUTs and the
         // change only lands after a DSH restart (green saved hint says so).
         h("section", { className: "mneme-set-card" },
@@ -2755,6 +2846,30 @@ window.__ModuleLoader__.load({
                   t("memory.settings.mode.offList"))
               )
         ),
+        // 功能开关 — 后端能力的细粒度闸门；改动即时保存，重启 DSH 后生效。
+        h(FeaturesCard, { t }),
+        // —— 搜索：语义召回 ——
+        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.search")),
+        // 向量搜索 — semantic recall over an embeddings API
+        h("section", { className: "mneme-set-card" },
+          h("div", { className: "mneme-set-title" }, t("memory.settings.vectorTitle")),
+          h("div", { className: "mneme-set-desc" }, t("memory.settings.vectorHint")),
+          h("label", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 13, color: "var(--dsw-alias-label-primary)" } },
+            h("input", { type: "checkbox", checked: !!vector.enabled, onChange: (e) => setVector({ ...vector, enabled: e.target.checked }) }),
+            h("span", null, t("memory.settings.vectorEnabled"))
+          ),
+          h("input", { className: "mneme-set-input", value: vector.baseUrl, placeholder: t("memory.settings.vectorBaseUrl"), onChange: (e) => setVector({ ...vector, baseUrl: e.target.value }) }),
+          h("input", { className: "mneme-set-input", type: "password", value: vector.apiKey, placeholder: t("memory.settings.vectorApiKey"), onChange: (e) => setVector({ ...vector, apiKey: e.target.value }) }),
+          h("input", { className: "mneme-set-input", value: vector.model, placeholder: t("memory.settings.vectorModel"), onChange: (e) => setVector({ ...vector, model: e.target.value }) }),
+          h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+            h("button", { className: "mneme-btn", onClick: saveVector }, t("memory.settings.vectorSave")),
+            vectorSaved && h("span", { className: "mneme-saved" }, t("memory.settings.vectorSaved")),
+            h("button", { className: "mneme-btn", onClick: reindex, disabled: reindexing }, reindexing ? t("memory.settings.vectorReindexing") : t("memory.settings.vectorReindex")),
+            reindexMsg && h("span", { style: { fontSize: 12, color: "var(--dsw-alias-label-secondary, #666)" } }, reindexMsg)
+          )
+        ),
+        // —— 连接与安全：外部访问 API / 面板令牌 ——
+        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.connect")),
         // 外部访问 API — standalone HTTP service for plugins/CLI/desktop tools;
         // the token is generated and kept by the backend, so it is read-only
         // here with a copy affordance. Changes need a DSH restart.
@@ -2818,26 +2933,10 @@ window.__ModuleLoader__.load({
                 )
               )
         ),
-        // 向量搜索 — semantic recall over an embeddings API
-        h("section", { className: "mneme-set-sec" },
-          h("div", { className: "mneme-set-title" }, t("memory.settings.vectorTitle")),
-          h("div", { className: "mneme-set-desc" }, t("memory.settings.vectorHint")),
-          h("label", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 13, color: "var(--dsw-alias-label-primary)" } },
-            h("input", { type: "checkbox", checked: !!vector.enabled, onChange: (e) => setVector({ ...vector, enabled: e.target.checked }) }),
-            h("span", null, t("memory.settings.vectorEnabled"))
-          ),
-          h("input", { className: "mneme-set-input", value: vector.baseUrl, placeholder: t("memory.settings.vectorBaseUrl"), onChange: (e) => setVector({ ...vector, baseUrl: e.target.value }) }),
-          h("input", { className: "mneme-set-input", type: "password", value: vector.apiKey, placeholder: t("memory.settings.vectorApiKey"), onChange: (e) => setVector({ ...vector, apiKey: e.target.value }) }),
-          h("input", { className: "mneme-set-input", value: vector.model, placeholder: t("memory.settings.vectorModel"), onChange: (e) => setVector({ ...vector, model: e.target.value }) }),
-          h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
-            h("button", { className: "mneme-btn", onClick: saveVector }, t("memory.settings.vectorSave")),
-            vectorSaved && h("span", { className: "mneme-saved" }, t("memory.settings.vectorSaved")),
-            h("button", { className: "mneme-btn", onClick: reindex, disabled: reindexing }, reindexing ? t("memory.settings.vectorReindexing") : t("memory.settings.vectorReindex")),
-            reindexMsg && h("span", { style: { fontSize: 12, color: "var(--dsw-alias-label-secondary, #666)" } }, reindexMsg)
-          )
-        ),
+        // 向量搜索卡片已上移到「搜索」分组（与功能开关里的语义检索路线相邻），
+        // 这里不再重复渲染。
         // API Token — advanced, last
-        h("section", { className: "mneme-set-sec" },
+        h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.apiTokenTitle")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.apiTokenHint")),
           h("div", { style: { display: "flex", gap: 8 } },
@@ -2853,18 +2952,25 @@ window.__ModuleLoader__.load({
           ),
           apiTokenSaved && h("div", { style: { marginTop: 8 } }, h("span", { className: "mneme-saved" }, t("memory.settings.apiTokenSaved")))
         ),
-        // 帮助与反馈 — 反馈问题三入口（新建 issue 预填 / 邮件 / 浏览已知问题）。
+        // —— 帮助：意见与反馈（图标行 + 版本 footer，兼当「关于」收尾） ——
+        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.help")),
+        // 反馈三入口：新建 issue 预填（版本+平台）/ 邮件 / 浏览已知问题。
         // 纯前端链接零后端成本；插件版本来自 /info，平台取 userAgent。GitHub
         // 仓库当前没有 issue 模板，故用 issues/new?title=&body= 直接预填。
-        h("section", { className: "mneme-set-sec" },
+        h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.feedback.title")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.feedback.desc")),
-          h("div", { style: { display: "flex", flexDirection: "column", gap: 2 } },
-            h("a", { className: "mneme-feed-link", href: issueHref, target: "_blank", rel: "noopener noreferrer" }, t("memory.settings.feedback.newIssue")),
-            h("a", { className: "mneme-feed-link", href: mailHref }, t("memory.settings.feedback.email")),
-            h("a", { className: "mneme-feed-link", href: "https://github.com/slow-stack/mneme/issues", target: "_blank", rel: "noopener noreferrer" }, t("memory.settings.feedback.browse"))
+          h("div", { className: "mneme-feedlist" },
+            feedRow("bug", t("memory.settings.feedback.newIssue"), t("memory.settings.feedback.newIssue.sub"),
+              { href: issueHref, target: "_blank", rel: "noopener noreferrer" }),
+            feedRow("mail", t("memory.settings.feedback.email"), t("memory.settings.feedback.email.sub"),
+              { href: mailHref }),
+            feedRow("search", t("memory.settings.feedback.browse"), t("memory.settings.feedback.browse.sub"),
+              { href: "https://github.com/slow-stack/mneme/issues", target: "_blank", rel: "noopener noreferrer" })
           ),
-          h("div", { className: "mneme-featsubhint", style: { marginTop: 8 } }, t("memory.settings.feedback.hint"))
+          h("div", { className: "mneme-set-foot" },
+            h("span", null, `dsh-mneme v${pkgVersion}`)
+          )
         )
       );
     }
@@ -2968,8 +3074,10 @@ window.__ModuleLoader__.load({
 
     // --- Status sub-view: a responsive grid of stat cards. Every card owns
     // its fetch, loading ("…") and error state, so one failing endpoint
-    // never blanks or blocks the others. ---
-    function StatusCard({ t, title, loading, error, num, cap }) {
+    // never blanks or blocks the others.
+    // 卡片解剖：标题（h3）→ 大数字 → 指标行（rows，一行一指标）→ 脚注
+    // （foot，采样口径这类背景信息）。cap 仍保留给单句说明型卡片。
+    function StatusCard({ t, title, loading, error, num, cap, rows, foot }) {
       return h("div", { className: "mneme-statuscard" },
         h("h3", { className: "mneme-xcolhead" }, title),
         loading
@@ -2978,7 +3086,14 @@ window.__ModuleLoader__.load({
             ? h("div", { className: "mneme-statuscap", style: { color: "var(--dsw-alias-state-error,#c33)" } }, t("memory.status.error"))
             : h(react.Fragment, null,
                 h("div", { className: "mneme-statusnum" }, num),
-                cap ? h("div", { className: "mneme-statuscap" }, cap) : null
+                rows && rows.length
+                  ? h("div", { className: "mneme-statrows" },
+                      rows.map((r, i) => h("div", { className: "mneme-statrow", key: r.key ?? i },
+                        h("span", null, r.label),
+                        h("span", { className: "mneme-statrowval", title: String(r.value) }, String(r.value))))
+                    )
+                  : cap ? h("div", { className: "mneme-statuscap" }, cap) : null,
+                foot ? h("div", { className: "mneme-statfoot" }, foot) : null
               )
       );
     }
@@ -3005,16 +3120,15 @@ window.__ModuleLoader__.load({
           .catch(() => { if (!cancelled) setState({ loading: false, error: true, total: 0, byType: [] }); });
         return () => { cancelled = true; };
       }, []);
-      const cap = state.byType
-        .map(([ty, n]) => `${typeLabel(t, ty)} ${n === null ? "—" : n}`)
-        .join(" · ");
+      const rows = state.byType
+        .map(([ty, n]) => ({ label: typeLabel(t, ty), value: n === null ? "—" : String(n) }));
       return h(StatusCard, {
         t,
         title: t("memory.status.memories"),
         loading: state.loading,
         error: state.error,
         num: state.total.toLocaleString(),
-        cap
+        rows
       });
     }
 
@@ -3042,14 +3156,14 @@ window.__ModuleLoader__.load({
           .catch(() => { if (!cancelled) setState({ loading: false, error: true, total: 0, byType: [] }); });
         return () => { cancelled = true; };
       }, []);
-      const cap = state.byType.map(([ty, n]) => `${entityTypeLabel(t, ty)} ${n}`).join(" · ");
+      const rows = state.byType.map(([ty, n]) => ({ label: entityTypeLabel(t, ty), value: String(n) }));
       return h(StatusCard, {
         t,
         title: t("memory.status.entities"),
         loading: state.loading,
         error: state.error,
         num: state.total.toLocaleString(),
-        cap
+        rows
       });
     }
 
@@ -3351,23 +3465,32 @@ window.__ModuleLoader__.load({
           h("div", { className: "mneme-statuscap" }, t("memory.status.injectPreviewNone"))
         );
       }
-      const params = [
-        `maxItems=${snap.maxItems}`,
-        `threshold=${snap.threshold}`,
-        snap.adaptive ? t("memory.status.injectPreview.adaptiveOn") : null,
-        snap.scoped ? `scope=${snap.scoped.agent_scope || snap.scoped.workspace_scope}` : null,
-        snap.rotated > 0 ? `${t("memory.status.injectPreview.rotated")} ${snap.rotated}` : null
-      ].filter(Boolean).join(" · ");
+      // 参数改用指标行呈现：maxItems/threshold 这类裸键名换成白话标签，
+      // 查询串这类背景信息放脚注。
+      const rows = [
+        { label: t("memory.status.injectPreview.maxItems"), value: String(snap.maxItems) },
+        { label: t("memory.status.injectPreview.threshold"), value: String(snap.threshold) },
+        snap.adaptive ? { label: t("memory.status.injectPreview.adaptiveOn"), value: "✓" } : null,
+        snap.scoped
+          ? { label: t("memory.status.injectPreview.scope"), value: snap.scoped.agent_scope || snap.scoped.workspace_scope }
+          : null,
+        snap.rotated > 0 ? { label: t("memory.status.injectPreview.rotated"), value: String(snap.rotated) } : null,
+        snap.hotChars > 0
+          ? { label: t("memory.status.injectPreview.hot"), value: `${snap.hotChars}${t("memory.status.injectPreview.charsUnit")}` }
+          : null,
+        { label: t("memory.status.injectPreview.chars"), value: `${snap.totalChars}${t("memory.status.injectPreview.charsUnit")}` }
+      ].filter(Boolean);
+      const foot = snap.query
+        ? t("memory.status.injectPreview.query").replace("{query}", snap.query.slice(0, 24))
+        : null;
       return h("div", { className: "mneme-statuscard", style: { gridColumn: "1 / -1" } },
         h("h3", { className: "mneme-xcolhead" }, t("memory.status.injectPreview")),
-        h("div", { className: "mneme-statuscap" },
-          params,
-          ` · ${t("memory.status.injectPreview.chars").replace("{chars}", String(snap.totalChars))}`,
-          snap.query ? ` · ${t("memory.status.injectPreview.query").replace("{query}", snap.query.slice(0, 24))}` : ""
-        ),
-        snap.hotChars > 0 && h("div", { className: "mneme-statuscap", style: { marginTop: 4 } },
-          `${t("memory.status.injectPreview.hot")} · ${snap.hotChars}${t("memory.status.injectPreview.charsUnit")}`),
-        h("div", { style: { marginTop: 6 } },
+        h("div", { className: "mneme-statrows" },
+          rows.map((r, i) => h("div", { className: "mneme-statrow", key: i },
+            h("span", null, r.label),
+            h("span", { className: "mneme-statrowval", title: String(r.value) }, String(r.value))))),
+        foot ? h("div", { className: "mneme-statfoot" }, foot) : null,
+        h("div", { style: { marginTop: 10 } },
           (snap.entries || []).length === 0
             ? h("div", { className: "mneme-statuscap" }, t("memory.status.injectPreview.empty"))
             : (snap.entries || []).map((m) => h("div", { key: m.id, style: { display: "flex", gap: 8, alignItems: "baseline", fontSize: 12, padding: "2px 0" } },
@@ -3666,18 +3789,34 @@ window.__ModuleLoader__.load({
         return () => { cancelled = true; };
       }, []);
       if (state.off) return null;
-      return h(StatusCard, {
-        t,
-        title: t("memory.status.heatDistribution"),
-        loading: state.loading,
-        error: false,
-        num: `${state.hot}`,
-        cap: t("memory.status.heatHint")
-          .replace("{hot}", String(state.hot))
-          .replace("{warm}", String(state.warm))
-          .replace("{cold}", String(state.cold))
-          .replace("{sample}", String(state.sample))
-      });
+      // 三档占比用堆叠条直接画出来（一眼读出分布），数字退到指标行；大数字
+      // 不再放「热门数」——它曾被误读成总数。
+      const total = state.hot + state.warm + state.cold;
+      const tiers = [
+        ["--hot", state.hot, t("memory.status.heat.hot")],
+        ["--warm", state.warm, t("memory.status.heat.warm")],
+        ["--cold", state.cold, t("memory.status.heat.cold")]
+      ];
+      return h("div", { className: "mneme-statuscard" },
+        h("h3", { className: "mneme-xcolhead" }, t("memory.status.heatDistribution")),
+        state.loading
+          ? h("div", { className: "mneme-statusnum" }, "…")
+          : h(react.Fragment, null,
+              total > 0 && h("div", { className: "mneme-heatbar" },
+                tiers.map(([tier, n]) => h("span", {
+                  key: tier,
+                  className: `mneme-heatbar-seg mneme-heatbar${tier}`,
+                  style: { flexGrow: n }
+                }))),
+              h("div", { className: "mneme-statrows" },
+                tiers.map(([tier, n, label]) => h("div", { className: "mneme-statrow", key: tier },
+                  h("span", { style: { display: "flex", alignItems: "center", gap: 6 } },
+                    h("span", { className: `mneme-heatdot mneme-heatdot${tier}`, "aria-hidden": "true" }),
+                    label),
+                  h("span", { className: "mneme-statrowval" }, String(n))))),
+              h("div", { className: "mneme-statfoot" },
+                t("memory.status.heat.sample").replace("{sample}", String(state.sample)))
+            ));
     }
 
     // 记忆复用卡（#217）：只读聚合 /recall-stats（Top-N 召回 + 僵尸率 +
@@ -3733,19 +3872,24 @@ window.__ModuleLoader__.load({
         return () => { cancelled = true; };
       }, []);
       if (state.off) return null;
+      // 大数字保留复用率；其余指标拆成一行一条，不再用「·」串成散文。
+      const rows = [
+        {
+          label: t("memory.status.recall.zombie"),
+          value: `${state.zombie}/${state.active}（${t("memory.status.recall.exempt")} ${state.exempt}）`
+        },
+        { label: t("memory.status.recall.runs"), value: String(state.runs) },
+        state.top && state.top !== "—" ? { label: t("memory.status.recall.top"), value: state.top } : null,
+        state.inject ? { label: t("memory.status.recall.inject"), value: state.inject } : null,
+        state.archive ? { label: t("memory.status.recall.archive"), value: state.archive } : null
+      ].filter(Boolean);
       return h(StatusCard, {
         t,
         title: t("memory.status.recallStats"),
         loading: state.loading,
         error: false,
         num: state.rate ?? "—",
-        cap: t("memory.status.recallHint")
-          .replace("{rate}", state.rate ?? "—")
-          .replace("{zombie}", String(state.zombie))
-          .replace("{active}", String(state.active))
-          .replace("{exempt}", String(state.exempt))
-          .replace("{runs}", String(state.runs))
-          .replace("{top}", state.top || "—") + (state.inject ? " · " + state.inject : "") + (state.archive ? " · " + state.archive : "")
+        rows
       });
     }
 
@@ -3759,12 +3903,17 @@ window.__ModuleLoader__.load({
         if (queueRef.current.scrollIntoView) queueRef.current.scrollIntoView({ block: "start", behavior: "smooth" });
       };
       return h("div", { className: "mneme-status" },
+        // 两个分组标题把九张卡拆成「库内一览 / 后台运转」两段扫读单元
+        h("div", { className: "mneme-statushead" }, t("memory.status.sec.overview")),
         h("div", { className: "mneme-statusgrid" },
           h(MemoriesStatusCard, { t }),
           h(EntitiesStatusCard, { t }),
-          h(VectorStatusCard, { t }),
-          h(LlmStatusCard, { t }),
+          h(VectorStatusCard, { t })
+        ),
+        h("div", { className: "mneme-statushead" }, t("memory.status.sec.engine")),
+        h("div", { className: "mneme-statusgrid" },
           h(DreamStatusCards, { t, onGotoQueue: gotoQueue }),
+          h(LlmStatusCard, { t }),
           h(HeatStatusCard, { t }),
           h(RecallStatsCard, { t }),
           h(InjectStatusCard, { t }),
