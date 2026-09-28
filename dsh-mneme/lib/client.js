@@ -169,6 +169,21 @@ window.__ModuleLoader__.load({
           }))));
     };
 
+    // 单颗星（与 ImportanceStars 同一份 Lucide 路径）：筛选 chip、实体提及数、
+    // 注入预览这类行内小指标用它渲染，替换此前的文本星号——文本星号角更尖锐，
+    // 与卡片/抽屉的 SVG 星并排时明显不同形（用户反馈后全线统一）。
+    const StarGlyph = ({ size = 11, filled = true }) => h("svg", {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      "aria-hidden": "true",
+      fill: filled ? "currentColor" : "none",
+      stroke: "currentColor",
+      strokeWidth: 1.6,
+      strokeLinejoin: "round",
+      style: { verticalAlign: "-1px" }
+    }, h("path", { d: STAR_PATH_D, opacity: filled ? 1 : 0.35 }));
+
     // 热度徽章（阶段二）：flame 图标 + 整数百分比，三档配色（热/温/冷）。
     // /list 仅在 heatEnabled=true 时下发 heat 字段——缺省即不渲染，开关关闭
     // 时徽章全站自动消失，前端无需感知开关状态。
@@ -544,6 +559,7 @@ window.__ModuleLoader__.load({
         "memory.explorer.detail.editTitle": "标题",
         "memory.explorer.detail.editContent": "内容",
         "memory.explorer.detail.editImportance": "重要性",
+        "memory.explorer.detail.starLabel": "设为 {n} 星",
         "memory.status.dream": "最近巩固",
         "memory.status.dreamNever": "尚未运行",
         "memory.status.conflicts": "待确认冲突",
@@ -967,6 +983,7 @@ window.__ModuleLoader__.load({
         "memory.explorer.detail.editTitle": "Title",
         "memory.explorer.detail.editContent": "Content",
         "memory.explorer.detail.editImportance": "Importance",
+        "memory.explorer.detail.starLabel": "Set importance to {n} stars",
         "memory.status.dream": "Last consolidation",
         "memory.status.dreamNever": "Not yet run",
         "memory.status.conflicts": "Pending conflicts",
@@ -1426,6 +1443,12 @@ window.__ModuleLoader__.load({
       ".mneme-status{flex:1;min-height:0;overflow-y:auto;padding:20px 24px 40px;box-sizing:border-box}",
       ".mneme-statusgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;max-width:1000px;margin:0 auto 12px}",
       ".mneme-statusgrid:last-of-type{margin-bottom:0}",
+      // 概览区是单行三卡：auto-fit 让不满的轨道塌缩，三张卡恒等宽铺满、行尾不留洞
+      ".mneme-statusgrid--overview{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}",
+      // 跨列只在容器够放下 ≥2 列时生效（220px 最小轨 + 12px 间隙推出来的界）；
+      // 单列容器里 span 2 会撑出隐式轨道把布局撑爆，必须撤掉
+      "@container (min-width:452px) and (max-width:683px){.mneme-statuscard--vectorwide{grid-column:span 2}}",
+      "@container (min-width:452px){.mneme-statuscard--wide{grid-column:span 2}}",
       // 状态页分组标题（库内一览 / 后台运转）：只做扫读锚点，压得比卡片标题低
       ".mneme-statushead{max-width:1000px;margin:0 auto 10px;font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-label-tertiary)}",
       ".mneme-statusgrid+.mneme-statushead{margin-top:26px}",
@@ -1438,12 +1461,12 @@ window.__ModuleLoader__.load({
       ".mneme-statrow .mneme-heatdot{align-self:center}",
       ".mneme-statrowval{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}",
       ".mneme-statfoot{margin-top:8px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-dimmed)}",
-      // 热度分布条：三档占比一图看清，行标只补数字
+      // 热度分布条：三档占比一图看清，行标只补数字（类名带双横线，与 heatdot 同款）
       ".mneme-heatbar{display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:12px;background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-heatbar-seg{min-width:2px}",
-      ".mneme-heatbar-hot{background:var(--dsw-alias-state-warning,#d97706)}",
-      ".mneme-heatbar-warm{background:var(--dsw-alias-label-tertiary)}",
-      ".mneme-heatbar-cold{background:var(--dsw-alias-label-dimmed)}",
+      ".mneme-heatbar--hot{background:var(--dsw-alias-state-warning,#d97706)}",
+      ".mneme-heatbar--warm{background:var(--dsw-alias-label-tertiary)}",
+      ".mneme-heatbar--cold{background:var(--dsw-alias-label-dimmed)}",
       ".mneme-heatdot{flex:none;width:8px;height:8px;border-radius:50%}",
       ".mneme-heatdot--hot{background:var(--dsw-alias-state-warning,#d97706)}",
       ".mneme-heatdot--warm{background:var(--dsw-alias-label-tertiary)}",
@@ -1477,6 +1500,12 @@ window.__ModuleLoader__.load({
       ".mneme-set-grouphead:first-child{margin-top:8px}",
       ".mneme-set-token{font-family:monospace;font-size:12px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);word-break:break-all;user-select:all}",
       ".mneme-set-hint{font-size:12px;color:var(--dsw-alias-label-tertiary)}",
+      // --- 重要性编辑行：与查看态同一份 Lucide 星形（此前是文本星号下拉，角更尖锐且与其他星不统一） ---
+      ".mneme-staredit{display:inline-flex;align-items:center;gap:1px;justify-self:start}",
+      ".mneme-starbtn{border:none;background:none;cursor:pointer;padding:2px 1px;display:inline-flex;color:var(--dsw-alias-label-secondary);transition:transform .12s}",
+      ".mneme-starbtn--on{color:var(--dsw-alias-state-warning,#d97706)}",
+      ".mneme-starbtn:hover{transform:scale(1.12)}",
+      ".mneme-starbtn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px;border-radius:4px}",
       // --- 意见与反馈：图标行 + 版本 footer，收在设置页末尾当「关于」用 ---
       ".mneme-feedlist{display:flex;flex-direction:column;gap:4px}",
       ".mneme-feedrow{display:flex;align-items:flex-start;gap:10px;padding:9px 10px;border-radius:10px;text-decoration:none;transition:background .12s}",
@@ -1859,7 +1888,9 @@ window.__ModuleLoader__.load({
             h("div", { className: "mneme-gs-title" },
               h("span", null, selected.node.name),
               h("span", { className: "mneme-gs-meta" },
-                `${entityTypeLabel(t, selected.node.type || "concept")} · ★${selected.node.mention_count ?? 1}`)
+                `${entityTypeLabel(t, selected.node.type || "concept")} · `,
+                h(StarGlyph, { size: 11 }),
+                ` ${selected.node.mention_count ?? 1}`)
             ),
             selected.node.name !== entityName && h("button", {
               className: "mneme-footbtn",
@@ -3077,8 +3108,8 @@ window.__ModuleLoader__.load({
     // never blanks or blocks the others.
     // 卡片解剖：标题（h3）→ 大数字 → 指标行（rows，一行一指标）→ 脚注
     // （foot，采样口径这类背景信息）。cap 仍保留给单句说明型卡片。
-    function StatusCard({ t, title, loading, error, num, cap, rows, foot }) {
-      return h("div", { className: "mneme-statuscard" },
+    function StatusCard({ t, title, loading, error, num, cap, rows, foot, className }) {
+      return h("div", { className: className ? `mneme-statuscard ${className}` : "mneme-statuscard" },
         h("h3", { className: "mneme-xcolhead" }, title),
         loading
           ? h("div", { className: "mneme-statusnum" }, "…")
@@ -3330,7 +3361,9 @@ window.__ModuleLoader__.load({
           loading: state.loading,
           error: state.error,
           num,
-          cap
+          cap,
+          // 概览区三张卡在 2 列档位会剩下半行空洞：向量卡在该档位跨满整行
+          className: "mneme-statuscard--vectorwide"
         }),
         !state.loading && !state.error && localBlocked
           ? h("div", { className: "mneme-statuscap", style: { marginTop: "6px" } },
@@ -3483,7 +3516,7 @@ window.__ModuleLoader__.load({
       const foot = snap.query
         ? t("memory.status.injectPreview.query").replace("{query}", snap.query.slice(0, 24))
         : null;
-      return h("div", { className: "mneme-statuscard", style: { gridColumn: "1 / -1" } },
+      return h("div", { className: "mneme-statuscard mneme-statuscard--wide" },
         h("h3", { className: "mneme-xcolhead" }, t("memory.status.injectPreview")),
         h("div", { className: "mneme-statrows" },
           rows.map((r, i) => h("div", { className: "mneme-statrow", key: i },
@@ -3496,7 +3529,9 @@ window.__ModuleLoader__.load({
             : (snap.entries || []).map((m) => h("div", { key: m.id, style: { display: "flex", gap: 8, alignItems: "baseline", fontSize: 12, padding: "2px 0" } },
                 h("span", { className: "mneme-xcolhead" }, typeLabel(t, m.type)),
                 h("span", { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title || "—"),
-                h("span", { className: "mneme-xcolhead" }, `★${m.importance ?? "—"} · ${m.chars}${t("memory.status.injectPreview.charsUnit")}`))))
+                h("span", { className: "mneme-xcolhead" },
+                  h(StarGlyph, { size: 11 }),
+                  ` ${m.importance ?? "—"} · ${m.chars}${t("memory.status.injectPreview.charsUnit")}`))))
       );
     }
 
@@ -3889,7 +3924,9 @@ window.__ModuleLoader__.load({
         loading: state.loading,
         error: false,
         num: state.rate ?? "—",
-        rows
+        rows,
+        // 引擎区五张卡是奇数：复用卡信息量最大，宽容器下跨两列补齐行尾空洞
+        className: "mneme-statuscard--wide"
       });
     }
 
@@ -3905,7 +3942,7 @@ window.__ModuleLoader__.load({
       return h("div", { className: "mneme-status" },
         // 两个分组标题把九张卡拆成「库内一览 / 后台运转」两段扫读单元
         h("div", { className: "mneme-statushead" }, t("memory.status.sec.overview")),
-        h("div", { className: "mneme-statusgrid" },
+        h("div", { className: "mneme-statusgrid mneme-statusgrid--overview" },
           h(MemoriesStatusCard, { t }),
           h(EntitiesStatusCard, { t }),
           h(VectorStatusCard, { t })
@@ -4038,12 +4075,16 @@ window.__ModuleLoader__.load({
           h("div", { className: "mneme-dmeta" },
             h("span", { className: "mneme-dmetakey" }, t("memory.explorer.importance")),
             editing
-              ? h("select", {
-                  className: "mneme-select",
-                  style: { height: 26, fontSize: 12, justifySelf: "start" },
-                  value: importance,
-                  onChange: (e) => setImportance(Number(e.target.value))
-                }, [1, 2, 3, 4, 5].map((n) => h("option", { key: n, value: n }, "★".repeat(n))))
+              ? h("div", { className: "mneme-staredit", role: "radiogroup", "aria-label": t("memory.explorer.detail.editImportance") },
+                  [1, 2, 3, 4, 5].map((n) => h("button", {
+                    key: n,
+                    type: "button",
+                    role: "radio",
+                    "aria-checked": String(importance === n),
+                    "aria-label": t("memory.explorer.detail.starLabel").replace("{n}", String(n)),
+                    className: importance >= n ? "mneme-starbtn mneme-starbtn--on" : "mneme-starbtn",
+                    onClick: () => setImportance(n)
+                  }, h(StarGlyph, { size: 15, filled: importance >= n }))))
               : h(ImportanceStars, { className: "mneme-dmetaval", value: memory.importance || 0 }),
             memory.heat != null && h(react.Fragment, null,
               h("span", { className: "mneme-dmetakey" }, t("memory.explorer.heat")),
@@ -4695,7 +4736,7 @@ window.__ModuleLoader__.load({
                   key: v,
                   className: minImp === v ? "mneme-chip mneme-active" : "mneme-chip",
                   onClick: () => setMinImp(v)
-                }, v === 0 ? t("memory.tab.all") : `★${v}+`))
+                }, v === 0 ? t("memory.tab.all") : h(react.Fragment, null, h(StarGlyph, { size: 11 }), ` ${v}+`)))
             ),
             h("div", { className: "mneme-xcolhead" }, t("memory.explorer.sourceFilter")),
             h("div", { className: "mneme-xrow" },

@@ -234,9 +234,12 @@ test("entry tracks native class, inherits native sizing, and lifts the toolbar d
 
 // Importance renders as Lucide star glyphs (the morphicons-paired data set;
 // the runtime cannot require the ESM-only morphicons engine, so the path
-// ships inline like the other stroke icons), not raw ★ text. Only the
-// drawer's edit-mode <option> labels keep the text form — SVG cannot render
-// inside <option>.
+// ships inline like the other stroke icons). Raw text stars are fully
+// retired: the drawer's edit-mode <option> select used to keep "★".repeat
+// labels (SVG cannot render inside <option>) — it is now the SVG star
+// button row, and the inline indicators (importance chips / entity meta /
+// inject preview) share the same StarGlyph, so every star in the panel has
+// one shape. (用户反馈：文本 ★ 过尖、与卡片 SVG 星不统一。)
 test("importance renders as star glyphs, not raw text stars", () => {
   assert.ok(
     clientSource.includes("STAR_PATH_D"),
@@ -247,9 +250,9 @@ test("importance renders as star glyphs, not raw text stars", () => {
     "the star-row component must exist"
   );
   assert.equal(
-    (clientSource.match(/"★"\.repeat/g) || []).length,
-    1,
-    "only the drawer edit <option> labels may keep the ★ text form"
+    (clientSource.match(/★/g) || []).length,
+    0,
+    "no raw text star may remain anywhere — every star renders through the shared SVG path"
   );
   assert.ok(
     /h\(ImportanceStars, \{ className: "mneme-dmetaval"/.test(clientSource),
@@ -258,6 +261,14 @@ test("importance renders as star glyphs, not raw text stars", () => {
   assert.ok(
     /h\(ImportanceStars, \{ value: m\.importance/.test(clientSource),
     "the card foot must render the star row"
+  );
+  assert.ok(
+    /className: "mneme-staredit"/.test(clientSource),
+    "the drawer edit importance must be the SVG star button row, not a text-star <select>"
+  );
+  assert.ok(
+    /h\(StarGlyph, \{ size: 11 \}\)/.test(clientSource),
+    "inline star indicators must go through the shared StarGlyph"
   );
 });
 
