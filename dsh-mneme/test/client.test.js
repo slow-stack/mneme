@@ -63,8 +63,12 @@ test("sidebar entry opens the sheet; conversation-view tab stays retired", () =>
     "no dialog surface should remain"
   );
   assert.ok(
-    /function openLibrary\(\) \{\s*setOverlayOpen\(true\);\s*\}/.test(clientSource),
+    /function openLibrary\(\) \{\s*setOverlayOpen\(true\);/.test(clientSource),
     "the entry must open the overlay directly (no tab activation)"
+  );
+  assert.ok(
+    clientSource.includes("conflictBadgeCount.refresh();"),
+    "opening the library must re-read the conflict count (badge must not show a stale number)"
   );
   assert.equal(
     clientSource.includes('ctx.slots.inject("conversation.view"'),
@@ -126,16 +130,20 @@ test("trigger renders a wide row or a rail icon from the wide flag", () => {
     "the label span must render only when wide"
   );
   assert.ok(
-    /size: wide \? 15 : 18/.test(clientSource),
-    "the portalled icon must follow the native rail sizing convention"
+    /size: wide \? 16 : 18/.test(clientSource),
+    "the portalled icon must follow the host panel-row size (16) and the rail size (18)"
   );
 });
 
-// The entry lives at the top of the plugin-entry group: the real button is
-// portalled right after the host's New-Session row (above the entries other
-// plugins inject there), while the sidebar.footer.action registration remains
-// as the React anchor and the in-place fallback when the host markup changes.
-test("sidebar entry portals above the workspaces region with footer fallback", () => {
+// 入口的两态形状（宿主内核 0.2 侧边栏改版后重写，见 lib/client.js 的
+// SidebarTopEntry 头注释）：
+//  · 展开：混进宿主 nav.panelList 里「插件 / 自动化任务」那一组，套用宿主
+//    panelRow 的实时类名 → 一颗低调面板行，不再是第二个高亮「新会话」按钮；
+//  · 收起：宿主把面板列表整组 display:none，只有 fixed 到标题栏的开关与
+//    「新会话」还可见，所以入口必须搬回那个位置（见下一条用例）。
+// 本用例锁「展开态借的是宿主面板行」，回归表现是入口退回成大按钮或落回
+// 新会话行后面变成孤立项。
+test("sidebar entry portals into the host panel list with footer fallback", () => {
   assert.ok(
     clientSource.includes('ctx.slots.inject("sidebar.footer.action"'),
     "the footer slot registration must stay as anchor + fallback"
@@ -149,20 +157,24 @@ test("sidebar entry portals above the workspaces region with footer fallback", (
     "the portal must anchor at the host's regionArea container"
   );
   assert.ok(
+    clientSource.includes(`'[class*="panelList"]'`),
+    "the wide shape must target the host panel list (the 插件 / 自动化任务 group)"
+  );
+  assert.ok(
+    clientSource.includes(`'[class*="panelRow"]:not(.mneme-topentry-native)'`),
+    "the panel-row class must come from a host row, never from our own portalled button"
+  );
+  assert.ok(
+    clientSource.includes("list.appendChild(created)"),
+    "the wide entry must be appended into that group, below the host's own entries"
+  );
+  assert.ok(
     clientSource.includes("insertBefore(created, target)"),
-    "the entry must be placed through the idempotent place() helper"
+    "the entry must keep the idempotent place() helper for hosts without a panel list"
   );
   assert.ok(
     clientSource.includes("if (!host) return fallback;"),
     "the portal entry persists across collapse (no footer jump); footer fallback only covers portal failure"
-  );
-  assert.ok(
-    clientSource.includes('className: `${nativeCls} mneme-topentry-native`'),
-    "the entry must reuse the host New-Session button class for native geometry alignment"
-  );
-  assert.ok(
-    /querySelector\('\[class\*="newSession"\]'\)/.test(clientSource),
-    "the native class must be read from the live New-Session button, not hardcoded"
   );
   assert.ok(
     clientSource.includes('"memory.view.label"'),
@@ -178,7 +190,7 @@ test("sidebar entry portals above the workspaces region with footer fallback", (
 // sidebar-entry-core (logoRow row, legacy direct-child button), (b) re-asserts
 // its slot from the existing observer, and (c) stays idempotent — the anchor
 // check short-circuits before any DOM write, so observers never ping-pong.
-test("entry re-asserts the New-Session-adjacent slot against ecosystem entries", () => {
+test("entry re-asserts its slot against ecosystem entries", () => {
   assert.ok(
     clientSource.includes(`btn.closest('[class*="logoRow"]')`),
     "the anchor must resolve the New-Session logo row like the ecosystem core"
@@ -192,18 +204,55 @@ test("entry re-asserts the New-Session-adjacent slot against ecosystem entries",
     "placement must be idempotent so the observer never writes on steady state"
   );
   assert.ok(
-    /place\(cur\);\s*\n\s*const cls = findNative\(cur\)/.test(clientSource),
-    "the observer must re-place the entry on childList churn, not just re-sync the class"
+    /place\(cur\);\s*\n\s*sync\(cur\);/.test(clientSource),
+    "the observer must re-place the entry and re-read its classes on childList churn"
+  );
+});
+
+// 用户实测确认的遮挡 bug（v0.8.10）：收起侧边栏时入口沿用宿主给「新会话」的
+// left:48px，正好压在「新会话」图标上把它盖掉，左上角只剩两颗图标。
+// 修法：不再共用那个 left，用一条更具体的规则推到 84px（「新会话」右侧 =
+// 宿主 48px + 钮宽 28px + 间距 8px），并把宿主的面板菜单变量
+// --dsh-windows-menu-start（宿主收起态自己设 84px）顺延到 120px。
+// 回归表现：左上角少一颗图标，或「应用 / 编辑」与记忆图标叠在一起。
+test("collapsed entry vacates the New-Session slot instead of covering it", () => {
+  assert.ok(
+    clientSource.includes("html[data-windows-titlebar] .mneme-topentry .mneme-topentry-rail{left:84px}"),
+    "the collapsed entry must sit right of the host's 48px New-Session slot"
+  );
+  assert.ok(
+    // 源码里这段 CSS 含转义引号（注入 <style> 后才还原成普通引号），断言按源码字面量写。
+    clientSource.includes(':has([data-plugin-entry=\\"@modusensus/dsh-mneme\\"]){--dsh-windows-menu-start:120px}'),
+    "the caption menu must shift right so the memory icon never overlaps 应用 / 编辑"
+  );
+  assert.ok(
+    clientSource.includes(":has([data-sidebar-collapsed=true]):has("),
+    "the menu shift must apply only while the sidebar is collapsed"
+  );
+  assert.ok(
+    clientSource.includes("`${cls.row} mneme-topentry-rail`.trim()"),
+    "the collapsed button carries the host New-Session class plus our rail offset rule"
+  );
+});
+
+// 宿主面板行的类名带着激活态修饰类（.xxx_panelActive），而我们的入口不是
+// panel 插槽的成员、永远不该常亮；照抄整串类名会让记忆入口跟着宿主当前选中
+// 的面板一起高亮。这里锁「读类名时必须剔掉激活态」。
+test("panel-row highlight never leaks onto the memory entry", () => {
+  assert.ok(
+    clientSource.includes('!name.includes("panelActive")'),
+    "panelActive must be filtered out of the copied host row classes"
   );
 });
 
 // Three alignment/softness guarantees born from field feedback: (a) the
-// portalled entry keeps tracking the live New-Session class (host and skin
-// rewrite it asynchronously, so a mount-time snapshot goes stale), (b) it
-// inherits that button's width and margins along with its native centering,
-// (c) the toolbar dropdown escapes the transform stacking trap — the
+// portalled entry re-reads the live host classes on every mutation — the host
+// and skins rewrite hashed class names asynchronously, so a mount-time snapshot
+// goes stale (收起态尤其依赖这条：搬迁后类名必须重新对齐宿主「新会话」按钮),
+// (b) it never hardcodes a width, so whichever host class it carries decides the
+// box model, (c) the toolbar dropdown escapes the transform stacking trap — the
 // container needs the z-index because transform creates the context.
-test("entry tracks native class, inherits native sizing, and lifts the toolbar dropdown", () => {
+test("entry re-reads the live host classes and lifts the toolbar dropdown", () => {
   assert.ok(
     clientSource.includes("new MutationObserver"),
     "the entry must re-sync the copied class via MutationObserver"
@@ -355,8 +404,7 @@ test("#287: archive glyph probes both naming generations and degrades to no glyp
   );
   for (const site of [
     "renderArchiveIcon({ size: 15 })",              // 浮层标题栏
-    "renderArchiveIcon({ size: wide ? 16 : 18 })",  // 侧栏 trigger
-    "renderArchiveIcon({ size: wide ? 15 : 18 })",  // portal 到宿主原生侧栏的入口
+    "renderArchiveIcon({ size: wide ? 16 : 18 })",  // 侧栏 trigger + portal 入口（面板行档 16 / 标题栏档 18）
     "renderArchiveIcon({ size })"                   // better-sidebar tab 图标
   ]) {
     assert.ok(clientSource.includes(site), `every render site must go through the helper: ${site}`);
@@ -937,9 +985,94 @@ test("conflict queue: actionable status card and sidebar entry badge", () => {
   assert.ok(clientSource.includes("mneme-statuscard--actionable"), "highlight CSS must exist");
   assert.ok((clientSource.match(/h\(ConflictBadge, \{ pending \}\)/g) || []).length === 2,
     "badge must be wired into both entry buttons");
-  assert.ok((clientSource.match(/= useConflictBadgeCount\(t\)/g) || []).length === 2,
-    "both entry components must subscribe to the badge count");
+  assert.ok((clientSource.match(/= useConflictBadgeCount\(\);/g) || []).length === 2,
+    "both entry components must subscribe to the shared badge count");
   assert.ok(clientSource.includes('"/api/dsh-mneme/dream-status"'), "badge must reuse the dream-status endpoint");
+});
+
+// 用户反馈「裁决完红点消失得很慢」的根因：裁决成功时冲突队列广播
+// mneme:conflicts-changed，但只有状态卡订阅了它，侧边栏红点漏订——红点于是只能
+// 等 60s 兜底轮询。本用例锁三类回归：(a) 红点订阅该广播并立即重取；(b) 计数走
+// 模块级单例（原先 portal 与 footer 回退各起一个 60s 轮询 → 两份请求且互不同步）；
+// (c) 兜底轮询保留（后台 autoDream 自己产生/消解冲突时没人广播，靠它浮现）。
+test("sidebar badge clears on the conflicts-changed broadcast, not on the next poll", () => {
+  assert.ok(
+    /window\.addEventListener\("mneme:conflicts-changed", onChanged\)/.test(clientSource),
+    "the badge must subscribe to the broadcast the conflict queue already emits"
+  );
+  assert.ok(
+    clientSource.includes("const conflictBadgeCount = (() => {"),
+    "the count must live in one module-level store shared by both entry components"
+  );
+  assert.ok(
+    clientSource.includes("if (listeners.size === 1) {"),
+    "exactly one poll timer per store, refcounted by its subscribers"
+  );
+  assert.ok(
+    /setInterval\(refresh, 60_000\)/.test(clientSource),
+    "the 60s fallback poll must stay: background autoDream resolves conflicts without broadcasting"
+  );
+  assert.ok(
+    clientSource.includes("if (inflight) return inflight;"),
+    "concurrent refreshes (broadcast + open + first subscriber) must collapse into one request"
+  );
+});
+
+// 上一条锁的是"接线在不在"，这条锁"接线真的按预期跑"。把源码里那段 store 抠出来
+// 用受控的 apiFetch / setInterval 真跑一遍——用户抱怨的正是时序（慢），而
+// "存在某个字符串" 证明不了任何时序。回归表现：第二个订阅者又开一条轮询、
+// 广播后不立刻反映、并发 refresh 打两次请求、订阅者走光后定时器还在跑。
+test("badge store: one poll for both entries, immediate publish after a refresh", async () => {
+  const src = clientSource.match(/const conflictBadgeCount = \(\(\) => \{[\s\S]*?\}\)\(\);/);
+  assert.ok(src, "the badge store source block must be extractable verbatim");
+  const calls = [];
+  const resolvers = [];
+  const timers = [];
+  let cleared = 0;
+  const makeStore = new Function("apiFetch", "setInterval", "clearInterval",
+    `${src[0]}\nreturn conflictBadgeCount;`);
+  const store = makeStore(
+    (path) => {
+      calls.push(path);
+      return new Promise((resolve) => { resolvers.push(resolve); });
+    },
+    (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    () => { cleared += 1; }
+  );
+  const settle = async (payload) => {
+    const batch = resolvers.splice(0, resolvers.length);
+    batch.forEach((r) => r({ ok: true, json: () => Promise.resolve(payload) }));
+    await new Promise((r) => setTimeout(r, 0));
+  };
+
+  const seen = [];
+  const un1 = store.subscribe((v) => seen.push(v));
+  assert.equal(calls.length, 1, "the first subscriber must trigger exactly one fetch");
+  assert.equal(timers.length, 1, "and exactly one timer");
+  assert.equal(timers[0].ms, 60_000, "the fallback cadence stays 60s");
+  const un2 = store.subscribe((v) => seen.push(v));
+  assert.equal(calls.length, 1, "a second subscriber must reuse the poll, not start another");
+  assert.equal(timers.length, 1, "still one timer for both entry buttons");
+
+  await settle({ pendingConflicts: 3 });
+  assert.deepEqual(seen, [0, 0, 3, 3], "both subscribers must see the same published value");
+
+  // 广播路径：冲突队列裁决成功后 dispatch mneme:conflicts-changed → hook 调 refresh()
+  store.refresh();
+  store.refresh();
+  assert.equal(calls.length, 2, "concurrent refreshes collapse into a single in-flight request");
+  await settle({ pendingConflicts: 0 });
+  assert.equal(store.get(), 0, "the count must drop as soon as the refreshed value lands");
+  assert.equal(seen[seen.length - 1], 0, "and both subscribers must be notified");
+
+  store.refresh();
+  await settle({ pendingConflicts: 0 });
+  assert.deepEqual(seen, [0, 0, 3, 3, 0, 0], "an unchanged value must not re-render subscribers");
+
+  un1();
+  assert.equal(cleared, 0, "the timer must survive while one subscriber remains");
+  un2();
+  assert.equal(cleared, 1, "the timer must stop when the last subscriber leaves");
 });
 
 // --- issue #179：注入预览（状态页卡片 + /inject-preview 端点透传的旁路快照） ---

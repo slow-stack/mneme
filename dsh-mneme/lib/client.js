@@ -1328,11 +1328,26 @@ window.__ModuleLoader__.load({
       ".mneme-heat--warm{color:var(--dsw-alias-label-secondary)}",
       ".mneme-heat--cold{color:var(--dsw-alias-label-tertiary)}",
       ".mneme-heat--cold .mneme-heatpct{display:none}",
-      // 纵向 flex 容器按原生按钮的宽度与外边距分配空间，保留展开和收起态的对齐。
+      // 侧边栏入口两种形态的样式（挂载与搬移逻辑见 SidebarTopEntry 的头注释）。
+      // 展开态兜底：逐条镜像宿主 panelRow（36px 行高 / 透明底 / 2px 外边距 /
+      // 7px 8px 内边距）——宿主面板行类名在或不在，观感都是「插件 / 自动化任务」
+      // 那一档，不会再退回 v0.8.10 那种高亮大按钮。
+      // 收起态：按钮带宿主 newSession 类名，标题栏固定几何（position:fixed、
+      // 顶部居中、28px 圆钮、次级文字色、hover 填充）整套继承宿主规则，我们只用
+      // 一条更具体的规则把 left 从宿主的 48px 推到 84px——即「新会话」右侧，
+      // 不再像 v0.8.10 那样压在它身上（用户实测确认的遮挡 bug）。
+      // 84 = 48（宿主给「新会话」的 left）+ 28（钮宽）+ 8（间距）；120 = 84 + 28 + 8，
+      // 让「应用 / 编辑」菜单顺延到我们右侧。宿主侧出处：SidebarRoot.module.css 的
+      // `.collapsed .newSession{left:48px}` 与
+      // `html[data-windows-titlebar]:has([data-sidebar-collapsed=true]){--dsh-windows-menu-start:84px}`。
       ".mneme-topentry{display:flex;flex-direction:column;position:relative}",
-      ".mneme-topentry-native{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}",
+      ".mneme-topentry-native{box-sizing:border-box;min-height:36px;border:none;border-radius:var(--dsw-radius-md);background:0 0;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer;align-items:center;gap:8px;margin:0 2px;padding:7px 8px;line-height:22px;display:flex}",
       ".mneme-topentry-native:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}",
+      ".mneme-topentry-native:focus-visible{outline:var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-2px}",
       ".mneme-topentry-native .mneme-topentry-label{white-space:nowrap}",
+      "html[data-windows-titlebar] .mneme-topentry .mneme-topentry-rail{left:84px}",
+      // 菜单让位只在「收起 + 入口确实挂在标题栏里」时生效；展开态完全不碰宿主变量。
+      "html[data-windows-titlebar]:has([data-sidebar-collapsed=true]):has([data-plugin-entry=\"@modusensus/dsh-mneme\"]){--dsh-windows-menu-start:120px}",
       // --- 功能开关：一行一开关，Claude 式安静排版 ---
       ".mneme-featgroup{flex:none;font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-label-tertiary);margin:16px 0 2px}",
       ".mneme-featrow{display:flex;align-items:center;gap:14px;padding:11px 2px;border-bottom:1px solid var(--dsw-alias-border-l1)}",
@@ -3031,6 +3046,10 @@ window.__ModuleLoader__.load({
     // MemoryExplorer 内部状态（选中行、过滤）由各自的跳转回调处理。
     function openLibrary() {
       setOverlayOpen(true);
+      // 打开面板 = 用户正准备处理冻结冲突：顺手把入口红点重取一次，别让他
+      // 对着一个已经过期的计数（裁决走别的路径、或后台 autoDream 刚写过库时，
+      // 计数不该等 60s 兜底轮询才对齐）。
+      conflictBadgeCount.refresh();
     }
 
     // --- Hero fallback overlay state (module-level pub/sub) ---
@@ -4924,32 +4943,80 @@ window.__ModuleLoader__.load({
       );
     }
 
-    // --- Sidebar entry: 工作区上方的记忆按钮 ---
+    // --- Sidebar entry: 侧边栏里的记忆入口 ---
     // 注册仍在 sidebar.footer.action（list 插槽）——它既是 React 树的挂载
-    // 锚点，也是 portal 失效时的原位回退。真实按钮 portal 插到「新会话」行
-    // 之后、插件入口组的最前：任务看板/技能中心等生态插件也把入口插在新会话
-    // 行后（它们的后插入者在上），若我们固定在 regionArea 之前就会被打成
-    // 入口组末尾的孤立位（issue #130），所以观察器发现错位就搬回锚点位。
-    // 几何对齐方案：读取宿主「新会话」按钮的实时 className 原样套用，再用
-    // 我们的修饰类覆盖配色（次级观感）。这样展开态与收起态（rail）都直接
-    // 继承宿主自己的盒模型与间距——宿主改版/缩进动画零位移，无需硬编码。
+    // 锚点，也是 portal 失效时的原位回退；常驻 sheet 也从这个插槽挂载。
+    // 入口形状跟着宿主 v0.2 的侧边栏走，分两态：
+    //  · 展开态：宿主把「插件 / 自动化任务」这类全局面板渲染成 nav.panelList
+    //    里的 panelRow（36px 行高、透明底、图标 + 标题）。我们把按钮 portal 进
+    //    同一组并原样套用宿主 panelRow 的实时类名，于是它是该组的第三行——低调，
+    //    而不是 v0.8.10 那样长得像第二个高亮「新会话」按钮。
+    //  · 收起态（Windows 标题栏）：panelList / regionArea / footArea 被宿主
+    //    display:none，只有开关与「新会话」被改成固定在标题栏上。我们把按钮搬回
+    //    标题栏、并排在「新会话」右侧（84px / 120px 的算法见上面 CSS 注释），
+    //    三颗图标各就各位——v0.8.10 把入口留在宿主的 48px 上把它盖住了。
+    // 承载类名一律从活元素读取（宿主/皮肤会异步改写哈希类名），不硬编码；
+    // 面板列表不存在（没装任何面板插件）时退回「新会话」行之后。
     // 宿主结构异常时约 2 秒后放弃 portal，footer 回退按钮保持可用。
-    // #177：未处理冲突数 badge——数据走 dream-status 的 pendingConflicts（状态卡
-    // 同一端点），60s 轮询 + 打开面板即刷新。挂侧边栏入口按钮右上角（portal 与
-    // 回退两处都挂），让用户不进面板也知道有冻结要裁决。
-    function useConflictBadgeCount(t) {
-      const [pending, setPending] = useState(0);
+    // #177：未处理冲突数 badge——数据走 dream-status 的 pendingConflicts（与状态卡
+    // 同一端点）。挂侧边栏入口按钮右上角（portal 与回退两处都挂），让用户不进面板
+    // 也知道有冻结要裁决。
+    // 刷新时机（用户反馈「裁决完红点消失得很慢」后重做）：
+    //  · 裁决成功时冲突队列广播 mneme:conflicts-changed → 立刻重取，不必等下一轮；
+    //    此前这条广播只有状态卡订阅，红点漏订，才慢到要等 60s 兜底轮询；
+    //  · openLibrary 打开面板时重取（见上）；
+    //  · 60s 兜底轮询——后台 autoDream 自己产生/消解冲突时没人广播，靠它浮现。
+    // 计数是模块级单例：入口按钮的 portal 与 footer 回退是两个组件，原先各起一个
+    // 60s 轮询（两份请求、两个互不同步的计数）。现在共享一个 store：一次取回广播给
+    // 全部订阅者，in-flight 请求也去重，最后一个订阅者离开才停表。
+    const conflictBadgeCount = (() => {
+      const listeners = new Set();
+      let value = 0;
+      let timer = null;
+      let inflight = null;
+      const publish = (next) => {
+        if (next === value) return;
+        value = next;
+        listeners.forEach((fn) => {
+          try { fn(value); } catch { /* 单个订阅者出错不拖垮其余 */ }
+        });
+      };
+      const refresh = () => {
+        if (inflight) return inflight;
+        inflight = apiFetch("/api/dsh-mneme/dream-status")
+          .then((res) => (res.ok ? res.json() : { pendingConflicts: 0 }))
+          .then((d) => { publish(Number((d && d.pendingConflicts) ?? 0) || 0); })
+          .catch(() => { publish(0); })
+          .finally(() => { inflight = null; });
+        return inflight;
+      };
+      return {
+        get: () => value,
+        refresh,
+        subscribe: (fn) => {
+          listeners.add(fn);
+          fn(value);
+          if (listeners.size === 1) {
+            refresh();
+            timer = setInterval(refresh, 60_000);
+          }
+          return () => {
+            listeners.delete(fn);
+            if (listeners.size === 0 && timer !== null) { clearInterval(timer); timer = null; }
+          };
+        }
+      };
+    })();
+    function useConflictBadgeCount() {
+      const [pending, setPending] = useState(() => conflictBadgeCount.get());
       useEffect(() => {
-        let cancelled = false;
-        const tick = () => {
-          apiFetch("/api/dsh-mneme/dream-status")
-            .then((res) => (res.ok ? res.json() : { pendingConflicts: 0 }))
-            .then((d) => { if (!cancelled) setPending(Number((d && d.pendingConflicts) ?? 0) || 0); })
-            .catch(() => { if (!cancelled) setPending(0); });
+        const unsubscribe = conflictBadgeCount.subscribe(setPending);
+        const onChanged = () => { conflictBadgeCount.refresh(); };
+        window.addEventListener("mneme:conflicts-changed", onChanged);
+        return () => {
+          unsubscribe();
+          window.removeEventListener("mneme:conflicts-changed", onChanged);
         };
-        tick();
-        const timer = setInterval(tick, 60_000);
-        return () => { cancelled = true; clearInterval(timer); };
       }, []);
       return pending;
     }
@@ -4959,7 +5026,7 @@ window.__ModuleLoader__.load({
         pending > 99 ? "99+" : String(pending));
     }
     function SidebarFallbackTrigger({ wide, t }) {
-      const pending = useConflictBadgeCount(t);
+      const pending = useConflictBadgeCount();
       // #295 评审：.mneme-trigger 自身 overflow:hidden 且无定位上下文，badge
       // 直接放里面会被裁剪——包一层定位容器，badge 挂在容器上。
       return h("div", { className: "mneme-triggerwrap" },
@@ -4982,14 +5049,25 @@ window.__ModuleLoader__.load({
 
     function SidebarTopEntry({ wide, t, fallback }) {
       const [host, setHost] = useState(null);
-      const [nativeCls, setNativeCls] = useState("");
-      const pending = useConflictBadgeCount(t);
+      const [cls, setCls] = useState({ row: "", glyph: "", title: "" });
+      const pending = useConflictBadgeCount();
       useEffect(() => {
         if (!reactDom || typeof document === "undefined") return undefined;
         let tries = 0, timer = null, created = null, mo = null;
+        const findRegion = () => {
+          const region = document.querySelector('[class*="regionArea"]');
+          return region && region.parentElement ? region : null;
+        };
         const findNative = (region) =>
           region.parentElement.querySelector('[class*="newSession"]')
           || region.previousElementSibling;
+        const findPanelList = (region) =>
+          region.parentElement.querySelector('[class*="panelList"]');
+        // 宿主自己的面板行：排除我们自己 portal 进去的那颗按钮（它也带 panelRow）。
+        const findPanelRow = (region) => {
+          const list = findPanelList(region);
+          return list ? list.querySelector('[class*="panelRow"]:not(.mneme-topentry-native)') : null;
+        };
         // 占位锚点：新会话行（现役外壳里 newSession 按钮嵌在 logoRow 内，
         // 旧外壳是根的直接子按钮）。判定与生态插件的 sidebar-entry-core
         // 一致；锚点不可靠时回退到 regionArea 之前的旧位置。
@@ -5008,32 +5086,61 @@ window.__ModuleLoader__.load({
         // insertBefore(x, x) 在 Chromium 里不是 no-op，会触发 mutation 造成
         // 观察器自激风暴、冻死整个 SPA。
         const place = (region) => {
+          if (!created) return;
           const parent = region.parentElement;
           if (!parent) return;
+          // 展开态落进宿主的面板列表（紧跟「插件 / 自动化任务」）；宿主没有面板
+          // 列表时退回「新会话」行之后，由 .mneme-topentry-native 兜住低调行样式。
+          const list = wide ? findPanelList(region) : null;
+          if (list) {
+            if (created.parentElement === list && created === list.lastElementChild) return;
+            list.appendChild(created);
+            return;
+          }
           const anchor = findAnchor(region);
           const target = anchor ? anchor.nextSibling : region;
           if (target === created) return;
           if (created.parentElement === parent && created.nextSibling === target) return;
           parent.insertBefore(created, target);
         };
+        // 类名一律从活元素读。展开态借宿主面板行的盒模型，并剔掉激活态修饰类
+        // （否则我们的行会跟着宿主当前选中的面板一起常亮）；收起态借「新会话」
+        // 按钮的类名拿整套标题栏固定几何。两处都取不到时留空，由我们的类兜底。
+        const readCls = (region) => {
+          if (!wide) return { row: findNative(region)?.className || "", glyph: "", title: "" };
+          const row = findPanelRow(region);
+          const btn = row || findNative(region);
+          const glyph = row && row.querySelector('[class*="panelGlyph"]');
+          const title = row && row.querySelector('[class*="panelTitle"]');
+          return {
+            row: (btn?.className || "")
+              .split(/\s+/)
+              .filter((name) => name && !name.includes("panelActive"))
+              .join(" "),
+            glyph: (glyph && glyph.className) || "",
+            title: (title && title.className) || ""
+          };
+        };
+        const sync = (region) => {
+          const next = readCls(region);
+          setCls((prev) => (prev.row === next.row && prev.glyph === next.glyph && prev.title === next.title ? prev : next));
+        };
         const attempt = () => {
-          const region = document.querySelector('[class*="regionArea"]');
-          if (region && region.parentElement) {
-            // 「新会话」按钮与 regionArea 同级且紧邻其前，借它的类名获得
-            // 与原生侧边栏项完全一致的盒模型（含收起态 rail 几何）。
-            // 宿主/皮肤会异步改写按钮类名，用 MutationObserver 持续同步，
-            // 否则 portal 按钮会停留在捕获时刻的旧类上（宽度/对齐失配）。
+          const region = findRegion();
+          if (region) {
+            // 宿主切换展开/收起时会重排 DOM（面板列表 → 标题栏固定位），所以每次
+            // 变动都重新落位并重读类名；宿主/皮肤异步改写类名也靠这条同步，否则
+            // portal 按钮会停留在捕获时刻的旧类上（宽度/对齐失配）。
             created = document.createElement("div");
             created.dataset.pluginEntry = "@modusensus/dsh-mneme";
             place(region);
             setHost(created);
-            setNativeCls(findNative(region)?.className || "");
+            sync(region);
             mo = new MutationObserver(() => {
-              const cur = document.querySelector('[class*="regionArea"]');
-              if (!cur || !cur.parentElement) return;
+              const cur = findRegion();
+              if (!cur) return;
               place(cur);
-              const cls = findNative(cur)?.className || "";
-              setNativeCls((prev) => (prev === cls ? prev : cls));
+              sync(cur);
             });
             mo.observe(region.parentElement, {
               attributes: true,
@@ -5052,13 +5159,19 @@ window.__ModuleLoader__.load({
           if (mo) mo.disconnect();
           if (created && created.parentElement) created.parentElement.removeChild(created);
         };
-      }, []);
+      }, [wide]);
       if (!host) return fallback;
+      // 图标与「插件 / 自动化任务」同档（16px）；收起态沿用标题栏里原来的 18px。
+      const icon = renderArchiveIcon({ size: wide ? 16 : 18 });
       return reactDom.createPortal(
         h("div", { className: "mneme-topentry" },
           h("button", {
             type: "button",
-            className: `${nativeCls} mneme-topentry-native`.trim(),
+            // 展开态：宿主面板行类名 + 我们的同款兜底；收起态：宿主「新会话」类名
+            // + 只覆盖 left 的 rail 规则（整套标题栏几何继承宿主）。
+            className: wide
+              ? `${cls.row} mneme-topentry-native`.trim()
+              : `${cls.row} mneme-topentry-rail`.trim(),
             "aria-label": pending > 0
               ? `${t("memory.sidebar.aria")} · ${t("memory.status.conflicts")} ${pending}`
               : t("memory.sidebar.aria"),
@@ -5066,8 +5179,9 @@ window.__ModuleLoader__.load({
             onClick: openLibrary,
             "data-mneme-overlay-opener": "true"
           },
-            renderArchiveIcon({ size: wide ? 15 : 18 }),
-            wide && h("span", { className: "mneme-topentry-label" }, t("memory.panel.open")),
+            // 图标套上宿主面板行的槽位类名，视觉与同组入口完全一致；取不到时裸渲染。
+            cls.glyph ? h("span", { className: cls.glyph, "aria-hidden": "true" }, icon) : icon,
+            wide && h("span", { className: `${cls.title} mneme-topentry-label`.trim() }, t("memory.panel.open")),
             h(ConflictBadge, { pending })
           )
         ), host);
