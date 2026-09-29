@@ -1,11 +1,5 @@
 # Changelog
 
-## [0.8.10] - 2026-09-29
-
-## 🐛 修复
-
-- （待填）
-
 ## [0.8.9] - 2026-09-28
 
 ## 🐛 修复
@@ -42,15 +36,23 @@
   重要度筛选 chip、图谱侧卡提及数、注入预览的行内星号统一走共享 `StarGlyph`
   （同一份 Lucide 路径）。`test/client.test.js` 星形守卫同步收紧为「全文零文本星号」。
 
-## [Unreleased]
+## [0.8.10] - 2026-09-29
 
 ## 🐛 修复
 
-- **注入路径 4 处截断点切开 emoji 代理对 → 会话级 400（issue #334）**：UTF-16 `slice` 切在代理对中间会留下孤立高位代理项，序列化成非法 UTF-8，DeepSeek API 对每个请求回 400；畸形文本随注入消息被永久写进会话历史，此后每一轮都带着它（换话题/重启都不恢复）。新增 `safeSlice`（尾字符是高位代理即丢弃），热上下文查询/回复、lastUserQuery、记忆条目 4 处截断点全部换用；回归测试以「孤立代理项不存在」锁语义，配阴性对照。
+- **注入路径 4 处截断点切开 emoji 代理对 → 会话级 400（issue #334，PR #335）**：UTF-16 `slice` 切在代理对中间会留下孤立高位代理项，序列化成非法 UTF-8，DeepSeek API 对每个请求回 400；畸形文本随注入消息被永久写进会话历史，此后每一轮都带着它（换话题/重启都不恢复）。新增 `safeSlice`（尾字符是高位代理即丢弃），热上下文查询/回复、lastUserQuery、记忆条目 4 处截断点全部换用；回归测试以「孤立代理项不存在」锁语义，配阴性对照。
 
-- **恢复 v0.7.11 误删的对话开始时间注入（issue #34，报告 #333）**：`injectTimePrefix` 于 v0.7.2 引入（issue #34），v0.7.11 面板大改版时随一次批量删除静默消失、CHANGELOG 无登记（同刀误删的 `escapePromptVars` 已随 #162/#165 恢复，本函数漏了）——用户按 CHANGELOG 开着开关实际什么都不会发生。本次按 v0.7.2 语义原样恢复：键名/默认值（false）/格式 `[当前时间: YYYY-MM-DD 周X HH:MM]` 不变，存量 feature_flags 恢复即生效；per-session 闩锁保证每个新会话只注入一次。
+- **恢复 v0.7.11 误删的对话开始时间注入（issue #34，报告 #333，PR #335）**：`injectTimePrefix` 于 v0.7.2 引入（issue #34），v0.7.11 面板大改版时随一次批量删除静默消失、CHANGELOG 无登记（同刀误删的 `escapePromptVars` 已随 #162/#165 恢复，本函数漏了）——用户按 CHANGELOG 开着开关实际什么都不会发生。本次按 v0.7.2 语义原样恢复：键名/默认值（false）/格式 `[当前时间: YYYY-MM-DD 周X HH:MM]` 不变，存量 feature_flags 恢复即生效；per-session 闩锁保证每个新会话只注入一次。
 
 - **saveWithDedupe 透传显式 epistemic_status（trustEpistemicWeighting 写入通路缺口）**：创建路径此前丢弃显式字段，store 回退内容标记推断（中文正则）——英文/无标记内容一律落 subjective，EPISTEMIC_WEIGHTS 对整池均匀 ×0.7，`trustEpistemicWeighting` 的重排对工具主路径写入的记忆**整体空转**（v0.4.5 起消费者在、写入通路断；patch 路径 store.update 本来就通）。E 系列四臂实验现场抓到（重排臂与对照臂注入序逐条相同）。修复后 undefined 保持推断行为（存量零变化），显式值优先（契约同 resolveEpistemicStatus）；回归测试锁「observation 加权前后分数不变——字段丢失则全体缩放当场红」。
+
+## 🆕 新增
+
+- **写入准入第 1 级：确定性硬拒（issue #254，PR #332，贡献者 heptaspirit）**：saveWithDedupe 写入前对内容做确定性扫描——空白/噪声行（blank）与密钥/PII 形状（sensitiveScan：AWS Key、GitHub PAT、JWT、私钥块、邮箱、手机号、身份证）直接拒收不入库；`writeAdmission.enforce` 默认关（第一阶段只计量），审计行打 `gate=level1` 落 `llm_audit_logs` 供真实流量回看；被拒内容不进去重键、不占写入预算，审计回填跳过被拒行。sensitiveScan 语料全用 GitHub 官方文档示例值（运行时拼接成完整形状，源码与提交历史零真实凭据）。
+
+## 🧹 工程
+
+- **supersede 旧值探针进 recall benchmark（anti-update，E6/#280 链，PR #330）**：benchmark-recall 的 TEST_CASES 支持可选 `forbidden` 字段（forbidden id 进 top-K 即记 `forbiddenHit` + LEAK 标记），seed 复刻 applySupersede 落库状态（loser archived=1 + superseded-by 注记）。新增 `test/recall-anti-update.test.js` 6 例钉成回归锁：四路默认检索对归档行是**排除**不是降权、取代是归档不是删除、`includeArchived` 显式口子仍在。依据 StatemenBench anti-update probes。测试 1405 → 1411（当轮）。
 
 ## [0.8.8] - 2026-09-27
 
