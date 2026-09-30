@@ -17,6 +17,31 @@
 ## 🧹 工程
 
 - **基线持久化回归集 9 条，全量测试 1441 → 1450**：无种子对照组与播种组同库同写入（一个仍触发、一个被拦下——锁的正是这个差异，否则播种被忽略时两条断言同真同假）、阈值照常累积（+10 条仍触发）、run 自报基线优先于现场计算（运行后再长 15 条仍不触发）、成功轮落库 / 失败轮不落、sleep 行不进 auto 基线、半个基线被拒、老库补列幂等、非法种子（半个 / 负数 / 非整数 / 非对象）一律按「没有基线」处理、收尾取证失败既不反噬审计行也不写假基线、`index.js` 接线源码锁。**变异检验**：把播种改成忽略种子（`toBaseline(baselineSeed)` 恒为空）→ 2 条变红；把「成功轮落基线」分支短路 → 1 条变红。
+- **蒸馏 JSON 崩溃窗口的 salvage（issue #339，E8 考卷）**：E8 实测 10-20% 的蒸馏窗口输出了
+  含记忆条目的完整 JSON 数组，只因中段一处语法错误（如杂散引号）被 `parseSummaryJsonResult`
+  整窗拒收——失败路径的生产行为是游标不推进 + 温度 0 重试同文同错 = 该窗口记忆静默丢失，
+  无任何用户可见信号；再蒸馏场景（摘要再当输入）崩溃率翻倍。修复：解析失败时做括号配对
+  双遍扫描（字符串感知 + 盲扫，去重合并）截出完整的顶层对象逐个 parse，救活的条目走正常
+  白名单校验后照常写库、推进游标；审计 `metadata.json_salvaged: true` 留痕。截出 0 条不视为
+  「显式空数组」，窗口保持可重试；lib-smoke 的三类退化输入行为不变。
+
+## 🆕 新增
+
+- **`dreamMergeGuard`（issue #339，E8 考卷，opt-in 默认关）**：巩固 merge 护栏——合并对象命中
+  长保留类型（与 archive 护栏同表：preference/pattern/rejected_solution/constraint/pitfall）的
+  merge 决策整条跳过。E8 实测巩固损耗里 10/26 条被丢约束已归位 guarded 类型仍被 merge 吃掉
+  （archive 护栏只挡 archive 不挡 merge，「更精炼的摘要」恰是约束失真的主通道）。
+  `dreamSkipInvalid`（默认开）时被跳条目进 `dream_runs.skipped`、run 记 degraded；关闭时整单拒绝。
+  dream 与 sleep 两条链路同一判据；白名单 + 计数锁 +1。
+
+### scope
+
+- **A2 软加权补齐到注入通道（issue #339，E7 考卷）**：此前 ×0.5/×1.25 只作用于 searchMemories，
+  E7 实测「explicit 标注 + 软档」的注入集与无标注逐条相同（80/80）——自动注入这个主泄露面上
+  软档形同虚设，而文档本就承诺「关闭时全部为软隔离」。现 `scopeEnabled` 开启且会话至少一维
+  可解析时，注入规则路比较器在层内数值积乘 `scopeMultiplier`（priority 档位不动）、selectiveInject
+  相似度重排乘同乘数；未激活时乘 1，排序与改动前逐字节一致。strictScope 硬过滤保持在软加权
+  之前，与检索侧叠加顺序一致。
 
 - **宿主开发依赖对齐 0.2 线（PR #344）**：`peerDependencies` 自 #121 起就声明覆盖 0.2.x，`devDependencies` 却停在 `^0.1.0-rc.6`（0.x 语义 = `>=0.1.0-rc.6 <0.2.0`，永远装不到 0.2 线）——**声明支持 0.2、CI 却从没跑过 0.2**，而桌面端 DSH NEXT 内置内核已是 0.2.0-rc.1。开发依赖对齐 0.2.0-rc.1，lockfile 与 CI 真落在声明覆盖的版本上。
 - **brace-expansion 钉到 5.0.12（PR #345，CVE-2026-102276/102277/102278）**：osv-scanner 三条告警（两条 high 栈耗尽 DoS + 一条 medium 二次时间 DoS）全落在 devDependency 链的同一包上——实际打不着（不被仓库自身 import），但 lock 合规仍要清；overrides 抬 pin 号即清零，`npm audit` 双口径 0 vulnerabilities。

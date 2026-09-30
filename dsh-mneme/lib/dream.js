@@ -1181,7 +1181,9 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       // Issue #89：v0.6.9（Issue #26）的宽容路径在 v0.7.11 重写中丢失——单条
       // 非法决策重新只跳过该条、合法子集照常应用（run 记为 degraded）。
       skipInvalid: config.dreamSkipInvalid !== false,
-      allowCrossTypeMerge: config.allowCrossTypeMerge === true
+      allowCrossTypeMerge: config.allowCrossTypeMerge === true,
+      // issue #339 / E8：guarded 类型 merge 护栏（opt-in，dreamMergeGuard）。
+      mergeGuard: config.dreamMergeGuard === true
     });
     // Issue #135：模型把 UUID 缩写成前缀时，唯一前缀已在校验前被解析回完整 id。
     // 解析量是模型输出质量的一个直接信号（>0 意味着模型在缩写 id），记一条 info

@@ -210,6 +210,22 @@ export function validateDecisions(decisions, snapshot, options = {}) {
         if (mergeTypes.size > 1 && options.allowCrossTypeMerge !== true) {
           local.push(`${at}: merge ids span multiple types (${[...mergeTypes].join(", ")})`);
         }
+        // issue #339 / E8 考卷：merge 护栏（opt-in，dreamMergeGuard）。巩固损耗
+        // 实测里 10/26 条被丢约束已归位 guarded 类型仍被 merge 吃掉——archive
+        // 护栏（上方）只挡 archive 不挡 merge，而 merge 的「更精炼摘要」恰是
+        // 约束失真的主通道。开启后被合并对象命中 ARCHIVE_GUARDED_TYPES 的
+        // merge 决策整条跳过（与 archive 护栏同款通道：skipInvalid 时 skipped
+        // 明细、严格模式整单拒绝）。
+        if (local.length === 0 && options.mergeGuard === true) {
+          const guardedTypes = new Set();
+          for (const id of d.ids) {
+            const mem = snapshot.get(id);
+            if (mem && ARCHIVE_GUARDED_TYPES.has(mem.type)) guardedTypes.add(mem.type);
+          }
+          if (guardedTypes.size > 0) {
+            local.push(`${at}: merge of long-retention type(s) ${[...guardedTypes].join(", ")} is blocked by dreamMergeGuard`);
+          }
+        }
       }
     }
     if (local.length > 0) {

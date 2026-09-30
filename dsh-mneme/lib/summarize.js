@@ -15,10 +15,17 @@ function parseSummaryJsonResult(raw) {
   const end = text.lastIndexOf("]");
   if (start === -1 || end === -1 || end <= start) return { ok: false, entries: [] };
   let arr;
+  let salvaged = false;
   try {
     arr = JSON.parse(text.slice(start, end + 1));
   } catch {
-    return { ok: false, entries: [] };
+    // issue #339 / E8 实测：10-20% 的窗口输出了含记忆条目的完整对象，只因中段
+    // 一处语法错误被整窗 JSON.parse 拒收；而失败路径的生产行为是游标不推进 +
+    // 温度 0 重试同文同错 = 该窗口记忆静默丢失。这里做失败路径修复：括号配对
+    // 扫描截出完整的顶层对象逐个 parse，救活多少算多少；截出 0 个不视为「模型
+    // 显式说无内容」（那是 ok:true 专属于真实空数组的语义）。
+    arr = salvageArrayItems(text.slice(start, end + 1));
+    salvaged = true;
   }
   if (!Array.isArray(arr)) return { ok: false, entries: [] };
   const VALID = new Set(["preference", "project", "decision", "history", "rejected_solution", "pitfall", "constraint"]);
@@ -38,8 +45,67 @@ function parseSummaryJsonResult(raw) {
     importance: Number.isInteger(item.importance) ? Math.min(5, Math.max(1, item.importance)) : 3
   }));
   // 空数组表示模型明确判断本轮没有可沉淀内容；非空数组若全部无效，
-  // 则不能消费窗口，否则无效输出会永久推进 seq 游标。
-  return { ok: arr.length === 0 || entries.length > 0, entries };
+  // 则不能消费窗口，否则无效输出会永久推进 seq 游标。salvage 路径
+  // 没有「显式空数组」可言——ok 只看是否救回了条目。
+  return {
+    ok: salvaged ? entries.length > 0 : (arr.length === 0 || entries.length > 0),
+    entries,
+    salvaged
+  };
+}
+
+/**
+ * Salvage scanner for malformed JSON arrays (issue #339): extracts every
+ * complete top-level {...} span, parsing each independently. Two passes,
+ * merged with de-duplication:
+ *  - pass 1 is string-aware (handles valid objects whose string values
+ *    legitimately contain braces);
+ *  - pass 2 ignores string state entirely — E8 现场的坏对象带奇数个引号
+ *    （stray quote），pass 1 的奇偶失配会把后续对象的收尾 } 吞进字符串里，
+ *    盲扫按括号深度截取反而能救回它们。坏对象两种扫法都 parse 失败，自然
+ *    被丢弃；两遍的去重靠序列化键。
+ */
+function salvageArrayItems(chunk) {
+  const out = [];
+  const seen = new Set();
+  const push = (obj) => {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return;
+    const key = JSON.stringify(obj);
+    if (!seen.has(key)) { seen.add(key); out.push(obj); }
+  };
+  for (const obj of scanBraceSpans(chunk, true)) push(obj);
+  for (const obj of scanBraceSpans(chunk, false)) push(obj);
+  return out;
+}
+
+function scanBraceSpans(chunk, respectStrings) {
+  const items = [];
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let objStart = -1;
+  for (let i = 0; i < chunk.length; i++) {
+    const ch = chunk[i];
+    if (respectStrings && inString) {
+      if (escape) escape = false;
+      else if (ch === "\\") escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (respectStrings && ch === '"') { inString = true; continue; }
+    if (ch === "{") {
+      if (depth === 0) objStart = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && objStart !== -1) {
+        try { items.push(JSON.parse(chunk.slice(objStart, i + 1))); } catch { /* 坏对象跳过 */ }
+        objStart = -1;
+      }
+      if (depth < 0) depth = 0;
+    }
+  }
+  return items;
 }
 
 /** Extract a JSON array from LLM output that may contain prose around it. */
@@ -678,9 +744,10 @@ export function createSummarizer(ctx, service, config, deps = {}) {
         // 空数组是合法成功：没有记忆写入，但本次事件窗口仍然应被持久消费。
         persistCursor(session.id, nextSeq);
       }
-      if (audit && (capped > 0 || deduped > 0)) {
+      if (audit && (capped > 0 || deduped > 0 || parsedResult.salvaged)) {
         audit.metadata = {
           parsed: parsed.length,
+          ...(parsedResult.salvaged ? { json_salvaged: true } : {}),
           ...(capped > 0 ? { capped } : {}),
           ...(deduped > 0 ? { deduped, mode: dedupeMode, maxSim: Number(dedupeMaxSim.toFixed(4)) } : {})
         };

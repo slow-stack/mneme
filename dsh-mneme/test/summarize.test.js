@@ -143,6 +143,32 @@ test("parseSummaryJson extracts valid entries and skips malformed ones", () => {
   assert.equal(parsed[1].type, "preference");
 });
 
+// --- issue #339 / E8 考卷：JSON 崩溃窗口的 salvage（失败路径修复，默认开）-----
+// E8 实测 10-20% 的窗口输出了含约束的完整对象，只因中段一处语法错误被整窗
+// JSON.parse 拒收 → 生产行为 = 游标卡死 + 温度 0 重试同错 = 静默丢失。
+
+test("parseSummaryJson salvages complete objects from a malformed array (issue #339)", () => {
+  // E8 现场同款：闭合数组、中段对象含杂散引号（stray quote）。
+  const raw = `[
+    {"type":"constraint","title":"预算","content":"总额 $12,400","importance":4},
+    { " "type": "history", "title": "坏对象", "content": "语法错误" },
+    {"type":"preference","title":"硬件","content":"只要 brushed brass"}
+  ]`;
+  const parsed = parseSummaryJson(raw);
+  assert.equal(parsed.length, 2, "the broken middle object is dropped, both survivors kept");
+  assert.equal(parsed[0].content, "总额 $12,400");
+  assert.equal(parsed[1].title, "硬件");
+});
+
+test("parseSummaryJson salvage finding nothing stays a failure (no fake empty success)", () => {
+  // 只有一个语法坏掉的对象 → 救回 0 条：不得按「显式空数组」放行消费窗口。
+  const raw = `[
+    { " "type": "history", "title": "坏", "content": "语法错误" }
+  ]`;
+  const parsed = parseSummaryJson(raw);
+  assert.deepEqual(parsed, []);
+});
+
 test("subscribes to session/event when autoSummarize enabled", () => {
   const { events } = setup();
   assert.ok(events.some((e) => e.name === "session/event"));
@@ -671,6 +697,78 @@ test("invalid summary JSON leaves the seq window retryable", async () => {
   await handler(session, { seq: 2, type: "turn/end" });
   assert.equal(calls.length, 2, "a parse failure must not advance the seq cursor");
   assert.equal(store.count(), 0, "the valid empty retry remains a no-op");
+});
+
+test("a JSON-crashed window with salvageable objects is recovered, consumed once, and audited (issue #339)", async (t) => {
+  const malformed = `[
+    {"type":"constraint","title":"预算","content":"总额 $12,400","importance":4},
+    { " "type": "history", "title": "坏对象", "content": "语法错误" },
+    {"type":"preference","title":"硬件","content":"只要 brushed brass"}
+  ]`;
+  const { events, service, store, calls, summarizer } = setup({ distillRateLimitIntervalMs: 0 }, {
+    stream() {
+      return (async function* () {
+        yield { type: "block-start", block: { type: "text" } };
+        yield { type: "text-delta", delta: malformed };
+        yield { type: "finish", kind: "ok" };
+      })();
+    }
+  });
+  t.after(() => { summarizer.dispose(); store.close(); });
+  const handler = events.find((e) => e.name === "session/event").fn;
+  const session = {
+    id: "s-salvage",
+    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    events: [userMessage("带语法错误的蒸馏窗口", 1), { seq: 2, type: "turn/end" }]
+  };
+
+  await handler(session, { seq: 2, type: "turn/end" });
+  assert.equal(service.count(), 2, "the two intact objects are written, the broken one dropped");
+  const titles = service.list().map((m) => m.title).sort();
+  assert.deepEqual(titles, ["硬件", "预算"]);
+  assert.equal(calls.length, 1, "salvage consumed the window: no same-window retry");
+  const audit = service.listLlmAudits().find((r) => r.status === "success");
+  assert.ok(audit, "salvaged run is audited as a success");
+  assert.equal(audit.metadata?.json_salvaged, true, "salvage is observable in the audit trail");
+
+  await handler(session, { seq: 2, type: "turn/end" });
+  assert.equal(calls.length, 1, "the consumed window is not re-distilled");
+  assert.equal(service.count(), 2, "no duplicate writes on the second turn/end");
+});
+
+test("a JSON-crashed window with nothing salvageable stays retryable (issue #339)", async (t) => {
+  const hopeless = `[
+    { " "type": "history", "title": "坏", "content": "语法错误" }
+  ]`;
+  let attempt = 0;
+  const { events, service, store, calls, summarizer } = setup({ distillRateLimitIntervalMs: 0 }, {
+    stream() {
+      const output = attempt++ === 0 ? hopeless : `[
+        {"type":"history","title":"重试成功","content":"干净窗口","importance":3}
+      ]`;
+      return (async function* () {
+        yield { type: "block-start", block: { type: "text" } };
+        yield { type: "text-delta", delta: output };
+        yield { type: "finish", kind: "ok" };
+      })();
+    }
+  });
+  t.after(() => { summarizer.dispose(); store.close(); });
+  const handler = events.find((e) => e.name === "session/event").fn;
+  const session = {
+    id: "s-salvage-none",
+    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    events: [userMessage("救不回的窗口", 1), { seq: 2, type: "turn/end" }]
+  };
+
+  await handler(session, { seq: 2, type: "turn/end" });
+  assert.equal(service.count(), 0, "zero salvage is not a fake success");
+  await handler(session, { seq: 2, type: "turn/end" });
+  assert.equal(calls.length, 2, "the window stays retryable");
+  assert.equal(service.count(), 1);
+  assert.ok(service.listLlmAudits().some(
+    (r) => r.status === "error" && r.error_message === "invalid summary JSON"
+  ), "zero-salvage run keeps the error audit");
 });
 
 test("an all-invalid summary leaves the same window retryable until valid memories are saved", async (t) => {

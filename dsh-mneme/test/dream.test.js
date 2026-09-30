@@ -1306,3 +1306,78 @@ test("issue#258: dreamSummaryMaxInputs caps summary inputs to the newest N (0 = 
   assert.match(overview().content, /整理后 5 条/, "uncapped run covers the whole library");
   store.close();
 });
+
+// --- issue #339 / E8 考卷：merge 护栏（dreamMergeGuard，opt-in）---------------
+// E8 实测巩固损耗里 10/26 条被丢约束已归位 guarded 类型仍被 merge 吃掉——
+// archive 护栏只挡 archive 不挡 merge。开启后被合并对象命中 ARCHIVE_GUARDED_TYPES
+// 的 merge 决策走与 archive 护栏同款通道：skipInvalid 时 skipped、严格时整单拒绝。
+
+test("validateDecisions mergeGuard: guarded-type merge is skipped under skipInvalid", () => {
+  const snap = new Map([
+    ["c1", { id: "c1", type: "constraint", title: "预算", content: "$12,400", importance: 4, archived: false, forgotten: false }],
+    ["c2", { id: "c2", type: "constraint", title: "预算(疑似重复)", content: "$12,450", importance: 4, archived: false, forgotten: false }],
+    ["h1", { id: "h1", type: "history", title: "旧事", content: "内容", importance: 3, archived: false, forgotten: false }],
+    ["h2", { id: "h2", type: "history", title: "旧事(近似)", content: "内容2", importance: 3, archived: false, forgotten: false }]
+  ]);
+  const decisions = [
+    { action: "merge", ids: ["c1", "c2"], keepSource: "c1", title: "预算合并", content: "$12,400 上下", importance: 4 },
+    { action: "merge", ids: ["h1", "h2"], keepSource: "h1", title: "旧事合并", content: "合并内容", importance: 3 }
+  ];
+  const { ok, skipped } = validateDecisions(decisions, snap, { skipInvalid: true, mergeGuard: true });
+  assert.equal(ok, true, "history merge survives, guarded merge skipped");
+  assert.equal(skipped.length, 1);
+  assert.match(skipped[0].error, /dreamMergeGuard/, "skip reason names the guard");
+  assert.match(skipped[0].error, /constraint/, "skip reason names the guarded type");
+  // guarded merge 被 splice 掉，history merge 与两条隐式 keep 存活。
+  assert.deepEqual(decisions.map((d) => d.action), ["merge", "keep", "keep"]);
+  assert.ok(decisions.some((d) => d.action === "keep" && d.ids.includes("c1")), "c1 auto-kept");
+});
+
+test("validateDecisions mergeGuard: strict mode rejects the whole batch", () => {
+  const guardedSnap = new Map([
+    ["g1", { id: "g1", type: "pitfall", title: "坑", content: "内容", importance: 3, archived: false, forgotten: false }],
+    ["g2", { id: "g2", type: "pitfall", title: "坑2", content: "内容2", importance: 3, archived: false, forgotten: false }]
+  ]);
+  const strict = validateDecisions(
+    [{ action: "merge", ids: ["g1", "g2"], keepSource: "g1", title: "t", content: "c" }],
+    guardedSnap,
+    { skipInvalid: false, mergeGuard: true }
+  );
+  assert.equal(strict.ok, false, "strict mode rejects guarded merge");
+  assert.ok(strict.errors.some((e) => /dreamMergeGuard/.test(e)));
+});
+
+test("validateDecisions mergeGuard: non-guarded types unaffected, guard off = legacy behavior", () => {
+  const snap = new Map([
+    ["c1", { id: "c1", type: "constraint", title: "预算", content: "$12,400", importance: 4, archived: false, forgotten: false }],
+    ["c2", { id: "c2", type: "constraint", title: "预算(疑似重复)", content: "$12,450", importance: 4, archived: false, forgotten: false }]
+  ]);
+  const decisions = [{ action: "merge", ids: ["c1", "c2"], keepSource: "c1", title: "预算合并", content: "合并", importance: 4 }];
+  // guard 关 = 现行为（merge 照常通过）。
+  assert.equal(validateDecisions(decisions, snap, { skipInvalid: true }).ok, true);
+  // guard 开但类型非 guarded（history 用 snapshot 默认 type=project 亦非 guarded）。
+  const plainSnap = snapshot(["x", "y"]);
+  assert.equal(
+    validateDecisions(
+      [{ action: "merge", ids: ["x", "y"], keepSource: "x", title: "t", content: "c" }],
+      plainSnap,
+      { skipInvalid: true, mergeGuard: true }
+    ).ok,
+    true,
+    "non-guarded merge passes under guard"
+  );
+});
+
+test("validateDecisions archive guard: long-retention type without duplicate/outdated rationale is skipped (prior gap)", () => {
+  const snap = new Map([
+    ["c", { id: "c", type: "constraint", title: "预算", content: "$12,400", importance: 4, archived: false, forgotten: false }],
+    ["p", { id: "p", type: "project", title: "项目", content: "内容", importance: 3, archived: false, forgotten: false }]
+  ]);
+  const { ok, skipped } = validateDecisions([
+    { action: "archive", ids: ["c"], reason: "keeps the store tidy" },
+    { action: "archive", ids: ["p"], reason: "outdated" }
+  ], snap, { skipInvalid: true });
+  assert.equal(ok, true, "project archive with stale rationale survives");
+  assert.equal(skipped.length, 1, "constraint archive without rationale skipped");
+  assert.match(skipped[0].error, /long-retention type/);
+});

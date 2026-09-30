@@ -100,6 +100,9 @@ const FEATURE_FLAG_BOOLEANS = [
   // Issue #89：宽容校验回归（默认开）+ 跨类型合并显式放宽（默认关）。
   "dreamSkipInvalid",
   "allowCrossTypeMerge",
+  // Issue #339 / E8：guarded 类型 merge 护栏（默认关）——合并对象命中
+  // 长保留类型的 merge 决策整条跳过。
+  "dreamMergeGuard",
   // Issue #17（v0.8.0 A1）：scope 隔离存储层总开关。开启后写入标注
   // agent_scope/workspace_scope、去重键扩展（含 sensitivity）；检索侧过滤在
   // A2/A3。默认关=行为与 A1 前逐字节一致。
