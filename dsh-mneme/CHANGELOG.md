@@ -4,7 +4,18 @@
 
 ## 🐛 修复
 
-- （待填）
+- **侧边栏入口不再盖住「新会话」图标（PR #338）**：宿主 0.2 的侧边栏收起时只把开关（`left:12px`）与「新会话」（`left:48px`）固定在 Windows 标题栏上，而记忆入口沿用了同一个 left —— 两者完全重叠，宿主的「新会话」被压在下面，左上角只剩两颗图标。现在入口用一条更具体的规则排到「新会话」右侧 84px，并让 `--dsh-windows-menu-start` 顺延到 120px、「应用 / 编辑」菜单右移让位；这段覆盖只在收起且入口确实挂上时生效（`:has([data-sidebar-collapsed=true]):has([data-plugin-entry=…])`）。真机确认收起态为 `[开关][新会话][记忆] 应用 编辑`，无重叠。
+- **冻结冲突裁决后，入口红点立刻消失（PR #338）**：裁决成功时冲突队列本就广播 `mneme:conflicts-changed`，但只有状态卡订阅了它，侧边栏红点漏订——只能等 60s 兜底轮询才更新，用户反馈「消失得很慢」。现在红点订阅该广播立即重取，打开面板时也重取；计数收进模块级单例，两处入口（portal 与 footer 回退）共享一条轮询（原先各起一条且互不同步），并发请求去重，最后一个订阅者离开即停表。60s 兜底轮询保留：后台 autoDream 自己产生/消解冲突时没人广播，靠它浮现。
+
+## 🆕 新增
+
+- **记忆入口改为低调面板行（PR #338）**：展开态入口 portal 进宿主 `nav.panelList`，套用 `panelRow` 的实时类名与图标/标题槽位类名，成为「插件 / 自动化任务」之后的第三个面板行。此前它套用「新会话」按钮的类名，展开后与「新会话」长得一模一样（同款高亮大按钮）——根因是**宿主 CSS 后注入，同特异性时宿主赢**，插件自己的配色覆盖从未生效。类名一律从活元素读（哈希前缀随宿主构建变），并剔掉激活态修饰类 `panelActive`，免得入口跟着宿主当前选中的面板常亮。
+- **自绘 mneme mark，替换借来的「归档」图标（PR #338）**：不再用宿主的 `IconArchiveOutline*`——「归档盒」与记忆库里的归档动作是同一个符号，用户看不出这是记忆插件；而且宿主图标名换代时（#287：`Outline20` → `OutlineRegular` / `OutlineMedium`）只认一代就会把 undefined 交给 `h()`，落成 React #130 把整个 slot entry 崩掉。改为自绘螺旋（记忆痕迹 / 召回回路），规格逐条对齐宿主：16 栅格、`fill:none`、`stroke:currentColor`、描边 1；路径是 6 段三次贝塞尔拟合（与逐点采样版逐像素一致），源码里只有 200 字符。四处入口（浮层标题栏 / footer 回退 / 侧边栏 portal / better-sidebar tab）共用同一颗。
+- **插件列表的图标与文案（PR #338）**：`package.json` 声明 `icon`，宿主 `iconOf()` 只收包内相对路径、realpath 不许跑出包目录、仅 SVG/PNG/JPEG/WebP、≤256KiB，命中后内联成 data URI；`assets/icon.svg` 自带品牌蓝 `#4176e6`（宿主 `--dsw-static-deepseek-500`），因为列表把它渲染成 `<img>`、继承不到 `currentColor`。列表标题与描述改读包内 `locale/en.json` 与 `locale/zh.json`（英文 `mneme`、中文 `mneme 记忆库`），`exports` 放行 `"./locale/*"`——少了这一行，宿主用 ESM resolver 读不到字典（`ERR_PACKAGE_PATH_NOT_EXPORTED`）且**静默**回落成裸包名 `@modusensus/dsh-mneme`，文件乖乖躺在包里也永不生效。
+
+## 🧹 工程
+
+- **面板守卫净增 6 条，全量测试 1431 → 1437**：收起态不遮挡（锁 84px / 120px 两条规则与 `:has` 守卫）、`panelActive` 不外溢、badge store **真执行**时序用例（用 `new Function` 抠出源码里那段 store，注入受控 `apiFetch`/`setInterval` 断言请求去重与定时器引用计数）、mark 自绘且不再探测宿主图标名、列表图标的声明/文件/同源漂移校验、locale 的 exports 门槛与字段形状。红点用例做过**变异检验**：把 `listeners.size === 1` 改成 `> 0`，两条用例立刻变红（"still one timer for both entry buttons"），确认测试不是空转。
 
 ## [0.8.9] - 2026-09-28
 
