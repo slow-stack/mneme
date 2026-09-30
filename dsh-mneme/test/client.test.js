@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -383,32 +383,99 @@ test("graph toggle uses a node-graph glyph, not the share icon", () => {
   );
 });
 
-// #287 跨代图标守卫：primitives 在 0.1.7 把归档图标从「像素后缀」改名成「字重后缀」
-// （IconArchiveOutline20 → …OutlineRegular / …OutlineMedium），旧名不留别名，而
-// peerDependencies 仍同时覆盖 0.1.6 与 0.1.7 两代宿主。只认某一代的名字，另一代就会
-// 把 undefined 交给 h()，落成 slot entry 里的 React #130（该 entry 整块崩），因此必须
-// 探测两代名字、并在全缺时降级为不渲染图标。
-test("#287: archive glyph probes both naming generations and degrades to no glyph", () => {
-  assert.ok(
-    /primitives\.IconArchiveOutline20\s*\?\?\s*primitives\.IconArchiveOutlineRegular\s*\?\?\s*primitives\.IconArchiveOutlineMedium/.test(clientSource),
-    "the glyph must probe the 0.1.6 pixel name before the 0.1.7 weight names"
-  );
+// #287 的成因已经不存在了，但那条教训要留着：当年的崩法是「宿主图标名换代 →
+// 取到 undefined → h(undefined) 即 React #130，整个 slot entry 崩掉」。现在的解法
+// 不是继续探测多代名字，而是**不再依赖宿主图标库**——插件自己画 mneme mark。
+// 这条用例锁三件事：(a) 客户端里不再有对宿主 IconArchive* 名字的探测（回到探测
+// 就等于把 #287 那类耦合请回来）；(b) mark 走一个内联 SVG 组件、自带路径常量；
+// (c) 四个入口共用同一个 helper，避免某处漏改又出现"归档盒"。
+test("mneme mark is self-drawn: no host icon-name probing left (#287 root cause)", () => {
   assert.equal(
-    /h\(IconArchiveOutline20/.test(clientSource),
+    /primitives\.IconArchiveOutline(20|Regular|Medium)/.test(clientSource),
     false,
-    "the raw constant must never reach h() — on a host lacking that name it renders undefined (React #130)"
+    "the client must not probe host archive glyph names any more"
   );
   assert.ok(
-    /const renderArchiveIcon = \(props\) => \(IconArchive \? h\(IconArchive, props\) : null\)/.test(clientSource),
-    "the glyph must render through a null-guarded helper so a missing icon degrades to nothing"
+    /const MNEME_MARK_D = "M[^"]+"/.test(clientSource),
+    "the mark must carry its own path constant"
+  );
+  assert.ok(
+    clientSource.includes('viewBox: "0 0 16 16"') && clientSource.includes('stroke: "currentColor"'),
+    "the mark must follow the host icon spec (16 grid, currentColor) so it reads as first-party"
+  );
+  assert.ok(
+    /const renderMnemeMark = \(props\) => h\(MnemeMark, props\)/.test(clientSource),
+    "the mark must render through one shared helper"
   );
   for (const site of [
-    "renderArchiveIcon({ size: 15 })",              // 浮层标题栏
-    "renderArchiveIcon({ size: wide ? 16 : 18 })",  // 侧栏 trigger + portal 入口（面板行档 16 / 标题栏档 18）
-    "renderArchiveIcon({ size })"                   // better-sidebar tab 图标
+    "renderMnemeMark({ size: 15 })",              // 浮层标题栏
+    "renderMnemeMark({ size: wide ? 16 : 18 })",  // 侧栏 trigger + portal 入口（面板行档 16 / 标题栏档 18）
+    "renderMnemeMark({ size })"                   // better-sidebar tab 图标
   ]) {
     assert.ok(clientSource.includes(site), `every render site must go through the helper: ${site}`);
   }
+  assert.equal(
+    /renderArchiveIcon/.test(clientSource),
+    false,
+    "the retired archive-glyph helper must be gone, not left as a second path"
+  );
+});
+
+// 插件列表那颗图标由宿主从 package.json 的 `icon` 读：必须是**包内相对路径**、
+// 落在 files 白名单里、且宿主只接受 SVG/PNG/JPEG/WebP ≤256KiB。
+// 宿主 `iconOf()` 的硬规则：绝对路径或带 scheme 直接报错、realpath 后不许跑出
+// manifest 目录、超 256KiB 报错；缺文件/坏文件时静默回落成通用插画（等于用户
+// 看到的不是自家图标）。这里把可静态检的部分全锁住。
+test("plugin-list icon: declared, in-package, and shipped in files", () => {
+  const icon = pkg.icon;
+  assert.equal(typeof icon, "string", "package.json must declare an icon");
+  assert.equal(icon, "assets/icon.svg", "the icon must be the self-drawn mark");
+  assert.ok(!/^([A-Za-z]:|[A-Za-z][A-Za-z\d+.-]*:)/.test(icon), "the icon must be a relative path (host rejects absolute/URL)");
+  assert.ok(pkg.files.includes("assets"), "the assets dir must ship, or the published package has no icon");
+  const file = join(root, icon);
+  assert.ok(existsSync(file), `the declared icon must exist: ${icon}`);
+  const bytes = readFileSync(file);
+  assert.ok(bytes.length > 0 && bytes.length <= 256 * 1024, "the icon must be a non-empty file under the host's 256 KiB cap");
+  const svg = bytes.toString("utf8");
+  assert.ok(svg.includes("<svg") && svg.includes("viewBox"), "the icon must be an SVG with a viewBox");
+  // <img> 不能继承 currentColor：文件必须自带颜色，否则会渲染成黑块/不可见。
+  assert.ok(/stroke="#[0-9a-fA-F]{6}"/.test(svg), "the standalone file must bake its own colour (<img> cannot inherit currentColor)");
+  // 文件与客户端内联路径必须是同一颗：两边形状漂移是最容易悄悄发生的事。
+  const inline = clientSource.match(/const MNEME_MARK_D = "([^"]+)"/)[1];
+  assert.ok(svg.includes(inline), "assets/icon.svg must use the same path as the inline mark (no shape drift)");
+});
+
+// 插件列表的标题/描述读包内的 `locale/<语言码>.json`：宿主 readPluginMeta 先解析
+// `<specifier>/locale/en.json`，再遍历同目录的每个 *.json（文件名必须过语言码正则），
+// 取 meta.title / meta.description；一个都读不到就回落到 package.json 的 name——
+// 也就是裸包名 "@modusensus/dsh-mneme"（用户看到的现状）。
+// ⚠️ 真正的门槛是**能否被 Node 解析**：宿主用 ESM resolver 取这个文件，而 exports
+// 字段会把没列出的子路径**全部挡掉**，且 optionalResourcePath 对"读不到"是静默的
+// （返回 undefined 继续走回落），不报错。所以少了 "./locale/*" 这一行，文件乖乖躺在
+// 包里也永远不生效——这条回归极难靠肉眼发现，必须锁死。
+test("plugin-list title/description are localized through locale/*.json", () => {
+  assert.ok(
+    Object.keys(pkg.exports).includes("./locale/*"),
+    "exports must expose ./locale/* or the host resolver silently never reads the dictionaries"
+  );
+  assert.ok(pkg.files.includes("locale"), "the locale dir must ship in files, or the published package loses it");
+  const dir = join(root, "locale");
+  assert.ok(existsSync(dir), "locale/ must exist");
+  const files = readdirSync(dir).filter((name) => name.endsWith(".json"));
+  assert.ok(files.length >= 2, "at least an English and a Chinese dictionary must ship");
+  for (const name of files) {
+    const language = name.slice(0, -5);
+    assert.match(language, /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/, `locale/${name} must be named after a language id`);
+    const parsed = JSON.parse(readFileSync(join(dir, name), "utf8"));
+    assert.equal(typeof parsed.meta, "object", `locale/${name} must carry a meta block`);
+    assert.ok(typeof parsed.meta.title === "string" && parsed.meta.title.trim() !== "", `locale/${name}: meta.title must be a non-empty string`);
+    assert.ok(
+      typeof parsed.meta.description === "string" && parsed.meta.description.trim() !== "",
+      `locale/${name}: meta.description must be a non-empty string`
+    );
+  }
+  const en = JSON.parse(readFileSync(join(dir, "en.json"), "utf8"));
+  assert.ok(en.meta.title !== pkg.name, "the English title must not be the bare package name (that is the bug this fixes)");
 });
 
 // 方案 A：查询收敛。状态页只做仪表盘（小页预览 + 服务端 total + 查看全部），

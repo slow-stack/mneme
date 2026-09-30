@@ -68,19 +68,37 @@ window.__ModuleLoader__.load({
       if (ops.filter((o) => o.kind !== "same").length > 200) return null;
       return ops;
     }
-    // #287 归档图标跨代兼容：primitives 在 0.1.7 把图标命名从「像素后缀」改成
-    // 「字重后缀」（IconArchiveOutline20 → …OutlineRegular / …OutlineMedium），
-    // 旧名不留别名，而 peerDependencies 同时覆盖 0.1.6 与 0.1.7 两代宿主——
-    // 只认某一代的名字，另一代就会取到 undefined，h(undefined) 即 React #130
-    // （整个 slot entry 崩掉）。故按「旧名 → 新名」顺序取第一个存在的；
-    // 两代都缺时降级为不渲染图标，宁可无图标也不把 slot 打崩。
-    const IconArchive = primitives.IconArchiveOutline20
-      ?? primitives.IconArchiveOutlineRegular
-      ?? primitives.IconArchiveOutlineMedium
-      ?? null;
+    // --- mneme mark：插件自己的标识图标 -------------------------------------
+    // 不再借宿主的 IconArchiveOutline*，两个原因：
+    //  · 语义撞车——「归档盒」和记忆库里的归档动作是同一个符号，用户反馈看不出
+    //    这是记忆插件（issue 走维护者自开通道）；
+    //  · 宿主耦合——宿主图标名会换代（#287：Outline20 → OutlineRegular/Medium），
+    //    只认某一代就取到 undefined，h(undefined) 即 React #130 把整个 slot entry
+    //    崩掉。自绘后这一整类问题消失，也不再需要「探测多代名字 + 缺名降级」。
+    // 形状：单线螺旋（记忆痕迹 / 召回回路）。规格逐条对齐宿主图标，才不像外来户：
+    // 16 栅格、fill:none、stroke:currentColor、描边 1（宿主 Regular 档）、圆头圆角。
+    // 路径是 6 段三次贝塞尔拟合同一螺旋（拟合版与逐点采样版逐像素一致，已核验），
+    // 所以源码里只有 200 字符，不是一百多个采样点。
+    // 改形状只需换 MNEME_MARK_D，并同步 assets/icon.svg（插件列表那份，同一个 d）。
+    const MNEME_MARK_D = "M4.43 12.31C2.19 10.17 2.27 6.81 4.18 4.84C6.10 2.88 9.06 2.99 10.74 4.68C12.43 6.37 12.28 8.92 10.82 10.33C9.35 11.74 7.22 11.55 6.08 10.32C4.95 9.08 5.18 7.35 6.18 6.50C6.57 6.17 7.03 5.99 7.48 5.97";
 
-    /** 渲染归档图标；宿主未提供任一候选名时返回 null（无图标，不影响其余内容）。 */
-    const renderArchiveIcon = (props) => (IconArchive ? h(IconArchive, props) : null);
+    /** mneme mark 的内联 SVG；currentColor + 描边 1，随主题与字号走。 */
+    const MnemeMark = ({ size = 16, className }) => h("svg", {
+      width: size,
+      height: size,
+      className,
+      viewBox: "0 0 16 16",
+      fill: "none",
+      xmlns: "http://www.w3.org/2000/svg",
+      "aria-hidden": "true",
+      stroke: "currentColor",
+      strokeWidth: 1,
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    }, h("path", { d: MNEME_MARK_D }));
+
+    /** 渲染 mneme mark：四个入口（浮层标题栏 / footer 回退 / 侧边栏 portal / better-sidebar tab）共用同一颗。 */
+    const renderMnemeMark = (props) => h(MnemeMark, props);
 
     // Portal target for the hero fallback surface. The host whitelists
     // react-dom for its own bundles (dsh-client-ui-trajectory requires it);
@@ -3117,7 +3135,7 @@ window.__ModuleLoader__.load({
         h("div", { className: "mneme-overlay", role: "region", "aria-label": t("memory.view.label"), ref: panelRef },
           h("div", { className: "mneme-overlaybar" },
             h("span", { className: "mneme-overlaytitle" },
-              renderArchiveIcon({ size: 15 }),
+              renderMnemeMark({ size: 15 }),
               t("memory.view.label")
             ),
             h("button", {
@@ -5040,7 +5058,7 @@ window.__ModuleLoader__.load({
           onClick: openLibrary,
           "data-mneme-overlay-opener": "true"
         },
-          renderArchiveIcon({ size: wide ? 16 : 18 }),
+          renderMnemeMark({ size: wide ? 16 : 18 }),
           wide && h("span", { className: "mneme-trigger-label" }, t("memory.panel.open"))
         ),
         h(ConflictBadge, { pending })
@@ -5162,7 +5180,7 @@ window.__ModuleLoader__.load({
       }, [wide]);
       if (!host) return fallback;
       // 图标与「插件 / 自动化任务」同档（16px）；收起态沿用标题栏里原来的 18px。
-      const icon = renderArchiveIcon({ size: wide ? 16 : 18 });
+      const icon = renderMnemeMark({ size: wide ? 16 : 18 });
       return reactDom.createPortal(
         h("div", { className: "mneme-topentry" },
           h("button", {
@@ -5242,7 +5260,7 @@ window.__ModuleLoader__.load({
                   reg.registerTab({
                     id: TAB_ID,
                     title: () => t("memory.view.label"),
-                    icon: (size) => renderArchiveIcon({ size }),
+                    icon: (size) => renderMnemeMark({ size }),
                     order: 60,
                     component: () => h(MemoryExplorer, { t })
                   });

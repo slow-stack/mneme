@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "mneme",
+    "description": "Cross-session memory: auto-distill each session into a local SQLite store, inject on demand, consolidate while idle (autoDream)."
+  }
+}

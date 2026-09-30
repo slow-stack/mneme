@@ -13,6 +13,7 @@
   },
   "type": "module",
   "main": "lib/index.js",
+  "icon": "assets/icon.svg",
   "bin": {
     "dsh-mneme": "bin/cli.mjs",
     "dsh-mneme-mcp": "bin/dsh-mneme-mcp.mjs"
@@ -24,11 +25,14 @@
     "./client": {
       "default": "./lib/client.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*": "./locale/*"
   },
   "files": [
+    "assets",
     "bin",
     "lib",
+    "locale",
     "src",
     "scripts",
     "test",
