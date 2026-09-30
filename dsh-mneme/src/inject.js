@@ -374,8 +374,9 @@ export function createInjector(ctx, service, settings, config) {
         const query = lastUserQuery(ctx);
         if (query) prefetchQueryVector(query);
         const queryVector = queryVectorCache.get(query);
-        // v0.8.0 A3：scope 随请求解析（strict 开启时 injectCandidates 内硬过滤；
-        // flag 关闭时解析器返回 null，注入行为不变）。
+        // v0.8.0 A3：scope 随请求解析（解析器恒返回对象，身份取不到时两维为
+        // null）；硬过滤与软加权的门控都在 injectCandidates 内——strict 看
+        // strictScope，软加权看 scopeEnabled 且至少一维可解析（issue #339）。
         const scope = resolveSessionScope(ctx);
         // Issue #205：跨轮轮换——最近 N 个查询轮次注入过的 id 本轮不再优先。
         const sessionId = ctx?.agent?.session?.id ?? "_";

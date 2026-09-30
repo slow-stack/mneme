@@ -1507,6 +1507,14 @@ export function createService({ store, mirror, config, onWrite, logger, document
       ? new Map(filtered.map((m) => [m.id, computeHeat(m, Date.now(), config)]))
       : null;
     const heatOf = (m) => (heatMap ? heatMap.get(m.id) ?? 1 : 1);
+    // v0.8.x（issue #339 / E7 实测）：A2 软加权补齐到注入通道。此前 ×0.5/×1.25
+    // 只作用于 searchMemories——E7 考卷里「explicit 标注 + 软档」的注入集与无标注
+    // 逐条相同（80/80），主泄露面上软档形同虚设。门控与检索侧同款：scopeEnabled
+    // 且当前会话至少一维可解析；strictScope 硬过滤在下方先行，硬墙开启时被滤行
+    // 不会到这里被二次降权。未激活时乘 1，排序与改动前逐字节一致。
+    const softScopeActive = config?.scopeEnabled === true && scope != null &&
+      Boolean(scope.agent_scope || scope.workspace_scope);
+    const scopeMultOf = (m) => (softScopeActive ? scopeMultiplier(m, scope) : 1);
     const items = filtered.sort((a, b) => {
         // 编码记忆在编码任务时优先于普通 decision（与 preference 同级），
         // importance 乘 codingBoostFactor 加权（封顶 5，保持 importance 语义）。
@@ -1527,8 +1535,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
             : m.importance;
         const pa = priority(a);
         const pb = priority(b);
+        // 软加权乘在层内数值积上（priority 档位不动）：foreign ×0.5 后压不过
+        // 同档自己行——E7 的同 importance 档设计正是这个场景。
         return pa - pb ||
-          (effImportance(b) * qualityWeight(b) * heatOf(b)) - (effImportance(a) * qualityWeight(a) * heatOf(a));
+          (effImportance(b) * qualityWeight(b) * heatOf(b) * scopeMultOf(b)) -
+          (effImportance(a) * qualityWeight(a) * heatOf(a) * scopeMultOf(a));
       });
     let candidates = items;
     if (config.hybridInject !== false && q) {
@@ -1603,7 +1614,13 @@ export function createService({ store, mirror, config, onWrite, logger, document
         const hits = vectorIndex.search(queryVector, { limit: 200, threshold: 0 });
         const sim = new Map(hits.map((m) => [m.id, m.score ?? 0]));
         if (sim.size) {
-          candidates = [...candidates].sort((a, b) => (sim.get(b.id) ?? -1) - (sim.get(a.id) ?? -1));
+          // 软加权作用在真实 sim 上；未命中的规则候选保持 -1 沉底（缺失项
+          // 乘乘数会让 foreign 缺失项反而排到自己的缺失项之上，故不乘）。
+          const scopedSim = (m) => {
+            const s = sim.get(m.id);
+            return s === undefined ? -1 : s * scopeMultOf(m);
+          };
+          candidates = [...candidates].sort((a, b) => scopedSim(b) - scopedSim(a));
         }
       } catch { /* topic re-rank unavailable: keep rule-based order */ }
     }

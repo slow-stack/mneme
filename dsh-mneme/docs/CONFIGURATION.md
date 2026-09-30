@@ -25,8 +25,8 @@
 
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |
 |---|---|---|---|
-| `scopeEnabled` | `false` | 存储层总开关：写入标注 agent_scope / workspace_scope，去重键扩展 | opt-in；关 = 写入不标注、行为与 A1 前逐字节一致 |
-| `strictScope` | `false` | 硬过滤模式（A3）：他 scope 完全不可见、未标注恒可见（fail-closed） | 依赖 `scopeEnabled` 打开才有意义；关 = A2 软隔离（他 scope 降权保留可见） |
+| `scopeEnabled` | `false` | 存储层总开关：写入标注 agent_scope / workspace_scope，去重键扩展；检索与注入排序按当前会话作用域加权（命中 ×1.25、他 scope ×0.5 保留可见，issue #339 补齐注入通道） | opt-in；关 = 写入不标注、行为与 A1 前逐字节一致 |
+| `strictScope` | `false` | 硬过滤模式（A3）：他 scope 完全不可见、未标注恒可见（fail-closed）；硬过滤先于软加权执行 | 依赖 `scopeEnabled` 打开才有意义；关 = A2 软隔离（他 scope 降权保留可见，检索与注入同权重） |
 
 ## 审计
 
