@@ -1584,6 +1584,13 @@ export function createService({ store, mirror, config, onWrite, logger, document
             semanticItems.push(hit);
           }
         }
+        // issue #339（CodeRabbit review on #350）：首轮 BM25 兜底领跑合并池，
+        // 而 selectiveInject 相似度重排要等查询向量就绪才执行——软加权必须
+        // 在这里就位，否则 foreign 命中绕过降权直接占注入位。
+        if (softScopeActive) {
+          semanticItems.sort((a, b) =>
+            (b.score ?? 0) * scopeMultOf(b) - (a.score ?? 0) * scopeMultOf(a));
+        }
       }
       if (semanticItems.length) {
         const seen = new Set();

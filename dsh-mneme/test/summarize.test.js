@@ -1384,3 +1384,22 @@ test("issue#127: a dedupe lookup that yields nothing still lands the entry (neve
   assert.equal(store.count(), 1, "the entry is stored through the normal write path");
   assert.equal(store.all()[0].title, "必须落库");
 });
+
+test("parseSummaryJson salvage only takes direct children of the outer array (issue #339 review)", () => {
+  // 嵌套子数组里的对象不捞（模型没把它当顶层记忆产出），坏对象照旧丢弃。
+  const nested = `[[{"type":"history","title":"nested","content":"kept"}], { " "type":"history"}]`;
+  assert.deepEqual(parseSummaryJson(nested), []);
+});
+
+test("parseSummaryJson salvage does not turn string-embedded objects into memories (issue #339 review)", () => {
+  // 全数组解析失败（第二对象坏）+ 第一对象的 content 字符串里嵌着假记忆形状：
+  // 盲扫不得把属性值对象当独立记忆——外层对象整体才是直接子项。
+  const raw = `[
+    {"type":"history","title":"good","content":"note { \\"type\\": \\"history\\", \\"title\\": \\"fake\\" }"},
+    { " "type": "history", "title": "坏", "content": "x" }
+  ]`;
+  const parsed = parseSummaryJson(raw);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].title, "good");
+  assert.match(parsed[0].content, /fake/);
+});

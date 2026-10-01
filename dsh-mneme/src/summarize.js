@@ -79,11 +79,18 @@ function salvageArrayItems(chunk) {
 }
 
 function scanBraceSpans(chunk, respectStrings) {
+  // 修订（CodeRabbit review on #350）：只接受「最外层数组的直接子对象」——
+  // 候选 { 必须满足 arrayDepth===1 && objDepth===0 且前一非空白 token 是 [ 或
+  // ,。否则 (a) 嵌套子数组里的对象会被误捞成顶层记忆；(b) 盲扫遇到字符串值
+  // 里的 } 会提前断 span，把属性值对象当独立记忆落库。误拦的代价只是少救回
+  // （安全侧），误捞的代价是写进假记忆。
   const items = [];
-  let depth = 0;
+  let arrayDepth = 0;
+  let objDepth = 0;
   let inString = false;
   let escape = false;
   let objStart = -1;
+  let prev = "";
   for (let i = 0; i < chunk.length; i++) {
     const ch = chunk[i];
     if (respectStrings && inString) {
@@ -93,17 +100,35 @@ function scanBraceSpans(chunk, respectStrings) {
       continue;
     }
     if (respectStrings && ch === '"') { inString = true; continue; }
+    if (ch === "[") {
+      arrayDepth++;
+      prev = "[";
+      continue;
+    }
+    if (ch === "]") {
+      arrayDepth = Math.max(0, arrayDepth - 1);
+      prev = "]";
+      continue;
+    }
     if (ch === "{") {
-      if (depth === 0) objStart = i;
-      depth++;
-    } else if (ch === "}") {
-      depth--;
-      if (depth === 0 && objStart !== -1) {
+      if (arrayDepth === 1 && objDepth === 0 && (prev === "[" || prev === ",")) {
+        objStart = i;
+      }
+      objDepth++;
+      prev = "{";
+      continue;
+    }
+    if (ch === "}") {
+      objDepth = Math.max(0, objDepth - 1);
+      if (objDepth === 0 && objStart !== -1) {
         try { items.push(JSON.parse(chunk.slice(objStart, i + 1))); } catch { /* 坏对象跳过 */ }
         objStart = -1;
       }
-      if (depth < 0) depth = 0;
+      prev = "}";
+      continue;
     }
+    if (ch === ",") { prev = ","; continue; }
+    if (!/\s/.test(ch)) prev = ch;
   }
   return items;
 }

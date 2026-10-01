@@ -91,3 +91,16 @@ test("soft-weighted order feeds the pin pool (pin picks the weighted-first candi
   assert.equal(pinnedStats.shown, 1);
   assert.equal(injected[0].title, "mine");
 });
+
+test("first-round BM25 fallback applies the soft weight (no query vector yet)", () => {
+  const { store, service } = setup({ scopeEnabled: true, strictScope: false });
+  // 同内容同长度（标题各 1 token 且不在查询词表）→ BM25 原始分相同；
+  // 未加权时同分序随 store.list（updated desc，foreign 后存先出）。
+  store.save({ type: "decision", title: "alpha", content: "plan the dinner party menu with care", importance: 4, agent_scope: "me", agent_scope_source: "explicit" });
+  store.save({ type: "decision", title: "bravo", content: "plan the dinner party menu with care", importance: 4, agent_scope: "other", agent_scope_source: "explicit" });
+
+  const injected = service.injectCandidates({
+    query: "dinner party menu", maxItems: 5, threshold: 3, scope: SCOPE_ME,
+  });
+  assert.equal(injected[0].title, "alpha", "BM25 hits are soft-weighted before the semantic-first merge");
+});
