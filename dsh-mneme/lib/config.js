@@ -708,6 +708,13 @@ export const Config = z.object({
   // 恒 1，sleep 降级退回纯时间分层。
   // 也走 feature_flags（FEATURE_FLAG_BOOLEANS 白名单），面板可启停=线上回滚开关。
   heatEnabled: z.boolean().default(false),
+  // issue #218 / E5 效用考卷：heat 乘进注入排序在真实年龄混合下饿死老约束
+  // （现行量级 ≡ 拟合参数，注入集逐条相同；importance-only 遵从 +12.7pp），
+  // 故注入侧 heat 改为独立 opt-in：默认关 = heatEnabled 开启后热度字段/sleep
+  // 保护/前端投影照常，但注入排序乘数恒 1（与 heat 关闭逐字节一致）；
+  // 显式开启才恢复「层内乘 heat」的旧序。召回侧时钟（touchLastAccess）与
+  // sleep 降级联判不受本键影响——它们不参与注入排序。
+  injectHeatEnabled: z.boolean().default(false),
   // 广义指数形状参数 β（heat = exp(-λ·Δt^β)，issue #218 拍板）：β=1 纯指数。
   // 快慢以 Δt>1 小时为准——β<1 衰减更慢（亚线性长尾）、β>1 更快（超线性）；
   // 0<Δt<1 的首小时内方向相反（Δt^β 随 β 增大而变小）。专家调优项，不进面板白名单。

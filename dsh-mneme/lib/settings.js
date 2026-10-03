@@ -83,6 +83,8 @@ const FEATURE_FLAG_BOOLEANS = [
   "autoDreamFailureBackoff",
   "sleepModeEnabled",
   "heatEnabled",
+  // issue #218 / E5：注入侧 heat 独立开关（默认关，老用户 injectHeatEnabled=true 回滚）。
+  "injectHeatEnabled",
   "hybridInject",
   "selectiveInjectEnabled",
   "searchSemanticDedup",

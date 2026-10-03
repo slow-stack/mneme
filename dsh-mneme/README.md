@@ -405,7 +405,7 @@ dsh web
 | `bm25SearchEnabled` | `true` | BM25 稀疏第三路召回（v0.5.0）：ASCII 词元 + CJK bigram，IDF 加权，散词/ID/代码片段查询不再依赖子串命中 |
 | `adaptiveThresholdEnabled` | `true` | 自适应相似度阈值（v0.5.0）：按查询形态动态截断（前缀 0.5 / 短查询 0.7 / 长查询 0.6 / 头部分差大放宽 0.5），显式传 `threshold` 走旧行为 |
 | `hotMemoryEnabled` | `true` | 会话级短期热记忆总开关（v0.5.0）：关闭后热记忆块不再注入（长期召回不受影响） |
-| `heatEnabled` | `false` | 热度模型总开关（v0.7.0 / v0.7.20 回归，**默认关**——v0.7.12 起用户已习惯无 heat 行为）：开启后提供热度字段 / sleep 热联合降级保护 / 前端热度投影，并在注入排序的优先级层内乘热度（#218；`order=chrono` 分页序与召回融合序不动）；关闭则跳过 heat 计算与热度触达，sleep 降级退回纯时间分层。也走 feature_flags 白名单（面板可启停=回滚开关），lightMode 预设强制关 |
+| `heatEnabled` | `false` | 热度模型总开关（v0.7.0 / v0.7.20 回归，**默认关**——v0.7.12 起用户已习惯无 heat 行为）：开启后提供热度字段 / sleep 热联合降级保护 / 前端热度投影；注入排序乘热度已拆为独立开关 `injectHeatEnabled`（#218 / E5 考卷：heat 乘进注入排序在真实年龄混合下饿死老约束，默认关，显式开启恢复旧序）。关闭则跳过 heat 计算与热度触达，sleep 降级退回纯时间分层。也走 feature_flags 白名单（面板可启停=回滚开关），lightMode 预设强制关 |
 | `heatGlobalBeta` | `1.0` | 广义指数形状参数 β（`H=exp(-λ·Δt^β)`，issue #218 拍板）：β=1 纯指数；以 Δt>1 小时为准，β<1 衰减更慢（亚线性长尾）、β>1 衰减更快（超线性）；0<Δt<1 的首小时内方向相反（Δt^β 随 β 增大而变小） |
 | `heatTypeDecay` | 内置 TYPE_DECAY | per-type 衰减因子 λ；λ=0 的类型免疫（preference/pattern/summary 热度恒 1.0，sleep 永不降级） |
 | `sleepHeatThreshold` | `0.05` | sleep 降级联合判定热度下限：heat<该值 **且** importance<5 才允许降级 |
