@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+## 🧹 工程
+
+- **发布准备脚本在 CRLF 检出上不再假成功（`scripts/release-prep.mjs`）**：该脚本用 `/^(# Changelog\n\n)/` 匹配 CHANGELOG 文件头，而 Windows 检出是 CRLF——正则命中不了，`replace` 退化成空操作，**脚本却照样打印 `✓ … 占位节`**，`git status` 里看不出任何异常（CI 跑在 ubuntu 是 LF，所以只有本机发版会中招，v0.8.13 那次即如此、最后靠人工补的占位节）。规则抽成 `dsh-mneme/scripts/changelog-prep.mjs` 的纯函数：行尾两种都吃、插入内容跟随原文件行尾、带 BOM 也认；匹配不上则如实回报 `header-not-found`，入口**报错退出（exit 1）**而不是假打印成功。配 6 条回归测试（LF / CRLF / BOM / 幂等 / 回报契约 / detectEol）。
+
 ## [0.8.13] - 2026-10-03
 
 ## 🐛 修复
