@@ -229,3 +229,89 @@ test("memory_list filters explicit rows and keeps total consistent under strictS
   assert.deepEqual(out2.items.map((m) => m.title), ["theirs"]);
   assert.equal(out2.total, 1);
 });
+
+// --- entity: / attr: 前缀路的 scope 闸 ----------------------------------------
+// 回归锁：这两条前缀路在 searchMemories 的入口就 return，早于融合池那道 strictScope
+// 过滤，曾经整条绕过硬墙——显式他者 scope 的记忆用 `entity:` / `attr:` 就能原样读出，
+// 而且是满分返回（连 A2 的 ×0.5 都没有）。所以除了「出局」，还要钉住「auto / 存量
+// 他者保留」这条 A2 语义没有跟着塌掉。
+
+/** 把若干记忆挂到同一个实体上。
+ *  属性键必须各不相同：同一 (实体, 键) 有时间轴语义，后写的一条会把前一条作废，
+ *  那样只有最后一条会被链接上（写这个测试时踩过，别改成同一个键）。 */
+function linkToEntity(store, name, memories) {
+  const entity = store.createEntity({ name, type: "person" });
+  memories.forEach((mem, i) => {
+    store.saveAttr({ entity_id: entity.id, attr_key: `attr${i}`, attr_value: `value${i}`, memory_id: mem.id });
+  });
+  return entity;
+}
+
+/** 五条覆盖各种 scope 来源的记忆，供下面两条用。 */
+function saveScopeBattery(store) {
+  return {
+    global: store.save({ type: "project", title: "global", content: "x" }),
+    mine: store.save({ type: "project", title: "mine", content: "x", agent_scope: "me", agent_scope_source: "explicit" }),
+    theirs: store.save({ type: "project", title: "theirs", content: "x", agent_scope: "other", agent_scope_source: "explicit" }),
+    autoForeign: store.save({ type: "project", title: "auto", content: "x", agent_scope: "other", agent_scope_source: "auto" }),
+    legacyForeign: store.save({ type: "project", title: "legacy", content: "x", agent_scope: "other" })
+  };
+}
+
+test("searchMemories entity: prefix honours the strictScope hard filter", async () => {
+  const { store, service } = setup({ scopeEnabled: true, strictScope: true, entitySearchEnabled: true });
+  const rows = saveScopeBattery(store);
+  linkToEntity(store, "阿尔托", Object.values(rows));
+
+  const asMe = await service.searchMemories("entity:阿尔托", { scope: { agent_scope: "me", workspace_scope: null } });
+  assert.deepEqual(asMe.map((m) => m.title).sort(), ["auto", "global", "legacy", "mine"], "显式他者出局，auto / 存量他者按 A2 保留");
+
+  // 原主人自己查：显式那条必须还在（否则上面是「谁都搜不到」的假绿）。
+  const asOther = await service.searchMemories("entity:阿尔托", { scope: { agent_scope: "other", workspace_scope: null } });
+  assert.ok(asOther.some((m) => m.title === "theirs"), "命中当前 agent 的显式行必须可见");
+});
+
+test("searchMemories attr: prefix honours the strictScope hard filter", async () => {
+  const { store, service } = setup({ scopeEnabled: true, strictScope: true, entitySearchEnabled: true });
+  const rows = saveScopeBattery(store);
+  // 每条挂到各自实体上、共用一个属性键：这样 attr:key=value 能一次覆盖全部五条
+  // （同实体同键会被时间轴作废，见 linkToEntity 的注释）。
+  Object.values(rows).forEach((mem, i) => {
+    const entity = store.createEntity({ name: `entity-${i}`, type: "person" });
+    store.saveAttr({ entity_id: entity.id, attr_key: "国籍", attr_value: "芬兰", memory_id: mem.id });
+  });
+
+  const asMe = await service.searchMemories("attr:国籍=芬兰", { scope: { agent_scope: "me", workspace_scope: null } });
+  assert.deepEqual(asMe.map((m) => m.title).sort(), ["auto", "global", "legacy", "mine"], "显式他者出局，auto / 存量他者按 A2 保留");
+
+  const asOther = await service.searchMemories("attr:国籍=芬兰", { scope: { agent_scope: "other", workspace_scope: null } });
+  assert.ok(asOther.some((m) => m.title === "theirs"), "命中当前 agent 的显式行必须可见");
+});
+
+test("entity: / attr: 的 scope 闸在触达之前：出局的行不被回温，也不 bump 关联边", async () => {
+  // 闸门若只加在「返回前」，出局的行仍会先被 touchRecalled 摸一遍——一次越权检索
+  // 照样给它刷回温时钟、并在被动确认开启时 bump 它的关联边。所以这条钉的是次序。
+  const { store, service } = setup({
+    scopeEnabled: true, strictScope: true, entitySearchEnabled: true,
+    heatEnabled: true, graphWeightEnabled: true, graphPassiveConfirm: true, graphWeightDelta: 0.1
+  });
+  const theirs = store.save({ type: "project", title: "theirs", content: "x", agent_scope: "other", agent_scope_source: "explicit" });
+  const global = store.save({ type: "project", title: "global", content: "x" });
+  linkToEntity(store, "阿尔托", [theirs, global]);
+
+  const a = store.createEntity({ name: "A", type: "technology" });
+  const b = store.createEntity({ name: "B", type: "technology" });
+  for (const mem of [theirs, global]) {
+    store.saveRelation({ from_entity: a.id, to_entity: b.id, relation_type: "uses", memory_id: mem.id, source: "llm" });
+  }
+
+  const rows = await service.searchMemories("entity:阿尔托", { scope: { agent_scope: "me", workspace_scope: null } });
+  assert.deepEqual(rows.map((m) => m.title), ["global"], "只剩可见那条");
+
+  // 正向对照：可见那条确实被触达了——否则下面两个「没被触达」可能是假绿。
+  assert.ok(store.getRelationsByMemory(global.id)[0].weight > 0.4, "可见行照常 bump 关联边");
+  assert.ok(store.getById(global.id).last_accessed_at, "可见行照常回温");
+
+  assert.equal(store.getRelationsByMemory(theirs.id)[0].weight, 0.4, "出局行不该 bump 关联边");
+  assert.equal(store.getById(theirs.id).last_accessed_at ?? null, null, "出局行不该被回温");
+});

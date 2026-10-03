@@ -360,15 +360,32 @@ export function createService({ store, mirror, config, onWrite, logger, document
   }
 
   /**
+   * v0.8.0 A3（issue #17）strictScope 硬过滤的**唯一实现**。三处共用：融合池、
+   * `entity:` 与 `attr:` 两条前缀路。
+   *
+   * 抽成单一实现是为了让「过滤点写在哪」不再漂移——那两条前缀路在 searchMemories
+   * 的入口就 return（见那里的路由块），早于融合池那道过滤，曾经整条绕过硬墙；三处
+   * 各写一份判断，只会让下一个新增通路再漏一次（同 #349 把阈值口径收进
+   * activeStoreSize 的理由：两处各写一份过滤条件，漂移只在某条路径上显形）。
+   *
+   * strictScope 关（默认）或 scope 解析不到时原样返回：行为与改动前逐字节一致。
+   */
+  function gateByScope(rows, scope) {
+    if (config?.strictScope !== true || !scope) return rows;
+    return rows.filter((m) => isVisibleInScope(m, scope));
+  }
+
+  /**
    * Search for memories attached to a named entity (v0.3.0 Phase 3).
    * 合并优先级：entity_attrs.memory_id 精确关联 = 1.0 > 关键词提及 = 0.7；
    * attr 命中不覆盖，keyword 只补充召回，最后按 _score 降序取 topK。
    * @param {string} entityName
    * @param {object} [options]
    * @param {number} [options.topK=20]
+   * @param {object|null} [options.scope] 当前会话 scope，供 strictScope 闸门使用
    * @returns {any[]}
    */
-  function searchByEntity(entityName, { topK = 20 } = {}) {
+  function searchByEntity(entityName, { topK = 20, scope = null } = {}) {
     const entity = store.findEntityByName(entityName);
     if (!entity) return [];
     const attrs = store.getCurrentAttrs(entity.id);
@@ -381,8 +398,12 @@ export function createService({ store, mirror, config, onWrite, logger, document
       if (!merged.has(mem.id)) merged.set(mem.id, { ...mem, _source: "keyword", _score: 0.7 });
     }
     const hits = Array.from(merged.values()).sort((a, b) => b._score - a._score).slice(0, topK);
-    touchRecalled(hits);
-    return hits;
+    // 闸门必须在 touchRecalled **之前**：放在后面的话，一次越权检索照样会给出局的
+    // 行刷回温时钟，并在被动确认开启时 bump 它们的关联边——命中反馈落到了调用方
+    // 本不该看见的行上。
+    const visible = gateByScope(hits, scope);
+    touchRecalled(visible);
+    return visible;
   }
 
   /**
@@ -392,17 +413,20 @@ export function createService({ store, mirror, config, onWrite, logger, document
    * @param {string | undefined} value
    * @param {object} [options]
    * @param {number} [options.topK=20]
+   * @param {object|null} [options.scope] 当前会话 scope，供 strictScope 闸门使用
    * @returns {any[]}
    */
-  function searchByAttr(key, value, { topK = 20 } = {}) {
+  function searchByAttr(key, value, { topK = 20, scope = null } = {}) {
     if (!key) return [];
     // value 可能为 undefined（attr:key 无 = 值）：归一为空串后交给
     // store.findMemoriesByAttr —— 空 value 契约 = 返回该 attr_key 的全部
     // 当前有效记忆（v0.3.0，store.js 已实现）。
     const rows = store.findMemoriesByAttr(key, value ?? "");
     const hits = rows.slice(0, topK);
-    touchRecalled(hits);
-    return hits;
+    // 同 searchByEntity：闸门在 touchRecalled 之前（理由见那里）。
+    const visible = gateByScope(hits, scope);
+    touchRecalled(visible);
+    return visible;
   }
 
   /**
@@ -896,9 +920,7 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // （区别于 A2 的降权保留可见）；未标注行与命中行保留。strict 与 A2 加权
     // 叠加：过滤后剩下的命中行仍吃加成。scope 未传（flag 关）或完全解析不到
     // 时跳过——identity 为空的对象（{null,null}）按 fail-closed 过滤。
-    if (config.strictScope === true && scope) {
-      merged = merged.filter((m) => isVisibleInScope(m, scope));
-    }
+    merged = gateByScope(merged, scope);
     // v0.8.0 A2：occurred_at 时间过滤——在融合池上先滤再 dedup/slice，rerank
     // 只看窗内候选，topK 槽位不被窗外行占用。
     const occurredBounds = updatedAtBounds(occurredFrom, occurredTo);
