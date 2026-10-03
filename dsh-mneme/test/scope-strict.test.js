@@ -315,3 +315,29 @@ test("entity: / attr: 的 scope 闸在触达之前：出局的行不被回温，
   assert.equal(store.getRelationsByMemory(theirs.id)[0].weight, 0.4, "出局行不该 bump 关联边");
   assert.equal(store.getById(theirs.id).last_accessed_at ?? null, null, "出局行不该被回温");
 });
+
+test("scope 闸先于 topK 截断：出局的候选不占名额（topK=1 仍有可见结果）", async () => {
+  // 回归锁（评审发现）：先 slice 再 filter 的话，排在前面那条被闸掉的候选会占住唯一的
+  // 槽位，明明还有可见匹配却返回空数组。用 topK=1 把次序钉死——排序不动，只是闸门要插
+  // 在截断之前。
+  const me = { agent_scope: "me", workspace_scope: null };
+
+  const { store, service } = setup({ scopeEnabled: true, strictScope: true, entitySearchEnabled: true });
+  const theirsE = store.save({ type: "project", title: "theirs", content: "x", agent_scope: "other", agent_scope_source: "explicit" });
+  const mineE = store.save({ type: "project", title: "mine", content: "x", agent_scope: "me", agent_scope_source: "explicit" });
+  // 先挂 theirs、后挂 mine：前者排在候选前面，正好充当那个「占位」的候选。
+  linkToEntity(store, "阿尔托", [theirsE, mineE]);
+  const viaEntity = await service.searchMemories("entity:阿尔托", { topK: 1, scope: me });
+  assert.deepEqual(viaEntity.map((m) => m.title), ["mine"], "entity: 在 topK=1 下不该被出局候选挤空");
+
+  // attr: 同理——两条挂同一个属性键、各挂自己的实体，theirs 先写入。
+  const { store: s2, service: svc2 } = setup({ scopeEnabled: true, strictScope: true, entitySearchEnabled: true });
+  const theirsA = s2.save({ type: "project", title: "theirs", content: "x", agent_scope: "other", agent_scope_source: "explicit" });
+  const mineA = s2.save({ type: "project", title: "mine", content: "x", agent_scope: "me", agent_scope_source: "explicit" });
+  for (const [i, mem] of [theirsA, mineA].entries()) {
+    const entity = s2.createEntity({ name: `e${i}`, type: "person" });
+    s2.saveAttr({ entity_id: entity.id, attr_key: "国籍", attr_value: "芬兰", memory_id: mem.id });
+  }
+  const viaAttr = await svc2.searchMemories("attr:国籍=芬兰", { topK: 1, scope: me });
+  assert.deepEqual(viaAttr.map((m) => m.title), ["mine"], "attr: 在 topK=1 下不该被出局候选挤空");
+});

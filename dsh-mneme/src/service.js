@@ -391,17 +391,23 @@ export function createService({ store, mirror, config, onWrite, logger, document
     const attrs = store.getCurrentAttrs(entity.id);
     const memoryIds = [...new Set(attrs.map((a) => a.memory_id).filter(Boolean))];
     const attrHits = memoryIds.map((id) => store.getById(id)).filter(Boolean);
-    const keywordHits = store.search(entityName, { limit: topK });
+    // 关键词这一路的窗口取两倍：闸门在截断之前生效，出局的候选会让位，窗口按最终条数
+    // 取就会不够（与融合路给向量检索取 lim * 2 同一个理由）。没有候选被闸掉时结果与
+    // 取 topK 逐字节一致——多出来的是排在后面的低分候选，进不了 topK。
+    const keywordHits = store.search(entityName, { limit: topK * 2 });
     const merged = new Map();
     for (const mem of attrHits) merged.set(mem.id, { ...mem, _source: "entity_attr", _score: 1.0 });
     for (const mem of keywordHits) {
       if (!merged.has(mem.id)) merged.set(mem.id, { ...mem, _source: "keyword", _score: 0.7 });
     }
-    const hits = Array.from(merged.values()).sort((a, b) => b._score - a._score).slice(0, topK);
-    // 闸门必须在 touchRecalled **之前**：放在后面的话，一次越权检索照样会给出局的
+    // 先过闸、再截 topK：反过来做的话，出局的候选会占掉名额、可见的补不进来——topK=1
+    // 而首位出局时直接返回空数组。排序本身不动，只是把闸门插在截断之前，与融合池那条
+    // 路同序（那边也是先 filter 后 slice）。
+    const ranked = Array.from(merged.values()).sort((a, b) => b._score - a._score);
+    const visible = gateByScope(ranked, scope).slice(0, topK);
+    // 闸门还必须在 touchRecalled **之前**：放在后面的话，一次越权检索照样会给出局的
     // 行刷回温时钟，并在被动确认开启时 bump 它们的关联边——命中反馈落到了调用方
     // 本不该看见的行上。
-    const visible = gateByScope(hits, scope);
     touchRecalled(visible);
     return visible;
   }
@@ -422,9 +428,8 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // store.findMemoriesByAttr —— 空 value 契约 = 返回该 attr_key 的全部
     // 当前有效记忆（v0.3.0，store.js 已实现）。
     const rows = store.findMemoriesByAttr(key, value ?? "");
-    const hits = rows.slice(0, topK);
-    // 同 searchByEntity：闸门在 touchRecalled 之前（理由见那里）。
-    const visible = gateByScope(hits, scope);
+    // 同 searchByEntity：先过闸再截 topK，且闸门在 touchRecalled 之前。
+    const visible = gateByScope(rows, scope).slice(0, topK);
     touchRecalled(visible);
     return visible;
   }
