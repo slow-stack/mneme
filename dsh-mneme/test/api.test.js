@@ -674,11 +674,13 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 块2 新增 graphWeightEnabled/graphWeightDelta、块3 新增 graphInjectHint/graphInjectBudget、
   // 块4 新增 graphPassiveConfirm、
   // issue #339 新增 dreamMergeGuard、
+  // issue #218/E5 新增 injectHeatEnabled、
   // issue #164 A2 新增 sensitiveScanEnabled（顶层扁平键，走 configFlagValue 默认分支））
-  assert.equal(Object.keys(data.effective).length, 59 + 3 + 2 + 1 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 2 + 1 + 3 + 2 + 2 + 1 + 1 + 1);
+  assert.equal(Object.keys(data.effective).length, 59 + 3 + 2 + 1 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 2 + 1 + 3 + 2 + 2 + 1 + 1 + 1 + 1);
   assert.equal(data.effective.dreamSkipInvalid, true);
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, false);
+  assert.equal(data.effective.injectHeatEnabled, false);
   assert.equal(data.effective.dreamMinIntervalMinutes, 0);
   assert.equal(data.effective.autoDreamFailureBackoff, false);
   assert.equal(data.effective.dreamMaxTokens, 131072);

@@ -1530,7 +1530,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // 合序都不动）。heat 关闭时不建表、不算 heat，权重恒 1，排序与改动前一致。
     // selectiveInject 相似度重排（下方）开启且向量可用时相似度优先——heat 只
     // 生效于规则路排序与语义路回填序。
-    const heatMap = config?.heatEnabled === true
+    // issue #218 / E5 效用考卷：heat 乘进注入排序在真实年龄混合下饿死老约束
+    // （现行量级 ≡ 拟合参数，importance-only 遵从 +12.7pp），故注入侧 heat 拆出
+    // 独立开关 injectHeatEnabled（默认关）：不开时权重恒 1，排序与 heat 关闭
+    // 逐字节一致；召回侧时钟（touchLastAccess）与 sleep 降级联判不受影响。
+    const heatMap = config?.heatEnabled === true && config?.injectHeatEnabled === true
       ? new Map(filtered.map((m) => [m.id, computeHeat(m, Date.now(), config)]))
       : null;
     const heatOf = (m) => (heatMap ? heatMap.get(m.id) ?? 1 : 1);
