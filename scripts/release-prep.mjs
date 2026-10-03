@@ -6,6 +6,7 @@
 
 import fs from "node:fs";
 import { applyTestCount } from "../dsh-mneme/scripts/test-count-sync.mjs";
+import { insertReleaseSection } from "../dsh-mneme/scripts/changelog-prep.mjs";
 
 const version = (process.argv[2] || "").replace(/^v/, "");
 const testCount = process.argv[3];
@@ -48,16 +49,23 @@ if (testCount && /^\d+$/.test(testCount)) {
 }
 
 // ── 3. CHANGELOG 顶部空节（满足 release.yml verify 的 ^## [V] 检查）──
+// 规则收在 dsh-mneme/scripts/changelog-prep.mjs（可测、行尾两种都吃）。原先这段用
+// /^(# Changelog\n\n)/ 匹配文件头，CRLF 检出上命中不了 → replace 退化成 no-op 却照样
+// 打印 ✓，git status 里看不出任何异常——发版时最怕这种假成功。现在匹配不上直接报错
+// 退出，绝不假装写成功。
 {
   const t = fs.readFileSync(CHANGELOG, "utf8");
-  if (!t.includes(`## [${version}]`)) {
-    // 按东八区取日期（与历史 CHANGELOG 日期惯例一致）
-    const date = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-    const head = `## [${version}] - ${date}\n\n## 🐛 修复\n\n- （待填）\n\n`;
-    fs.writeFileSync(CHANGELOG, t.replace(/^(# Changelog\n\n)/, "$1" + head));
+  // 按东八区取日期（与历史 CHANGELOG 日期惯例一致）
+  const date = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+  const r = insertReleaseSection(t, version, date);
+  if (r.ok) {
+    fs.writeFileSync(CHANGELOG, r.text);
     console.log(`✓ ${CHANGELOG} 占位节`);
-  } else {
+  } else if (r.reason === "already-present") {
     console.log(`- ${CHANGELOG} 已含 ${version}，跳过`);
+  } else {
+    console.error(`✗ ${CHANGELOG} 顶部没匹配到 "# Changelog" 标题，未插入占位节（reason=${r.reason}）——请人工检查文件形状`);
+    process.exit(1);
   }
 }
 
