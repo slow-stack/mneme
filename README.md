@@ -10,11 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3E63DD?style=flat-square" alt="license"></a>
   <a href="https://github.com/slow-stack/mneme/actions"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI" alt="CI"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22%2B-3E63DD?style=flat-square&logo=nodedotjs&logoColor=white" alt="node"></a>
-<<<<<<< HEAD
   <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-1552%20passed-3E63DD?style=flat-square" alt="tests"></a>
-=======
-  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-1552%20passed-3E63DD?style=flat-square" alt="tests"></a>
->>>>>>> feat/serve-daemon
   <a href="https://codecov.io/gh/slow-stack/mneme"><img src="https://img.shields.io/codecov/c/github/slow-stack/mneme/main?style=flat-square" alt="coverage"></a>
   <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
@@ -207,11 +203,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 
 ```bash
 cd dsh-mneme && npm install
-<<<<<<< HEAD
 npm test        # 1552 个测试
-=======
-npm test        # 1552 个测试
->>>>>>> feat/serve-daemon
 npm run stress  # 三轴线压测
 npm run sync    # src → lib 同步
 ```
@@ -414,11 +406,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 
 ```bash
 cd dsh-mneme && npm install
-<<<<<<< HEAD
 npm test        # 1552 tests
-=======
-npm test        # 1552 tests
->>>>>>> feat/serve-daemon
 npm run stress  # three-axis stress test
 npm run sync    # src → lib sync
 ```
