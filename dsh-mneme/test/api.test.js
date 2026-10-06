@@ -675,8 +675,11 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 块4 新增 graphPassiveConfirm、
   // issue #339 新增 dreamMergeGuard、
   // issue #218/E5 新增 injectHeatEnabled、
-  // issue #164 A2 新增 sensitiveScanEnabled（顶层扁平键，走 configFlagValue 默认分支））
-  assert.equal(Object.keys(data.effective).length, 59 + 3 + 2 + 1 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 2 + 1 + 3 + 2 + 2 + 1 + 1 + 1 + 1);
+  // issue #164 A2 新增 sensitiveScanEnabled（顶层扁平键，走 configFlagValue 默认分支）、
+  // issue #380 新增 preInjectGate.enabled/preInjectGate.enforce（点号键，+2））
+  assert.equal(Object.keys(data.effective).length, 59 + 3 + 2 + 1 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 2 + 1 + 3 + 2 + 2 + 1 + 1 + 1 + 1 + 2);
+  assert.equal(data.effective["preInjectGate.enabled"], false);
+  assert.equal(data.effective["preInjectGate.enforce"], false);
   assert.equal(data.effective.dreamSkipInvalid, true);
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, true);
@@ -756,6 +759,9 @@ test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys"
     // 这里往返一次就是钉这件事的（计数锁只钉数量，钉不住值）。
     "writeAdmission.enabled": true,
     "writeAdmission.enforce": true,
+    // #380：同上一条的防线——新点号键的 NESTED_FLAG_PATHS 往返锁。
+    "preInjectGate.enabled": true,
+    "preInjectGate.enforce": true,
     // #164 A2：顶层扁平键（不是对象子字段），与上面两个点号键走同一条往返；
     // 它的默认值断言在计数锁那一条里，这里钉的是「PUT 存进去、effective 读得回」。
     sensitiveScanEnabled: true,
@@ -773,17 +779,24 @@ test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys"
     "llmAudit.enabled": false,
     "writeAdmission.enabled": true,
     "writeAdmission.enforce": true,
+    "preInjectGate.enabled": true,
+    "preInjectGate.enforce": true,
     sensitiveScanEnabled: true,
     embedProvider: "local",
     ollamaBaseUrl: "http://127.0.0.1:11434",
     dreamProvider: "siliconflow",
     dreamModel: ""
   }, "nested keys persist flat, free strings are trimmed");
+  // #380 新点号键同样平铺持久化
+  assert.equal(data.overrides["preInjectGate.enabled"], true);
+  assert.equal(data.overrides["preInjectGate.enforce"], true);
   // 嵌套键的覆盖值压过 bundle 配置的对象子字段
   assert.equal(data.effective["memoryQualityFilter.enabled"], false);
   assert.equal(data.effective["llmAudit.enabled"], false);
   assert.equal(data.effective["writeAdmission.enabled"], true);
   assert.equal(data.effective["writeAdmission.enforce"], true);
+  assert.equal(data.effective["preInjectGate.enabled"], true, "#380 dotted key round-trips");
+  assert.equal(data.effective["preInjectGate.enforce"], true, "#380 dotted key round-trips");
   assert.equal(data.effective.sensitiveScanEnabled, true);
   assert.equal(data.effective.embedProvider, "local");
   assert.equal(data.effective.ollamaBaseUrl, "http://127.0.0.1:11434");

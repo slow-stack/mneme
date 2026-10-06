@@ -142,7 +142,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     "memoryQualityFilter.enabled": ["memoryQualityFilter", "enabled"],
     "llmAudit.enabled": ["llmAudit", "enabled"],
     "writeAdmission.enabled": ["writeAdmission", "enabled"],
-    "writeAdmission.enforce": ["writeAdmission", "enforce"]
+    "writeAdmission.enforce": ["writeAdmission", "enforce"],
+    // #380：注入前判定与 writeAdmission 同构的点号键。
+    "preInjectGate.enabled": ["preInjectGate", "enabled"],
+    "preInjectGate.enforce": ["preInjectGate", "enforce"]
     // sensitiveScanEnabled（#164 A2）是顶层扁平键，不需要进这张表——走 configFlagValue
     // 的默认分支即可。
   };

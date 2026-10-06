@@ -85,6 +85,8 @@
 | `injectRotationTurns` | `0` | 跨轮轮换：最近 N 轮注入过的不再优先（#205） | opt-in；会话边界自动重置 |
 | `injectContentMaxChars` | `300` | 单条正文截断上限（60–4000，#164①） | 截断带「上限/原长/全文指引」提示，不静默 |
 | `injectUncertaintyAdaptive` | `false` | 确定性强的话题收缩注入条数（减半、下限 1，#239 第 5 项） | 只做单向收缩，绝不越过 `maxInjectedItems` |
+| `preInjectGate.enabled` **light** | `false` | 注入前判定（#380）：候选出池后异步预取一次池级 LLM 判定，标出携带**意见/立场**的条目（E12 协议，先判定后处置、不给模型看标记） | 关 = 零 LLM 调用、零行为变化；开 = 每轮注入路径 +1 次 LLM 调用，判定结果落 `llm_audit_logs`（`trigger_source=preInjectGate`），enforce 关时被标记者照常注入（观察档） |
+| `preInjectGate.enforce` **light** | `false` | 被判定为意见/立场的候选**不注入**（真过滤） | 依赖 `preInjectGate.enabled`；判定缓存按查询缓存、下一轮生效，首轮/判定失败/解析失败一律全量放行——防线失效绝不丢注入 |
 | `injectGuidanceEnabled` **light** | `true` | 工具描述 + order 150 系统段讲「何时查/何时写」（#249） | `autoInject` 子开关；lightMode 强制关 |
 | `continuityRescueEnabled` **light** | `false` | 压缩边缘双落点：连续性提案落库 + 追加注入（#249 N3） | opt-in（新注入表面）；`autoInject` 子开关；订阅宿主压缩事件，无该时机则降级为持久规则 |
 | `pinnedInjectBudget` | `0` | 约束/偏好 pin 池独立预算（0–5，#249 B1） | 0 = 关；pin 不占 `maxInjectedItems` 名额 |
@@ -245,7 +247,8 @@
 `entityExtractionEnabled` · `autoDream` · `sleepModeEnabled` · `rerankEnabled` ·
 `autoReindexOnBoot` · `hybridInject` · `injectGuidanceEnabled` · `searchSemanticDedup` ·
 `selectiveInjectEnabled` · `bm25SearchEnabled` · `entityRecallEnabled` ·
-`dreamNarrativeEnabled` · `documentMemoryEnabled` · `heatEnabled` · `continuityRescueEnabled`
+`dreamNarrativeEnabled` · `documentMemoryEnabled` · `heatEnabled` · `continuityRescueEnabled` ·
+`preInjectGate.enabled` · `preInjectGate.enforce`
 
 预设只是默认值而非强制：用户显式写进 feature_flags 的值在装配顺序上后展开、仍然生效
 （「用户开关 > 轻量预设 > bundle 配置」）。

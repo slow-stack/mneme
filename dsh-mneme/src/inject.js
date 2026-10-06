@@ -4,6 +4,17 @@ import { STR, langOf } from "./lang.js";
 import { MEMORY_GUIDE_SECTION } from "./guide.js";
 import { adaptiveInjectBudget } from "./search/adaptive.js";
 import { injectChildEnabled } from "./config.js";
+import { createPreinjectGate } from "./preinject-gate.js";
+
+// Issue #380：preInjectGate 的 LLM 适配器注入口。promptCtx（systemPrompt 注入点）
+// 没有 llm/agentDefaultModel 句柄，适配器必须在 index.js 的 apply 里装配（那里
+// 才拿得到 ctx.llm），经此模块级 setter 转交——与 getInjectionSnapshot 同款模块级
+// 单例形态（注入器全局唯一）。未注入时 callLLM 为 undefined，判定器预取直接空转
+// （warn 一次，让「开了闸没接上模型」可见——#108 的教训）。
+let preinjectCallLLM = null;
+export function setPreinjectCallLLM(fn) {
+  preinjectCallLLM = fn;
+}
 
 // Issue #179：注入预览的数据底座。systemPrompt 渲染是同步回调，面板只能事后
 // 拉取，所以在这里旁路缓存「最近一帧组装」——快照就是本次渲染用过的同一份
@@ -127,6 +138,18 @@ export function createInjector(ctx, service, settings, config) {
   const language = langOf(config);
   const baseMaxItems = config.maxInjectedItems ?? 5;
   const threshold = config.importanceThreshold ?? 3;
+  // Issue #380：注入前判定器。仅 preInjectGate.enabled 开启时创建（观察档就开
+  // 判定——审计分布本身就是 enabled 档的产出）；关时是三个空操作的哑对象，默认
+  // 路径零行为变化。callLLM 适配器由 index.js 经 setPreinjectCallLLM 注入
+  // （promptCtx 没有 llm 句柄，与 entity extractor 的装配同款）。
+  const preinjectGate = config?.preInjectGate?.enabled === true
+    ? createPreinjectGate({
+        // 闭包读模块级变量（不取值）：适配器在 index.js 的 apply 里稍后装配，
+        // createInjector 先跑——此处立即取值会永远捕获 null。
+        get callLLM() { return preinjectCallLLM; },
+        service, config, logger: ctx.logger
+      })
+    : { prefetch() {}, apply(_q, c) { return c; }, dispose() {} };
   // Issue #205：注入位跨轮轮换。rotationTurns = 最近 N 个「不同用户查询」轮次
   // 注入过的记忆本轮不再优先（0 = 关闭，保持既有行为）。历史按会话维护——
   // 新会话从零开始；同一查询的多次渲染（工具调用轮）视为同一轮，不推进窗口。
@@ -391,7 +414,11 @@ export function createInjector(ctx, service, settings, config) {
           : baseMaxItems;
         // #249 第一批：pin 池统计走可选出参，不动 injectCandidates 的数组契约。
         const pinnedStats = {};
-        const candidates = service.injectCandidates({ query, queryVector, maxItems, threshold, scope, rotate, rotateWindow: rotationTurns, pinnedStats });
+        let candidates = service.injectCandidates({ query, queryVector, maxItems, threshold, scope, rotate, rotateWindow: rotationTurns, pinnedStats });
+        // Issue #380：注入前判定。enforce 档在渲染前剔除被标记者（判定缓存来自
+        // 上一轮的异步预取，本轮同步消费）；判定只看注入候选，pin 常驻段同受闸
+        // （意见型约束正是 E12 的目标形态）。prefetch 在渲染尾部为下一轮挂判定。
+        candidates = preinjectGate.apply(query, candidates);
         // #249：pin 条目不进轮换历史——它们每轮固定前置，记进去只会占满轮换
         // 窗口、挤掉情景候选的新鲜度（验收：pin 不参与跨轮轮换）。
         recordInjection(sessionId, query, pinnedStats.shown > 0 ? candidates.slice(pinnedStats.shown) : candidates);
@@ -429,6 +456,12 @@ export function createInjector(ctx, service, settings, config) {
           })),
           totalChars: finalBody.length
         };
+        // Issue #380：为下一轮挂池级判定（fire-and-forget；同步渲染已结束）。
+        // 只对「本次实际拿到的候选」判——判定面就是注入面。同查询的重复渲染
+        // （工具调用轮）在 gate 内部按 query 去重，不重复烧调用。
+        if (config?.preInjectGate?.enabled === true) {
+          preinjectGate.prefetch(query, candidates);
+        }
         return finalBody;
       }
     }),
@@ -443,6 +476,7 @@ export function createInjector(ctx, service, settings, config) {
     queryVectorCache.clear();
     rotationHistory.clear();
     injectionSnapshot = null; // 注入器卸载即失效：快照不得跨生命周期存留
+    preinjectGate.dispose(); // #380：判定缓存同样不得跨生命周期存留
     for (const dispose of disposers) {
       if (typeof dispose === "function") dispose();
     }

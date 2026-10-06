@@ -8,7 +8,7 @@ import { createWriteAdmission } from "./write-admission.js";
 // #164 A2：写入边界的密钥 / PII 判据，注入给上面的写入准入。
 import { createSensitiveScan } from "./sensitive-scan.js";
 import { createTools } from "./tools.js";
-import { createInjector } from "./inject.js";
+import { createInjector, setPreinjectCallLLM } from "./inject.js";
 import { createContinuityRescue } from "./continuity.js";
 import { createSummarizer } from "./summarize.js";
 import { createDreamScheduler } from "./dream.js";
@@ -439,6 +439,27 @@ export const apply = (ctx, config) => {
   // #118: never let a pending embedder init retry fire after unload and touch
   // a torn-down context.
   disposers.push(() => semantic.dispose());   // #118 重试计时器 + boot 回填计时器(搬入 semantic.js 后由它自持)
+
+  // Issue #380：preInjectGate 的 LLM 适配器。promptCtx（systemPrompt 注入点）没有
+  // llm 句柄，注入器拿不到——这里在 apply 作用域装配（entity extractor 同款），
+  // 经 setPreinjectCallLLM 转交。仅 preInjectGate.enabled 开启且 ctx.llm 存在时
+  // 注入；开闸但没接上模型时 warn（#108 教训：静默不可见比失败更糟）。适配器合同
+  // callLLM(messages, options) => Promise<string|undefined> 与 entity adapter 一致：
+  // 路由解析（agentDefaultModel 回退）与审计记账在适配器内完成，判定器只认文本。
+  if (cfg.preInjectGate?.enabled === true) {
+    if (!ctx.llm) {
+      ctx.logger?.warn?.("[dsh-mneme] preInjectGate.enabled=true but ctx.llm unavailable — pre-injection gate will not judge (inject proceeds unfiltered)");
+    } else {
+      const streamPreinjectText = createEntityStreamAdapter({
+        llm: ctx.llm,
+        agentDefaultModel: ctx.agentDefaultModel,
+        logger: ctx.logger,
+        service,
+        config: cfg
+      });
+      setPreinjectCallLLM(streamPreinjectText);
+    }
+  }
 
   ctx.inject(["systemPrompt"], (promptCtx) => {
     if (cfg.autoInject) disposers.push(createInjector(promptCtx, service, settings, cfg));

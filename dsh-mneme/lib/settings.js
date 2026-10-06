@@ -127,6 +127,11 @@ const FEATURE_FLAG_BOOLEANS = [
   // writeAdmission 对象。
   "writeAdmission.enabled",
   "writeAdmission.enforce",
+  // Issue #380：注入前判定（意见/立场记忆先判定后处置）。两个键分层与 #254 同构
+  // ——enabled 跑判定（观察档，只审计）、enforce 真过滤；都默认关。点号键平铺
+  // 存、合并时展开回 preInjectGate 对象。
+  "preInjectGate.enabled",
+  "preInjectGate.enforce",
   // Issue #164 A2：写入边界的密钥 / PII 判据（src/sensitive-scan.js）。与上面两个
   // 键分层——本键决定「这类判据参不参与」（默认关），命中之后是仅告警还是真拦仍由
   // writeAdmission.enforce 决定（#164 口径：默认仅告警、拦截 opt-in）。

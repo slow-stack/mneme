@@ -653,6 +653,25 @@ export const Config = z.object({
     enforce: z.boolean().default(false)
   }).default({}),
 
+  // --- #380: pre-injection gate (preInjectGate) -------------------------------
+  // 注入前判定：意见/立场记忆先判定后处置（E12 D1 裁决落地，opt-in 默认关）。
+  // 两级语义与上面的 writeAdmission 同构，落点在注入面而非写入面：
+  //   enabled — 每轮注入候选出池后异步预取一次池级 LLM 判定（E12 口径：1 次调用
+  //     判整池），标出携带意见/立场的条目。enforce 关时被标记者照常注入（仅审计
+  //     ——先在真实负载里看意见占比与误杀面，再决定开不开拦截）。
+  //   enforce — 被判定为意见/立场的候选不注入（真过滤）。E12 实测：过滤是唯一过
+  //     预注册判据的处置（D1 −24.4pp；D2 标记 −6.8pp 且与 D1 差 +17.6pp，给模型
+  //     看标记的线已被 E2/E3 关闭，本闸不做标记）。
+  // 同步约束：注入渲染必须保持同步（systemPrompt contexts 无异步 text），判定
+  // 结果按查询缓存、下一轮生效；首轮/判定失败/解析失败一律全量放行——防线失效
+  // 绝不丢注入功能。判定不可用 ≠ 拦截一切，E1 已证个性化同灭无效。
+  // 也走 feature_flags（点号键平铺），面板可启停；lightMode 默认关（额外 LLM
+  // 调用 + 延迟一轮生效，轻量档不默认背）。
+  preInjectGate: z.object({
+    enabled: z.boolean().default(false),
+    enforce: z.boolean().default(false)
+  }).default({}),
+
   // --- #164 A2: secret / PII scan at the write boundary ----------------------
   // 写入边界的密钥 / PII 判据（src/sensitive-scan.js）自身的闸。与 writeAdmission
   // 的 enabled 分开是有意的：那一个管 #254 第 1 级的空白 / 噪声判据，本键管 A2 这
@@ -796,7 +815,12 @@ const LIGHT_MODE_OFF = [
   // 轻量档（小模型 / 小上下文）最不该再多一份注入物。这是预设给的默认值、不是强制：
   // 用户显式勾选仍然赢（合并顺序「用户开关 > 轻量预设 > bundle 配置」，同
   // injectGuidanceEnabled）。
-  "continuityRescueEnabled"
+  "continuityRescueEnabled",
+  // #380：注入前判定在轻量档默认关——每轮多一次池级 LLM 调用且延迟一轮生效，
+  // 轻量档（小模型 / 小上下文 / 成本敏感）不默认背这份成本。预设默认值非强制，
+  // 用户显式勾选仍然赢（合并顺序同上）。
+  "preInjectGate.enabled",
+  "preInjectGate.enforce"
 ];
 
 /**
