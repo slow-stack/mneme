@@ -1307,10 +1307,11 @@ test("issue#258: dreamSummaryMaxInputs caps summary inputs to the newest N (0 = 
   store.close();
 });
 
-// --- issue #339 / E8 考卷：merge 护栏（dreamMergeGuard，opt-in）---------------
+// --- issue #339 / E8 考卷：merge 护栏（dreamMergeGuard，默认开）----------------
 // E8 实测巩固损耗里 10/26 条被丢约束已归位 guarded 类型仍被 merge 吃掉——
-// archive 护栏只挡 archive 不挡 merge。开启后被合并对象命中 ARCHIVE_GUARDED_TYPES
-// 的 merge 决策走与 archive 护栏同款通道：skipInvalid 时 skipped、严格时整单拒绝。
+// archive 护栏只挡 archive 不挡 merge。默认开（config.js）；被合并对象命中
+// ARCHIVE_GUARDED_TYPES 的 merge 决策走与 archive 护栏同款通道：skipInvalid
+// 时 skipped、严格时整单拒绝。单元层直接传 options，不经 config。
 
 test("validateDecisions mergeGuard: guarded-type merge is skipped under skipInvalid", () => {
   const snap = new Map([
@@ -1353,7 +1354,8 @@ test("validateDecisions mergeGuard: non-guarded types unaffected, guard off = le
     ["c2", { id: "c2", type: "constraint", title: "预算(疑似重复)", content: "$12,450", importance: 4, archived: false, forgotten: false }]
   ]);
   const decisions = [{ action: "merge", ids: ["c1", "c2"], keepSource: "c1", title: "预算合并", content: "合并", importance: 4 }];
-  // guard 关 = 现行为（merge 照常通过）。
+  // guard 选项缺省/false = 旧行为（merge 照常通过）；默认值由 config.js 供给，
+  // 本单元层直接传 options，锁的是「不显式开就不拦」这条回退路径。
   assert.equal(validateDecisions(decisions, snap, { skipInvalid: true }).ok, true);
   // guard 开但类型非 guarded（history 用 snapshot 默认 type=project 亦非 guarded）。
   const plainSnap = snapshot(["x", "y"]);

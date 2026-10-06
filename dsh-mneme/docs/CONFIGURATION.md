@@ -118,7 +118,7 @@
 | `dreamMinExplicitCoverage` | `0.5` | 显式决策覆盖率下限（0–1） | 防截断输出被隐式 keep 洗白 |
 | `dreamSkipInvalid` | `true` | 跳过单条非法决策、应用合法子集、run 记 degraded（#89） | `false` = 恢复整单拒绝 |
 | `allowCrossTypeMerge` | `false` | 放宽跨类型合并检查 | opt-in；`dreamSkipInvalid` 关时跨类型 merge 直接整单拒绝 |
-| `dreamMergeGuard` | `false` | guarded 类型 merge 护栏（#339/E8）：合并对象命中长保留类型（与 archive 护栏同表：preference/pattern/rejected_solution/constraint/pitfall）的 merge 决策整条跳过——E8 实测巩固损耗里 10/26 条被丢约束已归位 guarded 类型仍被 merge 吃掉 | opt-in；`dreamSkipInvalid`（默认开）时被跳条目进 `dream_runs.skipped`、run 记 degraded，关闭时整单拒绝 |
+| `dreamMergeGuard` | `true` | guarded 类型 merge 护栏（#339/E8）：合并对象命中长保留类型（与 archive 护栏同表：preference/pattern/rejected_solution/constraint/pitfall）的 merge 决策整条跳过——E8 实测巩固损耗里 10/26 条被丢约束已归位 guarded 类型仍被 merge 吃掉 | 默认开（同类压缩管线实测：安全规则被同速压缩后一轮只剩 53%、五轮只剩 10%，全程无报错）；关闭 = guarded 类型的 merge 不再被跳过，「更精炼的摘要」重新成为约束失真的主通道。`dreamSkipInvalid`（默认开）时被跳条目进 `dream_runs.skipped`、run 记 degraded，关闭时整单拒绝 |
 | `dreamNarrativeEnabled` **light** | `false` | dream 期间按共享 tag 聚类合成叙述条（#164 对齐） | opt-in；按需检索、不常驻注入 |
 | `dreamNarrativeMinCluster` | `3` | 成簇门槛（共享同一 tag 的记忆数，2–20） | — |
 | `documentMemoryEnabled` **light** | `false` | document 型记忆：长文档指针行，全文归 agent（#230） | opt-in；注册校验 + C2 去重 + supersede 记账 |

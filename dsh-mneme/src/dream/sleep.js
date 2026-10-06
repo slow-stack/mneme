@@ -373,7 +373,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     minAgeHours: config.reflectionUpdateMinAgeHours,
     skipInvalid: config.dreamSkipInvalid !== false,
     allowCrossTypeMerge: config.allowCrossTypeMerge === true,
-    // issue #339 / E8：guarded 类型 merge 护栏（opt-in，dreamMergeGuard），
+    // issue #339 / E8：guarded 类型 merge 护栏（默认开，dreamMergeGuard），
     // 与 dream 主链路同一判据。
     mergeGuard: config.dreamMergeGuard === true,
     // Issue #126 review（Copilot）：默认档必须真的只放行旧动作集——只换 prompt 挡不住

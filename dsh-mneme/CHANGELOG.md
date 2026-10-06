@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## ⚠️ 行为变更
+
+- **`dreamMergeGuard` 默认值 `false` → `true`（issue #339 / E8）**：巩固 merge 护栏自 v0.8.13 引入时是 opt-in 默认关，现改为默认开——合并对象命中长保留类型（与 archive 护栏同表：preference/pattern/rejected_solution/constraint/pitfall）的 merge 决策整条跳过，`dreamSkipInvalid`（默认开）下被跳条目进 `dream_runs.skipped`、run 记 degraded。依据是它引入时就已写明的机制：archive 护栏只挡 archive 不挡 merge，而 merge 的「更精炼摘要」恰是约束失真的主通道——E8 实测巩固损耗里 10/26 条被丢约束已归位 guarded 类型仍被 merge 吃掉；同类压缩管线的实测也显示安全规则被同速压缩后一轮只剩 53%、五轮只剩 10%，且全程无报错信号。需要旧行为的库显式设 `dreamMergeGuard: false`（面板可关）。
+
 ## 🐛 修复
 
 - **事务内创建的记忆实体抽取被静默丢弃（#372）**：`scheduleEntityExtraction` 在事务内直接 return（注释写 deferred，实际 `transaction()` 从不补跑），而自动蒸馏的全部写入都裹在 `service.transaction()` 里——`session:*` 来源的记忆自 0.8.x 起 100% 抽不到实体（报告者库内数据：9-25 后 337 条自动蒸馏记忆 0 抽取 0 审计）。修法：事务内入队、COMMIT 成功后由事务本体补跑（回滚路径丢弃，绝不对已回滚的行抽取）；`saveWithDedupe` 的合并分支补触发抽取（此前并入的新内容永不进实体面；`saveAttr` 按 (entity_id, attr_key) 先失活再插入，重抽幂等）；`writeAudit` 在 LLM 路由解析失败（modelId 为空）时对非 ok 状态补一条 warn——消灭 #108 同款「零实体零日志」盲区。报告者（lqs50）三条主发现全部对源码坐实；其建议的「finally 里补跑」已修正为仅 COMMIT 成功后补跑。

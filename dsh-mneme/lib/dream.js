@@ -1182,7 +1182,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       // 非法决策重新只跳过该条、合法子集照常应用（run 记为 degraded）。
       skipInvalid: config.dreamSkipInvalid !== false,
       allowCrossTypeMerge: config.allowCrossTypeMerge === true,
-      // issue #339 / E8：guarded 类型 merge 护栏（opt-in，dreamMergeGuard）。
+      // issue #339 / E8：guarded 类型 merge 护栏（默认开，dreamMergeGuard）。
       mergeGuard: config.dreamMergeGuard === true
     });
     // Issue #135：模型把 UUID 缩写成前缀时，唯一前缀已在校验前被解析回完整 id。
