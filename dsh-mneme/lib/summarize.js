@@ -9,6 +9,28 @@ import { withEffortFallback, describeStreamFailure, EFFORT_REJECT_RE } from "./d
 // 三类编码专属记忆，专治重复踩坑 / 遗忘被否决方案 / 丢失工程约束。字段仍沿用
 // title/content 单列结构（store 无结构化字段），信息浓缩进 content。
 /** 解析 LLM 输出中的 JSON 数组，并保留数组是否有效的结果。 */
+// 蒸馏产物的事件时间锚定（SimpleMem，arXiv 2601.02553：抽取与时间锚定在同一次
+// 生成里完成，消融去掉后时间类问题 F1 掉 56.7%）。归一放在解析层而不是交给
+// store.normalizeOccurredAt：后者只判「可解析就 UTC ISO、否则 NULL」，拦不住模型
+// 编造的未来时间——而未来时间的记忆会污染注入侧的时间排序与 memory_search 的
+// occurred_from 过滤。未知/无法换算的相对时间必须整条省略字段，不能落 null。
+// 纯函数：唯一外部输入是显式入参 nowMs（测试注入假时钟即可确定性复现）。
+const OCCURRED_AT_FUTURE_TOLERANCE_MS = 24 * 60 * 60 * 1000;
+function normalizeDistilledOccurredAt(raw, nowMs = Date.now()) {
+  if (typeof raw !== "string") return undefined;
+  const text = raw.trim();
+  if (!text) return undefined;
+  const ms = Date.parse(text);
+  if (!Number.isFinite(ms)) return undefined;
+  // 容忍 1 天：模型给的绝对时间可能略晚于当下（时区/时钟偏移），超出即视为瞎填。
+  if (ms - nowMs > OCCURRED_AT_FUTURE_TOLERANCE_MS) return undefined;
+  try {
+    return new Date(ms).toISOString();
+  } catch {
+    return undefined;
+  }
+}
+
 function parseSummaryJsonResult(raw) {
   const text = String(raw ?? "");
   const start = text.indexOf("[");
@@ -38,12 +60,18 @@ function parseSummaryJsonResult(raw) {
       item.title.trim() &&
       typeof item.content === "string" &&
       item.content.trim()
-  ).map((item) => ({
-    type: item.type,
-    title: item.title.trim(),
-    content: item.content.trim(),
-    importance: Number.isInteger(item.importance) ? Math.min(5, Math.max(1, item.importance)) : 3
-  }));
+  ).map((item) => {
+    const occurredAt = normalizeDistilledOccurredAt(item.occurred_at);
+    return {
+      type: item.type,
+      title: item.title.trim(),
+      content: item.content.trim(),
+      importance: Number.isInteger(item.importance) ? Math.min(5, Math.max(1, item.importance)) : 3,
+      // 不可解析 / 未来时间：省略该键（不写 null、不写空串），让「模型没给」与
+      // 「给了但站不住」在库里同为「无时间锚」，避免下游把空值当成已锚定。
+      ...(occurredAt !== undefined ? { occurred_at: occurredAt } : {})
+    };
+  });
   // 空数组表示模型明确判断本轮没有可沉淀内容；非空数组若全部无效，
   // 则不能消费窗口，否则无效输出会永久推进 seq 游标。salvage 路径
   // 没有「显式空数组」可言——ok 只看是否救回了条目。
@@ -586,12 +614,19 @@ export function createSummarizer(ctx, service, config, deps = {}) {
       const summarizeEffort = config.summarizeReasoningEffort;
       const withEffort = typeof summarizeEffort === "string" && summarizeEffort !== "none";
 
+      // 时间锚点：转录行不带时间戳，prompt 要模型把「昨天/上周」换算成绝对
+      // occurred_at，就必须给基准，否则它只能编（幻觉）。锚点取本次蒸馏触发时刻
+      // （可注入 now()，测试用假时钟）；锚点行同时是 prompt 里「按提示末尾给出的
+      // 当前时间换算」那句的落点，改写/移动随两处一起动。
+      const distillPrompt = config.codingRetrospect ? STR.prompts.codingSummary[langOf(config)] : STR.prompts.summary[langOf(config)];
+      const anchoredPrompt = `${distillPrompt}${STR.distillTimeAnchor[langOf(config)](new Date(now()).toISOString())}`;
+
       const options = {
         provider: route.provider,
         model: route.model,
         purpose: "summarization",
         messages: [
-          { role: "system", content: [{ type: "text", text: config.codingRetrospect ? STR.prompts.codingSummary[langOf(config)] : STR.prompts.summary[langOf(config)] }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
+          { role: "system", content: [{ type: "text", text: anchoredPrompt }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
           ...messages
         ],
         signal: controller.signal
