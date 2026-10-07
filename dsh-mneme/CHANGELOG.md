@@ -10,6 +10,10 @@
 
 - **事务内创建的记忆实体抽取被静默丢弃（#372）**：`scheduleEntityExtraction` 在事务内直接 return（注释写 deferred，实际 `transaction()` 从不补跑），而自动蒸馏的全部写入都裹在 `service.transaction()` 里——`session:*` 来源的记忆自 0.8.x 起 100% 抽不到实体（报告者库内数据：9-25 后 337 条自动蒸馏记忆 0 抽取 0 审计）。修法：事务内入队、COMMIT 成功后由事务本体补跑（回滚路径丢弃，绝不对已回滚的行抽取）；`saveWithDedupe` 的合并分支补触发抽取（此前并入的新内容永不进实体面；`saveAttr` 按 (entity_id, attr_key) 先失活再插入，重抽幂等）；`writeAudit` 在 LLM 路由解析失败（modelId 为空）时对非 ok 状态补一条 warn——消灭 #108 同款「零实体零日志」盲区。报告者（lqs50）三条主发现全部对源码坐实；其建议的「finally 里补跑」已修正为仅 COMMIT 成功后补跑。
 
+## 🧹 工程
+
+- **code-scanning 依赖告警清零（`sharp` 0.35.4 → 0.35.5）**：GitHub code-scanning 上仅剩的一条 open 告警是 `sharp@0.35.4` 命中 `GHSA-wq5f-xc86-pv6w`（CVE-2026-96889，severity high，修复版 **0.35.5**——随包把上游 librsvg 带到 2.63.2）。它在 mneme 里不是直接依赖，而是 `@huggingface/transformers` 声明的 `^0.35.4` 传递依赖（本地嵌入运行时构建面，npm 用户装不到）。只改 lockfile 不够：`runtime-manifest.json` 把 `sharp` 与 23 个 `@img/sharp-*`（libvips 1.3.3）连 tarball 与 sha512 一起钉死并分发给用户，而扫描器看不见 JSON 清单，漏洞版本会继续发出去。故 lockfile 与清单同步升到 `sharp 0.35.5` + `@img/sharp-* 0.35.5` + libvips `1.3.4`（同一 `^0.35.4` 区间内，无 API 变更）。可达性本身很低——mneme 只做文本嵌入与重排，没有任何 `sharp()` 调用（不解码 SVG），RCE 还需 glibc Linux 且要攻击者提供 SVG；修的理由是升级免费且清单面向最终用户。`npm audit`（含 dev 与 `--omit=dev` 双口径）0 vulnerabilities；全量测试 1561/1560 pass/0 fail/1 skip。
+
 ## [0.8.14] - 2026-10-06
 
 ## 🐛 修复
