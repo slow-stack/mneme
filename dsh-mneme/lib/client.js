@@ -643,6 +643,14 @@ window.__ModuleLoader__.load({
         "memory.status.conflictQueue.similarity": "相似度",
         "memory.status.conflictQueue.diffTitle": "差异已高亮：红=删除、绿=新增",
         "memory.status.conflictQueue.diffFallback": "两段文本差异较大，请对照原文阅读",
+        "memory.status.conflictQueue.expand": "展开全文",
+        "memory.status.conflictQueue.collapse": "收起全文",
+        "memory.status.conflictQueue.copySide": "复制本侧",
+        "memory.status.conflictQueue.copiedSide": "本侧全文已复制",
+        "memory.status.conflictQueue.importance": "重要度 {n}",
+        "memory.status.conflictQueue.chars": "{n} 字符",
+        "memory.status.conflictQueue.updated": "更新于 {time}",
+        "memory.status.conflictQueue.created": "创建于 {time}",
         "memory.status.conflictQueue.emptyTitle": "暂无待确认冲突",
         "memory.status.conflictQueue.emptyBody": "当巩固发现两条互相矛盾或高度相似的记忆时，会先冻结在这里等你裁决，不会自动修改。裁决前双方都不参与注入。",
         "memory.status.conflictQueue.applyHintTitle": "确认后：保留方正文追加已否决注记，另一方归档",
@@ -1110,6 +1118,14 @@ window.__ModuleLoader__.load({
         "memory.status.conflictQueue.similarity": "similarity",
         "memory.status.conflictQueue.diffTitle": "Differences highlighted: red = removed, green = added",
         "memory.status.conflictQueue.diffFallback": "The two texts differ substantially — compare the originals",
+        "memory.status.conflictQueue.expand": "Expand full text",
+        "memory.status.conflictQueue.collapse": "Collapse",
+        "memory.status.conflictQueue.copySide": "Copy this side",
+        "memory.status.conflictQueue.copiedSide": "Full text copied",
+        "memory.status.conflictQueue.importance": "importance {n}",
+        "memory.status.conflictQueue.chars": "{n} chars",
+        "memory.status.conflictQueue.updated": "updated {time}",
+        "memory.status.conflictQueue.created": "created {time}",
         "memory.status.conflictQueue.emptyTitle": "No pending conflicts",
         "memory.status.conflictQueue.emptyBody": "When consolidation finds two contradictory or highly similar memories, it freezes them here for your review instead of changing anything automatically. Neither side participates in injection until resolved.",
         "memory.status.conflictQueue.applyHintTitle": "On confirm: a veto note is appended to the kept side and the other side is archived",
@@ -1504,6 +1520,14 @@ window.__ModuleLoader__.load({
       ".mneme-conflict-simbar{position:relative;flex:1;height:5px;border-radius:3px;background:var(--dsw-alias-interactive-bg-hover);overflow:hidden}",
       ".mneme-conflict-simfill{position:absolute;top:0;bottom:0;left:0;border-radius:3px;background:var(--dsw-alias-state-business-primary)}",
       ".mneme-conflict-diff{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}",
+      // 展开全文：取消行数钳制并给一个内部滚动区——报障点是「窗口太小又不能
+      // 放大，完全对比不了内容」，所以展开态必须能容纳长文本且不撑破面板。
+      ".mneme-conflict-diff--full{display:block;-webkit-line-clamp:unset;max-height:46vh;overflow-y:auto}",
+      ".mneme-conflict-text{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;overflow-wrap:anywhere;max-height:46vh;overflow-y:auto}",
+      ".mneme-conflict-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}",
+      ".mneme-conflict-metaval{color:var(--dsw-alias-label-secondary)}",
+      // 窄面板下并排会把每侧挤到无法阅读，退成单列（容器查询按面板实际宽度判）
+      "@container (max-width:560px){.mneme-conflict-pair{grid-template-columns:1fr}}",
       ".mneme-conflict-mark{text-decoration:none;border-radius:3px;padding:0 1px}",
       ".mneme-conflict-mark--del{background:color-mix(in srgb,var(--dsw-alias-state-error,#c33) 16%,transparent);text-decoration:line-through}",
       ".mneme-conflict-mark--ins{background:color-mix(in srgb,var(--dsw-alias-state-success,#3c9) 18%,transparent)}",
@@ -3757,6 +3781,17 @@ window.__ModuleLoader__.load({
       const [items, setItems] = useState(null);
       const [loadError, setLoadError] = useState(false);
       const [busy, setBusy] = useState(false);
+      // 展开态按冲突条目记（一对两侧同时展开，便于逐行对照）；复制态按
+      // 「条目:侧别」记，避免一次复制把别的按钮也点亮。
+      const [openItems, setOpenItems] = useState({});
+      const [copiedKey, setCopiedKey] = useState(null);
+      const toggleItem = (id) => setOpenItems((prev) => ({ ...prev, [id]: !prev[id] }));
+      const copySide = (key, content) => {
+        navigator.clipboard?.writeText(String(content || "")).then(
+          () => { setCopiedKey(key); announce(t("memory.status.conflictQueue.copiedSide")); setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500); },
+          () => {}
+        );
+      };
       const load = (silent) => {
         apiFetch("/api/dsh-mneme/conflicts")
           .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
@@ -3791,18 +3826,39 @@ window.__ModuleLoader__.load({
           .catch(() => {})
           .finally(() => setBusy(false));
       };
-      const side = (s, label, sideClass, ops, diffSide) => h("div", { className: `mneme-conflict-side ${sideClass}` },
+      const side = (s, label, sideClass, ops, diffSide, open, itemKey) => h("div", { className: `mneme-conflict-side ${sideClass}` },
         h("div", { className: "mneme-conflict-sidelabel" }, label),
         s.missing
           ? h("div", { className: "mneme-conflict-missing" }, t("memory.status.conflictQueue.missing"))
           : h(react.Fragment, null,
               h("div", { className: "mneme-conflict-sidetitle", title: s.title }, s.title || "…"),
+              // 判读依据行：类型 / 重要度 / 字数 / 新旧 + 单侧全文复制。报障者
+              // 「只好两个都删或胡乱选」的直接原因是这一行了无信息——只有
+              // A 方/B 方两个标签，看不出哪条更新、哪条更长、哪条更重要。
+              h("div", { className: "mneme-conflict-meta" },
+                h("span", { className: "mneme-conflict-metaval" }, typeLabel(t, s.type)),
+                s.importance !== null && s.importance !== undefined
+                  ? h("span", null, t("memory.status.conflictQueue.importance").replace("{n}", String(s.importance)))
+                  : null,
+                h("span", null, t("memory.status.conflictQueue.chars").replace("{n}", String((s.content || "").length))),
+                h("span", null, (s.updated_at ? t("memory.status.conflictQueue.updated") : t("memory.status.conflictQueue.created"))
+                  .replace("{time}", formatRelativeTime(s.updated_at || s.created_at, t))),
+                h("button", {
+                  className: "mneme-footbtn",
+                  onClick: () => copySide(`${itemKey}:${diffSide}`, s.content)
+                }, copiedKey === `${itemKey}:${diffSide}`
+                  ? t("memory.status.conflictQueue.copiedSide")
+                  : t("memory.status.conflictQueue.copySide"))),
               // #177：词级 diff 可用（LCS 无损对齐成功）时用高亮视图替代纯文本。
               // 侧别过滤（#295 评审修正）：A 侧渲染 same+del（它被删的部分高亮），
               // B 侧渲染 same+ins（它新增的部分高亮）——每列忠实于自己的原文。
               // title 提示颜色语义；diff 不可用时保留原 snippet。
+              // 展开态：diff 去掉 4 行钳制、纯文本不再截 140 字（改走 pre-wrap 滚动区）。
               ops
-                ? h("div", { className: "mneme-conflict-diff", title: t("memory.status.conflictQueue.diffTitle") },
+                ? h("div", {
+                    className: open ? "mneme-conflict-diff mneme-conflict-diff--full" : "mneme-conflict-diff",
+                    title: t("memory.status.conflictQueue.diffTitle")
+                  },
                     ops.map((o, k) => {
                       if (o.kind === "same") return o.text;
                       if (o.kind === "del" && diffSide === "a") {
@@ -3813,7 +3869,8 @@ window.__ModuleLoader__.load({
                       }
                       return null; // 对侧的编辑片段不出现在本列
                     }))
-                : h("div", { className: "mneme-conflict-snippet" }, (s.content || "").slice(0, 140)),
+                : h("div", { className: open ? "mneme-conflict-text" : "mneme-conflict-snippet" },
+                    open ? (s.content || "") : (s.content || "").slice(0, 140)),
               // #177：预裁决阶段两侧都还活着——「已归档」徽章换成「冻结中」，
               // 原注销记说明（applyHint）挪进 tooltip，不再整段占一行动态区。
               h("span", {
@@ -3846,6 +3903,7 @@ window.__ModuleLoader__.load({
               h("div", { className: "mneme-conflict-empty-body" }, t("memory.status.conflictQueue.emptyBody")))),
         items.map((it) => {
           const sim = similarityOf(it.reason);
+          const open = openItems[it.id] === true;
           const aText = (it.memory_a && it.memory_a.content) || "";
           const bText = (it.memory_b && it.memory_b.content) || "";
           // diff 与相似度条互补：reason 给不出数字时才跑 LCS（两者表达同一信息）。
@@ -3860,11 +3918,16 @@ window.__ModuleLoader__.load({
               h("span", { className: "mneme-conflict-simfill", style: { width: `${Math.round(sim * 100)}%` } })),
             h("span", null, `${Math.round(sim * 100)}%`)),
           h("div", { className: "mneme-conflict-pair" },
-            side(it.memory_a, t("memory.status.conflictQueue.sideA"), "mneme-conflict-side--a", diff, "a"),
-            side(it.memory_b, t("memory.status.conflictQueue.sideB"), "mneme-conflict-side--b", diff, "b")),
+            side(it.memory_a, t("memory.status.conflictQueue.sideA"), "mneme-conflict-side--a", diff, "a", open, it.id),
+            side(it.memory_b, t("memory.status.conflictQueue.sideB"), "mneme-conflict-side--b", diff, "b", open, it.id)),
           h("div", { className: "mneme-conflict-actions" },
             h("span", { className: "mneme-conflict-hint", title: t("memory.status.conflictQueue.applyHintTitle") },
               t("memory.status.conflictQueue.applyHint")),
+            h("button", {
+              className: "mneme-footbtn",
+              "aria-expanded": open,
+              onClick: () => toggleItem(it.id)
+            }, t(open ? "memory.status.conflictQueue.collapse" : "memory.status.conflictQueue.expand")),
             h("button", { className: "mneme-conflict-primary", disabled: busy, "aria-label": `${t("memory.status.conflictQueue.keepA")}: ${(it.memory_a && it.memory_a.title) || ""}`, onClick: () => resolve(it.id, "a") }, t("memory.status.conflictQueue.keepA")),
             h("button", { className: "mneme-conflict-primary", disabled: busy, "aria-label": `${t("memory.status.conflictQueue.keepB")}: ${(it.memory_b && it.memory_b.title) || ""}`, onClick: () => resolve(it.id, "b") }, t("memory.status.conflictQueue.keepB")),
             h("button", { className: "mneme-footbtn", disabled: busy, onClick: () => resolve(it.id, null) }, t("memory.status.conflictQueue.markReviewed"))));
