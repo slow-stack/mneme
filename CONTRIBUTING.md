@@ -82,6 +82,7 @@ Common scripts (all run under `dsh-mneme/`):
 - **Fail-safe is a hard rule**: local failures in any background LLM path (autoDream / sleep / autoTag / summarization) must skip or degrade, **never** block the main flow (write, recall, injection).
 - **Config is defined centrally with schemastery in `src/config.js`** (`z.object` + `.default(...)`); new options must keep docs and default-value semantics in sync.
 - **Audit honesty**: a run's status (ok / noop / degraded / reconcile / failed) must reflect what actually committed — never a fake ok.
+- **Benchmark honesty**: cite only reproducible numbers, and when quoting someone else's benchmark, mark it **self-reported vs independently reproduced**. A project claiming "best on every benchmark" without a reproducible harness is the norm, not the exception — treat unverifiable claims as marketing and never let them into our own docs. When borrowing a *design*, reading the README is enough; before borrowing *code*, read the LICENSE file itself (a `NOASSERTION` GitHub metadata field alongside an MIT badge means the license is unresolved, not MIT).
 
 ---
 
@@ -288,6 +289,7 @@ npm run test:coverage # c8 覆盖率
 - **fail-safe 是硬性约定**：所有后台 LLM 链路（autoDream / sleep / autoTag / 摘要）中的局部失败只能跳过或降级，**绝不能**阻断主流程（写入、检索、注入）。
 - **配置项统一用 schemastery 定义在 `src/config.js`**（`z.object` + `.default(...)`），新增配置记得同步文档与默认值语义。
 - **审计诚实性**：任何 run 的状态（ok / noop / degraded / reconcile / failed）必须反映真实提交结果，绝不虚报。
+- **benchmark 诚实性**：对外只引用可复现的数；引用他人 benchmark 时必须标注是**自报**还是**独立复现**。宣称「所有 benchmark 第一」却没有可复现评测工具的项目是常态而非例外——不可核验的声称按宣传处理，不得写进我们的文档。借鉴**设计**读 README 即可，借鉴**代码**必须先读 LICENSE 原文（GitHub 元数据为 `NOASSERTION` 却挂 MIT 徽章的，许可证属未定，不等于 MIT）。
 
 ---
 
