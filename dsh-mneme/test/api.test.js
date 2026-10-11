@@ -1162,6 +1162,13 @@ test("GET /api/dsh-mneme/conflicts joins both sides of unresolved conflicts", as
   );
   assert.equal(data.items[0].memory_a.archived, false);
   assert.equal(data.items[0].memory_b.archived, false);
+  // 裁决依据（冲突窗可读性报障）：两侧必须带新旧时间戳，否则面板只能显示
+  // A 方/B 方两个标签，用户没有客观依据判断该留哪条。
+  for (const key of ["memory_a", "memory_b"]) {
+    assert.equal(typeof data.items[0][key].created_at, "string", `${key} must carry created_at`);
+    assert.equal(typeof data.items[0][key].updated_at, "string", `${key} must carry updated_at`);
+    assert.ok(!Number.isNaN(Date.parse(data.items[0][key].updated_at)), `${key}.updated_at must parse`);
+  }
   // 幽灵侧容忍缺失
   service.saveConflictPending({ memory_a: a.id, memory_b: "ghost-id", reason: "对方已删" });
   const res2 = new FakeRes();

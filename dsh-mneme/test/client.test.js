@@ -1217,6 +1217,42 @@ test("mcp card: mount snippet is copyable and token-keyed to the external API", 
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
 });
+// --- #400 冲突裁决窗可读性（报障原话：窗口太小又不能放大，完全对比不了内容，只好
+// 两个都删或胡乱选一个）---
+// 锁四件事：展开切换存在且默认收起（折叠态仍走 140 字预览，既有布局不回归）；
+// 展开态渲染未截断全文并去掉 diff 的行数钳制；判读依据行（类型/重要度/字数/
+// 新旧 + 单侧复制）在位；窄容器降级单列。缺任何一条，报障就复发。
+test("conflict queue: expandable full text with decision metadata", () => {
+  assert.ok(clientSource.includes('"memory.status.conflictQueue.expand"'), "collapsed state must offer 展开全文");
+  assert.ok(clientSource.includes('"memory.status.conflictQueue.collapse"'), "expanded state must offer 收起全文");
+  assert.ok(clientSource.includes('"aria-expanded": open'), "the toggle must expose aria-expanded");
+  assert.ok(/open \? \(s\.content \|\| ""\) : \(s\.content \|\| ""\)\.slice\(0, 140\)/.test(clientSource),
+    "collapsed keeps the 140-char preview while expanded must render untruncated content");
+  assert.ok(clientSource.includes("mneme-conflict-diff--full"), "expanded diff must drop the 4-line clamp");
+  // 展开态高度上限必须与视口无关：宿主可能把面板放进零高视口（隐藏 webview /
+  // 后台页），那时 vh 会算成 0px，「展开全文」直接看不见字——肉眼验收实测踩过。
+  assert.ok(clientSource.includes("max-height:28em"), "expanded height cap must be viewport-independent");
+  assert.equal(/\.mneme-conflict-(diff--full|text)\{[^}]*\d+vh/.test(clientSource), false,
+    "conflict expand rules must not use vh");
+  assert.ok(clientSource.includes('"memory.status.conflictQueue.chars"'), "each side must show its length");
+  assert.ok(clientSource.includes('"memory.status.conflictQueue.updated"'), "each side must show which one is newer");
+  assert.ok(clientSource.includes("copySide"), "each side must be copyable for external comparison");
+  assert.ok(clientSource.includes("@container (max-width:560px){.mneme-conflict-pair{grid-template-columns:1fr}}"),
+    "a narrow panel must fall back to one column instead of two unreadable halves");
+  for (const key of [
+    "memory.status.conflictQueue.expand",
+    "memory.status.conflictQueue.collapse",
+    "memory.status.conflictQueue.copySide",
+    "memory.status.conflictQueue.copiedSide",
+    "memory.status.conflictQueue.importance",
+    "memory.status.conflictQueue.chars",
+    "memory.status.conflictQueue.updated",
+    "memory.status.conflictQueue.created"
+  ]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+});
 // 面板 bundle 在本文件里只被当**文本**读（上面的断言全是正则/字符串包含），
 // 而仓库的 CI 里没有任何一步**解析**它：于是重复声明这类语法错误能一路绿灯进
 // 主干，后果却是整个面板加载失败（__ModuleLoader__ 拿到的模块一执行就抛

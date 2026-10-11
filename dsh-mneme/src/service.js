@@ -1970,6 +1970,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
         type: m.type,
         importance: m.importance,
         content: m.content,
+        // 裁决依据：两侧的新旧与重要度是「该留哪条」的客观信号。此前 side() 不带
+        // 时间戳，面板只能显示 A 方/B 方两个标签，用户没有依据就整对删掉或乱选
+        // （#400）。
+        created_at: m.created_at ?? null,
+        updated_at: m.updated_at ?? null,
         archived: m.archived === true,
         forgotten: m.forgotten === true
       };
