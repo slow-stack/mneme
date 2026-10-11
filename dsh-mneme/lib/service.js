@@ -2498,6 +2498,13 @@ export function createService({ store, mirror, config, onWrite, logger, document
     transaction,
     getDistillCursor: (sessionId) => store.getDistillCursor(sessionId),
     setDistillCursor: (sessionId, lastSeq) => store.setDistillCursor(sessionId, lastSeq),
+    // #399 蒸馏原始记录与溯源：与上面两条游标一样是纯 passthrough——它们不是
+    // 记忆写入，不该触发 syncMirror / notifyWrite / 实体抽取（那些钩子挂在
+    // saveWithDedupe 上）。distill_records 的落盘由 summarize.js 在蒸馏窗口内
+    // 一次性批写，读回只给面板/CLI 的溯源视图用。
+    saveDistillRecords: (records) => store.saveDistillRecords(records),
+    saveMemoryProvenance: (link) => store.saveMemoryProvenance(link),
+    provenanceFor: (memoryId) => store.provenanceFor(memoryId),
     enqueue,
     setDreamHook(fn) { dreamHook = fn; },
     setSleepHook(fn) { sleepHook = fn; },

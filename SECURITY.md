@@ -287,6 +287,7 @@ All audit data is stored **locally** in the plugin database and never leaves the
 | `failure_memories` audit logs | Local database | Every failed write is recorded; used for forensic analysis |
 | `recall_run` search logs | Local database | Every search is recorded with timestamp and query metadata |
 | AutoDream receipts | Local database + Markdown mirror | Cryptographically verifiable; persist until user deletes them |
+| `distill_records` raw window text (#399) | Local database | **Opt-in, off by default.** Only when `distillRecords.enabled: true`: the raw prompt/answer text of distilled windows is kept verbatim (no truncation), capped by `retentionDays` (default 90). Never includes private reasoning, plugin-injected content, tool arguments or tool output. Retention trims the text only — provenance links stay (they point at an empty range, shown as "source expired") |
 | Dependency scan reports | OrbisAI Security dashboard | Not stored on device |
 
 Retention is user-controlled: audit records live only as long as the local database does. There is no remote logging and no telemetry.
@@ -334,6 +335,13 @@ dsh-mneme:
   # LLM audit log retention (days)
   llmAudit:
     enabled: true
+    retentionDays: 90
+
+  # Raw distilled-window text is off by default (data minimization).
+  # Turn it on only if you need to audit what a memory was distilled from:
+  # text is kept verbatim (untruncated), so enable a short retentionDays.
+  distillRecords:
+    enabled: false
     retentionDays: 90
 ```
 
@@ -645,6 +653,7 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 | `failure_memories` 审计日志 | 本地数据库 | 每次写入失败均记录，供取证分析 |
 | `recall_run` 搜索日志 | 本地数据库 | 每次搜索均记录时间戳和查询元数据 |
 | AutoDream receipts | 本地数据库 + Markdown 镜像 | 密码学可验证；保留至用户删除 |
+| `distill_records` 蒸馏窗口原文（#399） | 本地数据库 | **opt-in，默认关。** 仅当 `distillRecords.enabled: true` 时：被蒸馏窗口的用户提示与助手公开正文**逐字留存**（不截断），受 `retentionDays`（默认 90）约束。**绝不**包含私有推理链、插件注入的机器内容、工具入参与工具输出。到期裁剪只删原文，溯源链接保留（指向空区间，显示「来源已过期」） |
 | 依赖扫描报告 | OrbisAI Security 控制台 | 不存储于设备 |
 
 保留期由用户控制：审计记录仅随本地数据库存续。无远程日志、无遥测。
@@ -692,6 +701,13 @@ dsh-mneme:
   # LLM 审计日志保留天数
   llmAudit:
     enabled: true
+    retentionDays: 90
+
+  # 蒸馏窗口原文默认关闭（数据最小化）。
+  # 只有需要复核「一条记忆蒸馏自哪段对话」时才打开：
+  # 原文逐字留存（不截断），请同时设一个较短的 retentionDays
+  distillRecords:
+    enabled: false
     retentionDays: 90
 ```
 

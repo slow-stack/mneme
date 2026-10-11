@@ -579,10 +579,12 @@ function printReclaim(report, { applied }) {
   const size = report?.size ?? {};
   console.log(`存储无损回收（${applied ? '已执行' : 'dry-run，未改动任何数据'}）`);
   console.log(`  输入快照保留窗口: ${report?.olderThanDays ?? '?'} 天（cutoff ${report?.cutoff ?? '?'}）`);
-  const rows = (o) => `dream_runs.input ${o.dream_run_inputs ?? 0} 行 / 归档行向量 ${o.archived_embeddings ?? 0} 行`;
+  // 第三项（#399）：蒸馏原文的到期裁剪同样只删 distill_records，溯源链接刻意保留
+  const rows = (o) =>
+    `dream_runs.input ${o.dream_run_inputs ?? 0} 行 / 归档行向量 ${o.archived_embeddings ?? 0} 行 / 蒸馏原文 ${o.distill_records ?? 0} 行`;
   console.log(`  ${applied ? '已清理' : '将清理'}: ${rows(applied ? cleared : planned)}`);
   console.log(
-    `  列文本大小（上界，非回收量）: ${formatBytes(columnBytes.dream_run_inputs)} / ${formatBytes(columnBytes.archived_embeddings)}`
+    `  列文本大小（上界，非回收量）: ${formatBytes(columnBytes.dream_run_inputs)} / ${formatBytes(columnBytes.archived_embeddings)} / ${formatBytes(columnBytes.distill_records)}`
   );
   if (!applied) {
     console.log(

@@ -437,6 +437,7 @@ dsh web
 | `strictScope` | `false` | 作用域硬过滤（v0.8.0 引入，v0.8.1 起只认显式声明；依赖 `scopeEnabled`）：检索 / 注入 / 列表 / 单取四路过滤，**显式声明**收窄到他者作用域的记忆完全不可见；载体自动标注只降权保留可见——真正的物理隔离请用 sensitivity。会话身份解析不到时 fail-closed 只挡显式行。关闭时全部为软隔离（降权保留可见）。也走 feature_flags 白名单 |
 | `writeAdmission` | `{enabled:false, enforce:false}` | 写入准入（issue #254，默认关）：把「这条该不该进库」前移到 LLM 之前。第 1 级是零 LLM 的确定性判据——空白 / 纯噪声 + 密钥 / PII（判据来源是 #164 A2，经 `sensitiveScan` 注入，本批只定义接口）。`enabled` 跑判据并落审计行（`llm_audit_logs` 的 `metadata.deny`），`enforce` 才真的拒（`store.save` 之前返回，`memory_save` 返回 `action:"denied"` + `reason`）；只开 `enabled` = 仅告警、写入不拦。去重键命中不进第 1 级（归 write-update 放行），G1/G2 阈值只计量。也走 feature_flags 白名单 |
 | `preInjectGate` | `{enabled:false, enforce:false}` | 注入前判定（issue #380，默认关）：每帧注入候选出池后、进入 system prompt 前，一次池级 LLM 调用判出「会向本次请求注入意见/立场」的记忆（判定协议与 E12 实验同源；实测过滤把谄媚 26.9%→2.5%，且判定结果绝不进模型上下文——给模型看标记的线已被 E2/E3 关闭）。`enabled` 跑判定并落审计行（真实 token 用量 + 被标记记忆 id），`enforce` 才在缓存命中帧真滤除；冷缓存首帧降级为原样注入（宿主注入渲染是同步回调，判定走 prefetch+cache）。pin 池与检索线索行豁免；判定失败原样注入不阻塞；整池被标记时放弃本次滤除（fail-open）；判定连续失败 3 次熔断一个冷却期；无默认路由时审计行 `model_id` 落 `unknown` 占位；`llmAudit` 关闭时本闸不运行；lightMode 强制关。也走 feature_flags 白名单 |
+| `distillRecords` | `{enabled:false, retentionDays:90}` | 蒸馏原文留存 + 记忆级溯源（issue #399，默认关）：把蒸馏从「替换」降级为「叠加索引」——蒸过的窗口原文旁路落 `distill_records`（一个事件一行，主键 `(session_id, seq)`，`INSERT OR IGNORE` 幂等），每条新记忆落 `memory_provenance` 回指来源窗口（`(memory_id, session_id, seq_start, seq_end)` 唯一）。**渲染与落盘共用同一隐私谓词**：私有推理链、插件注入的机器内容（AGENTS.md / skill 正文 / 文件变更通知）两条路都不进；工具调用入参与结果、code 输出**只进渲染、不落盘**（渲染是 `codingRetrospect` 的输入，落盘只留对话）。留存文本**不受** `distillMaxChars` / 工具裁剪约束（原文就是原文）。到期裁剪只删 `distill_records`，溯源链接保留指向空区间（面板显示「来源已过期」），**绝不级联删记忆**；删记忆时显式清链接。无历史回填、从未蒸馏的窗口不留记录。进 `dsh-mneme reclaim` 报告第三项；lightMode 强制关。也走 feature_flags 白名单 |
 | `conflictFreezeEnabled` | `false` | 冲突冻结（v0.4.4）：dream 发现矛盾对不自动裁决，冻结进冲突队列；状态页「冲突队列」支持并排对比与人工确认（保留 A / 保留 B / 仅标记已处理，v0.8.0） |
 | `conflictFreezeMaxPending` | `100` | 冲突冻结队列最大挂起数（1-1000）：超出后不再入队（防队列无限膨胀） |
 | `escapePromptVariables` | `true` | 注入文本花括号转义（v0.8.0 恢复，issue #162）：注入边界把 `{{...}}` 转义，防止 hot memory / 记忆原文里的 Go template / Vue 语法触发宿主 interpolate 抛错卡死会话（v0.7.4 曾修复、v0.7.11 误删） |
@@ -639,6 +640,7 @@ npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动
 > 设计文档位于仓库根 `docs/`，链接以 `../docs/` 相对路径指向（GitHub 上从本目录打开可正常跳转）。
 
 - [配置说明（全键参考）](docs/CONFIGURATION.md)
+- [蒸馏原文留存与记忆级溯源](docs/DISTILL.md)
 - [实体结构化记忆设计](docs/ENTITIES.md)
 - [语义增强架构](docs/SEMANTIC.md)
 - [本地模型部署指南](docs/LOCAL_MODEL.md)

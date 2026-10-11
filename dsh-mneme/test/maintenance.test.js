@@ -102,8 +102,8 @@ test("dry-run：报出将清理的行数与列文本大小，一个字节都不�
 
     assert.equal(report.dryRun, true);
     assert.equal(report.olderThanDays, 7, "默认保留窗口 7 天");
-    assert.deepEqual(report.planned, { dream_run_inputs: 1, archived_embeddings: 1 });
-    assert.deepEqual(report.cleared, { dream_run_inputs: 0, archived_embeddings: 0 });
+    assert.deepEqual(report.planned, { dream_run_inputs: 1, archived_embeddings: 1, distill_records: 0 });
+    assert.deepEqual(report.cleared, { dream_run_inputs: 0, archived_embeddings: 0, distill_records: 0 });
     assert.ok(report.column_bytes.dream_run_inputs > 600, "列文本大小要给真实数字（它是上界）");
     assert.equal(typeof report.size.before_bytes, "number");
     assert.equal(report.vacuum.ran, false);
@@ -111,6 +111,41 @@ test("dry-run：报出将清理的行数与列文本大小，一个字节都不�
     assert.ok(rawRun(store, "old-run").input, "dry-run 不得置空 input");
     assert.ok(rawVec(store, archived.id), "dry-run 不得清向量");
     assert.equal(store.listLlmAudits().length, 0, "dry-run 不落回执");
+  } finally {
+    close();
+  }
+});
+
+test("dry-run 与执行：蒸馏原文进报告，裁剪只删原文、溯源链接留住（#399）", () => {
+  const { store, close } = fileStore();
+  try {
+    seed(store);
+    const old = new Date(NOW - 30 * DAY).toISOString();
+    const fresh = new Date(NOW - 1 * DAY).toISOString();
+    store.saveDistillRecords([
+      { sessionId: "s-old", seq: 1, role: "user", text: "z".repeat(600), windowId: "s-old:1", distilledAt: old },
+      { sessionId: "s-fresh", seq: 1, role: "user", text: "新窗口的原文", windowId: "s-fresh:1", distilledAt: fresh }
+    ]);
+    const memoryId = store.all()[0].id;
+    store.saveMemoryProvenance({ memoryId, sessionId: "s-old", seqStart: 1, seqEnd: 1, createdAt: old });
+
+    // dry-run：第三项要报出真实行数与列文本大小（上界），且一个字节都不改
+    const dry = maintenanceFor(store).reclaim({ dryRun: true });
+    assert.equal(dry.planned.distill_records, 1, "只有窗口外那行算数");
+    assert.ok(dry.column_bytes.distill_records >= 600, "蒸馏原文的列文本大小要给真实数字");
+    assert.equal(store.db.prepare("SELECT count(*) AS c FROM distill_records").get().c, 2, "dry-run 不删原文");
+
+    const applied = maintenanceFor(store).reclaim({ dryRun: false });
+    assert.equal(applied.cleared.distill_records, 1);
+    const rows = store.db.prepare("SELECT session_id FROM distill_records").all();
+    assert.deepEqual(rows.map((r) => r.session_id), ["s-fresh"], "窗口内原文留住");
+    // 裁剪只删原文：链接与记忆都留着，面板/CLI 显示「来源已过期」而不是查无此记忆。
+    assert.equal(
+      store.db.prepare("SELECT count(*) AS c FROM memory_provenance").get().c,
+      1,
+      "溯源链接刻意保留，指向已空区间"
+    );
+    assert.equal(rawMemoryCount(store), 2, "裁剪原文不删记忆");
   } finally {
     close();
   }
@@ -191,6 +226,8 @@ test("VACUUM 失败不回吞：清理照做、报告与回执都带上失败原�
         clearDreamRunInputs: (b) => store.clearDreamRunInputs(b),
         archivedEmbeddingStats: () => store.archivedEmbeddingStats(),
         clearArchivedEmbeddings: () => store.clearArchivedEmbeddings(),
+        distillRecordStats: (b) => store.distillRecordStats(b),
+        clearDistillRecords: (b) => store.clearDistillRecords(b),
         storageStats: () => store.storageStats(),
         saveLlmAudit: (e) => store.saveLlmAudit(e),
         vacuum: () => { throw new Error("SQLITE_BUSY: database is locked"); }

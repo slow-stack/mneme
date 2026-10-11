@@ -182,6 +182,8 @@ test("feature flags accept the new boolean, string, url and enum keys", () => {
   settings.setFeatureFlags({
     "memoryQualityFilter.enabled": false,
     "llmAudit.enabled": false,
+    "distillRecords.enabled": false,
+    "distillRecords.retentionDays": 30,
     bm25SearchEnabled: false,
     conflictFreezeEnabled: true,
     trustEpistemicWeighting: true,
@@ -196,6 +198,9 @@ test("feature flags accept the new boolean, string, url and enum keys", () => {
   const flags = settings.getFeatureFlags();
   assert.equal(flags["memoryQualityFilter.enabled"], false, "nested keys stored flat");
   assert.equal(flags["llmAudit.enabled"], false);
+  // #399：布尔与整数范围两类键都要能过白名单（retentionDays 是 natural 1..3650）
+  assert.equal(flags["distillRecords.enabled"], false);
+  assert.equal(flags["distillRecords.retentionDays"], 30);
   assert.equal(flags.bm25SearchEnabled, false);
   assert.equal(flags.conflictFreezeEnabled, true);
   assert.equal(flags.trustEpistemicWeighting, true);
@@ -215,6 +220,9 @@ test("nested feature flag keys are validated as booleans and rejected otherwise"
   const { store, settings } = setup();
   assert.throws(() => settings.setFeatureFlags({ "memoryQualityFilter.enabled": "yes" }), /memoryQualityFilter\.enabled/);
   assert.throws(() => settings.setFeatureFlags({ "llmAudit.enabled": 1 }), /llmAudit\.enabled/);
+  assert.throws(() => settings.setFeatureFlags({ "distillRecords.enabled": 1 }), /distillRecords\.enabled/);
+  // 范围外的整数也要被挡（retentionDays 上限 3650）
+  assert.throws(() => settings.setFeatureFlags({ "distillRecords.retentionDays": 0 }), /distillRecords\.retentionDays/);
   assert.deepEqual(settings.getFeatureFlags(), {}, "failed writes persist nothing");
   store.close();
 });

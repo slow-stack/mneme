@@ -365,6 +365,16 @@ test("lightMode：预设翻转 preInjectGate.enabled 且不污染用户配置对
   assert.equal(flat.heatEnabled, false, "平铺键照旧直赋（既有行为回归）");
 });
 
+test("lightMode：预设关掉 distillRecords.enabled，但保留用户显式设的 retentionDays（#399）", () => {
+  // 轻量模式关的是「留存原文」这个成本/隐私面；retentionDays 是保留窗口的时长，
+  // 不在 LIGHT_MODE_OFF 里——用户显式设过就照旧，别把配置顺手抹成默认值。
+  const user = { lightMode: true, distillRecords: { enabled: true, retentionDays: 30 } };
+  const preset = applyLightModePreset(user);
+  assert.equal(preset.distillRecords.enabled, false, "轻量模式必须关掉原始记录留存");
+  assert.equal(preset.distillRecords.retentionDays, 30, "保留窗口时长不受轻量模式影响");
+  assert.equal(user.distillRecords.enabled, true, "不改到用户原对象");
+});
+
 test("判定超时：abort 底层流（真宿主守约）→ degraded 审计 + 不缓存 + 下一帧重试（CodeRabbit on #382）", async () => {
   const llm = fakeLlm([{ hang: true }, { json: { ids: [], reason: "recovered" } }]);
   const s = setup({ preInjectGate: { enabled: true } }, llm, { judgeTimeoutMs: 50 });

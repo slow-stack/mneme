@@ -1500,3 +1500,140 @@ test("parseSummaryJson salvage does not turn string-embedded objects into memori
   assert.equal(parsed[0].title, "good");
   assert.match(parsed[0].content, /fake/);
 });
+
+// ── Issue #399：蒸馏窗口原始记录 + 记忆级溯源 ─────────────────────────────
+//
+// 这五条锁的是「把蒸馏从替换降级为叠加索引」的四个承重点：重跑幂等、隐私谓词
+// 在落盘路径同样成立、留存不受喂给模型的裁剪约束、裁剪不毁资产、默认关零写入。
+// 锁形状而非锁实现：断言直接查表，不去读 summarize.js 的中间变量。
+
+/** Issue #399 的开启档 + 关掉真实节流（否则同会话第二轮会被间隔门挡下）。 */
+const RECORDS_ON = { distillRecords: { enabled: true }, distillRateLimitIntervalMs: 0 };
+
+function countRows(store, sql) {
+  return store.db.prepare(sql).get().c;
+}
+
+function recordsSession(id, events) {
+  return {
+    id,
+    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    events
+  };
+}
+
+function eventHandler(events) {
+  return events.find((e) => e.name === "session/event").fn;
+}
+
+test("issue#399: re-distilling the same window never duplicates records", async () => {
+  const first = setup(RECORDS_ON);
+  const session = recordsSession("s399-idem", [userMessage("同一窗口的提问", 1), { seq: 2, type: "turn/end" }]);
+  await eventHandler(first.events)(session, { seq: 2, type: "turn/end" });
+  assert.equal(countRows(first.store, "SELECT count(*) AS c FROM distill_records"), 1);
+
+  // 模拟宿主重启后重跑同一 seq 段（代码注释里点名的路径：max-runs 耗尽额度、游标
+  // 写入随事务回滚后丢失）：删掉持久化游标 + 换一个全新的 summarizer 实例，于是
+  // lastDistilledSeq 这份内存游标也一并归零，同一窗口会被完整重蒸一遍。
+  first.store.db.prepare("DELETE FROM distill_cursors").run();
+  const second = setup(RECORDS_ON, { store: first.store });
+  await eventHandler(second.events)(session, { seq: 2, type: "turn/end" });
+
+  assert.equal(
+    countRows(first.store, "SELECT count(*) AS c FROM distill_records"),
+    1,
+    "同一 (session_id, seq) 只留一行：重跑必须幂等，保留首次落盘时间才诚实"
+  );
+  assert.equal(
+    countRows(
+      first.store,
+      `SELECT count(*) AS c FROM (
+         SELECT memory_id, session_id, seq_start, seq_end FROM memory_provenance
+         GROUP BY memory_id, session_id, seq_start, seq_end HAVING count(*) > 1)`
+    ),
+    0,
+    "同一窗口重跑不重复挂链接（唯一索引 + ON CONFLICT DO NOTHING）"
+  );
+});
+
+test("issue#399: records keep only public transcript; reasoning and machine-injected content never land on disk", async () => {
+  const { events, store, calls } = setup(RECORDS_ON);
+  const session = recordsSession("s399-priv", [
+    userMessage("真实提问：这个报错怎么修", 1),
+    // 机器注入的三类：AGENTS.md / skill 正文 / 文件变更通知。source.kind 不是
+    // user / agent-message / subagent-settled，必须整个事件被挡在门外。
+    { seq: 2, type: "user/message", data: { source: { kind: "plugin" }, content: [{ type: "text", text: "AGENTS.md 注入正文不该落盘" }] } },
+    { seq: 3, type: "user/message", data: { source: { kind: "skill" }, content: [{ type: "text", text: "SKILL_BODY 不该落盘" }] } },
+    { seq: 4, type: "user/message", data: { source: { kind: "file-change" }, content: [{ type: "text", text: "FILE_CHANGE 通知不该落盘" }] } },
+    {
+      seq: 5,
+      type: "assistant/message",
+      data: { message: { content: [
+        { type: "reasoning", text: "PRIVATE_REASONING 不该落盘" },
+        { type: "text", text: "公开回答：检查第 3 行。" }
+      ] } }
+    },
+    toolResultEvent("TOOL_OUTPUT 只进渲染不落盘", false, 6),
+    { seq: 7, type: "turn/end" }
+  ]);
+  await eventHandler(events)(session, { seq: 7, type: "turn/end" });
+
+  const texts = store.db.prepare("SELECT text FROM distill_records ORDER BY seq").all().map((r) => r.text).join("\n");
+  assert.ok(texts.includes("真实提问"), "用户提示落盘");
+  assert.ok(texts.includes("公开回答"), "助手公开正文落盘");
+  assert.ok(!texts.includes("AGENTS.md"), "插件注入的 AGENTS.md 绝不落盘");
+  assert.ok(!texts.includes("SKILL_BODY"), "skill 正文绝不落盘");
+  assert.ok(!texts.includes("FILE_CHANGE"), "文件变更通知绝不落盘");
+  assert.ok(!texts.includes("PRIVATE_REASONING"), "私有推理链绝不落盘");
+  assert.ok(!texts.includes("TOOL_OUTPUT"), "工具结果不落盘（#399 已知边界 3）");
+  // 渲染路径照旧带工具输出（codingRetrospect 靠它沉淀踩坑根因）——两条路径在
+  // 「工具输出」上的差异是设计的一部分，不是漂移：漂移的方向必须是「落盘的更少」。
+  assert.ok(JSON.stringify(calls[0].messages).includes("TOOL_OUTPUT"), "工具输出仍进 LLM 转录");
+});
+
+test("issue#399: records keep the untruncated prompt while the LLM transcript stays capped", async () => {
+  // 头部标记 + 超长正文：trimTranscript 保尾部，所以「渲染里找不到头部标记」正是
+  // 被 distillMaxChars 截断的证据；记录里必须连头部标记都在。
+  const long = `HEAD_MARKER ${"x".repeat(1200)} TAIL_MARKER`;
+  const { events, store, calls } = setup({ ...RECORDS_ON, distillMaxChars: 200 });
+  const session = recordsSession("s399-long", [userMessage(long, 1), { seq: 2, type: "turn/end" }]);
+  await eventHandler(events)(session, { seq: 2, type: "turn/end" });
+
+  const rows = store.db.prepare("SELECT text FROM distill_records ORDER BY seq").all();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].text, long, "留存的是整段原文，不截断、不加省略号");
+  assert.ok(!JSON.stringify(calls[0].messages).includes("HEAD_MARKER"), "喂 LLM 的转录仍受 distillMaxChars 约束");
+});
+
+test("issue#399: expiring records keeps the memories and leaves provenance dangling-but-present", async () => {
+  const { events, store } = setup(RECORDS_ON);
+  const session = recordsSession("s399-expire", [userMessage("会被裁剪的原文", 1), { seq: 2, type: "turn/end" }]);
+  await eventHandler(events)(session, { seq: 2, type: "turn/end" });
+  assert.equal(store.count(), 2);
+  assert.equal(countRows(store, "SELECT count(*) AS c FROM memory_provenance"), 2);
+
+  // 到期裁剪：把 cutoff 推到未来，等价于「这条记录已经过期」。
+  assert.equal(store.clearDistillRecords(new Date(Date.now() + 86400000).toISOString()), 1);
+  assert.equal(countRows(store, "SELECT count(*) AS c FROM distill_records"), 0);
+  assert.equal(store.count(), 2, "裁剪原文绝不级联删记忆");
+  assert.equal(countRows(store, "SELECT count(*) AS c FROM memory_provenance"), 2, "链接保留，从此指向空区间");
+  const memoryId = store.all()[0].id;
+  assert.ok(store.provenanceFor(memoryId).length >= 1, "面板/CLI 仍能回答「这条记忆出自哪个窗口」，只是来源已过期");
+});
+
+test("issue#399: enabled=false (the default) writes nothing at all", async () => {
+  const { events, store, service } = setup({ distillRateLimitIntervalMs: 0 });
+  let saverCalls = 0;
+  const original = service.saveDistillRecords;
+  service.saveDistillRecords = (...args) => {
+    saverCalls++;
+    return original(...args);
+  };
+  const session = recordsSession("s399-off", [userMessage("默认关不该留原文", 1), { seq: 2, type: "turn/end" }]);
+  await eventHandler(events)(session, { seq: 2, type: "turn/end" });
+
+  assert.equal(saverCalls, 0, "默认关：连收集都不做，一次写入调用都不发");
+  assert.equal(countRows(store, "SELECT count(*) AS c FROM distill_records"), 0);
+  assert.equal(countRows(store, "SELECT count(*) AS c FROM memory_provenance"), 0);
+  assert.equal(store.count(), 2, "记忆写入照旧");
+});

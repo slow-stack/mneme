@@ -238,6 +238,20 @@ export const apply = (ctx, config) => {
     }
   } catch { /* non-fatal */ }
 
+  // #399 的启动期裁剪：与上面同款（读装配后的 cfg，理由同上——面板写的保留期必须
+  // 与写入侧取到同一个值）。不同的一点：蒸馏原文留存默认关，而「默认关」在写入侧
+  // 的含义就是零写入，所以这里也只在 enabled === true 时才动手——否则一张空表被
+  // 每次启动扫一遍，白付一次全表 DELETE 的代价。只裁 distill_records；链接
+  // （memory_provenance）保留，指向空区间即为「来源已过期」。
+  try {
+    if (cfg.distillRecords?.enabled === true) {
+      const retentionMs = Number.isInteger(cfg.distillRecords?.retentionDays)
+        ? cfg.distillRecords.retentionDays
+        : 90;
+      store.clearDistillRecords(new Date(Date.now() - retentionMs * 86400000).toISOString());
+    }
+  } catch { /* non-fatal */ }
+
   // 记忆语言（memory.language）：本实例逐层传入 inject / summarize / dream /
   // sleep / mirror，多实例（如 agent preset 内挂载）互不影响。
   const mirror = createMirror(memoryDir, langOf(cfg));

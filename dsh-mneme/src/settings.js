@@ -135,7 +135,12 @@ const FEATURE_FLAG_BOOLEANS = [
   // Issue #164 A2：写入边界的密钥 / PII 判据（src/sensitive-scan.js）。与上面两个
   // 键分层——本键决定「这类判据参不参与」（默认关），命中之后是仅告警还是真拦仍由
   // writeAdmission.enforce 决定（#164 口径：默认仅告警、拦截 opt-in）。
-  "sensitiveScanEnabled"
+  "sensitiveScanEnabled",
+  // Issue #399：蒸馏原文留存 + 记忆级溯源。enabled 决定蒸馏时是否把公开正文原样
+  // 落盘（distill_records）并给记忆挂窗口链接（memory_provenance）；默认关。
+  // 点号键平铺存、合并时展开回 distillRecords 对象（同 llmAudit.enabled）。
+  // retentionDays 是 int，走下面的 INT_RANGES 表，不进开关白名单。
+  "distillRecords.enabled"
 ];
 // 整数开关的闭区间，与 config.js 里 z.natural().min().max() 对齐。
 const FEATURE_FLAG_INT_RANGES = {
@@ -178,7 +183,10 @@ const FEATURE_FLAG_INT_RANGES = {
   graphSeedCap: [1, 30],
   graphCascadeDepth: [1, 3],
   // Issue #24 块3：图线索行的独立注入预算（0 = 线索不进块）。
-  graphInjectBudget: [0, 5]
+  graphInjectBudget: [0, 5],
+  // Issue #399：蒸馏原文记录的保留天数（与 config.js 的 z.natural().min(1).max(3650)
+  // 对齐；同 llmAudit.retentionDays，是 int 而非开关）。
+  "distillRecords.retentionDays": [1, 3650]
 };
 // 浮点开关的闭区间（与 config.js 的 z.number().min().max() 对齐）。与整数开关
 // 分开：面板的整数控件要求 Number.isInteger，而余弦相似度阈值必须允许小数。

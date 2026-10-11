@@ -86,6 +86,17 @@
 | `memoryQualityFilter.minContentLength` | `10` | 最短内容长度（字符） | — |
 | `memoryQualityFilter.exemptImportance` | `4` | importance ≥ 此值豁免静默自动归档（#135） | 设 1 = 等效关自动归档 |
 
+## 蒸馏原文留存与溯源（#399）
+
+把蒸馏从「替换」降级为「叠加索引」：蒸过的窗口原文旁路落 `distill_records`，每条新记忆落 `memory_provenance` 回指来源窗口。**渲染与落盘共用同一隐私谓词**（`publicTranscriptParts`）——私有推理链与插件注入的机器内容两条路都不进；工具入参与结果只进渲染、不落盘。留存文本不受 `distillMaxChars` 与工具裁剪约束。详见 [蒸馏原文留存与记忆级溯源](DISTILL.md)。
+
+| 键 | 默认 | 作用 | 开启后果 / 冲突 |
+|---|---|---|---|
+| `distillRecords.enabled` **light** | `false` | 蒸馏时顺带留存窗口原文 + 写记忆级溯源链接 | opt-in；关 = 一行不写、连收集都不做，行为与 #399 之前逐字节一致 |
+| `distillRecords.retentionDays` | `90` | 原文保留天数（1–3650） | 启动期与 `dsh-mneme reclaim` 两处裁剪；**只删 `distill_records`**，溯源链接保留指向空区间（显示「来源已过期」），绝不级联删记忆 |
+
+两个键都走 feature_flags 白名单（面板可启停）；`enabled` 进 lightMode 预设关闭清单，`retentionDays` 不进（它是时长不是行为面，用户显式设过就照旧）。`dsh-mneme reclaim` 的报告从两项变三项（`planned` / `column_bytes` / `cleared` 各多一个 `distill_records`），入口语义（默认 dry-run、`--apply` 才动手）不变。已知边界：无历史回填、从未蒸馏过的窗口不留记录、不覆盖工具结果与 code 输出。
+
 ## 注入
 
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |
@@ -258,7 +269,7 @@
 `autoReindexOnBoot` · `hybridInject` · `injectGuidanceEnabled` · `searchSemanticDedup` ·
 `selectiveInjectEnabled` · `bm25SearchEnabled` · `entityRecallEnabled` ·
 `dreamNarrativeEnabled` · `documentMemoryEnabled` · `heatEnabled` · `continuityRescueEnabled` ·
-`preInjectGate.enabled`（#380）
+`preInjectGate.enabled`（#380） · `distillRecords.enabled`（#399）
 
 预设只是默认值而非强制：用户显式写进 feature_flags 的值在装配顺序上后展开、仍然生效
 （「用户开关 > 轻量预设 > bundle 配置」）。

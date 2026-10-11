@@ -219,6 +219,52 @@ CREATE TABLE IF NOT EXISTS distill_cursors (
   updated_at TEXT NOT NULL
 );
 
+-- #399 蒸馏窗口的原始公开记录（凭证）。蒸馏此前只把会话压成记忆、原文随即消失，
+-- 于是「这句原文没进任何记忆」永远不可测——留存一份原始副本，蒸馏就从「替换」
+-- 降级成「叠加索引」（arXiv 2609.36059 §3 Eq.1：与原文并存的旁路索引不丢信息）。
+-- 主键 (session_id, seq) 承担幂等：额度耗尽 / 宿主重启后会重跑同一 seq 窗口
+-- （summarize.js 的 max-runs 门刻意不消费游标），重跑必须不产生重复记录。
+-- 落盘文本不受 distillMaxChars / trim() 三刀约束——留存的意义就是整段原文。
+-- 刻意不加 sensitivity 列：机密级是**记忆级**判断，写记录那一刻它还不存在
+-- （一个窗口里什么都有），加了就是往 schema 里写一个做不到的承诺。
+CREATE TABLE IF NOT EXISTS distill_records (
+  session_id   TEXT    NOT NULL,
+  seq          INTEGER NOT NULL,
+  role         TEXT    NOT NULL,   -- user | assistant | agent（lang.js 的三种公开形态）
+  text         TEXT    NOT NULL,   -- 未截断的公开正文
+  window_id    TEXT,
+  distilled_at TEXT    NOT NULL,
+  PRIMARY KEY (session_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_distill_records_window ON distill_records(window_id);
+-- 到期裁剪按 distilled_at 扫（与 llm_audit_logs.timestamp 同一口径）。
+CREATE INDEX IF NOT EXISTS idx_distill_records_distilled_at ON distill_records(distilled_at);
+
+-- #399 记忆级溯源：一条记忆由哪个蒸馏窗口的哪个 seq 区间派生。归因用**区间**而非
+-- 逐事件外键——蒸馏窗口本身就是连续 seq 段，窗口级归因第一步够用。
+-- 删除语义：到期裁剪只删 distill_records，本表保留并指向空区间（面板/CLI 显示
+-- 「来源已过期」），绝不级联删记忆；删记忆只清链接、记录保留——一个窗口的凭证
+-- 不该因删掉其中一条派生记忆而消失。
+-- memory_id 是 TEXT 而非 issue 草稿里的 INTEGER：memories.id 是 TEXT 主键，
+-- 类型必须与父表一致（否则 join 恒空）。
+-- ON DELETE CASCADE 在本库**不生效**——store.js 从不打开 PRAGMA foreign_keys，
+-- 全库唯一那条 REFERENCES 也一直是惰性的。与其为一个新表翻转全局 pragma
+-- （会同时改变既有 recall_events 的写入行为），不如在 remove() 里显式清链接：
+-- 语义相同、影响面只在本表。见 remove() 的注释。
+CREATE TABLE IF NOT EXISTS memory_provenance (
+  memory_id  TEXT    NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  session_id TEXT    NOT NULL,
+  seq_start  INTEGER NOT NULL,
+  seq_end    INTEGER NOT NULL,
+  created_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memory_provenance_memory ON memory_provenance(memory_id);
+CREATE INDEX IF NOT EXISTS idx_memory_provenance_session ON memory_provenance(session_id);
+-- issue 草稿没有唯一约束，但重跑同一窗口会重复插同一链接（幂等测试锁 1 会挂）。
+-- 同一 (记忆, 会话, 区间) 只有一条事实，用唯一索引 + ON CONFLICT DO NOTHING 表达。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_provenance_link
+  ON memory_provenance(memory_id, session_id, seq_start, seq_end);
+
 -- entity gene (v0.3.0): named entities mentioned across memories, with
 -- time-boxed attributes (valid_from → valid_until) and typed relations.
 -- Attributes follow the snapshot style: saveAttr invalidates the previous
@@ -1235,6 +1281,12 @@ export function createStore(path) {
 
   function remove(id) {
     runAtomically(() => {
+      // #399：memory_provenance 的 ON DELETE CASCADE 在本库是惰性的（createStore
+      // 从不打开 PRAGMA foreign_keys），所以链接在这里显式清。不用翻转全局 pragma
+      // 换这一条级联：那会同时激活 recall_events 那条既有的 REFERENCES，改变一个
+      // 与 #399 无关的写入路径。记录本身（distill_records）不删——删掉一条派生记忆
+      // 不该让整个窗口的原文凭证消失。
+      db.prepare("DELETE FROM memory_provenance WHERE memory_id = ?").run(id);
       db.prepare("DELETE FROM memories WHERE id = ?").run(id);
       // Mirror sync must reflect the deletion; bump desired generation so a
       // crash between the delete and syncMirror leaves a recoverable debt.
@@ -2111,6 +2163,77 @@ export function createStore(path) {
   /** Delete audit rows older than `before` (ISO string). Returns count removed. */
   function deleteOldLlmAudits(before) {
     return db.prepare("DELETE FROM llm_audit_logs WHERE timestamp < ?").run(before).changes;
+  }
+
+  // --- 蒸馏原始记录与记忆级溯源（#399）-------------------------------------
+
+  /**
+   * 落盘一个蒸馏窗口的公开记录（#399）。
+   *
+   * `INSERT OR IGNORE` 而非 OR REPLACE：主键 (session_id, seq) 的冲突只可能来自
+   * **同一窗口的重跑**（max-runs 门耗尽额度、宿主重启都会重跑同一 seq 段，见
+   * summarize.js 里「max-runs 刻意不消费游标」的注释），而重跑必须幂等——同一
+   * seq 的原文没有第二次「更真」的版本，保留首次落盘时间才诚实。
+   * @param {Array<{seq:number, role:string, text:string, windowId?:string, distilledAt:string}>} records
+   * @returns {number} 实际插入行数（被忽略的冲突不计）
+   */
+  function saveDistillRecords(records) {
+    if (!Array.isArray(records) || records.length === 0) return 0;
+    const stmt = db.prepare(
+      `INSERT OR IGNORE INTO distill_records (session_id, seq, role, text, window_id, distilled_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    );
+    let inserted = 0;
+    for (const r of records) {
+      inserted += stmt.run(r.sessionId, r.seq, r.role, r.text, r.windowId ?? null, r.distilledAt).changes;
+    }
+    return inserted;
+  }
+
+  /**
+   * 到期记录统计（#275 回收报告口径，dry-run 用）。`bytes` 是列文本大小上界。
+   * @returns {{rows: number, bytes: number}}
+   */
+  function distillRecordStats(before) {
+    const row = db.prepare(
+      `SELECT count(*) AS c, COALESCE(SUM(LENGTH(text)), 0) AS b
+         FROM distill_records WHERE distilled_at < ?`
+    ).get(before);
+    return { rows: row.c, bytes: row.b };
+  }
+
+  /**
+   * 删除到期原始记录。返回实际删除行数。
+   *
+   * 只删 distill_records——memory_provenance 的链接**刻意保留**并从此指向空区间，
+   * 面板/CLI 显示「来源已过期」。级联删链接会把「这条记忆有来源、只是来源到期」
+   * 降级成「这条记忆无来源」，把可观测性削成不可观测（#399 删除语义）。
+   */
+  function clearDistillRecords(before) {
+    return db.prepare("DELETE FROM distill_records WHERE distilled_at < ?").run(before).changes;
+  }
+
+  /**
+   * 记一条记忆级溯源链接（#399）：某条记忆派生自某会话的 seq 区间。
+   *
+   * `ON CONFLICT DO NOTHING` 配合 idx_memory_provenance_link 唯一索引吸收同窗口
+   * 重跑的重复链接（否则幂等测试锁会挂）。
+   * @returns {number} 实际插入行数
+   */
+  function saveMemoryProvenance({ memoryId, sessionId, seqStart, seqEnd, createdAt }) {
+    return db.prepare(
+      `INSERT INTO memory_provenance (memory_id, session_id, seq_start, seq_end, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT DO NOTHING`
+    ).run(memoryId, sessionId, seqStart, seqEnd, createdAt).changes;
+  }
+
+  /** 一条记忆的全部溯源链接（#399 面板/CLI 读取面）。 */
+  function provenanceFor(memoryId) {
+    return db.prepare(
+      `SELECT memory_id, session_id, seq_start, seq_end, created_at
+         FROM memory_provenance WHERE memory_id = ? ORDER BY created_at, session_id, seq_start`
+    ).all(memoryId);
   }
 
   // --- 存储生命周期：无损回收（#275 第一批）--------------------------------
@@ -3009,6 +3132,12 @@ export function createStore(path) {
     countLlmAudits,
     getLlmAuditStats,
     deleteOldLlmAudits,
+    // 蒸馏原始记录与记忆级溯源（#399）：窗口凭证的写入/统计/裁剪，链接的读写。
+    saveDistillRecords,
+    distillRecordStats,
+    clearDistillRecords,
+    saveMemoryProvenance,
+    provenanceFor,
     // 存储生命周期（#275 第一批）：无损回收的统计、清理与体积口径。
     dreamRunInputStats,
     clearDreamRunInputs,

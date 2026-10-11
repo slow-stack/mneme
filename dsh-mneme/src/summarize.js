@@ -225,6 +225,83 @@ function eventSeq(event) {
 
 const SUBAGENT_MESSAGE_KINDS = new Set(["agent-message", "subagent-settled"]);
 
+// 兼容严格形状 [{type:"text",text}] 与宽松形状 ["字符串", ...]（lib-smoke 用例
+// 直接传字符串数组）。只取公开文本块；reasoning 私有推理块不进蒸馏上下文。
+function textOf(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) => (typeof block === "string" ? block : (block && block.type === "text" && typeof block.text === "string" ? block.text : "")))
+    .filter((s) => s)
+    .join("\n");
+}
+
+/**
+ * Issue #399：公开会话正文的**单一隐私谓词**。
+ *
+ * 渲染（喂给 LLM 的转录）与落盘（distill_records 原始记录）必须走同一份判定，
+ * 各写一遍必然漂移——而漂移方向是「存下来的比 LLM 看过的更多」，也就是把从未
+ * 交给模型的内容留在盘上，是最糟的那个方向。所以这里只回答一个问题：这个事件
+ * 里有没有**可公开的会话正文**，是什么角色、什么原文；裁剪与格式化交给调用方。
+ *
+ * 返回 `[]` 表示不含可公开正文，包含三种情形：
+ * - 机器注入内容（AGENTS.md、skill 正文、文件变更通知）：source.kind 不是
+ *   user / agent-message / subagent-settled，整个事件被挡在门外；
+ * - 私有推理（assistant 的 reasoning 块）：textOf 只认 `type:"text"` 块，
+ *   思考链在两条路径上都到不了；
+ * - 工具调用与结果、code 输出：它们是**渲染专属**内容（codingRetrospect 需要
+ *   模型看见工具报错才能沉淀踩坑根因），但 #399 明确不落盘（已知边界 3），
+ *   因此由 collectMessages 的渲染分支单独处理，不进这个函数。
+ *
+ * @returns {Array<{role: "user"|"assistant"|"agent", text: string, key?: string}>}
+ *   text 是**未截断**原文；key 仅子会话消息用于跨事件去重。
+ */
+function publicTranscriptParts(event) {
+  const data = event?.data ?? {};
+  const kind = data?.source?.kind;
+  const parts = [];
+  const pushAgentMessage = (message) => {
+    const messageKind = message?.source?.kind;
+    if (!SUBAGENT_MESSAGE_KINDS.has(messageKind)) return;
+    const text = textOf(message?.content);
+    if (!text.trim()) return;
+    parts.push({
+      role: "agent",
+      text,
+      // 同一条子会话消息可能同时出现在 user/message 与 agent/inbox/spliced
+      // 里（投递路径重叠），按 id（无 id 时按内容）去重，否则转录会重复。
+      key: typeof message?.id === "string" && message.id
+        ? `id:${message.id}`
+        : `content:${messageKind}:${text}`
+    });
+  };
+  switch (event?.type) {
+    case "user/message": {
+      if (kind !== undefined && kind !== "user" && !SUBAGENT_MESSAGE_KINDS.has(kind)) break;
+      const text = textOf(data?.content);
+      if (!text.trim()) break;
+      if (SUBAGENT_MESSAGE_KINDS.has(kind)) pushAgentMessage(data);
+      else parts.push({ role: "user", text });
+      break;
+    }
+    case "agent/inbox/spliced": {
+      const inserted = Array.isArray(data?.inserted) ? data.inserted : [];
+      for (const message of inserted) pushAgentMessage(message);
+      break;
+    }
+    case "assistant/message": {
+      const blocks = Array.isArray(data?.message?.content) ? data.message.content : [];
+      const text = textOf(blocks);
+      // 私有推理块（reasoning）刻意不采集：蒸馏记忆不得沉淀模型私有思考链。
+      if (text.trim()) parts.push({ role: "assistant", text });
+      break;
+    }
+    default:
+      break;
+  }
+  return parts;
+}
+
 // DSH 0.1.2-rc.1 起 Session 改用 snapshotEvents()，兼容旧版 .events。
 // snapshotEvents 的范围参数按 seq 传入；再做一次事件级过滤，是为了兼容
 // 旧实现忽略参数、或把边界解释为闭区间的情况，同时避免用数组下标充当游标。
@@ -253,16 +330,6 @@ function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, th
   const events = snapshotSessionEvents(session, afterSeq, throughSeq);
   const lines = [];
   const seenSubagentMessages = new Set();
-  // 兼容严格形状 [{type:"text",text}] 与宽松形状 ["字符串", ...]（lib-smoke 用例
-  // 直接传字符串数组）。只取公开文本块；reasoning 私有推理块不进蒸馏上下文。
-  const textOf = (content) => {
-    if (typeof content === "string") return content;
-    if (!Array.isArray(content)) return "";
-    return content
-      .map((block) => (typeof block === "string" ? block : (block && block.type === "text" && typeof block.text === "string" ? block.text : "")))
-      .filter((s) => s)
-      .join("\n");
-  };
   const trim = (s, n) => (typeof s === "string" && s.length > n ? `${s.slice(0, n)}…` : s);
   const trimTranscript = (s, n) => {
     if (typeof s !== "string" || s.length <= n) return s;
@@ -283,29 +350,22 @@ function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, th
   };
   for (const event of events) {
     const data = event?.data ?? {};
-    const kind = data?.source?.kind;
+    // #399：用户提示 / 助手公开正文 / 子会话交付三种可公开内容由共享谓词产出，
+    // 渲染与落盘因此不可能对「什么算公开」产生分歧（见 publicTranscriptParts）。
+    for (const part of publicTranscriptParts(event)) {
+      if (part.role === "agent") {
+        if (part.key && seenSubagentMessages.has(part.key)) continue;
+        if (part.key) seenSubagentMessages.add(part.key);
+        lines.push(STR.transcriptAgent[language](part.text));
+      } else if (part.role === "user") {
+        lines.push(STR.transcriptUser[language](part.text));
+      } else {
+        lines.push(STR.transcriptAssistant[language](part.text));
+      }
+    }
+    // 渲染专属内容：工具调用/结果与 code 输出进 LLM 转录（codingRetrospect 靠
+    // 它们沉淀踩坑根因），但不进 distill_records——#399 已知边界 3 明说不覆盖。
     switch (event.type) {
-      case "user/message": {
-        if (kind !== undefined && kind !== "user" && !SUBAGENT_MESSAGE_KINDS.has(kind)) break;
-        const text = textOf(data?.content);
-        if (!text.trim()) break;
-        if (SUBAGENT_MESSAGE_KINDS.has(kind)) appendSubagentMessage(data);
-        else lines.push(STR.transcriptUser[language](text));
-        break;
-      }
-      case "agent/inbox/spliced": {
-        const inserted = Array.isArray(data?.inserted) ? data.inserted : [];
-        for (const message of inserted) appendSubagentMessage(message);
-        break;
-      }
-      case "assistant/message": {
-        const msg = data?.message;
-        const blocks = Array.isArray(msg?.content) ? msg.content : [];
-        const text = textOf(blocks);
-        if (text.trim()) lines.push(STR.transcriptAssistant[language](text));
-        // 私有推理块（reasoning）刻意不采集：蒸馏记忆不得沉淀模型私有思考链。
-        break;
-      }
       case "tool/call": {
         const args = typeof data.arguments === "string"
           ? data.arguments
@@ -349,6 +409,56 @@ function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, th
     hasEvents: events.length > 0,
     lastSeq
   };
+}
+
+/**
+ * Issue #399：把当前蒸馏窗口里**可公开的会话正文**收集成待落盘记录。
+ *
+ * 与 collectMessages 共用 publicTranscriptParts，但**不截断**：留存的意义就是
+ * 整段原文（超长用户提示在记录里必须全文，而喂给 LLM 的转录仍受 distillMaxChars
+ * 约束）——两条路径在裁剪上的差异是设计的一部分，测试锁 3 显式覆盖。
+ *
+ * 只收有 seq 的事件：distill_records 的主键是 (session_id, seq)，seq 也是溯源
+ * 区间与幂等的唯一依据；没有 seq 就无法表达「这条记录属于哪个窗口」。
+ */
+function collectTranscriptRecords(session, afterSeq, throughSeq, distilledAt) {
+  const events = snapshotSessionEvents(session, afterSeq, throughSeq);
+  const records = [];
+  const seenKeys = new Set();
+  // 窗口的 seq 区间取窗口内**全部**事件的 min/max（不只是公开正文那些）：这是
+  // LLM 实际看到的那个窗口，溯源链接要回答的是「这条记忆出自哪个窗口」。
+  let seqStart;
+  let seqEnd;
+  for (const event of events) {
+    const seq = eventSeq(event);
+    if (seq !== undefined) {
+      if (seqStart === undefined || seq < seqStart) seqStart = seq;
+      if (seqEnd === undefined || seq > seqEnd) seqEnd = seq;
+    }
+    if (seq === undefined) continue;
+    const parts = [];
+    for (const part of publicTranscriptParts(event)) {
+      if (part.key) {
+        if (seenKeys.has(part.key)) continue;
+        seenKeys.add(part.key);
+      }
+      parts.push(part);
+    }
+    if (!parts.length) continue;
+    // 主键是 (session_id, seq)：一个事件一行。agent/inbox/spliced 一次可投递多条
+    // 子会话消息（同 seq、同 role），各自成行会被 INSERT OR IGNORE 静默丢掉后几条；
+    // 按事件合并成一行才是这套主键的真实语义（角色同事件内不会混：user/message 与
+    // assistant/message 各只产出一条公开 part）。
+    records.push({
+      sessionId: session.id,
+      seq,
+      role: parts[0].role,
+      text: parts.map((part) => part.text).join("\n"),
+      windowId: `session:${session.id}:${seq}`,
+      distilledAt
+    });
+  }
+  return { records, seqStart, seqEnd };
 }
 
 // ── 智能调速器（429 保护）─────────────────────────────────────────────
@@ -792,7 +902,45 @@ export function createSummarizer(ctx, service, config, deps = {}) {
         }
         writes.push({ entry, source, dup });
       }
-      if (writes.length) {
+      // #399：蒸馏窗口的原始公开记录 + 记忆级溯源链接，与记忆写入同事务落盘。
+      // 凭证与它的派生记忆必须同生共死：记忆写了而记录没写，溯源就断在「不知道
+      // 出自哪段原文」；记录写了而记忆没写，盘上留一份没有索引的原文。默认关
+      // （enabled !== true）时连收集都不做，一次 SQL 都不发（测试锁 5）。
+      const distilledAt = new Date(now()).toISOString();
+      const transcript = config?.distillRecords?.enabled === true
+        && typeof service.saveDistillRecords === "function"
+        ? collectTranscriptRecords(session, previousSeq, triggerSeq, distilledAt)
+        : null;
+      const writeWindow = () => {
+        const savedIds = [];
+        for (const { entry, source, dup } of writes) {
+          const outcome = service.saveWithDedupe({
+            ...entry,
+            source,
+            ...(dup ? { _mergeInto: dup.memory.id } : {})
+          });
+          // created 与 merged 两条成功分支都返回 memory（含 id）；merged 时 id 是
+          // 被并入的既有记忆——本次窗口的原文确实贡献了它，链接它是诚实的。
+          if (outcome?.memory?.id) savedIds.push(outcome.memory.id);
+        }
+        if (transcript && transcript.records.length) {
+          service.saveDistillRecords(transcript.records);
+          if (transcript.seqStart !== undefined && transcript.seqEnd !== undefined
+            && typeof service.saveMemoryProvenance === "function") {
+            for (const memoryId of savedIds) {
+              service.saveMemoryProvenance({
+                memoryId,
+                sessionId: session.id,
+                seqStart: transcript.seqStart,
+                seqEnd: transcript.seqEnd,
+                createdAt: distilledAt
+              });
+            }
+          }
+        }
+        persistCursor(session.id, nextSeq);
+      };
+      if (writes.length || (transcript && transcript.records.length)) {
         // 查询去重目标可以异步执行，但记忆写入必须在同一个事务中完成。
         // 否则第 N 条写入失败时，前 N-1 条会残留，而重试同一 seq 窗口会重复
         // 追加它们。createService 始终提供 transaction；缺失时直接失败并保留
@@ -800,16 +948,7 @@ export function createSummarizer(ctx, service, config, deps = {}) {
         if (typeof service.transaction !== "function") {
           throw new Error("dsh-mneme: atomic summarization writes require service.transaction");
         }
-        service.transaction(() => {
-          for (const { entry, source, dup } of writes) {
-            service.saveWithDedupe({
-              ...entry,
-              source,
-              ...(dup ? { _mergeInto: dup.memory.id } : {})
-            });
-          }
-          persistCursor(session.id, nextSeq);
-        });
+        service.transaction(writeWindow);
       } else {
         // 空数组是合法成功：没有记忆写入，但本次事件窗口仍然应被持久消费。
         persistCursor(session.id, nextSeq);

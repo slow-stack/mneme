@@ -678,7 +678,9 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // issue #164 A2 新增 sensitiveScanEnabled（顶层扁平键，走 configFlagValue 默认分支）、
   // issue #380 新增 preInjectGate.enabled/preInjectGate.enforce（注入前判定两级开关）、
   // #135 成本审计派生新增 dreamMaxMergePerRun（单轮 merge 决策上限））
-  assert.equal(Object.keys(data.effective).length, 59 + 3 + 2 + 1 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 2 + 1 + 3 + 2 + 2 + 1 + 1 + 1 + 1 + 2 + 1);
+  // issue #399 新增 distillRecords.enabled/distillRecords.retentionDays（蒸馏原文留存 +
+  // 溯源：开关与保留期都在嵌套对象里，两个都进 NESTED_FLAG_PATHS））
+  assert.equal(Object.keys(data.effective).length, 59 + 3 + 2 + 1 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 2 + 1 + 3 + 2 + 2 + 1 + 1 + 1 + 1 + 2 + 1 + 2);
   assert.equal(data.effective.dreamSkipInvalid, true);
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, true);
@@ -708,6 +710,10 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   assert.equal(data.effective["writeAdmission.enforce"], false);
   // #164 A2：密钥/PII 判据自己的闸，同样默认关（#332 的行为逐字节保留）。
   assert.equal(data.effective.sensitiveScanEnabled, false);
+  // #399：蒸馏原文留存默认关（这是一份对话原文副本，不该由升级默认打开），
+  // 保留期默认 90 天（与 llmAudit.retentionDays 同款）。
+  assert.equal(data.effective["distillRecords.enabled"], false);
+  assert.equal(data.effective["distillRecords.retentionDays"], 90);
   // 新增字符串 / URL / 枚举键
   assert.equal(data.effective.localEmbedModel, "Xenova/bge-small-zh-v1.5");
   assert.equal(data.effective.ollamaBaseUrl, "http://localhost:11434");
@@ -765,6 +771,10 @@ test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys"
     // #380：同款点号键往返——白名单与 NESTED_FLAG_PATHS 成对缺一即静默缺键。
     "preInjectGate.enabled": true,
     "preInjectGate.enforce": true,
+    // #399：布尔与整数范围两类点号键都往返一次（retentionDays 是 int，同样必须进
+    // NESTED_FLAG_PATHS——否则 configFlagValue 落到顶层同名键上，effective 静默缺键）。
+    "distillRecords.enabled": true,
+    "distillRecords.retentionDays": 30,
     // #164 A2：顶层扁平键（不是对象子字段），与上面两个点号键走同一条往返；
     // 它的默认值断言在计数锁那一条里，这里钉的是「PUT 存进去、effective 读得回」。
     sensitiveScanEnabled: true,
@@ -784,6 +794,8 @@ test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys"
     "writeAdmission.enforce": true,
     "preInjectGate.enabled": true,
     "preInjectGate.enforce": true,
+    "distillRecords.enabled": true,
+    "distillRecords.retentionDays": 30,
     sensitiveScanEnabled: true,
     embedProvider: "local",
     ollamaBaseUrl: "http://127.0.0.1:11434",
@@ -798,6 +810,8 @@ test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys"
   // #380：往返回来的覆盖值压过 bundle 配置默认
   assert.equal(data.effective["preInjectGate.enabled"], true);
   assert.equal(data.effective["preInjectGate.enforce"], true);
+  assert.equal(data.effective["distillRecords.enabled"], true);
+  assert.equal(data.effective["distillRecords.retentionDays"], 30, "整数点号键也要读得回来");
   assert.equal(data.effective.sensitiveScanEnabled, true);
   assert.equal(data.effective.embedProvider, "local");
   assert.equal(data.effective.ollamaBaseUrl, "http://127.0.0.1:11434");

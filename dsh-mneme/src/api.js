@@ -151,7 +151,11 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     // Issue #380：注入前判定。漏登记的后果是 effective 静默缺键、面板盲——
     // 上面的 round-trip 测试专门锁这张表与白名单成对。
     "preInjectGate.enabled": ["preInjectGate", "enabled"],
-    "preInjectGate.enforce": ["preInjectGate", "enforce"]
+    "preInjectGate.enforce": ["preInjectGate", "enforce"],
+    // Issue #399：蒸馏原文留存 + 溯源。两个键都是嵌套子字段（enabled 开关 +
+    // retentionDays 整数），漏登记的后果同上——effective 静默缺键。
+    "distillRecords.enabled": ["distillRecords", "enabled"],
+    "distillRecords.retentionDays": ["distillRecords", "retentionDays"]
     // sensitiveScanEnabled（#164 A2）是顶层扁平键，不需要进这张表——走 configFlagValue
     // 的默认分支即可。
   };

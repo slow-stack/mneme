@@ -677,6 +677,22 @@ export const Config = z.object({
     retentionDays: z.natural().min(1).max(3650).default(90)
   }).default({}),
 
+  // --- distill records + provenance (#399) ------------------------------------
+  // 蒸馏把窗口压成记忆后，原文默认不留——于是「这条记忆出自哪段对话」事后无法
+  // 复核（arXiv 2609.36059 §3 Eq.1：旁路索引不丢信息，替换才丢）。开启后蒸馏时
+  // 顺带把**公开**正文原样落盘（distill_records），并给写出的记忆挂上窗口链接
+  // （memory_provenance）。默认关：这是一份对话原文副本，价值与暴露面都取决于
+  // 用户是否愿意留档，不该由升级默认打开。
+  //
+  // retentionDays 只裁 distill_records（启动即清，挂 llmAudit purge 旁）；链接
+  // 保留指向空区间，面板/CLI 显示「来源已过期」——删原文不等于篡改历史。落盘
+  // 文本不受 distillMaxChars / trim(args,300) / trim(out,500) 约束（记录是凭证，
+  // 不是喂给 LLM 的预算）；工具调用入参与结果、code 输出不落盘（推理亦然）。
+  distillRecords: z.object({
+    enabled: z.boolean().default(false),
+    retentionDays: z.natural().min(1).max(3650).default(90)
+  }).default({}),
+
   // --- write admission (#254) ------------------------------------------------
   // 写入准入：把「这条该不该进库」前移到 LLM 之前。与 memoryQualityFilter 的分工
   // 是时点不是判据——那个是**写入后**打分归档（扣分可以错，只影响排序与归档），
@@ -868,7 +884,11 @@ const LIGHT_MODE_OFF = [
   // 轻量档（小模型 / 小上下文）最不该再多一份注入物。这是预设给的默认值、不是强制：
   // 用户显式勾选仍然赢（合并顺序「用户开关 > 轻量预设 > bundle 配置」，同
   // injectGuidanceEnabled）。
-  "continuityRescueEnabled"
+  "continuityRescueEnabled",
+  // #399：轻量档不开蒸馏原文留存——它是一份对话原文副本（磁盘 + 暴露面），
+  // 与轻量档「小模型 / 小上下文 / 少留痕」的取向相反。默认关，这里只是
+  // 轻量预设再确认一次；用户显式勾选仍然赢（合并顺序同 continuityRescueEnabled）。
+  "distillRecords.enabled"
 ];
 
 /**

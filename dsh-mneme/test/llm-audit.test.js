@@ -657,3 +657,40 @@ test("boot retention purge reads the assembled config, not rawCfg", async () => 
   after.close();
   assert.equal(left, 0, "面板开着的审计必须按 cfg 清理，否则审计行只增不减");
 });
+
+// #399 的启动期裁剪同理：留存开关与保留期都要取装配后的 cfg。这里额外锁一条
+// 「默认关就不动手」——留存是 opt-in，默认关时一张空表不该被每次启动扫一遍。
+test("boot purge trims expired distill records only when retention is on (issue #399)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mneme-distill-retention-"));
+  const dbPath = join(dir, "memory.db");
+
+  const seed = createStore(dbPath);
+  createSettings(seed.db).setFeatureFlags({ "distillRecords.enabled": true, "distillRecords.retentionDays": 1 });
+  seed.saveDistillRecords([
+    {
+      sessionId: "s-boot",
+      seq: 1,
+      role: "user",
+      text: "过期原文",
+      windowId: "s-boot:1",
+      distilledAt: new Date(Date.now() - 2 * 86400000).toISOString()
+    }
+  ]);
+  assert.equal(seed.db.prepare("SELECT count(*) AS c FROM distill_records").get().c, 1, "先放一行过期原文");
+  seed.close();
+
+  const ctx = new Context();
+  ctx.provide("tools", { register() { return () => {}; } });
+  ctx.provide("commands", { register() { return () => {}; } });
+  ctx.provide("systemPrompt", { context() { return () => {}; } });
+  ctx.provide("agentDefaultModel", { currentSelection() { return { provider: "mock", model: "mock" }; } });
+  ctx.provide("llm", { async *stream() { yield { type: "finish", reason: { kind: "stop" } }; } });
+  ctx.provide("webServer", { register() { return () => {}; } });
+  // bundle 说关、面板说开（保留期 1 天，那行已过期 2 天）：只有读装配后的 cfg 才会清掉
+  await ctx.plugin(mneme, { memoryDir: dir, distillRecords: { enabled: false, retentionDays: 1 } });
+
+  const after = new DatabaseSync(dbPath);
+  const left = after.prepare("SELECT count(*) AS c FROM distill_records").get().c;
+  after.close();
+  assert.equal(left, 0, "面板开着的留存必须按 cfg 裁剪，否则原文只增不减");
+});
