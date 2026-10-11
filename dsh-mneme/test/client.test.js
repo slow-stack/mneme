@@ -1217,7 +1217,7 @@ test("mcp card: mount snippet is copyable and token-keyed to the external API", 
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
 });
-// --- 冲突裁决窗可读性（报障原话：窗口太小又不能放大，完全对比不了内容，只好
+// --- #400 冲突裁决窗可读性（报障原话：窗口太小又不能放大，完全对比不了内容，只好
 // 两个都删或胡乱选一个）---
 // 锁四件事：展开切换存在且默认收起（折叠态仍走 140 字预览，既有布局不回归）；
 // 展开态渲染未截断全文并去掉 diff 的行数钳制；判读依据行（类型/重要度/字数/
