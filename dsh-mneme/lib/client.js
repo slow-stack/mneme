@@ -1522,8 +1522,10 @@ window.__ModuleLoader__.load({
       ".mneme-conflict-diff{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}",
       // 展开全文：取消行数钳制并给一个内部滚动区——报障点是「窗口太小又不能
       // 放大，完全对比不了内容」，所以展开态必须能容纳长文本且不撑破面板。
-      ".mneme-conflict-diff--full{display:block;-webkit-line-clamp:unset;max-height:46vh;overflow-y:auto}",
-      ".mneme-conflict-text{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;overflow-wrap:anywhere;max-height:46vh;overflow-y:auto}",
+      // 上限用 em 而非 vh：宿主可能把面板放在零高视口里（隐藏 webview / 后台
+      // 页），那时 46vh 会算成 0px，展开态直接看不见字——实测踩过。
+      ".mneme-conflict-diff--full{display:block;-webkit-line-clamp:unset;max-height:28em;overflow-y:auto}",
+      ".mneme-conflict-text{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;overflow-wrap:anywhere;max-height:28em;overflow-y:auto}",
       ".mneme-conflict-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}",
       ".mneme-conflict-metaval{color:var(--dsw-alias-label-secondary)}",
       // 窄面板下并排会把每侧挤到无法阅读，退成单列（容器查询按面板实际宽度判）

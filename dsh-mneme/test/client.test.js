@@ -1229,6 +1229,11 @@ test("conflict queue: expandable full text with decision metadata", () => {
   assert.ok(/open \? \(s\.content \|\| ""\) : \(s\.content \|\| ""\)\.slice\(0, 140\)/.test(clientSource),
     "collapsed keeps the 140-char preview while expanded must render untruncated content");
   assert.ok(clientSource.includes("mneme-conflict-diff--full"), "expanded diff must drop the 4-line clamp");
+  // 展开态高度上限必须与视口无关：宿主可能把面板放进零高视口（隐藏 webview /
+  // 后台页），那时 vh 会算成 0px，「展开全文」直接看不见字——肉眼验收实测踩过。
+  assert.ok(clientSource.includes("max-height:28em"), "expanded height cap must be viewport-independent");
+  assert.equal(/\.mneme-conflict-(diff--full|text)\{[^}]*\d+vh/.test(clientSource), false,
+    "conflict expand rules must not use vh");
   assert.ok(clientSource.includes('"memory.status.conflictQueue.chars"'), "each side must show its length");
   assert.ok(clientSource.includes('"memory.status.conflictQueue.updated"'), "each side must show which one is newer");
   assert.ok(clientSource.includes("copySide"), "each side must be copyable for external comparison");
