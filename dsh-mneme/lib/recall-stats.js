@@ -24,11 +24,18 @@ import { scopeKeyOf } from "./scope.js";
  *    上限，超出标 truncated（degraded 口径），不静默少算。
  *  - archive（#275 拍板的第五指标，与上面几项同位）：
  *    · total = 归档区现有行数；addedInWindow / perDay = 窗口内进入归档区的行数
- *      与其日均（净增速率）。归档时刻只能取 updated_at（setArchived 翻标志位时刷
- *      它）——这是代理口径：对已归档行做一次 memory_update，或对同一行重复调
- *      setArchived(…, true)，都会被算成「本窗口新进归档」，perDay 因此偏高。精确
- *      口径要一个 archived_at 列（schema 变更，属第二批题材），本版不加；真正的
- *      「净」增本来也要跨快照比 total（物理删除落地后，差值才会由负向变化体现）。
+ *      与其日均（净增速率）。归档时刻取 archived_at（#275 第二批落的精确列）：
+ *      setArchived 只在「活跃 → 归档」那一次落值，取消归档清 NULL，重复归档不刷新。
+ *      本指标 v1 曾用 updated_at 代理（setArchived 翻标志位时刷它），偏差方向是
+ *      **偏高**——对已归档行做一次 memory_update、或对同一行重复调 setArchived(…,
+ *      true)，都会把旧归档算成「本窗口新进」。archived_at 就是为消灭这两个假阳性
+ *      而加的，别再退回 updated_at。真正的「净」增本来也要跨快照比 total（物理
+ *      删除落地后，差值才会由负向变化体现）。
+ *    · undated = archived_at 为 NULL 的归档行数（本列落地前就已归档的存量行，时刻
+ *      不可追溯）。**刻意不计入 addedInWindow**：它们的归档时刻早于本列落地，无法
+ *      证明落在窗口内还是窗口外（迁移当刻，窗口内的存量归档行同样会是 NULL）。用
+ *      updated_at 顶替就是走回被推翻的代理口径；按 0 充数则是把「不知道」伪装成
+ *      「没有」。单列出来让读侧自判可信度——宁少不脏。
  *    · compressible = 可压掉行数：同 type、同 scope 三维且内容哈希完全相同的归档
  *      行里，多出来的那些（每组留一行）。用内容哈希而不是向量近重复，是因为回收
  *      动作本身会清掉归档行向量（clearArchivedEmbeddings）——指标不能建在它自己
@@ -85,12 +92,19 @@ export function recallStats(store, options = {}) {
   // （type + 哈希 + scope 三维）——可压掉的必须是「本来就会被判成同一件事」的行。
   let archivedTotal = 0;
   let archivedInWindow = 0;
+  let archivedUndated = 0;
   const hashGroups = new Map();
   for (const m of memories) {
     if (m.archived) {
       archivedTotal += 1;
-      const archivedMs = Date.parse(m.updated_at ?? "");
-      if (Number.isFinite(archivedMs) && archivedMs >= sinceMs) archivedInWindow += 1;
+      // 精确口径：只认 archived_at。NULL = 本列落地前的存量归档行，时刻不可追溯
+      // （见文件头 undated 段）——不拿 updated_at 顶替，那正是被本批推翻的代理口径。
+      const archivedMs = Date.parse(m.archived_at ?? "");
+      if (Number.isFinite(archivedMs)) {
+        if (archivedMs >= sinceMs) archivedInWindow += 1;
+      } else {
+        archivedUndated += 1;
+      }
       if (m.content_hash) {
         const key = [
           m.type ?? "",
@@ -161,6 +175,7 @@ export function recallStats(store, options = {}) {
       total: archivedTotal,
       addedInWindow: archivedInWindow,
       perDay: Math.round((archivedInWindow / windowDays) * 100) / 100,
+      undated: archivedUndated,
       compressible: { rows: compressibleRows, groups: compressibleGroups }
     },
     zombie: {

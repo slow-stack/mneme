@@ -124,21 +124,106 @@ test("windowDays/exemptDays 越界回默认；扫描超上限标 truncated", () 
 
 // ============================ 第五指标（#275）：归档净增速率 + 可压掉行数
 
-test("归档净增速率：按 updated_at 取归档时刻，窗外归档只进总数不进净增", () => {
+test("归档净增速率：按 archived_at 取归档时刻，窗外归档只进总数不进净增", () => {
   const { store, service } = setup();
   const fresh = service.saveWithDedupe({ type: "history", title: "刚归档", content: "x", importance: 3 }).memory;
   const old = service.saveWithDedupe({ type: "history", title: "早归档", content: "y", importance: 3 }).memory;
   service.saveWithDedupe({ type: "history", title: "活跃件", content: "z", importance: 3 });
   store.setArchived(fresh.id, true);
   store.setArchived(old.id, true);
-  // 归档时刻 = 最后一次写（setArchived 刷 updated_at）：把这行推到窗口外
-  store.db.prepare("UPDATE memories SET updated_at = ? WHERE id = ?")
+  // 精确口径：归档时刻是 archived_at 列（#275 第二批），把这行推到窗口外
+  store.db.prepare("UPDATE memories SET archived_at = ? WHERE id = ?")
     .run(new Date(Date.now() - 100 * 86400000).toISOString(), old.id);
 
   const stats = service.recallStats({ windowDays: 30, exemptDays: 0 });
   assert.equal(stats.archive.total, 2, "归档区现有行数（活跃件不算）");
   assert.equal(stats.archive.addedInWindow, 1, "窗外那次归档不算本窗口净增");
   assert.equal(stats.archive.perDay, Math.round((1 / 30) * 100) / 100);
+  assert.equal(stats.archive.undated, 0, "两行都有 archived_at，都不算时刻不可追溯");
+  store.close();
+});
+
+test("回归锁：归档后再 memory_update 刷 updated_at，不得算作本窗口新进归档", () => {
+  // 本批的核心回归锁。代理口径下归档时刻取 updated_at（setArchived 刷它），于是
+  // 「对已归档行做一次普通更新」就会把旧归档算成窗口内新进，perDay 偏高——这正是
+  // #275 第二批要消灭的假阳性。任何人把 recall-stats 改回 Date.parse(m.updated_at)
+  // 或改回 `m.archived_at ?? m.updated_at`，本用例立刻失败。
+  const { store, service } = setup();
+  const m = service.saveWithDedupe({ type: "history", title: "早归档", content: "x", importance: 3 }).memory;
+  store.setArchived(m.id, true);
+  store.db.prepare("UPDATE memories SET archived_at = ? WHERE id = ?")
+    .run(new Date(Date.now() - 100 * 86400000).toISOString(), m.id);
+  // 已归档行上的一次普通更新：updated_at 被刷到当下，archived_at 必须岿然不动
+  store.update(m.id, { content: "改过一遍" });
+  const row = store.getById(m.id);
+  assert.ok(
+    Date.parse(row.updated_at) > Date.now() - 60000,
+    "前提成立：update 确实把 updated_at 刷到了当下（否则本用例是恒真的）"
+  );
+
+  const stats = service.recallStats({ windowDays: 30, exemptDays: 0 });
+  assert.equal(stats.archive.total, 1);
+  assert.equal(stats.archive.addedInWindow, 0, "旧归档不因一次 update 变成窗口新进");
+  assert.equal(stats.archive.perDay, 0);
+  store.close();
+});
+
+test("取消归档清空 archived_at；再次归档重新落新时刻", () => {
+  const { store } = setup();
+  const m = store.save({ type: "history", title: "t", content: "c" });
+  const archived = store.setArchived(m.id, true);
+  assert.ok(archived.archived_at, "活跃 → 归档：落当前时刻");
+
+  const restored = store.setArchived(m.id, false);
+  assert.equal(restored.archived, false);
+  assert.equal(restored.archived_at, undefined, "取消归档清 NULL（toRow 读作 undefined，不是陈旧时刻）");
+
+  const again = store.setArchived(m.id, true);
+  assert.ok(again.archived_at, "重新归档重新落时刻");
+  assert.notEqual(again.archived_at, archived.archived_at, "是新一次归档，不是复用旧时刻");
+  store.close();
+});
+
+test("幂等：重复归档不刷新 archived_at（否则重复调用又变成一次净增）", () => {
+  // 代理口径被推翻的两个假阳性之一就是「对同一行重复调 setArchived(true)」。精确
+  // 口径下重复归档不是新一次归档，时刻保持首次值；刷新它就等于把旧毛病换个入口复活。
+  const { store } = setup();
+  const m = store.save({ type: "history", title: "t", content: "c" });
+  const first = store.setArchived(m.id, true);
+  const second = store.setArchived(m.id, true);
+  const third = store.setArchived(m.id, true);
+  assert.equal(second.archived_at, first.archived_at);
+  assert.equal(third.archived_at, first.archived_at);
+  store.close();
+});
+
+test("存量归档行（archived_at 为 NULL）计入 undated，不静默顶替成窗口新进", () => {
+  // NULL = 本列落地前就已归档的行，归档时刻不可追溯。用 updated_at 顶替就是退回被
+  // 推翻的代理口径；按 0 充数则是把「不知道」伪装成「没有」。这里锁的是第三种做法：
+  // 单独计数、不计入 addedInWindow。
+  const { store, service } = setup();
+  const m = service.saveWithDedupe({ type: "history", title: "存量归档", content: "x", importance: 3 }).memory;
+  store.setArchived(m.id, true);
+  store.db.prepare("UPDATE memories SET archived_at = NULL WHERE id = ?").run(m.id);
+
+  const stats = service.recallStats({ windowDays: 30, exemptDays: 0 });
+  assert.equal(stats.archive.total, 1);
+  assert.equal(stats.archive.addedInWindow, 0, "时刻不可追溯 → 不算窗口新进");
+  assert.equal(stats.archive.undated, 1, "单独暴露，不伪装成 0");
+  store.close();
+});
+
+test("口径升级不波及其他四项指标：归档行照旧不进活跃 / 僵尸 / 豁免", () => {
+  const { store, service } = setup();
+  service.saveWithDedupe({ type: "project", title: "活跃", content: "x", importance: 3 });
+  const arch = service.saveWithDedupe({ type: "project", title: "归档", content: "y", importance: 3 }).memory;
+  store.setArchived(arch.id, true);
+
+  const stats = service.recallStats({ windowDays: 30, exemptDays: 0 });
+  assert.equal(stats.zombie.activeCount, 1, "归档行不算活跃");
+  assert.equal(stats.zombie.zombieCount, 1, "零曝光的活跃行照旧算僵尸");
+  assert.equal(stats.zombie.exemptCount, 0);
+  assert.equal(stats.archive.total, 1);
   store.close();
 });
 
@@ -183,7 +268,7 @@ test("没有归档行时给 0，不返回 null / NaN", () => {
   service.saveWithDedupe({ type: "project", title: "只有活跃", content: "x", importance: 3 });
   const stats = service.recallStats({ windowDays: 30, exemptDays: 0 });
   assert.deepEqual(stats.archive, {
-    total: 0, addedInWindow: 0, perDay: 0, compressible: { rows: 0, groups: 0 }
+    total: 0, addedInWindow: 0, perDay: 0, undated: 0, compressible: { rows: 0, groups: 0 }
   });
   store.close();
 });

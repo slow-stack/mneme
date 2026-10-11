@@ -213,6 +213,114 @@ test("search excludes archived by default", () => {
   store.close();
 });
 
+// ============================ #275 第二批：archived_at 精确归档时刻
+
+test("schema migration adds archived_at column to legacy database", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-migrate-at-"));
+  const dbPath = join(dir, "legacy.db");
+  try {
+    // 存量库：有 archived 标志位，但没有 archived_at（#275 第一批时代的库）
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec(`CREATE TABLE memories (
+      id TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,
+      tags TEXT NOT NULL DEFAULT '[]', importance INTEGER NOT NULL DEFAULT 3,
+      forgotten INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0,
+      source TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );`);
+    legacy.exec(`INSERT INTO memories (id, type, title, content, tags, importance, forgotten, archived, source, created_at, updated_at)
+      VALUES ('old1', 'history', 't', 'c', '[]', 3, 0, 1, NULL, '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z');`);
+    legacy.close();
+
+    const store = createStore(dbPath);
+    const cols = store.db.prepare("PRAGMA table_info(memories)").all().map((c) => c.name);
+    assert.ok(cols.includes("archived_at"), "archived_at column added");
+    // 存量归档行零重写：不回填 updated_at（那等于把被推翻的代理口径固化进列里）
+    const raw = store.db.prepare("SELECT archived_at FROM memories WHERE id = 'old1'").get();
+    assert.equal(raw.archived_at, null, "legacy archived row keeps NULL, not backfilled from updated_at");
+    assert.equal(store.getById("old1").archived_at, undefined, "NULL 读作 undefined，调用方须显式处理");
+    store.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("archived_at migration is idempotent: reopening the upgraded database is a no-op", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-migrate-at2-"));
+  const dbPath = join(dir, "upgraded.db");
+  try {
+    const first = createStore(dbPath);
+    const m = first.save({ type: "history", title: "t", content: "c" });
+    first.setArchived(m.id, true);
+    const stamp = first.getById(m.id).archived_at;
+    first.close();
+
+    // 再开一次：addColumn 先 PRAGMA 后 ALTER，不该报错、不该重建、不该动已有值
+    const second = createStore(dbPath);
+    const cols = second.db.prepare("PRAGMA table_info(memories)").all().filter((c) => c.name === "archived_at");
+    assert.equal(cols.length, 1, "列只存在一份，没被重复 ALTER");
+    assert.equal(second.getById(m.id).archived_at, stamp, "重开不动已落盘的归档时刻");
+    second.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("setArchived stamps archived_at on archive, clears it on restore", () => {
+  const store = openMemory();
+  const saved = store.save({ type: "project", title: "t", content: "c", importance: 3 });
+  assert.equal(saved.archived_at, undefined, "新建行未归档 → 无时刻");
+
+  const archived = store.setArchived(saved.id, true);
+  assert.equal(archived.archived, true);
+  assert.ok(archived.archived_at, "活跃 → 归档落时刻");
+  assert.ok(
+    Math.abs(Date.parse(archived.archived_at) - Date.now()) < 5000,
+    "落的是当下时刻，不是别的行的 updated_at"
+  );
+
+  const restored = store.setArchived(saved.id, false);
+  assert.equal(restored.archived, false);
+  assert.equal(restored.archived_at, undefined, "取消归档清空");
+  store.close();
+});
+
+test("setArchived keeps updated_at semantics (existing readers depend on it)", () => {
+  // archived_at 是新增列，不是 updated_at 的替代品：面板排序、快照哈希、CAS 都读
+  // updated_at，本函数自 v0.2 起就无条件刷它——改口径不得顺手改掉这条既有语义。
+  const store = openMemory();
+  const saved = store.save({ type: "project", title: "t", content: "c", importance: 3 });
+  const before = store.getById(saved.id).updated_at;
+  const archived = store.setArchived(saved.id, true);
+  assert.ok(Date.parse(archived.updated_at) >= Date.parse(before), "updated_at 照旧被刷");
+  const again = store.setArchived(saved.id, false);
+  assert.ok(Date.parse(again.updated_at) >= Date.parse(archived.updated_at), "取消归档也刷");
+  store.close();
+});
+
+test("save with archived:true stamps archived_at at insert time", () => {
+  // 铸造即归档的行：archived=1 而 archived_at=NULL 会落进「存量行」语义，读侧只能
+  // 当它时刻不可追溯——明明是当下发生的归档，白丢一条记录。
+  const store = openMemory();
+  const born = store.save({ type: "history", title: "生来就归档", content: "c", archived: true });
+  assert.equal(born.archived, true);
+  assert.ok(born.archived_at, "入库即归档 → 归档时刻 = 入库时刻");
+  assert.equal(born.archived_at, born.created_at, "两列同源（同一个 nowIso）");
+
+  const live = store.save({ type: "history", title: "活跃", content: "c" });
+  assert.equal(live.archived_at, undefined);
+  store.close();
+});
+
+test("update() cannot set archived_at (archived is not an updatable field)", () => {
+  // 归档时刻只能由 setArchived 落。若 update 的 patch 能写它，就等于给精确口径开了
+  // 一个绕过 setArchived 语义（幂等 / 清空）的后门，代理口径会从缝里长回来。
+  const store = openMemory();
+  const saved = store.save({ type: "history", title: "t", content: "c" });
+  store.update(saved.id, { archived_at: "2020-01-01T00:00:00.000Z", content: "改过" });
+  assert.equal(store.getById(saved.id).archived_at, undefined, "patch 里的 archived_at 被忽略");
+  store.close();
+});
+
 // --- vector search ---
 
 test("save/update persist embedding vector and searchVector ranks by cosine", () => {

@@ -13,6 +13,10 @@ CREATE TABLE IF NOT EXISTS memories (
   importance  INTEGER NOT NULL DEFAULT 3,
   forgotten   INTEGER NOT NULL DEFAULT 0,
   archived    INTEGER NOT NULL DEFAULT 0,
+  -- Issue #275 第二批：归档时刻的精确列。archived 是标志位，updated_at 只是
+  -- 「最后一次写」——对已归档行做一次 update 就会刷它，代理口径因此高估归档
+  -- 净增速率。本列只在「从活跃面进入归档面」那一次落值，取消归档置 NULL。
+  archived_at TEXT,
   source      TEXT,
   content_history TEXT,
   content_hash TEXT,
@@ -453,6 +457,10 @@ function toRow(row) {
     importance: row.importance,
     forgotten: row.forgotten === 1,
     archived: row.archived === 1,
+    // Issue #275 第二批：NULL（存量归档行、或落地前的历史数据）读作 undefined，
+    // 与 sensitivity/occurred_at 同款——调用方必须显式处理「时刻不可知」，不能
+    // 顺手 `?? updated_at` 把代理口径捡回来。
+    archived_at: row.archived_at ?? undefined,
     source: row.source ?? undefined,
     content_history: parseJsonArray(row.content_history),
     evidence: parseJsonArray(row.evidence),
@@ -741,6 +749,11 @@ export function createStore(path) {
   };
 
   addColumn("memories", "archived", "ALTER TABLE memories ADD COLUMN archived INTEGER NOT NULL DEFAULT 0");
+  // Issue #275 第二批：归档时刻精确列。可空不带 DEFAULT——存量库的已归档行
+  // 零重写，读侧 NULL = 「本列落地前归档，时刻不可追溯」。刻意不回填：用
+  // updated_at 回填等于把被推翻的代理口径重新固化进列里，偏差（偏高）会从
+  // 「已知的口径差」变成「看不见的脏数据」。
+  addColumn("memories", "archived_at", "ALTER TABLE memories ADD COLUMN archived_at TEXT");
   addColumn("memories", "embedding", "ALTER TABLE memories ADD COLUMN embedding TEXT");
   addColumn("memories", "last_accessed_at", "ALTER TABLE memories ADD COLUMN last_accessed_at TEXT");
   addColumn("memories", "_full_content", "ALTER TABLE memories ADD COLUMN _full_content TEXT");
@@ -1058,8 +1071,8 @@ export function createStore(path) {
       : inferEpistemicStatus(memory);
     runAtomically(() => {
       db.prepare(
-        `INSERT INTO memories (id, type, title, content, tags, importance, forgotten, archived, source, content_history, quality_score, embedding, epistemic_status, agent_scope, workspace_scope, agent_scope_source, workspace_scope_source, scope_decided_at, sensitivity, occurred_at, evidence, doc_path, content_hash, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO memories (id, type, title, content, tags, importance, forgotten, archived, archived_at, source, content_history, quality_score, embedding, epistemic_status, agent_scope, workspace_scope, agent_scope_source, workspace_scope_source, scope_decided_at, sensitivity, occurred_at, evidence, doc_path, content_hash, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         type,
@@ -1068,6 +1081,10 @@ export function createStore(path) {
         tags,
         importance,
         memory.archived ? 1 : 0,
+        // 铸造即归档的行（store.save({archived:true})）：归档时刻就是入库时刻。
+        // 不写这一格的话，archived=1 而 archived_at=NULL 会落在「存量行」语义里，
+        // 精确口径读侧只能把它当不可追溯——明明是当下发生的归档，白丢一条记录。
+        memory.archived ? now : null,
         memory.source ?? null,
         JSON.stringify(memory.content_history ?? []),
         Number.isFinite(memory.quality_score) ? memory.quality_score : null,
@@ -1308,10 +1325,27 @@ export function createStore(path) {
     return getById(id);
   }
 
+  // Issue #275 第二批：archived_at 是「从活跃面进入归档面」那一刻的精确记录。
+  // updated_at 照旧刷新（本函数自 v0.2 起的既有语义，其他读侧依赖它——面板排序、
+  // 快照哈希、CAS），两列职责分开：updated_at = 最后一次写，archived_at = 归档时刻。
+  // 幂等：已是归档态再调 archived=true，不刷新 archived_at（重复归档不是新一次
+  // 归档，否则「重复调 setArchived」又变成一次净增——那正是代理口径被推翻的原因）。
   function setArchived(id, archived) {
+    const next = archived ? 1 : 0;
     runAtomically(() => {
-      db.prepare("UPDATE memories SET archived = ?, updated_at = ? WHERE id = ?")
-        .run(archived ? 1 : 0, nowIso(), id);
+      // nowIso 在事务内取（与改动前一致）：单调顶推的时间戳不该被一次回滚白白消耗。
+      const now = nowIso();
+      // CASE 里的 archived 是**更新前**的值（SQLite UPDATE 表达式语义）：
+      //   活跃 → 归档：落当前时刻；已归档 → 归档：保留原值（含存量 NULL，不回填）；
+      //   任意 → 取消归档：清 NULL。
+      // 幂等刻意选「重复归档不刷新时刻」：否则「对同一行重复调 setArchived(true)」
+      // 会再被算成本窗口新进——那正是本批要消灭的代理口径偏高，换个入口复活而已。
+      db.prepare(
+        `UPDATE memories SET archived = ?,
+           archived_at = CASE WHEN ? = 1 AND archived = 0 THEN ? WHEN ? = 0 THEN NULL ELSE archived_at END,
+           updated_at = ?
+         WHERE id = ?`
+      ).run(next, next, now, next, now, id);
       incrementGeneration();
     });
     return getById(id);
