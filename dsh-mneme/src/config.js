@@ -189,6 +189,42 @@ export const Config = z.object({
   // 模型的推理与正文共享该预算，effort 未压低时 32768 恰好被推理烧光 → 空体
   // （"no json array in llm output"，报告实测 146 轮因此失败）。默认抬到上限，
   // 让默认配置也留足正文预算；流式计费按实际用量，不按上限。
+  //
+  // 成本审计（2026-10-12，本机库只读探针）复验了「默认值该不该降回去」这个问题，
+  // 结论是**不该降**，故默认维持 131072。三条实测证据：
+  //   1. 这个键是**上限**，不是计费口径——流式按实际用量计费（与 sleepMaxTokens
+  //      的 description 同口径）。压上限只在**真撞顶**时生效：近 10 天 88 个成功
+  //      轮 output 中位 24022、73.9% 超过 16384，因此把默认压到 16384 会让近四分之三
+  //      的正常轮撞顶。
+  //   2. 撞顶的后果不是「少烧一点」，而是**整轮失败**：max_tokens 截断 → 流上没有
+  //      完整 JSON → extractJsonArray 返回 null → finish({ok:false,
+  //      error:"no json array in llm output"})（src/dream.js:1167-1171）；而调度器
+  //      **只有 result.ok 才刷新 baseline**（src/dream.js:905-915，注释明写这是刻意
+  //      设计「失败必须能立刻重试」）→ 下一次写入用**同一批输入**重跑一遍。按 133 个
+  //      有真实用量的成功轮逐轮折算：cap=16384 撞顶 78.9%、净总量 +54.1%；
+  //      cap=24576 +43.3%；cap=32768 +15.9%；cap=49152 +6.5%；98304 起为 0。
+  //      即**调低这个值会把 token 花得更多**，而不是更少。
+  //   3. 真正的大头它治不到：把「时间就近」配上的 133 次成功调用（同一次配对里取
+  //      分子与分母）的决策正文（merge/update 的 content+title，剥离代码自动补的隐式
+  //      keep）按中英分估（中文 ≈1.5 字符/token、英文 ≈4）折 419,487 token，而同一批
+  //      调用输出合计 3,543,111 token —— 正文约占 11.8%（换算方法敏感性区间
+  //      8.2%~22.0%，逐轮中位 12.1%），其余约 88% 是推理与 JSON 骨架。
+  //      注意别用「全部有 decisions 的 run」当分子配「配对子集」的分母（会得 13.9%
+  //      这种偏高的数）——跨口径比较先校量纲、分子分母必须同集合。
+  //      病根是推理与正文共享 max_tokens 单一池子。宿主（DSH）侧确有分离机制：
+  //      DEFAULT_THINKING_BUDGETS = { minimal:1024, low:2048, medium:8192, high:16384 }、
+  //      adjustMaxTokensForThinking()（正文预算 + 推理预算相加后卡模型上限）、
+  //      clampThinkingBudgetToAnswerRoom()（MIN_ANSWER_TOKENS=1024，保证正文至少留
+  //      1024 token）——但它只对 Anthropic Claude 路径默认生效；chat-completions 网关
+  //      （volcano-engine / deepseek / glm 均在此列）须由路由 profile 开
+  //      compat.supportsThinkingTokenBudget 并指定 compat.thinkingTokenBudgetField
+  //      （vLLM/Qwen/llama.cpp 风格顶层字段，上游端点还必须认它），asar 注释明写
+  //      "Off by default"。两者都是 **profile 级**配置，插件 stream 调用无法
+  //      per-request 传递（ctx.llm.stream 唯一的推理旋钮是 reasoningEffort）——故本插件
+  //      在调用面无法单独约束推理预算：抬高这个上限是当前路由下唯一可用的止损手段，
+  //      治标不治本；治本是换非思考模型，或走能分离预算的路由 profile。
+  // 显式调小仍是允许的（min 256）：适合「宁可整轮失败也要压单轮上限」的场景，但请
+  // 知悉上面第 2 条的净成本方向。需要旧行为（无上限感）的库显式设回 131072。
   dreamMaxTokens: z.natural().min(256).max(131072).default(131072),
   // Pass-through reasoning effort for dream's LLM calls (Issue #135 建议 4/5).
   // Unset (no value) resolves to the LOWEST effort the model declares before
@@ -216,6 +252,17 @@ export const Config = z.object({
   // 被批量归档，其中 8 条疑似误伤长保留类型）是失控信号，与 update 上限同类的
   // 全局闸门：skipInvalid 也不豁免，超限整单拒绝。正常清理可调高。
   dreamMaxArchivePerRun: z.natural().min(1).max(200).default(8),
+  // #135 成本审计派生：单轮 merge 决策上限。merge 是唯一**回吐正文**的动作（每条
+  // 要求模型重新写出合并后的 content，实测平均 550 字符/条），其余动作都不带正文，
+  // 所以这是「输出里正文占比」唯一可控的杠杆。与 update/archive 上限同类：全局
+  // 闸门，skipInvalid 也不豁免，超限整单拒绝（errors 由 decisions.js 的数量闸段
+  // 统一汇总，run 记 failed）。默认 40 的校准依据（只读探针 246 轮 / 近 10 天 88 轮）：
+  // 每轮 merge 数全库 p50 7 / p90 15 / p99 28 / max 39，近 10 天 p99 39 / max 39
+  // ——40 即观测分布上沿（历史命中 0/246），与 archive 闸默认 8 恰为其 p90=max 是
+  // 同一校准法。刻意保守（不取 p90=15 之类）：超限代价不对称，整单拒绝会让调度器
+  // 不刷新 baseline、下轮同输入重跑，一次误伤约等于该轮成本 ×2，而探针里 merge≥15
+  // 的大轮正文占比正常（10~22%），没有失控特征。想拿覆盖换成本的用户可调低。
+  dreamMaxMergePerRun: z.natural().min(1).max(200).default(40),
   // Issue #125：候选集构造方式。"window"（默认，等同现状）只取最近
   // dreamMaxSnapshotSize 条；"hybrid" 在此基础上并入**向量翻出的高相似组**——
   // 本机实测 45 对「双方活跃且 sim≥0.85」里 0 对能同时进窗口（窗口覆盖率 11.7%），

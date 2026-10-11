@@ -1173,6 +1173,8 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       maxUpdatePerRun: config.reflectionUpdateMaxPerRun,
       // Issue #104 方向 2：archive 批量上限（全局闸门，超限整单拒绝）。
       maxArchivePerRun: config.dreamMaxArchivePerRun,
+      // #135 成本审计派生：merge 批量上限（merge 是唯一回吐正文的动作，同款全局闸门）。
+      maxMergePerRun: config.dreamMaxMergePerRun,
       minAgeHours: config.reflectionUpdateMinAgeHours,
       // v0.4.4 fix：显式透传，用户配 dreamImplicitKeep:false 时严格模式必须
       // 真正生效，dreamMinExplicitCoverage 决定隐式 keep 下的覆盖率下限。

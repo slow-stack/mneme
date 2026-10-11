@@ -676,8 +676,9 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // issue #339 新增 dreamMergeGuard、
   // issue #218/E5 新增 injectHeatEnabled、
   // issue #164 A2 新增 sensitiveScanEnabled（顶层扁平键，走 configFlagValue 默认分支）、
-  // issue #380 新增 preInjectGate.enabled/preInjectGate.enforce（注入前判定两级开关））
-  assert.equal(Object.keys(data.effective).length, 59 + 3 + 2 + 1 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 2 + 1 + 3 + 2 + 2 + 1 + 1 + 1 + 1 + 2);
+  // issue #380 新增 preInjectGate.enabled/preInjectGate.enforce（注入前判定两级开关）、
+  // #135 成本审计派生新增 dreamMaxMergePerRun（单轮 merge 决策上限））
+  assert.equal(Object.keys(data.effective).length, 59 + 3 + 2 + 1 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 2 + 1 + 3 + 2 + 2 + 1 + 1 + 1 + 1 + 2 + 1);
   assert.equal(data.effective.dreamSkipInvalid, true);
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, true);
@@ -688,6 +689,7 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   assert.equal(data.effective.dreamMinIntervalMinutes, 0);
   assert.equal(data.effective.autoDreamFailureBackoff, false);
   assert.equal(data.effective.dreamMaxTokens, 131072);
+  assert.equal(data.effective.dreamMaxMergePerRun, 40);
   assert.equal(data.effective.sleepProvider, "");
   assert.equal(data.effective.sleepModel, "");
   assert.equal(data.effective.autoInject, true);

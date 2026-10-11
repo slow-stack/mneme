@@ -87,6 +87,8 @@ dsh web
 
 默认 `131072`（即上限，#135）已为思考型模型预留推理+正文的双重预算（部分思考型模型仅推理就可能消耗 8k+ token），常规记忆库无需调整。若**记忆量大**（数万字符以上）且正文仍被截断，优先按下方「巩固模型分类声明」换非思考模型 / 配 `dreamReasoningEffort` 压低思考，再考虑调大输入侧上限（如 `distillMaxChars`）——`dreamMaxTokens` 本身已无上调空间。
 
+> **不要为了省 token 把它调小**（#135 成本审计实测）：这个键是**上限**而非计费口径，流式按实际用量计费，压上限只在真撞顶时生效；而撞顶的后果是**整轮失败**（截断 → 无完整 JSON → `no json array in llm output`），且调度器只有 `ok` 轮才刷新基线，下一次写入会用同一批输入重跑。按 133 个有真实用量的成功轮折算，cap=16384 撞顶 78.9%、净总量 **+54.1%**；cap=32768 +15.9%。真正的大头（`dream_consolidate` 输出 token 里约 88% 是推理与 JSON 骨架，只有约 11.8% 是决策正文）由 `dreamReasoningEffort` 与模型选择决定，与本键无关。相关的数量护栏见 `dreamMaxMergePerRun`。
+
 > 若使用**思考型模型**（如 deepseek-v4-flash / DeepSeek-R1 类），模型可能把全部预算花在 reasoning 上导致正文为空（日志出现 `no json array in llm output`）。#135 修复后：未配置 `dreamReasoningEffort` 时会**自动取模型支持的最低档**发流（不再省略字段让模型自带默认档——v4-flash 系默认 high——顶上烧光预算），默认配置即生效；显式 `none` = 不发送字段用服务商默认，`off`/`low`/`medium`/`high` 原样传递，模型不支持的档位自动换用（拒绝原因记入 llm_audit）。正文仍为空时配置 `dreamProvider`/`dreamModel` 指向非思考模型（`dreamMaxTokens` 默认已是上限 131072，无上调空间）。sleep 侧对应 `sleepReasoningEffort`。
 
 **巩固模型分类声明**（settings panel「巩固模型」= `dreamProvider`/`dreamModel`，睡眠侧对应 `sleepProvider`/`sleepModel`）：
@@ -339,6 +341,7 @@ dsh web
 | `dreamCandidateMax` | `0` | hybrid 的候选总量上限；`0` = 复用 `dreamMaxSnapshotSize`。候选总量与库总量解耦，输入成本不随库增长 |
 | `dreamCandidateMinSim` | `0.85` | hybrid 判「高相似」的阈值（与 sleep 的 normal 档对齐，两个模块共用同一个「高相似」定义） |
 | `dreamMaxArchivePerRun` | `8` | 单轮 archive 决策上限（超限整单拒绝，防一次性大扫除；正常清理可调高） |
+| `dreamMaxMergePerRun` | `40` | 单轮 merge 决策上限（超限整单拒绝）。merge 是巩固里唯一回吐正文的动作（每条要模型重写合并后的 content），所以这是「输出里正文占比」唯一可控的杠杆；默认 40 = 实测每轮 merge 数分布上沿（全库 p99 28 / max 39，历史 0 命中），与 archive 闸默认 8 同为尾险护栏而非成本削减工具。**注意**：`dream_consolidate` 的输出 token 里只有约 11.8% 是决策正文，其余约 88% 是推理与 JSON 骨架——想省 token 请调 `dreamReasoningEffort` 或换非思考模型，调小本键收益有限 |
 | `dreamSkipInvalid` | `true` | 单条非法决策跳过 + 合法子集应用 + run 记 degraded（#89）；`false` 恢复严格模式整单拒绝 |
 | `allowCrossTypeMerge` | `false` | 显式放宽跨类型合并（默认关，类型边界由用户承担）；跨类型意图的正确出口是 `sleepActionSet: full` |
 | `dreamImplicitKeep` | `true` | 显式决策覆盖率不足时的隐式 keep（未提及条目保持原样）；`false` + `dreamMinExplicitCoverage: 0` 恢复旧严格行为 |

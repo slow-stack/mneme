@@ -264,6 +264,26 @@ export function validateDecisions(decisions, snapshot, options = {}) {
   if (archiveCount > maxArchivePerRun) {
     errors.push(`too many archive decisions: ${archiveCount} > ${maxArchivePerRun}`);
   }
+  // merge 批量上限（#135 成本审计的派生护栏）。merge 是唯一**回吐正文**的动作：
+  // 每条 merge 都要求模型重新写出合并后的 content（实测 2113 条 merge 平均 550
+  // 字符/条），而 archive/keep/conflict 都不带正文——所以单轮 merge 数是「输出
+  // 里正文占比」唯一可控的杠杆（实测 dream_consolidate 的输出 token 只有约 11.8%
+  // 是决策正文，其余是推理与 JSON 骨架，那部分由 effort 决定、与本闸无关）。
+  // 与 update/create/archive 三道闸同类：全局闸门，skipInvalid 也不豁免，超限整单
+  // 拒绝。默认值取 40 的校准依据（只读探针，全库 246 轮 / 近 10 天 88 轮）：
+  // 每轮 merge 数 全库 p50 7 / p90 15 / p99 28 / max 39，近 10 天 p50 9 / p90 20 /
+  // p99 39 / max 39 —— 40 是观测分布的上沿（历史命中 0/246），与 archive 闸默认 8
+  // 恰为其 p90=max 同一校准法：这是面向未来的尾险护栏，不是成本削减工具（现有三
+  // 道闸在实测分布下命中率均为 0.0%，同一性质）。刻意不取更小的值：超限的代价
+  // 不对称——整单拒绝 = run 记 failed = 调度器不刷新 baseline（src/dream.js:905-915）
+  // = 下一次写入用同一批输入重跑，一次误伤约等于该轮成本 ×2；而探针里 merge≥15 的
+  // 大轮正文/显式决策比例都正常（10~22%），没有失控特征。想用覆盖换成本的用户可
+  // 自行调低 dreamMaxMergePerRun。
+  const mergeCount = survivors.filter((d) => d.action === "merge").length;
+  const maxMergePerRun = options.maxMergePerRun ?? 40;
+  if (mergeCount > maxMergePerRun) {
+    errors.push(`too many merge decisions: ${mergeCount} > ${maxMergePerRun}`);
+  }
   // Issue #89 防洗白核心（#104 方向 1 重审后保留）：全部决策都被跳过、合法
   // 子集为空时仍整单拒绝——宽容的前提是「有合法子集可应用」；模型输出整体
   // 非法（如全部幻觉 id）是真故障，不能被隐式 keep 洗成 ok。#104 只豁免

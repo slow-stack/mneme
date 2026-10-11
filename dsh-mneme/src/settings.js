@@ -159,6 +159,9 @@ const FEATURE_FLAG_INT_RANGES = {
   dreamPeakMaxDeferMinutes: [0, 1440],
   // Issue #125：hybrid 候选量上限（0 = 复用 dreamMaxSnapshotSize）。
   dreamCandidateMax: [0, 5000],
+  // #135 成本审计派生：单轮 merge 决策上限（merge 是唯一回吐正文的动作，默认 40
+  // = 实测分布上沿；与 config.js 的 z.natural().min(1).max(200) 对齐）。
+  dreamMaxMergePerRun: [1, 200],
   // Issue #164①：注入单条正文截断上限（默认 300 = 既有行为）。
   injectContentMaxChars: [60, 4000],
   // Issue #164：叙述条成簇门槛（共享同一 tag 的记忆数下限）。

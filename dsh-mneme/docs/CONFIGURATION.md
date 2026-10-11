@@ -116,7 +116,7 @@
 | `dreamPeakHours` | `""` | 巩固错峰，与 `summarizePeakHours` 同一份时段语法（#239） | 命中高峰不做梦、阈值继续累积、留 skip 审计；非法写法按未配置 |
 | `dreamPeakMaxDeferMinutes` | `120` | 巩固顺延上限（分钟） | 0 = 不设上限；到点仍处高峰照跑 |
 | `dreamProvider` / `dreamModel` | 空 | 巩固专用路由（settings「巩固模型」） | 建议非思考模型——思考模型易烧光预算返回空体（#135） |
-| `dreamMaxTokens` | `131072` | 巩固输出预算（256–131072） | 流式计费按实际用量，调大不增加成本 |
+| `dreamMaxTokens` | `131072` | 巩固输出预算（256–131072） | 流式计费按实际用量，调大不增加成本；**调小则相反**——撞顶 → 无完整 JSON → 整轮失败 → baseline 不刷新 → 同输入重跑（#135 实测 cap=16384 净成本 +54%） |
 | `dreamReasoningEffort` | 未配置 | 巩固推理档位（同 `summarizeReasoningEffort` 的枚举） | 未配置 = 自动取模型支持的最低档（#135）；显式 `none` = 不发字段 |
 | `dreamSummaryProvider` / `dreamSummaryModel` | 空 | 记忆总览（dream_summarize）专用路由（#258） | 空 = 回落巩固路由；总览输入为全库，建议大 ctx 非思考模型 |
 | `dreamSummaryMaxInputs` | `0` | 总览输入条数硬上限（按 updated_at 倒序取最新 N 条） | 0 = 不设上限（库增长可能撑爆小 ctx 模型） |
@@ -125,6 +125,7 @@
 | `dreamCandidateMax` | `0` | `hybrid` 候选总量上限（≤5000） | 0 = 复用 `dreamMaxSnapshotSize` |
 | `dreamCandidateMinSim` | `0.85` | `hybrid` 判「高相似」的阈值 | 与 sleep normal 档同一个定义 |
 | `dreamMaxArchivePerRun` | `8` | 单轮 archive 决策上限（≤200，#104） | 超限整单拒绝，`dreamSkipInvalid` 不豁免 |
+| `dreamMaxMergePerRun` | `40` | 单轮 merge 决策上限（≤200，#135） | 超限整单拒绝；merge 是唯一回吐正文的动作，40 = 实测每轮 merge 数分布上沿（历史 0 命中） |
 | `dreamImplicitKeep` | `true` | LLM 未提及的快照记忆自动补 keep | `false` = 恢复严格校验（未覆盖即拒绝整单） |
 | `dreamMinExplicitCoverage` | `0.5` | 显式决策覆盖率下限（0–1） | 防截断输出被隐式 keep 洗白 |
 | `dreamSkipInvalid` | `true` | 跳过单条非法决策、应用合法子集、run 记 degraded（#89） | `false` = 恢复整单拒绝 |
