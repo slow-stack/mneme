@@ -468,6 +468,67 @@ test("GET /api/dsh-mneme/semantic/llm-audit/stats aggregates by source and statu
   store.close();
 });
 
+// by_operation / by_day 是面板「token 去向」环形图与 7 天柱状的数据源。
+// 锁三件事：① 环形图直接按返回顺序画段，所以 by_operation 必须按
+// total_tokens 降序、by_day 必须按 day 升序（前端不再排）；② 每行带完整的
+// in/out/total 拆分（by_source 只有 total，画不出输入/输出对照）；
+// ③ write_admission 只计量不调 LLM，token 恒 0 是设计——它必须作为一行
+// 出现且为 0，防的是将来有人把 0 行过滤掉或当成异常补齐。
+test("GET /api/dsh-mneme/semantic/llm-audit/stats breaks spend down by operation and by day", async () => {
+  const { store, service, routes } = apiSetup();
+  const day1 = new Date(Date.now() - 2 * 86400000).toISOString();
+  const day2 = new Date(Date.now() - 1 * 86400000).toISOString();
+  service.saveLlmAudit({
+    timestamp: day1,
+    trigger_source: "autoDream", operation_type: "dream_consolidate",
+    model_id: "m", input_tokens: 100, output_tokens: 40, status: "success"
+  });
+  service.saveLlmAudit({
+    timestamp: day1,
+    trigger_source: "writeAdmission", operation_type: "write_admission",
+    model_id: "m", input_tokens: 0, output_tokens: 0, status: "success"
+  });
+  service.saveLlmAudit({
+    timestamp: day2,
+    trigger_source: "autoDream", operation_type: "dream_consolidate",
+    model_id: "m", input_tokens: 10, output_tokens: 5, status: "success"
+  });
+  service.saveLlmAudit({
+    timestamp: day2,
+    trigger_source: "autoSummarize", operation_type: "summarize_compress",
+    model_id: "m", input_tokens: 30, output_tokens: 10, status: "success"
+  });
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/semantic/llm-audit/stats");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/semantic/llm-audit/stats?days=7"), res);
+  const stats = JSON.parse(res.body);
+  assert.equal(res.statusCode, 200);
+
+  // by_operation：total_tokens 降序，含 in/out/total 拆分
+  assert.deepEqual(
+    stats.by_operation.map((o) => o.operation),
+    ["dream_consolidate", "summarize_compress", "write_admission"]
+  );
+  const consolidate = stats.by_operation[0];
+  assert.equal(consolidate.c, 2);
+  assert.equal(consolidate.input_tokens, 110);
+  assert.equal(consolidate.output_tokens, 45);
+  assert.equal(consolidate.total_tokens, 155);
+  const admission = stats.by_operation.find((o) => o.operation === "write_admission");
+  assert.equal(admission.c, 1);
+  assert.equal(admission.total_tokens, 0);
+
+  // by_day：date(timestamp)（UTC）分组，day 升序
+  const d1 = day1.slice(0, 10);
+  const d2 = day2.slice(0, 10);
+  assert.deepEqual(stats.by_day.map((d) => d.day), [d1, d2]);
+  assert.equal(stats.by_day[0].c, 2);
+  assert.equal(stats.by_day[0].total_tokens, 140);
+  assert.equal(stats.by_day[1].c, 2);
+  assert.equal(stats.by_day[1].total_tokens, 55);
+  store.close();
+});
+
 // ------------------------------------------- entity extraction (issue #250)
 // 实体抽取是「每次写入记忆都会跑」的后台 LLM 链路，但 createEntityStreamAdapter
 // 只拿到 llm 句柄、没有 service，所以从来没有写审计的能力——面板因此回答不了

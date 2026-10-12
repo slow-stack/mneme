@@ -2045,8 +2045,16 @@ export function createStore(path) {
 
   /**
    * Aggregate LLM spend over the last `days`: total calls/tokens/duration/cost,
-   * broken down by trigger_source and by status. Used by the API's
-   * /llm-audit/stats endpoint so the Web panel can show where budget goes.
+   * broken down by trigger_source, by status, by operation_type and by day.
+   * Used by the API's /llm-audit/stats endpoint so the Web panel can show
+   * where budget goes.
+   *
+   * by_operation / by_day exist because by_source is too coarse for the
+   * "where did the tokens go" panel: trigger_source merges dream_consolidate
+   * and dream_summarize into one autoDream bucket, hiding the single largest
+   * cost item (37% of 7-day tokens in the 2026-10 audit). by_day feeds the
+   * 7-day trend bars. Both are additive — by_source/by_status keep their
+   * shape (two tests assert on them).
    */
   function getLlmAuditStats({ days = 7 } = {}) {
     const since = new Date(Date.now() - days * 86400000).toISOString();
@@ -2068,6 +2076,22 @@ export function createStore(path) {
     const byStatus = db.prepare(
       "SELECT status, count(*) AS c FROM llm_audit_logs WHERE timestamp >= ? GROUP BY status"
     ).all(since);
+    const byOperation = db.prepare(
+      `SELECT operation_type AS operation, count(*) AS c,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(total_tokens), 0) AS total_tokens
+       FROM llm_audit_logs WHERE timestamp >= ?
+       GROUP BY operation_type ORDER BY total_tokens DESC`
+    ).all(since);
+    const byDay = db.prepare(
+      `SELECT date(timestamp) AS day, count(*) AS c,
+              COALESCE(SUM(input_tokens), 0) AS input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS output_tokens,
+              COALESCE(SUM(total_tokens), 0) AS total_tokens
+       FROM llm_audit_logs WHERE timestamp >= ?
+       GROUP BY date(timestamp) ORDER BY day ASC`
+    ).all(since);
     return {
       days,
       since,
@@ -2078,7 +2102,9 @@ export function createStore(path) {
       total_duration_ms: total.d,
       total_cost_usd: Number(total.cst),
       by_source: bySource,
-      by_status: byStatus
+      by_status: byStatus,
+      by_operation: byOperation,
+      by_day: byDay
     };
   }
 

@@ -778,8 +778,30 @@ window.__ModuleLoader__.load({
         "memory.status.maint.vacuumOff": "未 VACUUM",
         "memory.status.maint.vacuumFailed": "VACUUM 失败",
         "memory.status.maint.vacuumFailedHint": "清理已完成且不可逆，但文件暂时不会变小；稍后重跑即可（清理是幂等的）。",
-        "memory.status.llm": "LLM 消耗",
-        "memory.status.llmCalls": "近 7 天 · {n} 次调用",
+        "memory.status.sec.token": "Token 去向 · 近 7 天",
+        "memory.status.token.in": "输入",
+        "memory.status.token.out": "输出",
+        "memory.status.token.total": "7 天 token 总量",
+        "memory.status.token.calls": "调用次数",
+        "memory.status.token.callsCap": "近 7 天 · 全部后台组件",
+        "memory.status.token.share": "巩固占比",
+        "memory.status.token.shareFoot": "dream_consolidate · {n} token",
+        "memory.status.token.conflicts": "待确认冲突",
+        "memory.status.token.conflictsFoot": "来自 /dream-status · 实时",
+        "memory.status.token.donut": "按组件 · 谁花了这些 token",
+        "memory.status.token.days": "按天 · 7 天趋势",
+        "memory.status.token.heat": "8 周热力 · 每天花了多少",
+        "memory.status.token.heatLess": "少",
+        "memory.status.token.heatMore": "多",
+        "memory.status.token.last7": "近 7 天",
+        "memory.status.token.meterOnly": "（只计量）",
+        "memory.status.token.detail": "详细状态卡（原「库内一览 / 后台运转」9 张，点击展开）",
+        "memory.status.token.op.dream_consolidate": "记忆巩固",
+        "memory.status.token.op.summarize_compress": "会话蒸馏",
+        "memory.status.token.op.entity_extract": "实体抽取",
+        "memory.status.token.op.dream_summarize": "总览摘要",
+        "memory.status.token.op.sleep_pattern": "睡眠模式",
+        "memory.status.token.op.write_admission": "写入准入",
         "memory.status.error": "加载失败"
       },
       en: {
@@ -1299,8 +1321,30 @@ window.__ModuleLoader__.load({
         "memory.status.maint.vacuumOff": "Not VACUUMed",
         "memory.status.maint.vacuumFailed": "VACUUM failed",
         "memory.status.maint.vacuumFailedHint": "The reclaim already completed and cannot be undone, but the file will not shrink yet; run it again later (reclaim is idempotent).",
-        "memory.status.llm": "LLM Usage",
-        "memory.status.llmCalls": "Last 7 days · {n} calls",
+        "memory.status.sec.token": "Token flow · last 7 days",
+        "memory.status.token.in": "input",
+        "memory.status.token.out": "output",
+        "memory.status.token.total": "7-day token total",
+        "memory.status.token.calls": "Calls",
+        "memory.status.token.callsCap": "Last 7 days · all background components",
+        "memory.status.token.share": "Consolidation share",
+        "memory.status.token.shareFoot": "dream_consolidate · {n} token",
+        "memory.status.token.conflicts": "Pending conflicts",
+        "memory.status.token.conflictsFoot": "From /dream-status · live",
+        "memory.status.token.donut": "By component · who spent these tokens",
+        "memory.status.token.days": "By day · 7-day trend",
+        "memory.status.token.heat": "8-week heat · daily spend",
+        "memory.status.token.heatLess": "less",
+        "memory.status.token.heatMore": "more",
+        "memory.status.token.last7": "last 7 days",
+        "memory.status.token.meterOnly": "(metered only)",
+        "memory.status.token.detail": "Detailed status cards (the original 9 under Library / Background activity, click to expand)",
+        "memory.status.token.op.dream_consolidate": "Memory consolidation",
+        "memory.status.token.op.summarize_compress": "Session distillation",
+        "memory.status.token.op.entity_extract": "Entity extraction",
+        "memory.status.token.op.dream_summarize": "Overview summary",
+        "memory.status.token.op.sleep_pattern": "Sleep patterns",
+        "memory.status.token.op.write_admission": "Write admission",
         "memory.status.error": "Failed to load"
       }
     };
@@ -1387,7 +1431,23 @@ window.__ModuleLoader__.load({
         "--mneme-accent:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
         "--mneme-danger:color-mix(in srgb,var(--dsw-alias-state-error-primary) 80%,var(--dsw-alias-label-primary));" +
         "--mneme-warn:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 65%,var(--dsw-alias-label-primary));" +
-        "--mneme-ok:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 65%,var(--dsw-alias-label-primary))" +
+        "--mneme-ok:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 65%,var(--dsw-alias-label-primary));" +
+        // Token 去向三屏（2026-10 可观测性改造）：图表六色全部单层 color-mix、
+        // 基准只用宿主 token，test/contrast.test.js GRAPHICS 逐 selector 锁浅/深
+        // ≥3:1。配比按 2026-10 审计数据校准（巩固 37% 是最大弧，占最深主色）。
+        "--mneme-chart-1:color-mix(in srgb,var(--dsw-alias-state-business-primary) 70%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-2:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 55%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-3:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 60%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-4:color-mix(in srgb,var(--dsw-alias-state-error-primary) 65%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-5:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 45%,var(--dsw-alias-state-business-primary));" +
+        // chart-6 与 graphic-dim 同款但内联写：对比度解析器不递归 --mneme-* 变量。
+        "--mneme-chart-6:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent);" +
+        // 热力档位用 label 补余而非 transparent：transparent 混色在浅色主题下
+        // 低档位对白底不足 3:1；label 补余两套主题各档都过线且单调。
+        "--mneme-heat-1:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
+        "--mneme-heat-2:color-mix(in srgb,var(--dsw-alias-state-business-primary) 70%,var(--dsw-alias-label-primary));" +
+        "--mneme-heat-3:color-mix(in srgb,var(--dsw-alias-state-business-primary) 55%,var(--dsw-alias-label-primary));" +
+        "--mneme-heat-4:color-mix(in srgb,var(--dsw-alias-state-business-primary) 40%,var(--dsw-alias-label-primary))" +
       "}",
       ".mneme-x{flex:1;min-height:0;height:100%;width:100%;box-sizing:border-box;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);container-type:inline-size}",
       // 窄容器（better-sidebar 工作台 ~500px）下中央 vtabs 会与右缘悬浮的
@@ -1726,6 +1786,64 @@ window.__ModuleLoader__.load({
       ".mneme-heatdot--hot{background:var(--mneme-warn)}",
       ".mneme-heatdot--warm{background:var(--mneme-fg-dim)}",
       ".mneme-heatdot--cold{background:var(--mneme-graphic-dim)}",
+      // --- Token 去向三屏（2026-10 可观测性改造）：KPI 带 / donut / 7 天柱状 / 8 周热力 ---
+      // KPI 带固定 4 列、容器收窄降 2 列：用 @container 不用 @media——面板同时长在
+      // 宿主侧栏（~500px）与 sheet（1240px）里，决定布局的是容器宽度而非视口。
+      ".mneme-kpiband{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;max-width:1000px;margin:0 auto 12px}",
+      "@container (max-width:560px){.mneme-kpiband{grid-template-columns:repeat(2,minmax(0,1fr))}}",
+      ".mneme-tokenflow{max-width:1000px;margin:0 auto 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px 16px 14px}",
+      ".mneme-donutwrap{display:flex;gap:20px;align-items:center;margin-top:12px}",
+      "@container (max-width:480px){.mneme-donutwrap{flex-direction:column;align-items:stretch}.mneme-donutbox{align-self:center}}",
+      ".mneme-donutbox{position:relative;flex:none;width:148px;height:148px}",
+      ".mneme-donutbox svg{width:100%;height:100%;display:block}",
+      ".mneme-donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}",
+      ".mneme-donut-center b{font-size:19px;font-weight:650;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary)}",
+      ".mneme-donut-center span{font-size:11px;color:var(--mneme-fg-dim);margin-top:1px}",
+      // r=15.9155 让周长≈100，dasharray 直接填百分比；段缝靠 JS 侧留，这里只管观感。
+      ".mneme-donut circle.mneme-seg{fill:none;stroke-width:5.6;transition:opacity .15s}",
+      ".mneme-donut.has-focus circle.mneme-seg:not(.focused){opacity:.35}",
+      ".mneme-seg--1{stroke:var(--mneme-chart-1)}",
+      ".mneme-seg--2{stroke:var(--mneme-chart-2)}",
+      ".mneme-seg--3{stroke:var(--mneme-chart-3)}",
+      ".mneme-seg--4{stroke:var(--mneme-chart-4)}",
+      ".mneme-seg--5{stroke:var(--mneme-chart-5)}",
+      ".mneme-seg--6{stroke:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent)}",
+      ".mneme-legend{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}",
+      ".mneme-legendrow{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;cursor:default;font-size:12.5px;line-height:18px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-legendrow:hover,.mneme-legendrow.focused{background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-legendrow.dim{opacity:.45}",
+      ".mneme-legenddot{flex:none;width:10px;height:10px;border-radius:3px}",
+      ".mneme-dot--1{background:var(--mneme-chart-1)}",
+      ".mneme-dot--2{background:var(--mneme-chart-2)}",
+      ".mneme-dot--3{background:var(--mneme-chart-3)}",
+      ".mneme-dot--4{background:var(--mneme-chart-4)}",
+      ".mneme-dot--5{background:var(--mneme-chart-5)}",
+      ".mneme-dot--6{background:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent)}",
+      ".mneme-legendname{color:var(--dsw-alias-label-primary);white-space:nowrap}",
+      ".mneme-legendsub{color:var(--mneme-fg-dim);font-size:11px}",
+      ".mneme-legendval{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary);white-space:nowrap}",
+      ".mneme-legendpct{flex:none;width:46px;text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary);font-weight:600}",
+      ".mneme-bars{position:relative;height:150px;margin-top:14px}",
+      ".mneme-gridline{position:absolute;left:0;right:0;border-top:1px dashed var(--dsw-alias-border-l2)}",
+      ".mneme-gridlabel{position:absolute;right:0;transform:translateY(-58%);font-size:10px;color:var(--mneme-fg-dim)}",
+      ".mneme-barcols{position:absolute;inset:0;display:flex;align-items:flex-end;gap:8px;padding:0 2px}",
+      ".mneme-barcol{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;height:100%}",
+      ".mneme-bar{border-radius:5px 5px 2px 2px;background:var(--mneme-accent);min-height:2px;transition:opacity .15s}",
+      ".mneme-barcol:hover .mneme-bar{opacity:.8}",
+      ".mneme-barlabels{display:flex;gap:8px;padding:6px 2px 0}",
+      ".mneme-barlabels span{flex:1;min-width:0;text-align:center;font-size:10.5px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums}",
+      ".mneme-heatgrid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,12px);gap:3px;margin-top:12px}",
+      ".mneme-heatcell{width:12px;height:12px;border-radius:3px;background:var(--dsw-alias-interactive-bg-hover)}",
+      // 类名编号=视觉档位（l1 最浅…l4 最深），变量编号=business 占比降序，故交叉引用。
+      ".mneme-heatcell.l1{background:var(--mneme-heat-4)}",
+      ".mneme-heatcell.l2{background:var(--mneme-heat-3)}",
+      ".mneme-heatcell.l3{background:var(--mneme-heat-2)}",
+      ".mneme-heatcell.l4{background:var(--mneme-heat-1)}",
+      ".mneme-heatlegend{display:flex;align-items:center;gap:3px;margin-top:8px;font-size:10.5px;color:var(--mneme-fg-dim)}",
+      ".mneme-heatlegend .mneme-heatcell{width:10px;height:10px}",
+      // 原 9 卡降级折叠区：默认收起，展开才挂载子卡（见 TokenFlowSection 注释）。
+      ".mneme-legacy{max-width:1000px;margin:0 auto 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:12px 16px}",
+      ".mneme-legacy summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}",
       // --- 状态页工作台：让用户看见插件在干活（动态/沉淀/归档） ---
       ".mneme-wbhead{margin:28px auto 10px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);max-width:1000px;display:flex;align-items:baseline;justify-content:space-between;gap:8px}",
       ".mneme-wblist{max-width:1000px;display:flex;flex-direction:column;gap:6px}",
@@ -3975,34 +4093,230 @@ window.__ModuleLoader__.load({
       });
     }
 
-    // LLM 消耗 — calls + tokens over the trailing 7 days.
-    function LlmStatusCard({ t }) {
-      const [state, setState] = useState({ loading: true, error: false, calls: 0, tokens: 0 });
+    // --- Token 去向三屏（2026-10 可观测性改造）---
+    // 原 LlmStatusCard 只有一个「LLM 消耗」总数，且 by_source 把两个最大成本项
+    // dream_consolidate / dream_summarize 合并成 autoDream（2026-10 审计里巩固
+    // 单项就占 37%），「token 花在哪」不可见。这里换成三屏：KPI 带（总量/调用/
+    // 巩固占比/待确认冲突）、按组件 donut、按天柱状 + 8 周热力；原 9 张状态卡
+    // 降级到折叠区。数据走 getLlmAuditStats 新增的 by_operation / by_day 两个
+    // 聚合（后端已排好序，前端按 TOKEN_OPS 恒定顺序取用，不依赖 API 排序）。
+    const TOKEN_OPS = [
+      "dream_consolidate",
+      "summarize_compress",
+      "entity_extract",
+      "dream_summarize",
+      "sleep_pattern",
+      "write_admission"
+    ];
+    const tokenOpLabel = (t, op) => {
+      const key = `memory.status.token.op.${op}`;
+      const label = t(key);
+      return label !== key ? label : String(op);
+    };
+    const tokenCompact = (n) => {
+      if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+      if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
+      return String(n);
+    };
+    const heatLevel = (n) => (n > 2500000 ? 4 : n > 1500000 ? 3 : n > 750000 ? 2 : n > 0 ? 1 : 0);
+
+    function TokenFlowSection({ t }) {
+      const [stats, setStats] = useState(null);
+      const [statsError, setStatsError] = useState(false);
+      const [conf, setConf] = useState({ loading: true, error: false, pending: 0 });
+      const [focusOp, setFocusOp] = useState(null);
       useEffect(() => {
         let cancelled = false;
         apiFetch("/api/dsh-mneme/semantic/llm-audit/stats?days=7")
           .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
           .then((j) => {
             if (cancelled) return;
-            const s = j && typeof j === "object" ? (j.stats || j) : {};
-            setState({ loading: false, error: false, calls: Number(s.total_calls ?? 0), tokens: Number(s.total_tokens ?? 0) });
+            setStats(j && typeof j === "object" ? (j.stats || j) : {});
+            setStatsError(false);
           })
-          .catch(() => { if (!cancelled) setState({ loading: false, error: true, calls: 0, tokens: 0 }); });
-        return () => { cancelled = true; };
+          .catch(() => { if (!cancelled) setStatsError(true); });
+        // KPI 第 4 格的待确认冲突与 DreamStatusCards 同源（/dream-status），
+        // 同样监听 mneme:conflicts-changed 重取（#295），两处计数永不漂移。
+        const loadConflicts = () => {
+          apiFetch("/api/dsh-mneme/dream-status")
+            .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+            .then((d) => {
+              if (cancelled) return;
+              setConf({ loading: false, error: false, pending: Number((d && d.pendingConflicts) ?? 0) });
+            })
+            .catch(() => { if (!cancelled) setConf({ loading: false, error: true, pending: 0 }); });
+        };
+        loadConflicts();
+        window.addEventListener("mneme:conflicts-changed", loadConflicts);
+        return () => { cancelled = true; window.removeEventListener("mneme:conflicts-changed", loadConflicts); };
       }, []);
-      return h(StatusCard, {
-        t,
-        title: t("memory.status.llm"),
-        loading: state.loading,
-        error: state.error,
-        num: state.tokens.toLocaleString(),
-        cap: t("memory.status.llmCalls").replace("{n}", state.calls.toLocaleString())
+
+      const loading = !stats && !statsError;
+      const byOp = stats && Array.isArray(stats.by_operation) ? stats.by_operation : [];
+      // 按恒定顺序取行：API 排序变化不影响图例次序；未知操作留到渲染时兜底。
+      const ops = TOKEN_OPS.map((op) => {
+        const row = byOp.find((r) => r.operation === op);
+        return { op, total: Number((row && row.total_tokens) ?? 0) };
       });
+      const unknownOps = byOp.filter((r) => !TOKEN_OPS.includes(r.operation));
+      const allOps = ops.concat(unknownOps.map((r) => ({ op: r.operation, total: Number(r.total_tokens ?? 0) })));
+      const grand = allOps.reduce((a, r) => a + r.total, 0);
+      const consolidate = ops[0].total;
+      // donut：r=15.9155 让周长≈100，dasharray 直接填百分比；段与段留缝（取
+      // 半个百分点与四分之一弧长的较小者），小弧不被缝吃掉。write_admission
+      // 的 token 恒 0 是设计（只计量不拦截），自然不画弧，图例仍保留一行。
+      let cursor = 0;
+      const segs = allOps
+        .map((r, i) => {
+          const len = grand > 0 ? (r.total / grand) * 100 : 0;
+          const gap = Math.min(0.25, len / 4);
+          const seg = Math.max(len - gap * 2, 0.4);
+          const off = -(cursor + gap);
+          cursor += len;
+          return { ...r, i, len, seg, off };
+        })
+        .filter((s) => s.len > 0);
+      const opIdx = (op) => {
+        const i = TOKEN_OPS.indexOf(op);
+        return i >= 0 ? i : Math.max(0, Math.min(allOps.findIndex((r) => r.op === op), 5));
+      };
+      // 7 天柱状：上限向上取整到整 M，四条网格线按 niceMax/4 等距。
+      const days = (stats && Array.isArray(stats.by_day) ? stats.by_day : []).map((d) => ({
+        day: String((d && d.day) ?? ""),
+        total: Number((d && d.total_tokens) ?? 0)
+      }));
+      const dayMax = Math.max(1, ...days.map((d) => d.total));
+      const niceMax = Math.max(1e6, Math.ceil(dayMax / 1e6) * 1e6);
+      const gridVals = [niceMax, niceMax * 0.75, niceMax * 0.5, niceMax * 0.25];
+      // 8 周热力：右缘对齐 by_day 最后一天（UTC），左侧补齐到周一；数据窗口
+      // 之外的格子隐藏留形。日期一律走 UTC——by_day 的 day 就是 UTC 日期。
+      const heatCells = [];
+      if (days.length) {
+        const byDayMap = new Map(days.map((d) => [d.day, d.total]));
+        const end = new Date(`${days[days.length - 1].day}T00:00:00Z`);
+        const start = new Date(end.getTime() - 55 * 86400000);
+        for (let i = 0; i < 56; i++) {
+          const d = new Date(start.getTime() + i * 86400000);
+          const key = d.toISOString().slice(0, 10);
+          heatCells.push({ key, hidden: d > end, total: byDayMap.get(key) ?? 0 });
+        }
+      }
+      const kpi = (title, num, cap) =>
+        h(StatusCard, { t, title, loading, error: statsError, num, cap });
+      const segClass = (s) =>
+        `mneme-seg mneme-seg--${opIdx(s.op) + 1}${focusOp === s.op ? " focused" : ""}`;
+      const rowProps = (op) => ({
+        className: focusOp && focusOp !== op ? "mneme-legendrow dim" : focusOp === op ? "mneme-legendrow focused" : "mneme-legendrow",
+        onMouseEnter: () => setFocusOp(op),
+        onMouseLeave: () => setFocusOp(null)
+      });
+
+      return h(react.Fragment, null,
+        h("div", { className: "mneme-statushead" }, t("memory.status.sec.token")),
+        h("div", { className: "mneme-kpiband" },
+          kpi(
+            t("memory.status.token.total"),
+            Number((stats && stats.total_tokens) ?? 0).toLocaleString(),
+            `${t("memory.status.token.in")} ${Number((stats && stats.input_tokens) ?? 0).toLocaleString()} · ${t("memory.status.token.out")} ${Number((stats && stats.output_tokens) ?? 0).toLocaleString()}`
+          ),
+          kpi(t("memory.status.token.calls"), Number((stats && stats.total_calls) ?? 0).toLocaleString(), t("memory.status.token.callsCap")),
+          kpi(
+            t("memory.status.token.share"),
+            grand > 0 ? `${((consolidate / grand) * 100).toFixed(1)}%` : "0.0%",
+            t("memory.status.token.shareFoot").replace("{n}", consolidate.toLocaleString())
+          ),
+          h(StatusCard, {
+            t,
+            title: t("memory.status.token.conflicts"),
+            loading: conf.loading,
+            error: conf.error,
+            num: conf.pending.toLocaleString(),
+            cap: t("memory.status.token.conflictsFoot")
+          })
+        ),
+        h("div", { className: "mneme-tokenflow" },
+          h("h3", { className: "mneme-xcolhead" }, t("memory.status.token.donut")),
+          statsError
+            ? h("div", { className: "mneme-statuscap", style: { color: "var(--mneme-danger)" } }, t("memory.status.error"))
+            : h("div", { className: "mneme-donutwrap" },
+                h("div", { className: "mneme-donutbox" },
+                  h("svg", {
+                    className: focusOp ? "mneme-donut has-focus" : "mneme-donut",
+                    viewBox: "0 0 42 42",
+                    "aria-hidden": "true"
+                  },
+                    h("g", { transform: "rotate(-90 21 21)" },
+                      segs.map((s) => h("circle", {
+                        key: s.op,
+                        className: segClass(s),
+                        cx: 21,
+                        cy: 21,
+                        r: 15.9155,
+                        "stroke-dasharray": `${s.seg.toFixed(2)} ${(100 - s.seg).toFixed(2)}`,
+                        "stroke-dashoffset": s.off.toFixed(2)
+                      }))
+                    )
+                  ),
+                  h("div", { className: "mneme-donut-center" },
+                    h("b", null, tokenCompact(grand)),
+                    h("span", null, t("memory.status.token.last7"))
+                  )
+                ),
+                h("div", { className: "mneme-legend" },
+                  allOps.map((r) => h("div", Object.assign({ key: r.op }, rowProps(r.op)),
+                    h("span", { className: `mneme-legenddot mneme-dot--${opIdx(r.op) + 1}` }),
+                    h("span", { className: "mneme-legendname" }, tokenOpLabel(t, r.op)),
+                    r.op === "write_admission"
+                      ? h("span", { className: "mneme-legendsub" }, t("memory.status.token.meterOnly"))
+                      : null,
+                    h("span", { className: "mneme-legendval" }, r.total.toLocaleString()),
+                    h("span", { className: "mneme-legendpct" },
+                      grand > 0 ? `${((r.total / grand) * 100).toFixed(1)}%` : "0.0%")
+                  ))
+                )
+              ),
+          h("h3", { className: "mneme-xcolhead" }, t("memory.status.token.days")),
+          h("div", { className: "mneme-bars" },
+            gridVals.map((v, i) => h("div", { key: v, className: "mneme-gridline", style: { top: `${i * 25}%` } },
+              h("span", { className: "mneme-gridlabel" }, `${(v / 1e6).toFixed(0)}M`)
+            )),
+            h("div", { className: "mneme-barcols" },
+              days.map((d) => h("div", { className: "mneme-barcol", key: d.day },
+                h("div", {
+                  className: "mneme-bar",
+                  style: { height: `${Math.max((d.total / niceMax) * 100, 0.4)}%` },
+                  title: `${d.day} · ${d.total.toLocaleString()}`
+                })
+              ))
+            )
+          ),
+          h("div", { className: "mneme-barlabels" },
+            days.map((d) => h("span", { key: d.day }, d.day.slice(5)))
+          ),
+          h("h3", { className: "mneme-xcolhead" }, t("memory.status.token.heat")),
+          h("div", { className: "mneme-heatgrid" },
+            heatCells.map((c) => h("div", {
+              key: c.key,
+              className: heatLevel(c.total) ? `mneme-heatcell l${heatLevel(c.total)}` : "mneme-heatcell",
+              style: c.hidden ? { visibility: "hidden" } : undefined,
+              title: `${c.key} · ${c.total.toLocaleString()}`
+            }))
+          ),
+          h("div", { className: "mneme-heatlegend" },
+            h("span", null, t("memory.status.token.heatLess")),
+            h("span", { className: "mneme-heatcell" }),
+            [1, 2, 3, 4].map((lv) => h("span", { key: lv, className: `mneme-heatcell l${lv}` })),
+            h("span", null, t("memory.status.token.heatMore"))
+          )
+        )
+      );
     }
 
     // 巩固状态卡（×2）：最近一次 autoDream 运行 + 待确认冲突计数。数据来自
     // /dream-status，一次取回两张卡共用；失败只影响这两张卡自身。
-    function DreamStatusCards({ t, onGotoQueue }) {
+    // showConflicts=false 用于 2026-10 改造后的降级折叠区：待确认冲突已升入
+    // KPI 带，这里不再重复渲染冲突卡，只留最近运行卡。
+    function DreamStatusCards({ t, onGotoQueue, showConflicts = true }) {
       const [state, setState] = useState({ loading: true, error: false, lastRun: null, pending: 0 });
       useEffect(() => {
         let cancelled = false;
@@ -4037,24 +4351,26 @@ window.__ModuleLoader__.load({
       const gotoQueue = () => { if (pending && onGotoQueue) onGotoQueue(); };
       return h(react.Fragment, null,
         h(StatusCard, { t, title: t("memory.status.dream"), loading: state.loading, error: state.error, num, cap }),
-        h("div", {
-          role: pending ? "button" : undefined,
-          tabIndex: pending ? 0 : undefined,
-          "aria-label": pending ? t("memory.status.conflictQueue.goto") : undefined,
-          className: pending ? "mneme-conflict-jump" : undefined,
-          style: pending ? { cursor: "pointer" } : undefined,
-          onClick: pending ? gotoQueue : undefined,
-          onKeyDown: pending ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); gotoQueue(); } } : undefined
-        },
-          h(StatusCard, {
-            t,
-            title: t("memory.status.conflicts"),
-            loading: state.loading,
-            error: state.error,
-            num: state.pending.toLocaleString(),
-            cap: t("memory.status.conflictsHint")
-          })
-        )
+        showConflicts
+          ? h("div", {
+              role: pending ? "button" : undefined,
+              tabIndex: pending ? 0 : undefined,
+              "aria-label": pending ? t("memory.status.conflictQueue.goto") : undefined,
+              className: pending ? "mneme-conflict-jump" : undefined,
+              style: pending ? { cursor: "pointer" } : undefined,
+              onClick: pending ? gotoQueue : undefined,
+              onKeyDown: pending ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); gotoQueue(); } } : undefined
+            },
+              h(StatusCard, {
+                t,
+                title: t("memory.status.conflicts"),
+                loading: state.loading,
+                error: state.error,
+                num: state.pending.toLocaleString(),
+                cap: t("memory.status.conflictsHint")
+              })
+            )
+          : null
       );
     }
 
@@ -4581,23 +4897,35 @@ window.__ModuleLoader__.load({
         queueRef.current.focus({ preventScroll: true });
         if (queueRef.current.scrollIntoView) queueRef.current.scrollIntoView({ block: "start", behavior: "smooth" });
       };
+      // 折叠区受控开合：收起时不挂载子卡，10 张卡各自的请求一次都不发——
+      // 展开才是「我要看后台细节」的明确信号，首屏只承担 Token 三屏的开销。
+      const [legacyOpen, setLegacyOpen] = useState(false);
       return h("div", { className: "mneme-status" },
-        // 两个分组标题把九张卡拆成「库内一览 / 后台运转」两段扫读单元
-        h("div", { className: "mneme-statushead" }, t("memory.status.sec.overview")),
-        h("div", { className: "mneme-statusgrid mneme-statusgrid--overview" },
-          h(MemoriesStatusCard, { t }),
-          h(EntitiesStatusCard, { t }),
-          h(VectorStatusCard, { t }),
-          h(MirrorHealthCard, { t })
-        ),
-        h("div", { className: "mneme-statushead" }, t("memory.status.sec.engine")),
-        h("div", { className: "mneme-statusgrid" },
-          h(DreamStatusCards, { t, onGotoQueue: gotoQueue }),
-          h(LlmStatusCard, { t }),
-          h(HeatStatusCard, { t }),
-          h(RecallStatsCard, { t }),
-          h(InjectStatusCard, { t }),
-          h(InjectPreviewCard, { t })
+        h(TokenFlowSection, { t }),
+        h("details", {
+          className: "mneme-legacy",
+          open: legacyOpen,
+          onClick: (e) => { e.preventDefault(); setLegacyOpen(!legacyOpen); }
+        },
+          h("summary", null, t("memory.status.token.detail")),
+          legacyOpen ? h(react.Fragment, null,
+            // 分组标题把九张卡拆成「库内一览 / 后台运转」两段扫读单元
+            h("div", { className: "mneme-statushead" }, t("memory.status.sec.overview")),
+            h("div", { className: "mneme-statusgrid mneme-statusgrid--overview" },
+              h(MemoriesStatusCard, { t }),
+              h(EntitiesStatusCard, { t }),
+              h(VectorStatusCard, { t }),
+              h(MirrorHealthCard, { t })
+            ),
+            h("div", { className: "mneme-statushead" }, t("memory.status.sec.engine")),
+            h("div", { className: "mneme-statusgrid" },
+              h(DreamStatusCards, { t, showConflicts: false }),
+              h(HeatStatusCard, { t }),
+              h(RecallStatsCard, { t }),
+              h(InjectStatusCard, { t }),
+              h(InjectPreviewCard, { t })
+            )
+          ) : null
         ),
         h("div", { className: "mneme-statushead" }, t("memory.status.sec.maintenance")),
         h("div", { className: "mneme-statusgrid" }, h(MaintenanceCard, { t })),

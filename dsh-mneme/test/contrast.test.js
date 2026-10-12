@@ -255,7 +255,27 @@ const GRAPHICS = [
   { sel: ".mneme-heatdot--cold", prop: "background" },
   { sel: ".mneme-wbdot", prop: "background" },
   { sel: ".mneme-wbdot--err", prop: "background" },
-  { sel: ".mneme-gedge", prop: "stroke" }
+  { sel: ".mneme-gedge", prop: "stroke" },
+  // Token 去向三屏（2026-10）：donut 弧（stroke）、图例色点与 7 天柱（background）
+  // 都是「颜色就是信息」的图形——弧长/点位承载比例语义，掉回浅灰等于白画。
+  // 零值热力格（interactive-bg-hover 轨道）与 heatbar 同理不在此列。
+  { sel: ".mneme-seg--1", prop: "stroke" },
+  { sel: ".mneme-seg--2", prop: "stroke" },
+  { sel: ".mneme-seg--3", prop: "stroke" },
+  { sel: ".mneme-seg--4", prop: "stroke" },
+  { sel: ".mneme-seg--5", prop: "stroke" },
+  { sel: ".mneme-seg--6", prop: "stroke" },
+  { sel: ".mneme-dot--1", prop: "background" },
+  { sel: ".mneme-dot--2", prop: "background" },
+  { sel: ".mneme-dot--3", prop: "background" },
+  { sel: ".mneme-dot--4", prop: "background" },
+  { sel: ".mneme-dot--5", prop: "background" },
+  { sel: ".mneme-dot--6", prop: "background" },
+  { sel: ".mneme-bar", prop: "background" },
+  { sel: ".mneme-heatcell.l1", prop: "background" },
+  { sel: ".mneme-heatcell.l2", prop: "background" },
+  { sel: ".mneme-heatcell.l3", prop: "background" },
+  { sel: ".mneme-heatcell.l4", prop: "background" }
 ];
 test("图形色（热度/打卡/连线）在浅深两主题下都达到 3:1", () => {
   const bySel = new Map(rules.map((r) => [r.sel, r]));
