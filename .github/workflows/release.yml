@@ -144,8 +144,14 @@ jobs:
         run: node dsh-mneme/scripts/publish-gate.mjs "${{ needs.verify.outputs.version }}"
 
   # ── 4. GitHub Release（按 v0.7.9 / v0.7.10 的既定格式，说明自动取自 CHANGELOG）──
+  # needs 里必须带 publish：Release 是对外的「这个版本已发布」声明，registry 才是唯一事实。
+  # 只等 verify/test 时，publish 真失败（token 失效、registry 拒绝）Release 照样建出来 ——
+  # Release 页写着 v0.8.x、registry 上却没有，用户按 Release 装回的是上一个版本。这是与
+  # 「Verify published version」同源的一处豁口：那边是校验假绿，这边是声明抢跑。
+  # 带上 publish 后两条路径都收口：publish 失败 ⇒ 本 job 被跳过；dry_run 时 publish 被跳过，
+  # 而本 job 的 `if` 同为假 ⇒ 不会发出无从兑现的发布声明。
   release:
-    needs: [verify, test]
+    needs: [verify, test, publish]
     if: github.event_name == 'push' || inputs.dry_run != true
     runs-on: ubuntu-latest
     steps:
