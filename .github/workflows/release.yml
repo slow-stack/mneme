@@ -133,10 +133,15 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Verify published version
-        run: |
-          V="${{ needs.verify.outputs.version }}"
-          echo "Published: $(npm view "@modusensus/dsh-mneme@${V}" version)"
+      # 真闸门：拿不到这个版本就非零退出，让 job 变红。
+      # 原先这里是 `echo "Published: $(npm view "@modusensus/dsh-mneme@${V}" version)"` —— 命令
+      # 替换里的失败**不会**让 `set -e` 退出：v0.8.16 那次日志白纸黑字写着
+      # `npm error code E404 / 404 No match found for version 0.8.16`，step 与 job 却都是绿的。
+      # 闸门必须能区分「发出去了」与「没发出去」，而两者当时是同一种颜色。
+      # 轮询而不是一次性查询：registry 有传播延迟（v0.8.16 实测 publish→可见约 4.5 分钟），
+      # 一次性查询只有假绿或假红两种结局；幂等跳过路径首次探测即通过，不付等待成本。
+      - name: Verify published version (blocking gate)
+        run: node dsh-mneme/scripts/publish-gate.mjs "${{ needs.verify.outputs.version }}"
 
   # ── 4. GitHub Release（按 v0.7.9 / v0.7.10 的既定格式，说明自动取自 CHANGELOG）──
   release:
