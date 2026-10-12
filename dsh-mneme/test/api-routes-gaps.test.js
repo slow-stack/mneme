@@ -732,6 +732,16 @@ test("reclaim without the maintenance dependency answers 503 instead of crashing
   out = await callReclaim(route, { method: "POST", body: {} });
   assert.equal(out.status, 503);
   assert.equal(out.body.error, "maintenance-unavailable");
+
+  // 顺序也是契约：端点整个没接线时，报「窗口不合法」是误导——调用方会去改窗口，
+  // 改完照样 503。所以 503 必须赢过字段校验（数据面同一条，见 maintenance.test.js）。
+  out = await callReclaim(route, { method: "POST", body: { olderThanDays: 1e20 } });
+  assert.equal(out.status, 503, "没接线要赢过字段校验");
+  assert.equal(out.body.error, "maintenance-unavailable");
+
+  out = await callReclaim(route, { path: `${RECLAIM_PATH}?olderThanDays=abc` });
+  assert.equal(out.status, 503, "GET 侧同样：没接线要赢过窗口校验");
+  assert.equal(out.body.error, "maintenance-unavailable");
 });
 
 test("reclaim maps a throwing maintenance.reclaim to 500 instead of leaking", async () => {

@@ -10,6 +10,7 @@ import { getInjectionSnapshot } from "./inject.js";
 import { describeLocalRuntime, publicRuntimeStatus } from "./runtime/loader.js";
 import { hostModulesDir, provisionRuntime } from "./runtime/provision.js";
 import { classify, fetchLatestVersion, PACKAGE_VERSION } from "./version-check.js";
+import { parseReclaimQuery, parseReclaimJson, readReclaimFields, reclaimReply, RECLAIM_UNAVAILABLE } from "./reclaim-http.js";
 
 // headers：少数端点（/export 附件下载）需要追加 Content-Disposition 等响应头。
 function sendJson(res, status, payload, headers = {}) {
@@ -32,12 +33,6 @@ function sendAttachment(res, status, contentType, filename, body) {
 // Defaults for the standalone external API — keep in step with the schema
 // defaults in config.js (externalApiPort / externalApiHost).
 const EXTERNAL_API_DEFAULTS = { enabled: false, port: 8790, host: "127.0.0.1" };
-
-// 回收窗口（天）的上界。maintenance.reclaim 拿这个数算 `now() - days * 86400000` 再
-// toISOString()：日期一旦超出 Date 的有效范围就抛 RangeError。整数校验挡不住量级——
-// 1e20 也是「整数」，JSON 里还能写成 400 位数字。所以显式钉一个上界，取值与既有保留
-// 窗口配置一致（config.js 的 llmAudit.retentionDays / recallRetentionDays 都是 max 3650）。
-const MAX_RECLAIM_WINDOW_DAYS = 3650;
 
 /** Merge persisted external-api kv over the defaults for client display. */
 function fullExternalConfig(kv = {}) {
@@ -701,8 +696,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   });
 
   // --- maintenance/reclaim（#386 第 4 条：面板有了回收入口）------------------
-  // 与 standalone 数据面的 POST /maintenance/reclaim 是同一能力的两张皮，口径必须
-  // 逐字一致（错误码字符串、默认值、报告形状）；改这里时那边一起改。
+  // 与 standalone 数据面的 POST /maintenance/reclaim 是同一能力的两张皮：口径（错误码
+  // 字符串、默认值、报告形状）只写在 src/reclaim-http.js 里，这里与数据面都调它。
+  // 差别只有鉴权与路径——两张皮的其余部分必须没有第二份实现（#411 的教训：以前是整段
+  // 复制，于是 #410 修好这边之后那边还停在旧形态）。
   //
   // 为什么 GET 也能跑：dry-run 是只读的（src/maintenance.js 里 dry-run 与执行同一条
   // 代码路径，只是不落 UPDATE/VACUUM），面板 mount 时拿它渲染「现在能回收多少」。
@@ -716,34 +713,21 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         if (req.method === "GET") {
           if (!requireAuth(req, res, apiToken)) return;
           if (!maintenance) {
-            sendJson(res, 503, { error: "maintenance-unavailable" });
+            sendJson(res, 503, { error: RECLAIM_UNAVAILABLE });
             return;
           }
-          // query 是字符串域：只收十进制整数字面量，缺省才落默认窗口。**不能用
-          // Number()**——它把 ""/[]/" " 都化成 0，而 0 在这里是「清掉全部快照」，
-          // 最坏解释绝不能从一个畸形输入静默拿到（POST 侧收 JSON 数字，口径不同）。
-          const raw = new URL(req.url, "http://localhost").searchParams.get("olderThanDays");
-          let olderThanDays;
-          if (raw === null) {
-            olderThanDays = undefined;
-          } else if (/^\d+$/.test(raw)) {
-            olderThanDays = Number(raw);
-            // 十进制字面量不保证是个能算日期的数：400 位数字会化成 Infinity。上界与
-            // POST 侧同一条（见 MAX_RECLAIM_WINDOW_DAYS 的说明）。
-            if (!Number.isFinite(olderThanDays) || olderThanDays > MAX_RECLAIM_WINDOW_DAYS) {
-              sendJson(res, 400, { error: "invalid-older-than-days" });
-              return;
-            }
-          } else {
-            sendJson(res, 400, { error: "invalid-older-than-days" });
+          const parsed = parseReclaimQuery(new URL(req.url, "http://localhost").searchParams.get("olderThanDays"));
+          if (!parsed.ok) {
+            sendJson(res, 400, { error: parsed.error });
             return;
           }
-          try {
-            sendJson(res, 200, maintenance.reclaim({ olderThanDays, dryRun: true }));
-          } catch (error) {
-            ctx.logger?.warn?.(`[dsh-mneme] storage reclaim failed: ${String(error)}`);
-            sendJson(res, 500, { error: "internal" });
-          }
+          const { status, body } = reclaimReply({
+            maintenance,
+            dryRun: true,
+            olderThanDays: parsed.olderThanDays,
+            warn: (msg) => ctx.logger?.warn?.(msg)
+          });
+          sendJson(res, status, body);
           return;
         }
         if (req.method !== "POST") {
@@ -752,65 +736,29 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         }
         if (!requireAuth(req, res, apiToken)) return;
         return readBody(req).then((text) => {
-          // 不用 parseBody：它把坏 JSON 吞成 {}，而这里 invalid-json 与 invalid-body
-          // 是两个不同的错（前者是调用方发坏了，后者是发成了数组/null）。
-          let body;
-          try {
-            body = JSON.parse(text || "{}");
-          } catch {
-            sendJson(res, 400, { error: "invalid-json" });
-            return;
-          }
-          if (body === null || typeof body !== "object" || Array.isArray(body)) {
-            sendJson(res, 400, { error: "invalid-body" });
+          const parsed = parseReclaimJson(text);
+          if (!parsed.ok) {
+            sendJson(res, 400, { error: parsed.error });
             return;
           }
           if (!maintenance) {
-            sendJson(res, 503, { error: "maintenance-unavailable" });
+            sendJson(res, 503, { error: RECLAIM_UNAVAILABLE });
             return;
           }
-          const dryRun = body.dryRun !== false;
-          const olderThanDays = body.olderThanDays === undefined || body.olderThanDays === null
-            ? undefined
-            : body.olderThanDays;
-          if (olderThanDays !== undefined
-            && (!Number.isInteger(olderThanDays) || olderThanDays < 0 || olderThanDays > MAX_RECLAIM_WINDOW_DAYS)) {
-            sendJson(res, 400, { error: "invalid-older-than-days" });
+          const fields = readReclaimFields(parsed.body);
+          if (!fields.ok) {
+            sendJson(res, 400, { error: fields.error });
             return;
           }
-          if (body.vacuum !== undefined && typeof body.vacuum !== "boolean") {
-            sendJson(res, 400, { error: "invalid-vacuum" });
-            return;
-          }
-          if (!dryRun && body.confirm !== true) {
-            // 拒执行，但把 dry-run 报告一并回给调用方：确认的依据就是这份数字。报告
-            // 必须描述**将要执行的那个动作**，所以 vacuum 原样带上——否则调用方看到
-            // 的是「不 VACUUM」的数字，却带着 vacuum 去执行。
-            //
-            // 这份报告是在**回调里**算的，外层 try 已经退栈了：它抛出去就是一个没人接的
-            // rejection，客户端拿到的不是 500 而是「一个字节都没回」。所以本地兜住，与
-            // 执行路径给出同一个 500 internal。
-            let report;
-            try {
-              report = maintenance.reclaim({ olderThanDays, vacuum: body.vacuum === true, dryRun: true });
-            } catch (error) {
-              ctx.logger?.warn?.(`[dsh-mneme] storage reclaim failed: ${String(error)}`);
-              sendJson(res, 500, { error: "internal" });
-              return;
-            }
-            sendJson(res, 400, {
-              error: "confirm-required",
-              hint: "先看 dry-run 报告，确认后带 {\"dryRun\":false,\"confirm\":true} 再发",
-              report
-            });
-            return;
-          }
-          try {
-            sendJson(res, 200, maintenance.reclaim({ olderThanDays, vacuum: body.vacuum === true, dryRun }));
-          } catch (error) {
-            ctx.logger?.warn?.(`[dsh-mneme] storage reclaim failed: ${String(error)}`);
-            sendJson(res, 500, { error: "internal" });
-          }
+          const { status, body } = reclaimReply({
+            maintenance,
+            dryRun: fields.dryRun,
+            olderThanDays: fields.olderThanDays,
+            vacuum: fields.vacuum,
+            confirm: fields.confirm,
+            warn: (msg) => ctx.logger?.warn?.(msg)
+          });
+          sendJson(res, status, body);
         });
       } catch {
         sendJson(res, 500, { error: "internal" });

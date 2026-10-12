@@ -389,3 +389,76 @@ test("CLI：--vacuum 单独用会被拒（dry-run 没有可回收的页），也
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--vacuum 需要配 --apply/);
 });
+
+test("HTTP 面（数据面）：窗口上界与确认门里的抛错都跟面板侧同口径（#411）", async () => {
+  // 这张脸曾是面板路由的整段复制，于是 #410 修好面板侧之后它停在旧形态：#508 没有
+  // 上界（1e20 打进来 → maintenance 算日期抛 RangeError → 一个字节都不回），#523 的
+  // confirm-required 报告也没兜错。现在两处口径都来自 src/reclaim-http.js，这条锁从
+  // **数据面自己的端口**打真 HTTP，证明它真的走的是同一份。
+  const { store, close } = fileStore();
+  const maintenance = maintenanceFor(store);
+  const service = createService({ store, mirror: null, config: {} });
+  const settings = createSettings(store.db);
+  const api = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: 0, maintenance });
+  await api.ready;
+  const url = `http://127.0.0.1:${api.port}/maintenance/reclaim`;
+  const post = (body) =>
+    fetch(url, {
+      method: "POST",
+      headers: { authorization: `Bearer ${api.token}`, "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  // 第二个实例：不传 maintenance（「没接线」的那一档）。在 try 之外建、在 finally 里
+  // 关——它要是漏关，node --test 会挂着一个开着的 server 句柄永不退出（变异检验里
+  // 一旦断言先炸就正好踩这条）。
+  const unplugged = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: 0 });
+  await unplugged.ready;
+  try {
+    const { archived } = seed(store);
+
+    // 顺序也是契约：端点整个没接线时，报「窗口不合法」是误导——调用方会去改窗口，
+    // 改完照样 503。所以 503 必须赢过字段校验（面板侧同一条，见 api-routes-gaps.test.js）。
+    const unpluggedRes = await fetch(`http://127.0.0.1:${unplugged.port}/maintenance/reclaim`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${unplugged.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ olderThanDays: 1e20 })
+    });
+    assert.equal(unpluggedRes.status, 503, "没接线要赢过字段校验");
+    assert.equal((await unpluggedRes.json()).error, "maintenance-unavailable");
+
+    // 量级超界：旧形态下这一发既不改数据、也不回任何字节。
+    for (const huge of [3651, 1e20]) {
+      const out = await post({ dryRun: false, olderThanDays: huge });
+      assert.equal(out.status, 400, `olderThanDays=${huge} 必须被拒，而不是把连接挂住`);
+      assert.equal((await out.json()).error, "invalid-older-than-days");
+    }
+    const atLimit = await post({ olderThanDays: 3650 });
+    assert.equal(atLimit.status, 200, "上界本身合法");
+    assert.equal((await atLimit.json()).olderThanDays, 3650);
+    assert.ok(rawVec(store, archived.id), "被拒的那几发一个字节都不能改");
+
+    // 确认门的报告要描述「将要执行的那个动作」，且窗口是调用方问的那个。
+    const refused = await post({ dryRun: false, olderThanDays: 30, vacuum: true });
+    assert.equal(refused.status, 400);
+    const refusedBody = await refused.json();
+    assert.equal(refusedBody.error, "confirm-required");
+    assert.equal(refusedBody.report.olderThanDays, 30, "报告必须说的是被问的那个窗口");
+    assert.equal(refusedBody.report.vacuum.requested, true, "报告必须描述将要执行的那个动作（含 vacuum）");
+    assert.ok(rawVec(store, archived.id), "缺 confirm 时一个字节都不改");
+
+    const applied = await post({ dryRun: false, confirm: true, vacuum: true });
+    assert.equal(applied.status, 200);
+    const appliedBody = await applied.json();
+    assert.equal(appliedBody.olderThanDays, 7, "不传窗口就是默认 7 天");
+    assert.equal(appliedBody.cleared.dream_run_inputs, 1);
+    assert.equal(appliedBody.vacuum.requested, true, "勾了 VACUUM 就必须真带上");
+    assert.equal(appliedBody.vacuum.ran, true);
+    assert.equal(rawVec(store, archived.id), null);
+  } finally {
+    unplugged.server.closeIdleConnections?.();
+    unplugged.server.close();
+    api.server.closeIdleConnections?.();
+    api.server.close();
+    close();
+  }
+});

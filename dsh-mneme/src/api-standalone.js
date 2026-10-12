@@ -18,6 +18,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { TYPES } from "./store.js";
 import { bootstrapFromDirectory } from "./bootstrap.js";
 import { PACKAGE_VERSION } from "./version-check.js";
+import { parseReclaimJson, readReclaimFields, reclaimReply, RECLAIM_UNAVAILABLE } from "./reclaim-http.js";
 
 const DEFAULT_PORT = 8790;
 const DEFAULT_HOST = "127.0.0.1";
@@ -482,54 +483,36 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
       // 默认 dry-run：只有显式 confirm:true 才真改数据。这两步都是不可逆的内容丢弃
       // （历史 run 的输入快照置空、归档行向量置空），所以不给「带 body 就执行」这种
       // 省事路径——确认必须建立在看得见的数字上。
+      //
+      // 口径（错误码字符串、默认值、报告形状）不在这里写：与宿主内的面板路由
+      // /api/dsh-mneme/maintenance/reclaim 共用 src/reclaim-http.js，两张皮只有鉴权
+      // 与路径不同。这条曾经是整段复制的，于是面板侧修好之后这边还停在旧形态（#411）。
       if (req.method === "POST" && pathname === "/maintenance/reclaim") {
         void readBody(req).then((text) => {
-          let body;
-          try {
-            body = JSON.parse(text || "{}");
-          } catch {
-            sendJson(res, 400, { error: "invalid-json" });
+          const parsed = parseReclaimJson(text);
+          if (!parsed.ok) {
+            sendJson(res, 400, { error: parsed.error });
             return;
           }
-          if (body === null || typeof body !== "object" || Array.isArray(body)) {
-            sendJson(res, 400, { error: "invalid-body" });
-            return;
-          }
+          // 顺序敏感：端点整个没接线时报「窗口不合法」是误导，503 必须赢过字段校验。
           if (!maintenance) {
-            sendJson(res, 503, { error: "maintenance-unavailable" });
+            sendJson(res, 503, { error: RECLAIM_UNAVAILABLE });
             return;
           }
-          const dryRun = body.dryRun !== false;
-          // 只收 JSON 数字：`Number()` 会把 ""/[]/false 都化成 0，而 0 在这里是
-          // 「清掉全部快照」——最坏解释绝不能让一个畸形输入静默拿到。
-          const olderThanDays = body.olderThanDays === undefined || body.olderThanDays === null
-            ? undefined
-            : body.olderThanDays;
-          if (olderThanDays !== undefined && (!Number.isInteger(olderThanDays) || olderThanDays < 0)) {
-            sendJson(res, 400, { error: "invalid-older-than-days" });
+          const fields = readReclaimFields(parsed.body);
+          if (!fields.ok) {
+            sendJson(res, 400, { error: fields.error });
             return;
           }
-          if (body.vacuum !== undefined && typeof body.vacuum !== "boolean") {
-            sendJson(res, 400, { error: "invalid-vacuum" });
-            return;
-          }
-          if (!dryRun && body.confirm !== true) {
-            // 拒执行，但把 dry-run 报告一并回给调用方：确认的依据就是这份数字。报告
-            // 必须描述**将要执行的那个动作**，所以 vacuum 原样带上——否则调用方看到
-            // 的是「不 VACUUM」的数字，却带着 vacuum 去执行。
-            sendJson(res, 400, {
-              error: "confirm-required",
-              hint: "先看 dry-run 报告，确认后带 {\"dryRun\":false,\"confirm\":true} 再发",
-              report: maintenance.reclaim({ olderThanDays, vacuum: body.vacuum === true, dryRun: true })
-            });
-            return;
-          }
-          try {
-            sendJson(res, 200, maintenance.reclaim({ olderThanDays, vacuum: body.vacuum === true, dryRun }));
-          } catch (error) {
-            logger?.warn?.(`[dsh-mneme] storage reclaim failed: ${String(error)}`);
-            sendJson(res, 500, { error: "internal" });
-          }
+          const { status, body } = reclaimReply({
+            maintenance,
+            dryRun: fields.dryRun,
+            olderThanDays: fields.olderThanDays,
+            vacuum: fields.vacuum,
+            confirm: fields.confirm,
+            warn: (msg) => logger?.warn?.(msg)
+          });
+          sendJson(res, status, body);
         });
         return;
       }
