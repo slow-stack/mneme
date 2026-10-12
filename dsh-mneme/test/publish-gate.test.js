@@ -9,8 +9,13 @@
 // 谁要是把「拿不到」改成「跳过校验」或「返回成功」，第三条会红。
 //
 // 全部用例走假时钟 + 注入 probe：零网络、零真实等待，跑起来是毫秒级。
+// 还有一条走真进程（spawnSync）的端到端用例：工作流红不红只看真进程退出码，函数级断言钉不到
+// 「主模块判别 + process.exitCode」那条路径。
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   DEFAULT_INTERVAL_MS,
@@ -22,6 +27,9 @@ import {
   versionUrl,
   waitForPublished
 } from "../scripts/publish-gate.mjs";
+
+/** 被测入口的真实路径：端到端用例要把它当子进程跑起来。 */
+const scriptDir = dirname(fileURLToPath(import.meta.url));
 
 /** 假时钟：只有 sleep() 会让时间前进，于是超时逻辑可以确定性断言。 */
 function fakeClock() {
@@ -247,4 +255,18 @@ test("入口退出码：缺版本号 → 1 并打印用法", async () => {
   const code = await main([], { log: noop, error: (line) => errors.push(line), wait: async () => ({ ok: true }) });
   assert.equal(code, 1);
   assert.ok(errors.some((line) => line.includes("用法")));
+});
+
+test("真进程端到端：不存在的版本 → 退出码 1 且 stderr 指明原因（这一步红了 job 才会红）", () => {
+  // 单测里的 main() 是函数调用，钉不到「主模块判别 + process.exitCode」这条真实退出路径——而
+  // 工作流红不红只看真进程的退出码。目标版本刻意取一个永不存在、与发布无关的名字：registry 回
+  // 404（连不上网络则是 network 原因），两种都会走到同一个超时分支，所以这条例外不引入网络依赖。
+  const result = spawnSync(
+    process.execPath,
+    [join(scriptDir, "..", "scripts", "publish-gate.mjs"), "0.0.0-mneme-gate-test", "--timeout-ms", "1", "--interval-ms", "1"],
+    { encoding: "utf8" }
+  );
+  assert.equal(result.status, 1, `期望非零退出，实际 ${result.status}（stderr: ${result.stderr}）`);
+  assert.match(result.stderr, /发布闸门未通过/);
+  assert.match(result.stdout, /等待 @modusensus\/dsh-mneme@0\.0\.0-mneme-gate-test/);
 });
