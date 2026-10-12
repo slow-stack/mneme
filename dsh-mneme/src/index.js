@@ -483,6 +483,15 @@ export const apply = (ctx, config) => {
   const summarizer = createSummarizer(ctx, service, cfg);
   disposers.push(summarizer.dispose);
 
+  // #275 存储生命周期第一批：无损回收的手动入口。刻意不挂启动路径、不接定时器——
+  // 这一步是不可逆的内容丢弃，只由人显式触发（面板的维护卡、`dsh-mneme reclaim`）。
+  // 实例建在插件进程内，是为了让 CLI 也能走这条路：VACUUM 要排他锁，跟宿主抢锁的
+  // 那条路走不通。
+  // 位置在 webServer 块之前：面板的 in-process API（createApi）与 standalone 数据面
+  // 都要用它，而 webServer 是可选的——headless 宿主不注册面板路由，构造点若留在块后
+  // 就永远晚于 createApi（#386 第 4 条）。构造期无副作用（只返回 { reclaim }），前移安全。
+  const maintenance = createMaintenance({ store, config: cfg, logger: ctx.logger });
+
   // webServer 可选依赖：cordis 4 的 ctx 是 Proxy，直接访问未在 inject 声明的
   // 属性会抛 "cannot get property without inject"（不会返回 undefined），所以
   // 不能用 if (ctx.webServer) 守卫。ctx.reflect.get 是 cordis 提供的免 inject
@@ -495,15 +504,9 @@ export const apply = (ctx, config) => {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,
       list: () => []
-    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg);
+    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance);
     disposers.push(api.dispose);
   }
-
-  // #275 存储生命周期第一批：无损回收的手动入口。刻意不挂启动路径、不接定时器——
-  // 这一步是不可逆的内容丢弃，只由人显式触发（`dsh-mneme reclaim`）。实例在这里建、
-  // 在 standalone API 上暴露，是为了让 CLI 能在插件进程内跑（VACUUM 要排他锁，跟宿主
-  // 抢锁的那条路走不通）。
-  const maintenance = createMaintenance({ store, config: cfg, logger: ctx.logger });
 
   // Standalone external API (v0.7.12): plain node:http server for ecosystem
   // integrations outside the DSH host. Persisted external_api settings win

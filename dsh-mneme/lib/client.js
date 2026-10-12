@@ -746,6 +746,38 @@ window.__ModuleLoader__.load({
         "memory.status.mirror.foot": "记忆条目在磁盘上的 Markdown 副本同步状态",
         "memory.status.sec.overview": "库内一览",
         "memory.status.sec.engine": "后台运转",
+        "memory.status.sec.maintenance": "维护",
+        "memory.status.maint": "存储回收",
+        "memory.status.maint.freelist": "空闲页可立刻回收",
+        "memory.status.maint.plannedInputs": "待清理输入快照",
+        "memory.status.maint.plannedEmbeddings": "待清理归档向量",
+        "memory.status.maint.window": "保留窗口",
+        "memory.status.maint.windowUnit": "天",
+        "memory.status.maint.windowLabel": "保留窗口（天）",
+        "memory.status.maint.reestimate": "重新估算",
+        "memory.status.maint.reestimating": "估算中…",
+        "memory.status.maint.stale": "窗口已改动：先点「重新估算」再执行，否则执行的是上一次估算的数字。",
+        "memory.status.maint.vacuum": "同时 VACUUM",
+        "memory.status.maint.vacuumHint": "VACUUM 会短暂独占数据库，期间其它读写要等待；不做也不影响清理结果。",
+        "memory.status.maint.execute": "执行回收",
+        "memory.status.maint.confirm": "确认执行（不可逆）",
+        "memory.status.maint.running": "执行中…",
+        "memory.status.maint.cancel": "取消",
+        "memory.status.maint.confirmHint": "将清理 {inputs} 行输入快照与 {embeddings} 行归档向量，且不可逆。",
+        "memory.status.maint.badWindow": "保留窗口要填不小于 0 的整数",
+        "memory.status.maint.failed": "回收失败",
+        "memory.status.maint.done": "回收已完成",
+        "memory.status.maint.size": "体积（前 → 后）",
+        "memory.status.maint.reclaimed": "实际释放",
+        "memory.status.maint.clearedInputs": "已清理输入快照",
+        "memory.status.maint.clearedEmbeddings": "已清理归档向量",
+        "memory.status.maint.receipt": "审计回执",
+        "memory.status.maint.receiptNone": "未记录（审计未启用或回执写入失败）",
+        "memory.status.maint.duration": "耗时",
+        "memory.status.maint.vacuumRan": "VACUUM 已执行",
+        "memory.status.maint.vacuumOff": "未 VACUUM",
+        "memory.status.maint.vacuumFailed": "VACUUM 失败",
+        "memory.status.maint.vacuumFailedHint": "清理已完成且不可逆，但文件暂时不会变小；稍后重跑即可（清理是幂等的）。",
         "memory.status.llm": "LLM 消耗",
         "memory.status.llmCalls": "近 7 天 · {n} 次调用",
         "memory.status.error": "加载失败"
@@ -1235,6 +1267,38 @@ window.__ModuleLoader__.load({
         "memory.status.mirror.foot": "Sync state of the on-disk Markdown mirror of memory entries",
         "memory.status.sec.overview": "Library",
         "memory.status.sec.engine": "Background activity",
+        "memory.status.sec.maintenance": "Maintenance",
+        "memory.status.maint": "Storage reclaim",
+        "memory.status.maint.freelist": "Free pages reclaimable now",
+        "memory.status.maint.plannedInputs": "Input snapshots to clear",
+        "memory.status.maint.plannedEmbeddings": "Archived embeddings to clear",
+        "memory.status.maint.window": "Retention window",
+        "memory.status.maint.windowUnit": "days",
+        "memory.status.maint.windowLabel": "Retention window (days)",
+        "memory.status.maint.reestimate": "Re-estimate",
+        "memory.status.maint.reestimating": "Estimating…",
+        "memory.status.maint.stale": "Window changed - re-estimate before running, or the run would use the previous estimate's numbers.",
+        "memory.status.maint.vacuum": "VACUUM as well",
+        "memory.status.maint.vacuumHint": "VACUUM briefly takes an exclusive lock on the database; other reads and writes wait. Skipping it does not change what gets cleared.",
+        "memory.status.maint.execute": "Run reclaim",
+        "memory.status.maint.confirm": "Confirm (irreversible)",
+        "memory.status.maint.running": "Running…",
+        "memory.status.maint.cancel": "Cancel",
+        "memory.status.maint.confirmHint": "This clears {inputs} input-snapshot rows and {embeddings} archived-embedding rows. It cannot be undone.",
+        "memory.status.maint.badWindow": "The retention window must be an integer of at least 0",
+        "memory.status.maint.failed": "Reclaim failed",
+        "memory.status.maint.done": "Reclaim finished",
+        "memory.status.maint.size": "Size (before → after)",
+        "memory.status.maint.reclaimed": "Actually freed",
+        "memory.status.maint.clearedInputs": "Input snapshots cleared",
+        "memory.status.maint.clearedEmbeddings": "Archived embeddings cleared",
+        "memory.status.maint.receipt": "Audit receipt",
+        "memory.status.maint.receiptNone": "Not recorded (audit disabled or receipt write failed)",
+        "memory.status.maint.duration": "Duration",
+        "memory.status.maint.vacuumRan": "VACUUM ran",
+        "memory.status.maint.vacuumOff": "Not VACUUMed",
+        "memory.status.maint.vacuumFailed": "VACUUM failed",
+        "memory.status.maint.vacuumFailedHint": "The reclaim already completed and cannot be undone, but the file will not shrink yet; run it again later (reclaim is idempotent).",
         "memory.status.llm": "LLM Usage",
         "memory.status.llmCalls": "Last 7 days · {n} calls",
         "memory.status.error": "Failed to load"
@@ -1706,7 +1770,17 @@ window.__ModuleLoader__.load({
       ".mneme-feedtext{display:flex;flex-direction:column;gap:1px;min-width:0}",
       ".mneme-feedname{font-size:13px;line-height:18px;font-weight:500;color:var(--dsw-alias-label-primary)}",
       ".mneme-feedsub{font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
-      ".mneme-set-foot{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:12px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l1);font-size:12px;color:var(--mneme-fg-dim)}"
+      ".mneme-set-foot{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:12px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l1);font-size:12px;color:var(--mneme-fg-dim)}",
+      // --- 存储回收卡（#386 第 4 条）：控制行 + 两步确认的警告块 ---
+      ".mneme-maintrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}",
+      ".mneme-maintlbl{flex:none;font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
+      ".mneme-maintrow .mneme-set-input{flex:none;width:96px;margin-bottom:0}",
+      ".mneme-maintcheck{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-maintwarn{margin-top:12px;padding:10px 12px;border-radius:10px;border:1px solid color-mix(in srgb,var(--mneme-danger) 45%,transparent);background:color-mix(in srgb,var(--mneme-danger) 8%,transparent)}",
+      ".mneme-maintwarnhead{font-size:13px;line-height:19px;font-weight:600;color:var(--mneme-danger)}",
+      ".mneme-maintresult{margin-top:12px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l1)}",
+      ".mneme-maintresulthead{font-size:13px;line-height:19px;font-weight:600;color:var(--mneme-ok)}",
+      ".mneme-mainterr{margin-top:10px;font-size:12px;line-height:17px;color:var(--mneme-danger)}"
     ].join("\n");
     if (typeof document !== "undefined" && document.querySelector(`style[data-plugin-css="${CSS_TAG}"]`) === null) {
       const tag = document.createElement("style");
@@ -3618,6 +3692,250 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // 人读体积：回收报告里全是字节数（六到七位），不折成 KiB/MiB 就看不出「到底有没有
+    // 变小」——而那正是这张卡要回答的问题。
+    function formatBytes(n) {
+      const v = Number(n);
+      if (!Number.isFinite(v) || v < 0) return "—";
+      if (v < 1024) return `${v} B`;
+      const units = ["KiB", "MiB", "GiB", "TiB"];
+      let x = v / 1024;
+      let i = 0;
+      while (x >= 1024 && i < units.length - 1) { x /= 1024; i++; }
+      return `${x.toFixed(x >= 100 ? 0 : x >= 10 ? 1 : 2)} ${units[i]}`;
+    }
+
+    // 存储回收卡（issue #386 第 4 条，状态页「维护」区）。`dsh-mneme reclaim` 此前只有
+    // CLI 与 standalone 两张脸，面板侧一个字都没有——「不可逆的内容丢弃」这种能力要么
+    // 能被发现，要么等于不存在。
+    //
+    // 三条不变量，别在「顺手简化」时弄丢：
+    //   ① 执行是两步。第一次点只进确认态，把这次要动的数字摆到眼前；第二次点才真的发
+    //      POST。不用 window.confirm——宿主 webview 里它不一定可用，而且它挡不住「到底
+    //      要清多少行」这个问题。
+    //   ② VACUUM 失败 ≠ 成功。清理的两个 UPDATE 各自提交且不可逆，VACUUM 只负责把文件
+    //      缩回去，失败最常见的原因是锁被别的进程占着。所以失败时必须同时说清四件事：
+    //      清理已完成、不可逆、文件暂时不会变小、下一步重跑即可（清理是幂等的）。绝不
+    //      能渲染成一次干净的「成功」。
+    //   ③ 保留窗口只在点「重新估算」时发一次请求。键入即发 = 想输 30 却先敲出 3 的那一刻
+    //      就换了估算，数字会跳。而且估算一旦与输入框不一致，确认态里摆出来的就是另一个
+    //      动作的数字——所以那种状态下执行钮直接禁用（见下面的 stale）。
+    //
+    // 报告字段由 src/maintenance.js 的 reclaim() 决定，卡片只读不改。
+    function MaintenanceCard({ t }) {
+      // 与 src/maintenance.js 的 DEFAULT_INPUT_RETENTION_DAYS 同值：这里只用来初始化
+      // 输入框与首屏那次 GET，真正的默认值仍由服务端兜底。
+      const DEFAULT_WINDOW_DAYS = 7;
+      // 与后端 MAX_RECLAIM_WINDOW_DAYS 同值。超界窗口服务端会回 400，但本地先拦一道：
+      // 否则用户点「重新估算」只会看到一句服务端错误，还以为是网络问题。
+      const MAX_WINDOW_DAYS = 3650;
+      // 面板走 in-process 路由，与 CLI/standalone 底下是同一条 reclaim 实现。
+      const RECLAIM_PATH = "/api/dsh-mneme/maintenance/reclaim";
+      const [days, setDays] = useState(String(DEFAULT_WINDOW_DAYS));
+      const [vacuum, setVacuum] = useState(false);
+      const [report, setReport] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [estimating, setEstimating] = useState(false);
+      const [error, setError] = useState("");
+      // 确认态：true = 第一次点过了，此刻按钮换成实心红确认钮。
+      const [armed, setArmed] = useState(false);
+      const [running, setRunning] = useState(false);
+      // 成功与失败分开存：合成一个对象容易在「先失败后成功」时把上一次的残留显示出来。
+      const [result, setResult] = useState(null);
+      const [resultError, setResultError] = useState("");
+
+      // 挂载即预估：打开状态页就该看见「现在能收多少」，而不是先点一下才有数字。
+      useEffect(() => {
+        let cancelled = false;
+        apiFetch(`${RECLAIM_PATH}?olderThanDays=${DEFAULT_WINDOW_DAYS}`)
+          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+          .then((j) => { if (!cancelled) { setReport(j); setLoading(false); } })
+          .catch(() => { if (!cancelled) { setError(t("memory.status.maint.failed")); setLoading(false); } });
+        return () => { cancelled = true; };
+      }, []);
+
+      // 只由「重新估算」按钮调用，不在 onChange 里调用（见上面 ③）。
+      const estimate = () => {
+        if (!/^\d+$/.test(days)) { setError(t("memory.status.maint.badWindow")); setArmed(false); return; }
+        // 上界也在这里拦：`1e20` 与 400 位数字都能过 /^\d+$/（后者化成 Infinity），
+        // 后端会回 400，但那样用户看到的是一句「回收失败」，不如直接说窗口不合法。
+        if (Number(days) > MAX_WINDOW_DAYS) { setError(t("memory.status.maint.badWindow")); setArmed(false); return; }
+        setEstimating(true);
+        setError("");
+        // 窗口一变，上一轮的确认态连同它显示的数字一起作废；上一次执行的回执也别再跟
+        // 新的估算混在一起。
+        setArmed(false);
+        setResult(null);
+        setResultError("");
+        apiFetch(`${RECLAIM_PATH}?olderThanDays=${days}`)
+          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+          .then((j) => { setReport(j); setEstimating(false); })
+          .catch(() => { setError(t("memory.status.maint.failed")); setEstimating(false); });
+      };
+
+      // 第二次点击（确认态里）才走这里。dryRun:false 与 confirm:true 是后端那条不可逆
+      // 动作的确认门：缺 confirm 会回 400 confirm-required 并附一份 dry-run 报告。两个
+      // 字面量逐字保留——改名或省掉一个都等于把门拆了。
+      const execute = () => {
+        setRunning(true);
+        setResultError("");
+        apiFetch(RECLAIM_PATH, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dryRun: false, confirm: true, olderThanDays: Number(days), vacuum })
+        })
+          .then((res) => res.json().catch(() => null).then((body) => ({ ok: res.ok, status: res.status, body })))
+          .then((r) => {
+            // 非 2xx 一律落到这条分支并带着服务端的 error 串返回：成功态只在守卫另一侧。
+            if (!r.ok) {
+              setResultError(`${t("memory.status.maint.failed")} · ${(r.body && r.body.error) || `HTTP ${r.status}`}`);
+              setRunning(false);
+              return;
+            }
+            setResult(r.body);
+            setArmed(false);
+            setRunning(false);
+          })
+          .catch(() => { setResultError(t("memory.status.maint.failed")); setRunning(false); });
+      };
+
+      const size = (report && report.size) || {};
+      const planned = (report && report.planned) || {};
+      const rv = (result && result.vacuum) || {};
+      const rsz = (result && result.size) || {};
+      const rcl = (result && result.cleared) || {};
+      // 估算数字与输入框不一致（刚改过窗口还没重新估算）时禁止执行：否则确认态里摆出来
+      // 的是另一个窗口的数字，而对不可逆操作来说这是最坏的一种错位。
+      const stale = !report || String(report.olderThanDays) !== days;
+      // vacuum.error 是 string|null；非 null 就是「清理成功但文件没缩」这种半成功态。
+      const vacuumError = rv.error == null ? null : String(rv.error);
+      const freed = Number(rsz.before_bytes ?? 0) - Number(rsz.after_bytes ?? 0);
+
+      return h("div", { className: "mneme-statuscard mneme-statuscard--wide" },
+        h("h3", { className: "mneme-xcolhead" }, t("memory.status.maint")),
+        loading
+          ? h("div", { className: "mneme-statusnum" }, "…")
+          : h("div", { className: "mneme-statusnum" }, formatBytes(size.before_bytes)),
+        report ? h("div", { className: "mneme-statrows" },
+          h("div", { className: "mneme-statrow" },
+            h("span", null, t("memory.status.maint.freelist")),
+            h("span", { className: "mneme-statrowval" }, `${formatBytes(size.freelist_bytes)} · ${size.freelist_pages ?? 0}`)),
+          h("div", { className: "mneme-statrow" },
+            h("span", null, t("memory.status.maint.plannedInputs")),
+            h("span", { className: "mneme-statrowval" }, String(planned.dream_run_inputs ?? 0))),
+          h("div", { className: "mneme-statrow" },
+            h("span", null, t("memory.status.maint.plannedEmbeddings")),
+            h("span", { className: "mneme-statrowval" }, String(planned.archived_embeddings ?? 0))),
+          h("div", { className: "mneme-statrow" },
+            h("span", null, t("memory.status.maint.window")),
+            h("span", { className: "mneme-statrowval" }, `${report.olderThanDays} ${t("memory.status.maint.windowUnit")}`))
+        ) : null,
+        // 控制区：窗口只在点按钮时重新估算；VACUUM 默认关，并明说它会短暂独占数据库。
+        h("div", { className: "mneme-maintrow" },
+          h("span", { className: "mneme-maintlbl" }, t("memory.status.maint.windowLabel")),
+          h("input", {
+            className: "mneme-set-input",
+            inputMode: "numeric",
+            value: days,
+            disabled: armed || running,
+            onChange: (e) => setDays(e.target.value)
+          }),
+          h("button", {
+            type: "button",
+            className: "mneme-btn",
+            disabled: armed || running || estimating,
+            onClick: estimate
+          }, estimating ? t("memory.status.maint.reestimating") : t("memory.status.maint.reestimate"))
+        ),
+        h("label", { className: "mneme-maintcheck" },
+          h("input", {
+            type: "checkbox",
+            checked: vacuum,
+            disabled: armed || running,
+            onChange: (e) => setVacuum(e.target.checked)
+          }),
+          h("span", null, t("memory.status.maint.vacuum"))
+        ),
+        h("div", { className: "mneme-statuscap" }, t("memory.status.maint.vacuumHint")),
+        stale && !loading && !estimating
+          ? h("div", { className: "mneme-statuscap" }, t("memory.status.maint.stale"))
+          : null,
+        // 两步确认。未武装时只有「执行回收」（点了只进确认态，不发请求）；武装后换成实心
+        // 红确认钮，并把窗口/VACUUM 在确认态里锁住——保证屏幕上的数字就是即将发出的动作。
+        armed
+          ? h(react.Fragment, null,
+              h("div", { className: "mneme-maintwarn" },
+                h("div", { className: "mneme-maintwarnhead" },
+                  t("memory.status.maint.confirmHint")
+                    .replace("{inputs}", String(planned.dream_run_inputs ?? 0))
+                    .replace("{embeddings}", String(planned.archived_embeddings ?? 0))),
+                h("div", { className: "mneme-statuscap" },
+                  `${t("memory.status.maint.window")} ${report.olderThanDays} ${t("memory.status.maint.windowUnit")} · `
+                  + (vacuum ? t("memory.status.maint.vacuum") : t("memory.status.maint.vacuumOff")))
+              ),
+              h("div", { className: "mneme-maintrow" },
+                h("button", {
+                  type: "button",
+                  className: "mneme-btn mneme-btndangerconfirm",
+                  disabled: running,
+                  onClick: execute
+                }, running ? t("memory.status.maint.running") : t("memory.status.maint.confirm")),
+                h("button", {
+                  type: "button",
+                  className: "mneme-btn",
+                  disabled: running,
+                  onClick: () => setArmed(false)
+                }, t("memory.status.maint.cancel"))
+              )
+            )
+          : h("div", { className: "mneme-maintrow" },
+              h("button", {
+                type: "button",
+                className: "mneme-btn mneme-btndanger",
+                disabled: running || loading || estimating || stale,
+                onClick: () => setArmed(true)
+              }, t("memory.status.maint.execute"))
+            ),
+        result ? h("div", { className: "mneme-maintresult" },
+          h("div", { className: "mneme-maintresulthead" },
+            vacuumError ? t("memory.status.maint.vacuumFailed") : t("memory.status.maint.done")),
+          h("div", { className: "mneme-statrows" },
+            h("div", { className: "mneme-statrow" },
+              h("span", null, t("memory.status.maint.clearedInputs")),
+              h("span", { className: "mneme-statrowval" }, String(rcl.dream_run_inputs ?? 0))),
+            h("div", { className: "mneme-statrow" },
+              h("span", null, t("memory.status.maint.clearedEmbeddings")),
+              h("span", { className: "mneme-statrowval" }, String(rcl.archived_embeddings ?? 0))),
+            h("div", { className: "mneme-statrow" },
+              h("span", null, t("memory.status.maint.size")),
+              h("span", { className: "mneme-statrowval" }, `${formatBytes(rsz.before_bytes)} → ${formatBytes(rsz.after_bytes)}`)),
+            h("div", { className: "mneme-statrow" },
+              h("span", null, t("memory.status.maint.reclaimed")),
+              h("span", { className: "mneme-statrowval" }, formatBytes(freed))),
+            h("div", { className: "mneme-statrow" },
+              h("span", null, t("memory.status.maint.receipt")),
+              h("span", { className: "mneme-statrowval" },
+                result.receipt == null ? t("memory.status.maint.receiptNone") : String(result.receipt))),
+            h("div", { className: "mneme-statrow" },
+              h("span", null, t("memory.status.maint.duration")),
+              h("span", { className: "mneme-statrowval" }, `${Number(result.duration_ms ?? 0)} ms`))
+          ),
+          // VACUUM 失败 ≠ 成功：清理已经落库且不可逆，失败的只是「把文件缩回去」这一步。
+          // 这里必须把「已完成 + 不可逆 + 暂时不会变小」和下一步（重跑即可，清理是幂等
+          // 的）一起说清，否则用户只看到「没变小」会以为白清了。
+          vacuumError
+            ? h("div", { className: "mneme-maintwarn" },
+                h("div", { className: "mneme-maintwarnhead" },
+                  `${t("memory.status.maint.vacuumFailed")} · ${vacuumError}`),
+                h("div", { className: "mneme-statuscap" }, t("memory.status.maint.vacuumFailedHint")))
+            : h("div", { className: "mneme-statuscap" },
+                rv.ran ? t("memory.status.maint.vacuumRan") : t("memory.status.maint.vacuumOff"))
+        ) : null,
+        resultError ? h("div", { className: "mneme-mainterr" }, resultError) : null,
+        error ? h("div", { className: "mneme-mainterr" }, error) : null
+      );
+    }
+
     // Markdown 镜像健康卡（issue #386 第 3 条）。后端 /health 对镜像读失败是
     // fail-closed（dirty=null → unknown）；面板侧同样 fail-closed：fetch 失败
     // 或任何非 ok/degraded 的 status 一律渲染成「未知」，绝不显示「正常」——
@@ -4281,6 +4599,8 @@ window.__ModuleLoader__.load({
           h(InjectStatusCard, { t }),
           h(InjectPreviewCard, { t })
         ),
+        h("div", { className: "mneme-statushead" }, t("memory.status.sec.maintenance")),
+        h("div", { className: "mneme-statusgrid" }, h(MaintenanceCard, { t })),
         h("div", { ref: queueRef }, h(ConflictsQueue, { t })),
         h(WorkbenchSection, { t, onBrowse })
       );

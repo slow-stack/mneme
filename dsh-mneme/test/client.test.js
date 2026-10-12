@@ -1338,6 +1338,195 @@ test("panel can create a memory by hand: menu entry wired to the dialog", () => 
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
 });
+// --- issue #386 第 4 条：存储回收卡（dry-run 预估 + 两步确认执行）---
+// 这是「不可逆的内容丢弃」在面板上的唯一入口，所以锁的不是「有没有这张卡」，而是三条
+// 不变量：执行必须两步、POST 必须逐字带确认门、VACUUM 失败不得渲染成干净的成功。
+// 所有断言都做在**卡片切片**上：路由串/dryRun/confirm 这些字面量在整包里到处都是，
+// 在 clientSource 上做 includes 恒真、等于没锁（#408 评审踩过的坑）。
+const maintCardSource = () => {
+  const start = clientSource.indexOf("function MaintenanceCard");
+  const end = clientSource.indexOf("function MirrorHealthCard", start);
+  assert.ok(start >= 0 && end > start, "MaintenanceCard must be findable in the bundle (切片锚点变了？)");
+  return clientSource.slice(start, end);
+};
+
+test("maintenance card: i18n keys are bilingual and the section is really rendered", () => {
+  for (const key of [
+    "memory.status.sec.maintenance",
+    "memory.status.maint",
+    "memory.status.maint.freelist",
+    "memory.status.maint.plannedInputs",
+    "memory.status.maint.plannedEmbeddings",
+    "memory.status.maint.window",
+    "memory.status.maint.windowUnit",
+    "memory.status.maint.windowLabel",
+    "memory.status.maint.reestimate",
+    "memory.status.maint.reestimating",
+    "memory.status.maint.stale",
+    "memory.status.maint.vacuum",
+    "memory.status.maint.vacuumHint",
+    "memory.status.maint.execute",
+    "memory.status.maint.confirm",
+    "memory.status.maint.running",
+    "memory.status.maint.cancel",
+    "memory.status.maint.confirmHint",
+    "memory.status.maint.badWindow",
+    "memory.status.maint.failed",
+    "memory.status.maint.done",
+    "memory.status.maint.size",
+    "memory.status.maint.reclaimed",
+    "memory.status.maint.clearedInputs",
+    "memory.status.maint.clearedEmbeddings",
+    "memory.status.maint.receipt",
+    "memory.status.maint.receiptNone",
+    "memory.status.maint.duration",
+    "memory.status.maint.vacuumRan",
+    "memory.status.maint.vacuumOff",
+    "memory.status.maint.vacuumFailed",
+    "memory.status.maint.vacuumFailedHint"
+  ]) {
+    // 数的是**字典行**（`"key": "` 顶格成行），不是裸字符串出现次数。裸数会把调用点
+    // 一起算进来：`t("...maint.done")` 在卡片里本来就有一次，删掉一整行英文译文之后
+    // 「字典 zh 行 + 调用点」照样凑够 2——锁恒真，就是这么漏的（本条第一版被 M1 变异
+    // 抓出来了）。行首锚定后，少一侧译文就只剩 1。
+    const entries = clientSource.match(new RegExp(`^\\s*"${key.replace(/\./g, "\\.")}"\\s*:\\s*"`, "gm"));
+    const count = entries ? entries.length : 0;
+    assert.equal(count, 2, `i18n key ${key} must appear as exactly one dictionary line per language (got ${count})`);
+  }
+  // 分区键只在字典里躺着不算加分区：必须真的渲染出「维护」这段扫读锚点。
+  assert.ok(clientSource.includes('h("div", { className: "mneme-statushead" }, t("memory.status.sec.maintenance"))'),
+    "the maintenance section head must render from the dictionary key");
+});
+
+test("maintenance card: the reclaim route is the in-process one, not the standalone data plane", () => {
+  const src = maintCardSource();
+  // 走 /api/dsh-mneme/... 这条 in-process 路由：它才有 requireAuth + 与 CLI 同一条
+  // reclaim 实现。写成 standalone 数据面的路径会绕开面板身份的鉴权口径。
+  assert.equal(src.split('"/api/dsh-mneme/maintenance/reclaim"').length - 1, 1,
+    "the card must name the in-process reclaim route exactly once (via its path constant)");
+  // 预估走 GET 且把窗口作为查询参数带上；粘在按钮上——键入即发会让数字在半截输入时跳。
+  assert.ok(src.includes("`${RECLAIM_PATH}?olderThanDays=${days}`"),
+    "re-estimating must GET the route with the current window as a query parameter");
+  assert.equal(src.split("onClick: estimate").length - 1, 1,
+    "only the re-estimate button may trigger an estimate (no request per keystroke)");
+  assert.ok(src.includes('onChange: (e) => setDays(e.target.value)'),
+    "typing in the window field must only update local state");
+});
+
+test("maintenance card: execution carries the verbatim dryRun:false + confirm:true gate", () => {
+  const src = maintCardSource();
+  // 逐字锁请求体：多一个字段、少一个空格、把 Number(days) 换成裸 days 都匹配不上。
+  // 锁裸字段名（dryRun/confirm）会恒真——它们在这段源码里各自还有别的出现位置。
+  assert.match(src,
+    /JSON\.stringify\(\{ dryRun: false, confirm: true, olderThanDays: Number\(days\), vacuum \}\)/,
+    "the executing body must be exactly dryRun:false + confirm:true + olderThanDays + vacuum");
+  // 全卡只有一处能改库：确认门之外的任何一次 POST 都是「第一次点就真清了」。
+  assert.equal(src.split('method: "POST"').length - 1, 1, "the card must issue exactly one POST");
+  assert.equal(src.split("dryRun: false").length - 1, 1, "exactly one mutating body may exist");
+  // 窗口非法时不得发请求：0 在服务端是「清掉全部快照」，畸形输入绝不能静默落进最坏解释。
+  assert.ok(src.includes('if (!/^\\d+$/.test(days)) { setError(t("memory.status.maint.badWindow")); setArmed(false); return; }'),
+    "a non-numeric window must be rejected locally before any round trip");
+  // 上界同样在本地拦：/^\d+$/ 放得过 1e20 与 400 位数字（后者化成 Infinity），后端
+  // 会回 400，但那时用户只看到一句「回收失败」，分不清是窗口不合法还是网络问题。
+  assert.match(src, /const MAX_WINDOW_DAYS = 3650;/,
+    "the card must carry the same upper bound as the backend");
+  assert.ok(src.includes('if (Number(days) > MAX_WINDOW_DAYS) { setError(t("memory.status.maint.badWindow")); setArmed(false); return; }'),
+    "an out-of-range window must be rejected locally, before any round trip");
+});
+
+test("maintenance card: 'no receipt' does not claim a single cause", () => {
+  // writeReceipt 返回 null 有两种成因：审计被关（config.llmAudit.enabled === false），
+  // 或回执写库失败（saveLlmAudit 抛错，只 warn）。旧文案「无（审计未启用）」把第二种
+  // 情况说成第一种——而这行出现在不可逆操作的结果区，用户会照它去对账。
+  for (const wording of [
+    '"memory.status.maint.receiptNone": "未记录（审计未启用或回执写入失败）"',
+    '"memory.status.maint.receiptNone": "Not recorded (audit disabled or receipt write failed)"'
+  ]) {
+    assert.ok(clientSource.includes(wording),
+      `the missing-receipt wording must name both causes: ${wording}`);
+  }
+});
+
+test("maintenance card: no window.confirm — the host webview cannot be relied on for it", () => {
+  const src = maintCardSource();
+  assert.equal(/window\.confirm/.test(src), false,
+    "window.confirm is not reliably available in the host webview; the in-card confirm state is the gate");
+  assert.equal(/(^|[^.\w])confirm\s*\(/.test(src), false,
+    "no blocking confirm() call may exist in the card (the confirm state is a rendered branch)");
+  assert.ok(src.includes("mneme-btndangerconfirm"),
+    "the armed state must use the repo's existing danger-confirm styling");
+});
+
+test("maintenance card: mounted in the status view under the maintenance section", () => {
+  // 组件存在但没挂上树 = 用户永远看不到，正是这条 issue 报的缺口。
+  const panelStart = clientSource.indexOf("function StatusPanel");
+  const panelEnd = clientSource.indexOf("function ", clientSource.indexOf("h(WorkbenchSection", panelStart));
+  assert.ok(panelStart >= 0 && panelEnd > panelStart, "StatusPanel must be findable in the bundle");
+  const panel = clientSource.slice(panelStart, panelEnd);
+  assert.ok(panel.includes("h(MaintenanceCard, { t })"),
+    "the status panel must render the maintenance card");
+  assert.ok(panel.includes('t("memory.status.sec.maintenance")'),
+    "the card must sit under the maintenance section head, not loose in the grid");
+});
+
+test("maintenance card: success state exists only behind the confirm gate", () => {
+  const src = maintCardSource();
+  // 第一次点只能「武装」，不得直连执行：默认态是红描边钮（mneme-btndanger），只有武装
+  // 后的实心红确认钮（mneme-btndangerconfirm）才允许调用 execute。
+  assert.match(src, /mneme-btndangerconfirm"[\s\S]{0,200}?onClick: execute/,
+    "only the armed danger-confirm button may fire the mutating call");
+  assert.match(src, /mneme-btndanger"[\s\S]{0,200}?onClick: \(\) => setArmed\(true\)/,
+    "the first click must only arm the confirm state, never execute");
+  assert.equal(src.split("onClick: execute").length - 1, 1,
+    "the executing click must have exactly one entry point in the card");
+  // 非 2xx 必须先 return，成功态才能写在它之后——否则失败也会渲染成成功。
+  const guard = src.indexOf("if (!r.ok) {");
+  const success = src.indexOf("setResult(r.body)");
+  assert.ok(guard >= 0 && success > guard,
+    "a non-2xx response must return before the success report is written");
+  assert.equal(src.split("setResult(r.body)").length - 1, 1,
+    "the success report must be written exactly once, from the confirmed call");
+  // 窗口改过却没重新估算时，确认态里摆出来的会是上一次的数字——对不可逆动作来说这是最坏
+  // 的一种错位，所以那种状态下执行钮必须是禁用的。
+  assert.ok(src.includes("const stale = !report || String(report.olderThanDays) !== days;"),
+    "an estimate that no longer matches the input must be detectable");
+  assert.match(src, /disabled: running \|\| loading \|\| estimating \|\| stale/,
+    "the run button must stay disabled while the estimate is stale");
+});
+
+// VACUUM 失败 ≠ 成功（契约 §5 的硬要求）。清理的两个 UPDATE 各自提交且不可逆，VACUUM
+// 只负责把文件缩回去；把半成功渲染成成功，用户会以为白清了一次。这条锁住那个三元分支，
+// 防止未来被「简化」成只看 dryRun/receipt。
+test("maintenance card: a failed VACUUM is reported, never rendered as a clean success", () => {
+  const src = maintCardSource();
+  assert.ok(src.includes("const vacuumError = rv.error == null ? null : String(rv.error);"),
+    "vacuum.error is string|null and must be read as the failure signal it is");
+  assert.match(src, /vacuumError \? t\("memory\.status\.maint\.vacuumFailed"\) : t\("memory\.status\.maint\.done"\)/,
+    "a non-null vacuum.error must replace the success headline");
+  assert.ok(src.includes('t("memory.status.maint.vacuumFailedHint")'),
+    "the failed state must state that the reclaim already happened, is irreversible, and that a rerun is idempotent");
+  // receipt 也要露面：不可逆动作没有回执号，出事时无法对账。锁的是**取值表达式**而不是
+  // 行标签——`t("...maint.receipt")` 只是左侧那行文案，把右侧渲染删空它照样在，锁标签
+  // 等于没锁（M12 变异验证过）。
+  assert.match(src, /result\.receipt == null \? t\("memory\.status\.maint\.receiptNone"\) : String\(result\.receipt\)/,
+    "the receipt value must be rendered (id when present, an explicit 'not recorded' when absent)");
+});
+
+test("maintenance card: VACUUM defaults to off and a failed run is reported verbatim", () => {
+  const src = maintCardSource();
+  // VACUUM 会短暂独占数据库（别的进程此时写入会 SQLITE_BUSY），它是**可选**动作，
+  // 默认必须关着——默认开等于每次回收都替用户独占一次库。契约 §5 的硬要求。
+  assert.ok(src.includes("const [vacuum, setVacuum] = useState(false);"),
+    "VACUUM must default to off");
+  // 非 2xx 必须把服务端给的 error 串如实带出来：只说「失败」，现场就分不清是 400 的
+  // confirm-required 还是 500 的 internal。
+  assert.ok(src.includes('setResultError(`${t("memory.status.maint.failed")} · ${(r.body && r.body.error) || `HTTP ${r.status}`}`);'),
+    "a non-2xx response must surface the server's own error string, not a bare 'failed'");
+  // 执行成功后必须复位确认态：否则下一次点击落在已武装的分支上，一步就把不可逆动作
+  // 放出去，两步确认名存实亡。
+  assert.match(src, /setResult\(r\.body\);\s*setArmed\(false\);/,
+    "the confirm state must be reset on the success path");
+});
 // 面板 bundle 在本文件里只被当**文本**读（上面的断言全是正则/字符串包含），
 // 而仓库的 CI 里没有任何一步**解析**它：于是重复声明这类语法错误能一路绿灯进
 // 主干，后果却是整个面板加载失败（__ModuleLoader__ 拿到的模块一执行就抛
