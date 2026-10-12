@@ -818,7 +818,11 @@ test("reclaim report has no wrapper layer: fields sit at the top level", async (
     assert.ok(out.body.size.before_bytes > 0);
     assert.equal(typeof out.body.size.freelist_pages, "number");
     assert.equal(typeof out.body.duration_ms, "number");
-    assert.deepEqual(Object.keys(out.body.planned).sort(), ["archived_embeddings", "dream_run_inputs"]);
+    // #399：蒸馏原文记录按 distilled_at 到期纳入回收范围后，planned 的键随回收面
+    // 演进——这份锁防的是路由层悄悄包一层 { report }（键路径变深，面板与 standalone
+    // 会对不上字段），不是冻结回收范围本身；新增回收项时同步扩这份清单，并配
+    // maintenance.test.js 的同款断言。
+    assert.deepEqual(Object.keys(out.body.planned).sort(), ["archived_embeddings", "distill_records", "dream_run_inputs"]);
     assert.deepEqual(Object.keys(out.body.vacuum).sort(), ["duration_ms", "error", "ran", "requested"]);
     assert.ok("receipt" in out.body);
     assert.ok("cutoff" in out.body);
