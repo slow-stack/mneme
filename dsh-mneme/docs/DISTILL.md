@@ -106,8 +106,10 @@ distillRecords:
 
 **到期裁剪只删 `distill_records`**，`memory_provenance` 保留——链接从此指向空区间，面板
 显示「来源已过期」，而不是查无此记忆。**裁剪原文绝不级联删记忆**：原文是索引，记忆是资产。
-两处裁剪：启动期（`src/index.js`，只在 `enabled === true` 时动手——默认关时一张空表不该被
-每次启动扫一遍）+ `dsh-mneme reclaim`（默认 dry-run）。
+两处裁剪，**窗口各自独立**：启动期（`src/index.js`，只在 `enabled === true` 时动手——默认关时
+一张空表不该被每次启动扫一遍）按 `retentionDays` 裁；`dsh-mneme reclaim`（默认 dry-run）
+**不读这个键**，跟同一条 `--older-than`（默认 7 天）走——两个窗口互不联动，想一次对齐就把
+`--older-than` 显式传成与 `retentionDays` 相同的值。
 
 删记忆是另一条路：`store.remove(id)` 在事务内**显式**清掉它的溯源链接。之所以不靠
 `ON DELETE CASCADE`，是因为 `src/store.js` 从不启用 `PRAGMA foreign_keys`（全库唯一的

@@ -93,7 +93,7 @@
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |
 |---|---|---|---|
 | `distillRecords.enabled` **light** | `false` | 蒸馏时顺带留存窗口原文 + 写记忆级溯源链接 | opt-in；关 = 一行不写、连收集都不做，行为与 #399 之前逐字节一致 |
-| `distillRecords.retentionDays` | `90` | 原文保留天数（1–3650） | 启动期与 `dsh-mneme reclaim` 两处裁剪；**只删 `distill_records`**，溯源链接保留指向空区间（显示「来源已过期」），绝不级联删记忆 |
+| `distillRecords.retentionDays` | `90` | 原文保留天数（1–3650） | **只管启动期裁剪**（`src/index.js`，`enabled` 时动手）。`dsh-mneme reclaim` 不读这个键：它对三个表用同一条 `--older-than` 截止（默认 7 天），想对齐就显式传成与 `retentionDays` 相同的值（见 STORAGE.md）。两处都**只删 `distill_records`**，溯源链接保留指向空区间（显示「来源已过期」），绝不级联删记忆 |
 
 两个键都走 feature_flags 白名单（面板可启停）；`enabled` 进 lightMode 预设关闭清单，`retentionDays` 不进（它是时长不是行为面，用户显式设过就照旧）。`dsh-mneme reclaim` 的报告从两项变三项（`planned` / `column_bytes` / `cleared` 各多一个 `distill_records`），入口语义（默认 dry-run、`--apply` 才动手）不变。已知边界：无历史回填、从未蒸馏过的窗口不留记录、不覆盖工具结果与 code 输出。
 
