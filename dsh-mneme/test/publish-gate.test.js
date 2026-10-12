@@ -92,6 +92,26 @@ test("等满预算仍看不见：必须 ok:false + reason timeout（防的就是
   assert.match(result.lastError, /404/);
 });
 
+test("探测自己耗时到超过预算、但回来时版本已可见：仍然通过（预算约束等待，不约束判定）", async () => {
+  // 锁的是刻意选择：单次探测带 HTTP 超时，晚到的成功最多超出预算十几秒；而版本真的在 registry 上
+  // 就是发布成功，为晚到几秒判红是假红——闸门要消灭的是假绿，不该顺手制造另一种失真。
+  const clock = fakeClock();
+  const result = await waitForPublished("0.8.16", {
+    now: clock.now,
+    sleep: clock.sleep,
+    timeoutMs: 15000,
+    intervalMs: 15000,
+    probe: async () => {
+      await clock.sleep(20000); // 这一次探测自己就把预算耗穿了
+      return { ok: true, version: "0.8.16", tarball: "" };
+    },
+    log: noop
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.attempts, 1);
+  assert.equal(result.waitedMs, 20000);
+});
+
 test("预算不是间隔整数倍时：最后一轮只睡到超时点，不多睡一整轮", async () => {
   const clock = fakeClock();
   const result = await waitForPublished("0.8.16", {

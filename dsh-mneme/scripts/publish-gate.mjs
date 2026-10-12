@@ -111,6 +111,10 @@ export async function waitForPublished(version, {
   for (;;) {
     attempts += 1;
     const result = await probe();
+    // 探测成功即算通过，**不再回头比期限**：预算是「等多久才放弃」，不是「多久之后就算没发布」。
+    // 单次探测自带 HTTP 超时（默认 15 秒），所以晚到的成功最多超出预算十几秒；而版本真的在
+    // registry 上就等于发布成功，因为晚到几秒把它判红才是假红——这个闸门存在的理由正是消灭
+    // 假绿，不该顺手制造另一种失真。反过来，探测失败仍严格按预算收口（见下）。
     if (result?.ok) {
       return { ok: true, version, attempts, waitedMs: now() - startedAt, tarball: result.tarball ?? "" };
     }
