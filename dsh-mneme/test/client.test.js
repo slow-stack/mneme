@@ -667,6 +667,48 @@ test("heat badges render from the /list projection and self-hide when off", () =
   );
 });
 
+// Token 去向三屏（#412）：前端只拿 by_day 的稀疏行渲染两种时间尺度，三个坑
+// 都在这一层，且都是「不报错但图错了」的静默失效，所以锁形状而非锁行为：
+// ① 柱状图必须补连续 7 天——by_day 是 GROUP BY 的稀疏结果，直接映射会缺列；
+// ② 热力图的 56 格必须来自独立的 days=56 请求——复用 days=7 的响应会让 56 格
+//    里 48 格恒 0（图看着正常，其实只有一周有数据）；
+// ③ 开合不能挂在 details 上——details 的 onClick 会连折叠区子卡片的点击一起
+//    吃掉（preventDefault 拦掉冒泡的激活事件），必须挂 summary。
+test("token flow: 7-day bars pad to a continuous week, heatmap uses its own 56-day window", () => {
+  // ① 连续 7 天：右端对齐今天 UTC，缺日填 0
+  assert.ok(
+    /Array\.from\(\{ length: 7 \}/.test(clientSource),
+    "the 7-day bars must be generated as a fixed 7-slot array, not mapped straight off by_day"
+  );
+  assert.ok(
+    /rawDayMap\.get\(key\) \?\? 0/.test(clientSource),
+    "missing days must fill 0 so the x-axis stays a continuous week"
+  );
+  // stats 为 null（未到）与 {}（已知为空）必须分开：前者不画柱，后者补零
+  assert.ok(
+    /const rawDays = stats && Array\.isArray\(stats\.by_day\) \? stats\.by_day : null;/.test(clientSource),
+    "an unloaded response must stay null, else the loading state paints 7 zero bars"
+  );
+  // ② 热力图独立 56 天窗口
+  assert.ok(
+    clientSource.includes('llm-audit/stats?days=56'),
+    "the heatmap must issue its own days=56 request"
+  );
+  assert.ok(
+    /heatStats && Array\.isArray\(heatStats\.by_day\)/.test(clientSource),
+    "the heatmap must read heatStats.by_day, not stats.by_day"
+  );
+  // ③ 开合挂 summary，不挂 details
+  assert.ok(
+    !/className: "mneme-legacy",\s*\n\s*open: legacyOpen,\s*\n\s*onClick/.test(clientSource),
+    "the click handler must not sit on <details>: it swallows clicks from child cards"
+  );
+  assert.ok(
+    /h\("summary", \{ onClick: \(e\) => \{ e\.preventDefault\(\); setLegacyOpen\(!legacyOpen\); \} \}/.test(clientSource),
+    "the toggle must be bound on <summary>, the native disclosure handle"
+  );
+});
+
 // 巩固/睡眠模型路由 UI：下拉数据来自宿主侧已注册适配器（/llm-providers，
 // 云端插件侧端点），「测试连通性」走 POST /test-model 真实最小调用。旧后端
 // 端点 404 时必须回退纯文本输入——前端自门控，不挡旧版本。

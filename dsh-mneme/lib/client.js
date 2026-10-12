@@ -4122,6 +4122,7 @@ window.__ModuleLoader__.load({
 
     function TokenFlowSection({ t }) {
       const [stats, setStats] = useState(null);
+      const [heatStats, setHeatStats] = useState(null);
       const [statsError, setStatsError] = useState(false);
       const [conf, setConf] = useState({ loading: true, error: false, pending: 0 });
       const [focusOp, setFocusOp] = useState(null);
@@ -4135,6 +4136,16 @@ window.__ModuleLoader__.load({
             setStatsError(false);
           })
           .catch(() => { if (!cancelled) setStatsError(true); });
+        // 8 周热力要 56 天窗口，而 days=7 的 by_day 最多只有 8 个 UTC 日期——
+        // 复用同一份响应会让 56 格里 48 格恒为 0（自动评审 #412 指出）。两个
+        // 窗口各取所需：7 天喂 KPI 与柱状，56 天只喂热力。
+        apiFetch("/api/dsh-mneme/semantic/llm-audit/stats?days=56")
+          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+          .then((j) => {
+            if (cancelled) return;
+            setHeatStats(j && typeof j === "object" ? (j.stats || j) : {});
+          })
+          .catch(() => { if (!cancelled) setHeatStats({}); });
         // KPI 第 4 格的待确认冲突与 DreamStatusCards 同源（/dream-status），
         // 同样监听 mneme:conflicts-changed 重取（#295），两处计数永不漂移。
         const loadConflicts = () => {
@@ -4181,24 +4192,40 @@ window.__ModuleLoader__.load({
         return i >= 0 ? i : Math.max(0, Math.min(allOps.findIndex((r) => r.op === op), 5));
       };
       // 7 天柱状：上限向上取整到整 M，四条网格线按 niceMax/4 等距。
-      const days = (stats && Array.isArray(stats.by_day) ? stats.by_day : []).map((d) => ({
-        day: String((d && d.day) ?? ""),
-        total: Number((d && d.total_tokens) ?? 0)
-      }));
+      // by_day 只返回有审计行的日期（SQL 是 GROUP BY，缺日无行），而 since=now-7d
+      // 的窗口横跨 8 个 UTC 日期——直接映射会让柱子缺列、横轴不是连续 7 天（自动
+      // 评审 #412 指出）。这里以「今天 UTC」为右端补成连续 7 天，缺日填 0；响应还
+      // 没到时保持空数组，否则加载态会先画 7 根零高柱子（stats 为 null 与 {} 分属
+      // 「未知」与「已知为空」，只有后者该补零）。
+      const rawDays = stats && Array.isArray(stats.by_day) ? stats.by_day : null;
+      const rawDayMap = new Map((rawDays ?? []).map((d) => [String((d && d.day) ?? ""), Number((d && d.total_tokens) ?? 0)]));
+      const endDay = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+      const days = rawDays
+        ? Array.from({ length: 7 }, (_, i) => {
+            const key = new Date(endDay.getTime() - (6 - i) * 86400000).toISOString().slice(0, 10);
+            return { day: key, total: rawDayMap.get(key) ?? 0 };
+          })
+        : [];
       const dayMax = Math.max(1, ...days.map((d) => d.total));
       const niceMax = Math.max(1e6, Math.ceil(dayMax / 1e6) * 1e6);
       const gridVals = [niceMax, niceMax * 0.75, niceMax * 0.5, niceMax * 0.25];
-      // 8 周热力：右缘对齐 by_day 最后一天（UTC），左侧补齐到周一；数据窗口
-      // 之外的格子隐藏留形。日期一律走 UTC——by_day 的 day 就是 UTC 日期。
+      // 8 周热力：数据必须来自 56 天窗口（heatStats），右缘对齐该窗口最后一天
+      // （UTC），左侧补齐到周一；数据窗口之外的格子隐藏留形。日期一律走 UTC——
+      // by_day 的 day 就是 UTC 日期。用 heatStats 而非 stats：否则 56 格里
+      // 48 格恒 0。
+      const heatDays = (heatStats && Array.isArray(heatStats.by_day) ? heatStats.by_day : []).map((d) => ({
+        day: String((d && d.day) ?? ""),
+        total: Number((d && d.total_tokens) ?? 0)
+      }));
       const heatCells = [];
-      if (days.length) {
-        const byDayMap = new Map(days.map((d) => [d.day, d.total]));
-        const end = new Date(`${days[days.length - 1].day}T00:00:00Z`);
+      if (heatDays.length) {
+        const byDayMap = new Map(heatDays.map((d) => [d.day, d.total]));
+        const end = new Date(`${heatDays[heatDays.length - 1].day}T00:00:00Z`);
         const start = new Date(end.getTime() - 55 * 86400000);
         for (let i = 0; i < 56; i++) {
           const d = new Date(start.getTime() + i * 86400000);
           const key = d.toISOString().slice(0, 10);
-          heatCells.push({ key, hidden: d > end, total: byDayMap.get(key) ?? 0 });
+          heatCells.push({ key, total: byDayMap.get(key) ?? 0 });
         }
       }
       const kpi = (title, num, cap) =>
@@ -4298,7 +4325,6 @@ window.__ModuleLoader__.load({
             heatCells.map((c) => h("div", {
               key: c.key,
               className: heatLevel(c.total) ? `mneme-heatcell l${heatLevel(c.total)}` : "mneme-heatcell",
-              style: c.hidden ? { visibility: "hidden" } : undefined,
               title: `${c.key} · ${c.total.toLocaleString()}`
             }))
           ),
@@ -4904,10 +4930,13 @@ window.__ModuleLoader__.load({
         h(TokenFlowSection, { t }),
         h("details", {
           className: "mneme-legacy",
-          open: legacyOpen,
-          onClick: (e) => { e.preventDefault(); setLegacyOpen(!legacyOpen); }
+          open: legacyOpen
         },
-          h("summary", null, t("memory.status.token.detail")),
+          // 开合挂在 summary 上而非 details：details 上的 onClick 会连折叠区里
+          // 子卡片的点击一起吃掉（preventDefault 拦掉冒泡上来的激活事件），
+          // 而 summary 是浏览器原生的开合把手，点它以外的地方不该切换（自动
+          // 评审 #412 指出）。
+          h("summary", { onClick: (e) => { e.preventDefault(); setLegacyOpen(!legacyOpen); } }, t("memory.status.token.detail")),
           legacyOpen ? h(react.Fragment, null,
             // 分组标题把九张卡拆成「库内一览 / 后台运转」两段扫读单元
             h("div", { className: "mneme-statushead" }, t("memory.status.sec.overview")),
