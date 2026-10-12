@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="横幅.png" alt="dsh-mneme banner" width="100%" />
+  <img src="images/mneme-readme-hero.png" alt="Mneme — cross-session memory for AI agents" width="100%" />
 </p>
 
 <h1 align="center">dsh-mneme</h1>

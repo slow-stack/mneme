@@ -74,15 +74,12 @@ window.__ModuleLoader__.load({
     //    这是记忆插件（issue 走维护者自开通道）；
     //  · 宿主耦合——宿主图标名会换代（#287：Outline20 → OutlineRegular/Medium），
     //    只认某一代就取到 undefined，h(undefined) 即 React #130 把整个 slot entry
-    //    崩掉。自绘后这一整类问题消失，也不再需要「探测多代名字 + 缺名降级」。
-    // 形状：单线螺旋（记忆痕迹 / 召回回路）。规格逐条对齐宿主图标，才不像外来户：
-    // 16 栅格、fill:none、stroke:currentColor、描边 1（宿主 Regular 档）、圆头圆角。
-    // 路径是 6 段三次贝塞尔拟合同一螺旋（拟合版与逐点采样版逐像素一致，已核验），
-    // 所以源码里只有 200 字符，不是一百多个采样点。
-    // 改形状只需换 MNEME_MARK_D，并同步 assets/icon.svg（插件列表那份，同一个 d）。
-    const MNEME_MARK_D = "M4.43 12.31C2.19 10.17 2.27 6.81 4.18 4.84C6.10 2.88 9.06 2.99 10.74 4.68C12.43 6.37 12.28 8.92 10.82 10.33C9.35 11.74 7.22 11.55 6.08 10.32C4.95 9.08 5.18 7.35 6.18 6.50C6.57 6.17 7.03 5.99 7.48 5.97";
+    //    崩掉。改用本地 Lucide 路径数据后，不再需要「探测多代名字 + 缺名降级」。
+    // Lucide Brain（项目现有 Lucide 1.42 图标数据，ISC）；静态内嵌路径，避免插件运行时加载 ESM 包。
+    // 宿主图标名会随版本换代，因此插件标识仍由本地 helper 渲染；插件列表 SVG 与这里共用同一路径。
+    const MNEME_MARK_D = "M12 18V5M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5M17.997 5.125a4 4 0 0 1 2.526 5.77M18 18a4 4 0 0 0 2-7.464M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517M6 18a4 4 0 0 1-2-7.464M6.003 5.125a4 4 0 0 0-2.526 5.77";
 
-    /** mneme mark 的内联 SVG；currentColor + 描边 1，随主题与字号走。 */
+    /** 24 栅格 Lucide Brain 映射到宿主 16 栅格，颜色仍随主题走。 */
     const MnemeMark = ({ size = 16, className }) => h("svg", {
       width: size,
       height: size,
@@ -92,10 +89,10 @@ window.__ModuleLoader__.load({
       xmlns: "http://www.w3.org/2000/svg",
       "aria-hidden": "true",
       stroke: "currentColor",
-      strokeWidth: 1,
+      strokeWidth: 2,
       strokeLinecap: "round",
       strokeLinejoin: "round"
-    }, h("path", { d: MNEME_MARK_D }));
+    }, h("path", { d: MNEME_MARK_D, transform: "scale(0.666667)" }));
 
     /** 渲染 mneme mark：四个入口（浮层标题栏 / footer 回退 / 侧边栏 portal / better-sidebar tab）共用同一颗。 */
     const renderMnemeMark = (props) => h(MnemeMark, props);
