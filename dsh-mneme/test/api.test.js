@@ -1463,6 +1463,11 @@ const MOCK_LLM = {
       };
       return;
     }
+    // 抛错型真失败（网络中断 / provider 崩溃）：错误以异常形式冒到 catch 路径，
+    // 必须原样上报——「档位被拒才重试」不能退化成「见到错误就重试」。
+    if (options.model === "crash-model") {
+      throw new Error("socket hang up");
+    }
     if (options.reasoningEffort === "reject") {
       throw new Error('UNSUPPORTED_REASONING_EFFORT: provider "mock" model "mock-model" does not support reasoning effort "reject"');
     }
@@ -1596,6 +1601,26 @@ test("POST /api/dsh-mneme/test-model keeps real failures red and never reports a
   assert.match(data.error, /AUTH_FAILED/);
   assert.equal(data.effortDropped, undefined, "a genuine failure is not a downgrade");
   assert.equal(MOCK_LLM.streamCalls.length - before, 1, "non-effort failures are not retried blindly");
+});
+
+test("POST /api/dsh-mneme/test-model reports a thrown transport failure as-is (catch path)", async () => {
+  // 错误以异常形式到达时（socket 断开 / provider 崩溃）走 catch 路径：谎报成功不行，
+  // 拿 without-effort 的裸奔重试去掩盖真故障更不行——「档位被拒才重试」不能退化成
+  // 「见到错误就重试」，否则真故障会被一次盲重试糊住（还多烧一次配额）。
+  const { routes } = setupLlm(MOCK_LLM);
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/test-model");
+  const before = MOCK_LLM.streamCalls.length;
+  const res = new FakeRes();
+  await route.handler(
+    req("/api/dsh-mneme/test-model", "POST", { provider: "deepseek", model: "crash-model", reasoningEffort: "low" }),
+    res
+  );
+  assert.equal(res.statusCode, 502);
+  const data = JSON.parse(res.body);
+  assert.equal(data.ok, false);
+  assert.match(data.error, /socket hang up/, "the thrown cause reaches the panel verbatim");
+  assert.equal(data.effortDropped, undefined, "a thrown failure is not a downgrade");
+  assert.equal(MOCK_LLM.streamCalls.length - before, 1, "a thrown failure is not retried blindly either");
 });
 
 test("POST /api/dsh-mneme/test-model omits effortDropped when no effort was configured", async () => {
