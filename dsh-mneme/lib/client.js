@@ -550,6 +550,7 @@ window.__ModuleLoader__.load({
         "memory.features.modelTestOk": "连通正常",
         "memory.features.modelTestFail": "测试失败",
         "memory.features.modelTestHint": "真实发起一次最小巩固调用，验证 Provider/模型连通与 effort 支持",
+        "memory.features.modelTestDowngraded": "档位不被该模型接受，已去掉档位连通（与真实巩固一致）",
         "memory.features.routeStaleMark": "（不在可用列表）",
         "memory.features.routeStaleHint": "该值不在当前可用列表（常见于切换过 Provider）：请重新选择，或点「测试连通性」当场验证",
         "memory.explorer.viewCards": "卡片",
@@ -1093,6 +1094,7 @@ window.__ModuleLoader__.load({
         "memory.features.modelTestOk": "Connected",
         "memory.features.modelTestFail": "Test failed",
         "memory.features.modelTestHint": "Fires one minimal consolidation call to verify provider/model connectivity and effort support",
+        "memory.features.modelTestDowngraded": "Effort not accepted by this model; connected without it (same as a real consolidation)",
         "memory.features.routeStaleMark": " (not in list)",
         "memory.features.routeStaleHint": "This value is not in the currently available list (often a leftover from switching providers): reselect, or run a connectivity test to verify now",
         "memory.explorer.viewCards": "Cards",
@@ -2589,9 +2591,11 @@ window.__ModuleLoader__.load({
       // 连通性测试：POST /test-model，空 provider/model = 按巩固路由解析
       // （agent 默认）。durationMs 优先后端值，缺失时客户端兜底计时；成功行
       // 附模型的实际回复（reply，后端截 100 字符）——「真的答了 ok」而非只报通。
-      // reasoningEffort 透传该路由配置的档位（issue #215）：sleep 无回退重试，
-      // 档位被拒时真实 run 直接失败，测试是事前唯一的暴露口；'none'/未配置
-      // 省略字段，与后端 src/api.js 的同口径。
+      // reasoningEffort 透传该路由配置的档位（issue #215），'none'/未配置省略
+      // 字段，与后端 src/api.js 的同口径。**档位被拒不再是失败**：后端与真实
+      // run 一样丢掉字段重试一次，回以 effortDropped:true，这里单独说明「连通
+      // 了、但不是用你配的档位」——否则用户会照着红色失败去换 Provider，而
+      // 后台其实一直在正常跑（这正是它此前给出误导性诊断的原因）。
       const runModelTest = async (provider, model, setTestState, reasoningEffort) => {
         setTestState({ running: true });
         const started = Date.now();
@@ -2617,6 +2621,8 @@ window.__ModuleLoader__.load({
           setTestState({
             ok: true,
             ms,
+            // 只有后端明确置位才算降级（旧后端无此字段 → 不显示，不误报）。
+            dropped: j.effortDropped === true,
             detail: [j.modelId, j.reply ? "「" + j.reply + "」" : ""].filter(Boolean).join(" · ")
           });
         } catch (err) {
@@ -2684,6 +2690,7 @@ window.__ModuleLoader__.load({
             (testState && !testState.running
               ? h("div", { className: "mneme-featsubhint" },
                   (testState.ok ? "✓ " + t("memory.features.modelTestOk") : "✗ " + t("memory.features.modelTestFail"))
+                  + (testState.ok && testState.dropped ? " · " + t("memory.features.modelTestDowngraded") : "")
                   + (typeof testState.ms === "number" ? " · " + (testState.ms / 1000).toFixed(1) + "s" : "")
                   + (testState.detail ? " · " + testState.detail : ""))
               : h("div", { className: "mneme-featsubhint" }, t("memory.features.modelTestHint"))))

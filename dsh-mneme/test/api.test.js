@@ -1435,12 +1435,31 @@ const MOCK_LLM = {
     if (provider === "broken") throw new Error("provider not reachable");
     return [{ id: "deepseek-chat", name: "DeepSeek Chat" }, { id: "deepseek-reasoner", name: "DeepSeek Reasoner" }];
   },
+  // 每次 stream 的 options 留档：既给「字段省略 / 透传」的断言用，也让「档位被拒
+  // 后重试一次」能数出调用次数（降级必须恰好两次，多一次就是盲重试）。
+  streamCalls: [],
   async *stream(options) {
     MOCK_LLM.lastOptions = options;
+    MOCK_LLM.streamCalls.push(options);
     if (options.model === "bad-model") {
       yield {
         type: "finish",
         reason: { kind: "error", failure: { code: "AUTH_FAILED", message: "invalid api key" } }
+      };
+      return;
+    }
+    // 流级档位拒收：rc.1 起的适配器把 provider 的拒收折叠成终止 error finish
+    // chunk（不抛错），这条路径曾让 withEffortFallback 的重试形同死代码。
+    if (options.model === "stream-reject" && options.reasoningEffort) {
+      yield {
+        type: "finish",
+        reason: {
+          kind: "error",
+          failure: {
+            code: "UNSUPPORTED_REASONING_EFFORT",
+            message: `provider "mock" model "mock-model" does not support reasoning effort "${options.reasoningEffort}"`
+          }
+        }
       };
       return;
     }
@@ -1517,15 +1536,100 @@ test("POST /api/dsh-mneme/test-model reports stream-level failure with 502", asy
   assert.match(data.error, /AUTH_FAILED/, "stream failure reason surfaced like audit rows");
 });
 
-test("POST /api/dsh-mneme/test-model reports thrown failure with 502", async () => {
+// issue #215 的后续：探针是仓里唯一直接调 llm.stream 的调用面——巩固/睡眠/蒸馏/
+// 总览/实体抽取都包在 withEffortFallback 里，档位被拒则丢掉字段重试一次，于是
+// 同一份配置「后台跑得通、点测试报红」，用户被引向「换哪家 Provider 都失败」。
+// 探针必须与真实 run 同语义：降级跑通 → 200 + effortDropped:true（不是 502）。
+test("POST /api/dsh-mneme/test-model degrades on a rejected effort instead of failing (issue #215 follow-up)", async () => {
   const { routes } = setupLlm(MOCK_LLM);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/test-model");
+  const before = MOCK_LLM.streamCalls.length;
   const res = new FakeRes();
-  await route.handler(req("/api/dsh-mneme/test-model", "POST", { provider: "mock", model: "mock-model", reasoningEffort: "reject" }), res);
+  await route.handler(
+    req("/api/dsh-mneme/test-model", "POST", { provider: "mock", model: "mock-model", reasoningEffort: "reject" }),
+    res
+  );
+  assert.equal(res.statusCode, 200, "a rejected effort is a downgrade, not a connectivity failure");
+  const data = JSON.parse(res.body);
+  assert.equal(data.ok, true);
+  assert.equal(data.reply, "ok", "the no-effort retry actually answered");
+  assert.equal(data.effortDropped, true, "the caller must be able to tell 'connected, effort dropped' from 'connected as configured'");
+  const calls = MOCK_LLM.streamCalls.slice(before);
+  assert.equal(calls.length, 2, "exactly one retry: attempt with the effort, then once without");
+  assert.equal(calls[0].reasoningEffort, "reject", "first attempt carries the configured effort");
+  assert.equal("reasoningEffort" in calls[1], false, "the retry omits the field entirely");
+});
+
+test("POST /api/dsh-mneme/test-model degrades on a STREAM-level effort rejection too", async () => {
+  // rc.1 起适配器不抛错，把 provider 的拒收折叠成终止 error finish chunk——只在
+  // catch 里做兜底的话这条路径就是死的，探针会照旧 502。
+  const { routes } = setupLlm(MOCK_LLM);
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/test-model");
+  const before = MOCK_LLM.streamCalls.length;
+  const res = new FakeRes();
+  await route.handler(
+    req("/api/dsh-mneme/test-model", "POST", { provider: "mock", model: "stream-reject", reasoningEffort: "high" }),
+    res
+  );
+  assert.equal(res.statusCode, 200, "stream-level rejection also downgrades");
+  const data = JSON.parse(res.body);
+  assert.equal(data.ok, true);
+  assert.equal(data.effortDropped, true);
+  const calls = MOCK_LLM.streamCalls.slice(before);
+  assert.equal(calls.length, 2, "stream rejection retries once without the effort");
+  assert.equal("reasoningEffort" in calls[1], false);
+});
+
+test("POST /api/dsh-mneme/test-model keeps real failures red and never reports a phantom downgrade", async () => {
+  // 非档位原因的失败绝不能被兜底吞掉：真连不上还得是 502、还得带原始原因。
+  const { routes } = setupLlm(MOCK_LLM);
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/test-model");
+  const before = MOCK_LLM.streamCalls.length;
+  const res = new FakeRes();
+  await route.handler(
+    req("/api/dsh-mneme/test-model", "POST", { provider: "deepseek", model: "bad-model", reasoningEffort: "low" }),
+    res
+  );
   assert.equal(res.statusCode, 502);
   const data = JSON.parse(res.body);
   assert.equal(data.ok, false);
-  assert.match(data.error, /UNSUPPORTED_REASONING_EFFORT/, "throw path surfaces the harness rejection");
+  assert.match(data.error, /AUTH_FAILED/);
+  assert.equal(data.effortDropped, undefined, "a genuine failure is not a downgrade");
+  assert.equal(MOCK_LLM.streamCalls.length - before, 1, "non-effort failures are not retried blindly");
+});
+
+test("POST /api/dsh-mneme/test-model omits effortDropped when no effort was configured", async () => {
+  const { routes } = setupLlm(MOCK_LLM);
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/test-model");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/test-model", "POST", { provider: "deepseek", model: "deepseek-chat" }), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.equal(data.effortDropped, undefined, "no effort configured -> nothing was dropped");
+});
+
+// 防分叉静态锁（与 #405 的归一逻辑同款）：档位拒收的判据与降级语义全仓只有一份
+// ——dream.js 的 EFFORT_REJECT_RE + withEffortFallback。api.js 手写正则或自己做
+// 重试，两条路必然漂移（漂移方向就是「探针与服务端行为不一致」，本次修的就是这个）。
+test("api.js reuses the single effort-rejection source instead of forking it", () => {
+  const src = readFileSync(new URL("../src/api.js", import.meta.url), "utf8");
+  assert.match(
+    src,
+    /import \{[^}]*withEffortFallback[^}]*\} from "\.\/dream\.js"/,
+    "the probe must reuse dream.js's withEffortFallback instead of hand-rolling a retry"
+  );
+  assert.match(
+    src,
+    /import \{[^}]*EFFORT_REJECT_RE[^}]*\} from "\.\/dream\.js"/,
+    "the rejection predicate must come from dream.js (single source), not a local regex"
+  );
+  assert.ok(
+    !/\/reasoning\[/.test(src),
+    "api.js must not carry its own copy of the effort-rejection pattern"
+  );
+  // 降级语义只能有一处：探针内不得再出现第二个「无档位重试」判据。
+  const attempts = src.split("withEffortFallback(").length - 1;
+  assert.equal(attempts, 1, `the probe must route through withEffortFallback exactly once (got ${attempts})`);
 });
 
 test("POST /api/dsh-mneme/test-model resolves empty body against the consolidation route", async () => {

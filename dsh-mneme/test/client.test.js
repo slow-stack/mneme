@@ -839,8 +839,9 @@ test("stale route values are marked and explained at the row level (issue #191)"
     "the en stale hint must cover provider-absence too, not only the model case"
   );
   // 4. issue #215：三条路由各自透传自己的档位键——routeSelects 按路由行
-  // 传入键名、从生效配置取值；sleep 无回退重试，档位被拒时测试是事前唯一
-  // 的暴露口。
+  // 传入键名、从生效配置取值。（曾在此断言「sleep 无回退重试，测试是事前
+  // 唯一的暴露口」：该前提自 939fbfc 起就不成立——sleep/梦/蒸馏都走
+  // withEffortFallback，档位被拒会丢字段重试，测试从不是唯一暴露口。）
   assert.ok(
     /const routeSelects = \(providerKey, modelKey, testState, setTestState, effortKey\) => \{/.test(clientSource)
       && /const effort = effortKey \? \(eff\[effortKey\] \|\| ""\) : ""/.test(clientSource),
@@ -857,6 +858,31 @@ test("stale route values are marked and explained at the row level (issue #191)"
     /\(testState && !testState\.running\s*\n\s*\? h\("div", \{ className: "mneme-featsubhint" \},/.test(clientSource)
       && clientSource.includes('t("memory.features.modelTestHint")'),
     "the test row must show either the result or the standing explanation, never both"
+  );
+});
+
+// 探针降级的如实呈现（issue #215 后续）：后端档位被拒时不再 502，而是丢字段
+// 重试成功 + effortDropped:true。面板必须把「连通了、但不是按你配的档位」讲出来
+// ——静默成功和静默失败一样有害：前者让人以为档位生效，后者把人赶去换 Provider。
+test("panel surfaces a downgraded connectivity test instead of a silent success or a red failure", () => {
+  // 1. 只有后端明确置位才算降级（旧后端无字段 → 不误报）
+  assert.ok(
+    /dropped: j\.effortDropped === true/.test(clientSource),
+    "the panel must read effortDropped strictly (=== true) so an older backend never renders a phantom downgrade"
+  );
+  // 2. 降级文案只在成功行追加，失败行不得出现（失败就是失败，别混进降级措辞）
+  assert.ok(
+    /\(testState\.ok && testState\.dropped \? " · " \+ t\("memory\.features\.modelTestDowngraded"\) : ""\)/.test(clientSource),
+    "the downgrade note must be appended only on the success line"
+  );
+  // 3. 双语词表各一条（按行首的 "key": "…" 计数，与上面的全键计数锁同口径；
+  //    用 split 会把渲染处的 t("…") 一起数进来，那是 3 次不是 2 次）
+  const tableRows = clientSource.match(/^\s*"memory\.features\.modelTestDowngraded"\s*:\s*"/gm) || [];
+  assert.equal(tableRows.length, 2, `memory.features.modelTestDowngraded must be declared exactly twice in the tables (zh + en), got ${tableRows.length}`);
+  // 4. 那条陈旧前提不得复活：面板不得再声称 sleep/梦 侧无回退重试
+  assert.ok(
+    !/无回退重试|无回退|no fallback retry/.test(clientSource),
+    "the panel must not re-assert the stale 'no fallback retry' claim that withEffortFallback already covers"
   );
 });
 

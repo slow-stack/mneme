@@ -5,7 +5,7 @@ import { TYPES } from "./store.js";
 import { TYPE_FILE, renderMirrorText, renderFileHeader, parseHumanEdits, MIRROR_READONLY_TYPES } from "./mirror.js";
 import { langOf } from "./lang.js";
 import { computeHeat } from "./heat.js";
-import { describeStreamFailure, resolveRoute } from "./dream.js";
+import { EFFORT_REJECT_RE, describeStreamFailure, resolveRoute, withEffortFallback } from "./dream.js";
 import { getInjectionSnapshot } from "./inject.js";
 import { describeLocalRuntime, publicRuntimeStatus } from "./runtime/loader.js";
 import { hostModulesDir, provisionRuntime } from "./runtime/provision.js";
@@ -376,13 +376,27 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   // the same error wording the audit rows carry. Optional reasoningEffort
   // mirrors what the consolidation would send — the panel can verify a model
   // actually accepts the configured effort without tripping a full run.
+  //
+  // 档位被拒时探针必须和真实 run 一样降级：这里是全仓唯一直接调 llm.stream 的
+  // 调用面——巩固/睡眠/蒸馏/总览/实体抽取都包在 withEffortFallback 里，档位被
+  // 拒就丢掉字段重试一次（issue #9/#109/#135）。探针原先没有这层，于是同一份
+  // 配置「后台真的跑得通、点一下测试就报红」，把用户引向「换哪家 Provider 都
+  // 失败」的错误诊断（issue #215 的后续）。降级跑通后响应带 effortDropped:true，
+  // 面板据此说明「档位不被接受、已按无档位连通」，而不是与「真的连不上」同色。
   async function testLlmConnectivity(llm, provider, model, reasoningEffort) {
     const startedAt = Date.now();
     const elapsed = () => Date.now() - startedAt;
     const modelId = `${provider}:${model}`;
-    try {
+    // 流级失败原因：withEffortFallback 只用它做拒收甄别，回给面板的仍是同一条
+    // describeStreamFailure 文案（与审计行同口径，不制造第二套措辞）。
+    let streamError = "";
+    // 降级标记刻意放在 attempt 之外：fallback 里置位、attempt 里读出，结果对象
+    // 据此带上 effortDropped——降级是「换个姿势跑通了」，不是失败。
+    let droppedEffort = false;
+
+    const attempt = async (effort) => {
+      streamError = "";
       let reply = "";
-      let error = "";
       for await (const chunk of llm.stream({
         provider,
         model,
@@ -391,7 +405,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         // reply 恒为空，「真的答了 ok」对思考模型不成立。按实际用量计费，手动
         // 按钮无放大风险。
         maxTokens: 1024,
-        ...(reasoningEffort && reasoningEffort !== "none" ? { reasoningEffort } : {}),
+        ...(effort && effort !== "none" ? { reasoningEffort: effort } : {}),
         // role 用 user 而非 system（#189 后续）：0.1.6-alpha.1 起适配器把 system
         // 抽成顶层参数，system-only 对话会被官方 API 以
         // 「messages: at least one message is required」整单拒绝——探测按钮 502。
@@ -406,12 +420,39 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
       })) {
         if (chunk.type === "text-delta" && typeof chunk.text === "string") reply += chunk.text;
         if (chunk.type === "finish" && (chunk.reason?.kind === "error" || chunk.reason?.kind === "aborted")) {
-          error = describeStreamFailure(chunk.reason);
+          streamError = describeStreamFailure(chunk.reason);
           break;
         }
       }
-      if (error) return { ok: false, durationMs: elapsed(), error, modelId };
-      return { ok: true, durationMs: elapsed(), modelId, reply: reply.trim().slice(0, 100) };
+      const dropped = droppedEffort ? { effortDropped: true } : {};
+      if (streamError) {
+        // 只在「确实带了档位」时把流级拒收交回给 withEffortFallback 的 undefined
+        // 分支——rc.1 的适配器不抛错，把 provider 的拒收折叠成终止 finish chunk，
+        // 不看这里那次重试就是死代码。不带档位时原样上报：探针不该因为一句文案
+        // 没匹配上正则就退化成 500。
+        if (effort && effort !== "none" && EFFORT_REJECT_RE.test(streamError)) return undefined;
+        // 失败行不带 effortDropped：该字段只有一个含义——「连通了，但不是用你配的
+        // 档位连通的」（见下方成功分支的注释），失败时它只是噪音。
+        return { ok: false, durationMs: elapsed(), error: streamError, modelId };
+      }
+      return { ok: true, durationMs: elapsed(), modelId, reply: reply.trim().slice(0, 100), ...dropped };
+    };
+
+    try {
+      const result = await withEffortFallback(
+        ctx,
+        reasoningEffort,
+        () => attempt(reasoningEffort),
+        () => { droppedEffort = true; return attempt(""); },
+        () => streamError
+      );
+      // result === undefined 只可能来自上面那次「判据一致」的主动交还（两边用同
+      // 一份 EFFORT_REJECT_RE，走到这里等于假设被推翻）：退回已捕获的流失败原
+      // 因，绝不让探针 500。
+      if (result === undefined) {
+        return { ok: false, durationMs: elapsed(), error: streamError || "no stream result", modelId };
+      }
+      return result;
     } catch (error) {
       return { ok: false, durationMs: elapsed(), error: String(error?.message ?? error), modelId };
     }
