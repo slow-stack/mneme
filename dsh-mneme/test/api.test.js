@@ -1541,10 +1541,12 @@ test("POST /api/dsh-mneme/test-model reports stream-level failure with 502", asy
   assert.match(data.error, /AUTH_FAILED/, "stream failure reason surfaced like audit rows");
 });
 
-// issue #215 的后续：探针是仓里唯一直接调 llm.stream 的调用面——巩固/睡眠/蒸馏/
-// 总览/实体抽取都包在 withEffortFallback 里，档位被拒则丢掉字段重试一次，于是
-// 同一份配置「后台跑得通、点测试报红」，用户被引向「换哪家 Provider 都失败」。
-// 探针必须与真实 run 同语义：降级跑通 → 200 + effortDropped:true（不是 502）。
+// issue #215 的后续：探针是仓里唯一「接受并转发调用方档位、却此前没有兜底」的
+// LLM 调用面（直调 llm.stream 的其余各面要么在 withEffortFallback 之内，要么
+// 是 src/index.js 的手写版兜底，要么像 pre-inject-gate 的判定池那样不转发档位），
+// 档位被拒则丢掉字段重试一次，于是同一份配置「后台跑得通、点测试报红」，用户被
+// 引向「换哪家 Provider 都失败」。探针必须与真实 run 同语义：降级跑通 → 200 +
+// effortDropped:true（不是 502）。
 test("POST /api/dsh-mneme/test-model degrades on a rejected effort instead of failing (issue #215 follow-up)", async () => {
   const { routes } = setupLlm(MOCK_LLM);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/test-model");

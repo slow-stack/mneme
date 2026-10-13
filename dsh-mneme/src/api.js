@@ -377,12 +377,15 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   // mirrors what the consolidation would send — the panel can verify a model
   // actually accepts the configured effort without tripping a full run.
   //
-  // 档位被拒时探针必须和真实 run 一样降级：这里是全仓唯一直接调 llm.stream 的
-  // 调用面——巩固/睡眠/蒸馏/总览/实体抽取都包在 withEffortFallback 里，档位被
-  // 拒就丢掉字段重试一次（issue #9/#109/#135）。探针原先没有这层，于是同一份
-  // 配置「后台真的跑得通、点一下测试就报红」，把用户引向「换哪家 Provider 都
-  // 失败」的错误诊断（issue #215 的后续）。降级跑通后响应带 effortDropped:true，
-  // 面板据此说明「档位不被接受、已按无档位连通」，而不是与「真的连不上」同色。
+  // 档位被拒时探针必须和真实 run 一样降级：这里是全仓唯一「接受并转发调用方档位、
+  // 却此前没有兜底」的调用面——巩固/睡眠/蒸馏/总览/实体抽取都包在 withEffortFallback
+  // 里，档位被拒就丢掉字段重试一次（issue #9/#109/#135）。直调 llm.stream 的其余各面
+  // 要么本来就在兜底之内（dream.js/summarize.js/sleep.js 的共用辅助），要么是
+  // src/index.js 的手写版兜底，要么像 pre-inject-gate 的判定池那样根本不转发档位。
+  // 探针原先没有这层，于是同一份配置「后台真的跑得通、点一下测试就报红」，把用户
+  // 引向「换哪家 Provider 都失败」的错误诊断（issue #215 的后续）。降级跑通后响应带
+  // effortDropped:true，面板据此说明「档位不被接受、已按无档位连通」，而不是与「真的
+  // 连不上」同色。
   async function testLlmConnectivity(llm, provider, model, reasoningEffort) {
     const startedAt = Date.now();
     const elapsed = () => Date.now() - startedAt;
