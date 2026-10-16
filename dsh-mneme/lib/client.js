@@ -2830,8 +2830,9 @@ window.__ModuleLoader__.load({
         // 子块才能紧跟在它后面展开——items.map 之后的子块是按组尾渲染的。
         "distillRecords.enabled"] },
       // v0.9.0 M.O.（beta）复验修订：独立分组行——它不是行为开关而是座位闸门
-      // （关=一个座位都不注册，见 apply 内的 M.O. 块），藏在 enhance 末位
-      // 产品主人找不到；单独成组让它一眼可见。
+      // （关=一个座位都不注册，见 apply 内的 M.O. 块）。独立成组只解决「混在
+      // enhance 末位」；可见层由 FEATURE_FIRST_SCREEN 决定（见其注释），
+      // 本轮已把组名提进首屏——组成员资格不决定可见性。
       { key: "group.mo", items: ["actionPipelineEnabled"] },
       { key: "group.enhance", items: ["entityExtractionEnabled", "codingRetrospect", "rerankEnabled", "resilientModelDownload", "searchSemanticDedup", "bm25SearchEnabled", "heatEnabled", "documentMemoryEnabled"] },
       { key: "group.dream", items: ["sleepModeEnabled"] },
