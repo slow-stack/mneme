@@ -1020,10 +1020,14 @@ test("scope isolation ships panel switches and provenance surfaces (A4)", () => 
 // 默认值），面板自判、不加后端字段；④分组与折叠键中英成对。验收口径：首屏
 // 可点项 = 3 总开关 + autoInject 的 2 个子开关 + scope 2 开关 + 「全部设置」
 // 按钮 = 8（≤ 8），由 ①② 的组成正则共同钉死，不另数 DOM。
+// v0.9.0 复验修订：首屏加 group.mo（M.O. 独立组），可点项预算 8→9。这不是
+// 悄悄放宽——是产品主人点名「别藏在里面」：M.O. 独立成组却仍折在「全部
+// 设置」后等于换个地方继续藏。≤8 原为 #427 自设软预算，owner 豁免一项。
 test("settings card folds everything beyond the first screen behind All settings (issue #427)", () => {
-  // ① 首屏层组成：两组都要在，且 basic 的成员是从 core/dream 移走的。
-  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.scope"\];/.test(clientSource),
-    "the first screen must be exactly the basic and scope groups");
+  // ① 首屏层组成：三组都要在（basic 总开关 / mo 座位闸门 / scope 必答题），
+  // 且 basic 的成员是从 core/dream 移走的。
+  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.mo", "group\.scope"\];/.test(clientSource),
+    "the first screen must be exactly the basic, mo and scope groups");
   assert.ok(/key: "group\.basic", items: \["autoInject", "autoSummarize", "autoDream"\]/.test(clientSource),
     "group.basic must carry exactly the three master switches");
   assert.ok(!/key: "group\.core", items: \["autoInject/.test(clientSource) && !/key: "group\.dream", items: \["autoDream/.test(clientSource),
@@ -1938,4 +1942,50 @@ test("M.O. class names do not collide in the stylesheet", () => {
   assert.deepEqual(dupes, [], `duplicate .mneme-pipe-* rule(s): ${dupes.join(", ")}`);
   // 扫描量也得钉：正则一旦匹配不到东西，上面那条会静默变绿（例如样式表被整块挪走）。
   assert.ok(declared.size >= 20, `the scan must actually see the pipeline stylesheet (saw ${declared.size})`);
+});
+
+// 回归锁（v0.9.0 复验轮沉淀）：面板的两种「静默消失」假绿形状一起钉住。
+// ① i18n 缺定义：既有的「每键恰好两次」锁只统计**字典里存在**的键，一个只有
+//   用法、零字典行的键在计数里整个消失——本轮就查出 4 个这种键（zoom.value 自
+//   基线即断）。所以这里反向查：每一处用法都必须能找到定义行。三种用法形状：
+//   字面量 t("k")、模板 t(`memory.features.${g.key}`) 按 FEATURE_GROUPS 的组键
+//   展开、模板 t(`memory.features.${k}`) 按各 items 旗标键展开（boolRow 的
+//   name/hint 各一路）。不做全量动态键解析——拼接形态的键在此设防范围外。
+// ② 图标名未注册：Icon 对查不到的名字 return null（无回退、无告警），闸门照绿
+//   而屏幕上图标没了。本轮 star 入口就是这么哑掉的。这里钉「每个用到的名字都在
+//   ICON_PATHS 注册表里」+ 提取与注册表的最低数量（防正则空转的静默绿）。
+test("panel copy and icons must not silently vanish (missing dict lines, unregistered icon names)", () => {
+  const defined = (key) => clientSource.includes('"' + key + '":');
+
+  // ①-a 字面量用法（右括号紧贴字符串，排除 "前缀" + 变量 拼接形态）
+  const usedKeys = new Set();
+  for (const m of clientSource.matchAll(/\bt\("([a-zA-Z0-9_.]+)"\)/g)) usedKeys.add(m[1]);
+  assert.ok(usedKeys.size >= 300, `the literal scan must actually see the panel's t() calls (saw ${usedKeys.size})`);
+  // ①-b 模板展开：组键 与 旗标键（label + .hint 两路）
+  const groupKeys = [...clientSource.matchAll(/key: "(group\.[a-z]+)"/g)].map((m) => m[1]);
+  assert.ok(groupKeys.length >= 5, `FEATURE_GROUPS must be parseable (saw ${groupKeys.length} groups)`);
+  for (const g of groupKeys) usedKeys.add("memory.features." + g);
+  const flagKeys = [...new Set([...clientSource.matchAll(/items: \[((?:[^\]]|\n)*)\]/g)]
+    .flatMap((m) => [...m[1].matchAll(/"([a-zA-Z0-9_.]+)"/g)].map((x) => x[1])))];
+  assert.ok(flagKeys.length >= 20, `group items must be parseable (saw ${flagKeys.length})`);
+  for (const k of flagKeys) { usedKeys.add("memory.features." + k); usedKeys.add("memory.features." + k + ".hint"); }
+
+  const missing = [...usedKeys].filter((k) => !defined(k)).sort();
+  assert.deepEqual(missing, [], `用而无典的 i18n 键（界面会裸奔出键名）：${missing.join(", ")}`);
+
+  // ② 图标名：注册表形状（顶层对象、六空格缩进）+ Icon 表达式与 feedRow 首参的提取
+  const registered = new Set([...clientSource.matchAll(/^\s{6}([a-zA-Z]+): \[\[/gm)].map((m) => m[1]));
+  assert.ok(registered.size >= 10, `the ICON_PATHS registry must be parseable (saw ${registered.size})`);
+  const iconNames = new Set();
+  for (const m of clientSource.matchAll(/h\(Icon, \{ name: ([^}]+?) [,}]/g)) {
+    const expr = m[1];
+    const direct = expr.match(/^"([a-zA-Z]+)"$/);
+    if (direct) { iconNames.add(direct[1]); continue; }
+    // 只取三元分支的纯字母串；"===" 比较对象前面是运算符不是 ? : ，不会误伤
+    for (const b of expr.matchAll(/[?:]\s*"([a-zA-Z]+)"/g)) iconNames.add(b[1]);
+  }
+  for (const m of clientSource.matchAll(/feedRow\(\s*"([a-zA-Z]+)"/g)) iconNames.add(m[1]);
+  assert.ok(iconNames.size >= 8, `icon usage must be parseable (saw ${iconNames.size})`);
+  const noIcon = [...iconNames].filter((n) => !registered.has(n)).sort();
+  assert.deepEqual(noIcon, [], `Icon 静默 return null 的未注册名：${noIcon.join(", ")}`);
 });
