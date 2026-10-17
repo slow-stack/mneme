@@ -40,6 +40,26 @@ test("src/ and lib/ are byte-identical (no publish drift)", () => {
   assert.deepEqual(drift, [], "src↔lib must stay in sync (npm run sync)");
 });
 
+test("没有文件带双 CR（行尾必须是 LF 或 CRLF，不是 CRCRLF）", () => {
+  // 这条锁的来历：`src/candidates.js` 从诞生起每个换行都是 `<CR><CR><LF>`，
+  // 一路进了 main、又随 v0.9.0 发到 npm，而**当时没有任何检查会红**——
+  // 因为 `\r` 在 JS 里是合法空白，解析与测试全绿。代价落在别处：
+  //   · 任何改动这个文件的人，diff 都是整文件 908/908（噪声掩盖真改动）；
+  //   · 同一份文件 `Get-Content` 数出 908 行、编辑器/工具数出 454 行，两边对不上；
+  //   · 发布产物里带着畸形行尾。
+  // 判据是**扫描字节**而不是依赖某个工具的换行解释——正因工具口径不一致，
+  // 才必须查 `<CR><CR><LF>` 这个具体序列本身。
+  const bad = [];
+  for (const dir of [srcDir, libDir]) {
+    for (const file of walk(dir)) {
+      if (!file.endsWith(".js")) continue;
+      const doubleCr = readFileSync(file, "utf8").match(/\r\r\n/g);
+      if (doubleCr) bad.push(`${relative(root, file)}: ${doubleCr.length} 处`);
+    }
+  }
+  assert.deepEqual(bad, [], "行尾出现 <CR><CR><LF>——多出来的 CR 会让 diff 与行数口径一起坏掉");
+});
+
 // ---------------------------------------------------------------------------
 // lib 运行时冒烟：直接加载 npm 实际分发的产物
 // ---------------------------------------------------------------------------
