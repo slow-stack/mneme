@@ -308,11 +308,24 @@ export function createInjector(ctx, service, settings, config, gate = null) {
 
   // User profile + rules: injected ahead of the memory block because they are
   // always-relevant instructions the agent should follow every turn.
+  // 人格段（beta）：双闸门（config.personaEnabled && persona.enabled）开时渲染在
+  // 最前——设计稿⑥：特化指令（人格）先出，画像与规则后出、后写覆盖占上风，
+  // rules 恒最硬。任一闸关着时本函数输出与历史版本逐字节一致（老用户零变化，
+  // test/persona-inject.test.js 锁住）。人格段非空即触发整块渲染（与 profile 同权）。
   function renderUserSettings() {
     const profile = settings.getProfile().trim();
     const rules = settings.getRules();
-    if (!profile && !rules.length) return "";
+    const persona = config?.personaEnabled === true ? settings.getPersona() : {};
+    const personaLines = persona?.enabled === true
+      ? [
+          ...(typeof persona.name === "string" && persona.name.trim() ? [STR.personaNameLine[language](persona.name.trim())] : []),
+          ...(typeof persona.personality === "string" && persona.personality.trim() ? [STR.personaPersonalityLine[language](persona.personality.trim())] : []),
+          ...(typeof persona.replyStyle === "string" && persona.replyStyle.trim() ? [STR.personaReplyStyleLine[language](persona.replyStyle.trim())] : [])
+        ]
+      : [];
+    if (!profile && !rules.length && !personaLines.length) return "";
     const lines = [STR.userSettingsHeader[language]];
+    lines.push(...personaLines);
     if (profile) lines.push(STR.profileLine[language](profile));
     for (const rule of rules) lines.push(STR.ruleLine[language](rule));
     return escapePromptVars(lines.join("\n"));

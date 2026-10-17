@@ -874,7 +874,18 @@ export const Config = z.object({
   // 它只是只读视图、不引入任何重型后台路径，轻量档用户显式勾选仍然赢（预设
   // 该关的是重型能力，不该替用户关掉一个纯 UI 入口）。
   // 也走 feature_flags（FEATURE_FLAG_BOOLEANS 白名单），面板可启停=线上回滚开关。
-  actionPipelineEnabled: z.boolean().default(false)
+  actionPipelineEnabled: z.boolean().default(false),
+
+  // --- 人格定义页（beta）---------------------------------------------------
+  // 注入器渲染人格段的顶层总闸（双闸门的 config 半边；user_settings "persona"
+  // 键内的 persona.enabled 是 per-agent 半边，两闸同真才渲染）。API 的 effective
+  // 必须含这个键——schema 里没有它 effective 就静默少键，面板开关形同虚设
+  // （#254 漏登记 NESTED_FLAG_PATHS 是同一个坑，计数锁 test/api.test.js 钉住）。
+  // 默认关：beta 功能必须 opt-in，老用户行为逐字节不变。不进 LIGHT_MODE_OFF——
+  // 人格段是用户自写的一小段轻量常驻文本，不引入任何重型后台路径，轻量档用户
+  // 显式勾选仍然赢（同 actionPipelineEnabled 的定性）。
+  // 也走 feature_flags（FEATURE_FLAG_BOOLEANS 白名单），面板可启停=线上回滚开关。
+  personaEnabled: z.boolean().default(false)
 });
 
 // Fields forced to false by the light-mode preset. Everything not listed here

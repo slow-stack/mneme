@@ -31,6 +31,25 @@ function parseList(raw) {
   }
 }
 
+// persona 对象的字段白名单：写入时只挑这些键，未知字段丢弃（设计稿①：字段从简，
+// beta 收到真实反馈再加；provenance 是 v1.5 协作式人格的预留位，v1 不写管道）。
+// 读侧损坏即回空对象——同一容错口径照 parseList（坏值不抛错、面板显示为空可重写）。
+const PERSONA_FIELDS = ["name", "personality", "replyStyle", "enabled", "provenance"];
+
+function parsePersona(raw) {
+  try {
+    const value = JSON.parse(raw);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+    const out = {};
+    for (const key of PERSONA_FIELDS) {
+      if (value[key] !== undefined) out[key] = value[key];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 // --- feature flags（功能开关）白名单 -----------------------------------------
 // 面板可逐项开关的后端能力。设计约束：
 // 1. 键名与类型必须和 config.js schema 同名同型，这份白名单是唯一校验源
@@ -146,7 +165,14 @@ const FEATURE_FLAG_BOOLEANS = [
   // 决定是否注册座位（会话头图标 / 浮层 / 右栏 / 对话行卡片），服务端只负责把
   // 这个键稳定暴露出来——键若不在 effective 里，客户端静默少键、一个座位都不注册。
   // 默认关（beta、opt-in）；顶层扁平键，因此不需要 NESTED_FLAG_PATHS 条目。
-  "actionPipelineEnabled"
+  "actionPipelineEnabled",
+  // 人格定义页（beta）：注入器渲染人格段的顶层总闸（双闸门的 config 半边；对象内
+  // 的 persona.enabled 是 per-agent 半边，存 user_settings 的 "persona" 键，见
+  // getPersona/setPersona）。默认关（beta、opt-in，老用户行为逐字节不变）；不进
+  // LIGHT_MODE_OFF——人格段是用户自写的一小段轻量常驻文本，不引入任何重型后台
+  // 路径，轻量档用户显式勾选仍然赢（同 actionPipelineEnabled 的定性）。顶层扁平
+  // 键，不需要 NESTED_FLAG_PATHS 条目。
+  "personaEnabled"
 ];
 // 整数开关的闭区间，与 config.js 里 z.natural().min().max() 对齐。
 const FEATURE_FLAG_INT_RANGES = {
@@ -401,6 +427,24 @@ export function createSettings(db) {
     setRules(rules) {
       const list = Array.isArray(rules) ? rules.filter((r) => typeof r === "string") : [];
       setSetting("rules", JSON.stringify(list));
+    },
+
+    /**
+     * Agent persona (name / personality / replyStyle + enabled gate), stored as
+     * one JSON key. Write side keeps only whitelisted fields; read side is
+     * tolerant of corruption (returns {} — never throws) so a bad write can
+     * always be overwritten from the panel.
+     */
+    getPersona() {
+      return parsePersona(getSetting("persona") ?? "{}");
+    },
+    setPersona(input) {
+      const src = typeof input === "object" && input !== null && !Array.isArray(input) ? input : {};
+      const out = {};
+      for (const key of PERSONA_FIELDS) {
+        if (src[key] !== undefined) out[key] = src[key];
+      }
+      setSetting("persona", JSON.stringify(out));
     },
 
     /** All custom commands, sorted by name. */

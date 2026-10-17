@@ -281,6 +281,22 @@ window.__ModuleLoader__.load({
         "memory.settings.profileHint": "写一段自我介绍（角色、背景、偏好），Agent 每轮对话都会自动带上。",
         "memory.settings.profileSave": "保存画像",
         "memory.settings.profileSaved": "画像已保存",
+        "memory.settings.persona": "人格定义（beta）",
+        "memory.settings.personaHint": "给这位 Agent 一张角色卡：名字、性格、回复要求。开关打开且下方「人格定义」总闸开启时，每轮对话都会注入。",
+        "memory.settings.personaName": "名字",
+        "memory.settings.personaNamePlaceholder": "例如：Amarre",
+        "memory.settings.personaPersonality": "性格设定",
+        "memory.settings.personaPersonalityPlaceholder": "例如：轻松幽默，讲难题时用类比帮用户快速理解",
+        "memory.settings.personaReplyStyle": "回复要求",
+        "memory.settings.personaReplyStylePlaceholder": "例如：先给结论再解释；用人在用的词，不用机制名",
+        "memory.settings.personaSave": "保存人格",
+        "memory.settings.personaSaved": "人格已保存",
+        "memory.settings.personaEnabledToggle": "启用这张人格卡",
+        "memory.settings.personaView": "Agent 眼中的你（注入生效文本）",
+        "memory.settings.personaViewHint": "以下是每一轮实际注入的用户画像与规则，只读。",
+        "memory.settings.personaViewEmpty": "画像与规则均为空——Agent 每轮只会看到记忆库。",
+        "memory.features.personaEnabled": "人格定义（beta）",
+        "memory.features.personaEnabled.hint": "把「设置 → 个性化」里的人格卡注入到每轮对话。默认关（beta）；总闸与人格卡内的开关同时打开才生效。",
         "memory.settings.rules": "规则",
         "memory.settings.rulesHint": "给 Agent 立下必须遵守的规矩，随时增删，下一轮即生效。",
         "memory.settings.ruleAdd": "添加规则",
@@ -928,6 +944,22 @@ window.__ModuleLoader__.load({
         "memory.settings.profileHint": "Describe yourself once — the agent reads it every turn.",
         "memory.settings.profileSave": "Save Profile",
         "memory.settings.profileSaved": "Profile saved",
+        "memory.settings.persona": "Persona (beta)",
+        "memory.settings.personaHint": "Give this agent a character card: name, personality, reply style. Injected every turn when the toggle below and the \"Persona\" master switch are both on.",
+        "memory.settings.personaName": "Name",
+        "memory.settings.personaNamePlaceholder": "e.g. Amarre",
+        "memory.settings.personaPersonality": "Personality",
+        "memory.settings.personaPersonalityPlaceholder": "e.g. relaxed and humorous; use analogies for hard topics",
+        "memory.settings.personaReplyStyle": "Reply style",
+        "memory.settings.personaReplyStylePlaceholder": "e.g. conclusion first; plain words over jargon",
+        "memory.settings.personaSave": "Save Persona",
+        "memory.settings.personaSaved": "Persona saved",
+        "memory.settings.personaEnabledToggle": "Enable this persona card",
+        "memory.settings.personaView": "You, as the agent sees you (injected text)",
+        "memory.settings.personaViewHint": "The profile and rules actually injected every turn. Read-only.",
+        "memory.settings.personaViewEmpty": "Profile and rules are both empty — the agent only sees the memory store.",
+        "memory.features.personaEnabled": "Persona (beta)",
+        "memory.features.personaEnabled.hint": "Inject the persona card (Settings → Personalization) into every turn. Off by default (beta); both this switch and the card's own toggle must be on.",
         "memory.settings.rules": "Rules",
         "memory.settings.rulesHint": "Rules the agent must follow — add or remove anytime, effective next turn.",
         "memory.settings.ruleAdd": "Add Rule",
@@ -2840,7 +2872,10 @@ window.__ModuleLoader__.load({
       // enhance 末位」；可见层由 FEATURE_FIRST_SCREEN 决定（见其注释），
       // 本轮已把组名提进首屏——组成员资格不决定可见性。
       { key: "group.mo", items: ["actionPipelineEnabled"] },
-      { key: "group.enhance", items: ["entityExtractionEnabled", "codingRetrospect", "rerankEnabled", "resilientModelDownload", "searchSemanticDedup", "bm25SearchEnabled", "heatEnabled", "documentMemoryEnabled"] },
+      { key: "group.enhance", items: ["entityExtractionEnabled", "codingRetrospect", "rerankEnabled", "resilientModelDownload", "searchSemanticDedup", "bm25SearchEnabled", "heatEnabled", "documentMemoryEnabled",
+        // 人格定义页（beta）：注入总闸。分组随 enhance（行为开关，非座位闸门）；
+        // 人格内容在设置页「个性化」区的人格卡。
+        "personaEnabled"] },
       { key: "group.dream", items: ["sleepModeEnabled"] },
       // v0.8.0 A4（issue #17）：作用域隔离组——标注总开关 + 严格硬过滤。
       { key: "group.scope", items: ["scopeEnabled", "strictScope"] }
@@ -3355,6 +3390,10 @@ window.__ModuleLoader__.load({
       const [newCmd, setNewCmd] = react.useState({ name: "", description: "", instruction: "" });
       const [saved, setSaved] = react.useState(false);
       const [cmdError, setCmdError] = react.useState("");
+      // 人格卡（beta）：name/personality/replyStyle 三字段草稿 + 卡内开关；
+      // provenance 是 v1.5 协作式人格的预留位，v1 只透传不编辑。
+      const [persona, setPersona] = react.useState({ name: "", personality: "", replyStyle: "", enabled: false });
+      const [personaSaved, setPersonaSaved] = react.useState(false);
       const [vector, setVector] = react.useState({ enabled: false, baseUrl: "", apiKey: "", model: "" });
       const [vectorSaved, setVectorSaved] = react.useState(false);
       const [reindexing, setReindexing] = react.useState(false);
@@ -3415,16 +3454,25 @@ window.__ModuleLoader__.load({
 
       const load = react.useCallback(async () => {
         try {
-          const [p, r, c, v] = await Promise.all([
+          const [p, r, c, v, ps] = await Promise.all([
             apiFetch("/api/dsh-mneme/profile").then((res) => res.json()),
             apiFetch("/api/dsh-mneme/rules").then((res) => res.json()),
             apiFetch("/api/dsh-mneme/commands").then((res) => res.json()),
-            apiFetch("/api/dsh-mneme/vector-config").then((res) => res.json())
+            apiFetch("/api/dsh-mneme/vector-config").then((res) => res.json()),
+            apiFetch("/api/dsh-mneme/persona").then((res) => res.json()).catch(() => null)
           ]);
           setProfile(p.profile || "");
           setRules(Array.isArray(r.rules) ? r.rules : []);
           setCommands(Array.isArray(c.commands) ? c.commands : []);
           setVector(v.config || { enabled: false, baseUrl: "", apiKey: "", model: "" });
+          // 人格卡：旧后端无 /persona（404）时保持默认空卡，不阻塞其它卡片
+          const pj = ps && ps.persona && typeof ps.persona === "object" ? ps.persona : {};
+          setPersona({
+            name: typeof pj.name === "string" ? pj.name : "",
+            personality: typeof pj.personality === "string" ? pj.personality : "",
+            replyStyle: typeof pj.replyStyle === "string" ? pj.replyStyle : "",
+            enabled: pj.enabled === true
+          });
         } catch { /* ignore */ }
       }, []);
 
@@ -3499,6 +3547,22 @@ window.__ModuleLoader__.load({
           setTimeout(() => setSaved(false), 1500);
         } catch { /* ignore */ }
       }
+
+      // 人格卡保存：整对象 PUT（后端 setPersona 只挑白名单字段）；saved 提示同
+      // profile 卡节奏（1.5s 自消）。
+      async function savePersona(next) {
+        try {
+          await apiFetch("/api/dsh-mneme/persona", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ persona: next })
+          });
+          setPersonaSaved(true);
+          announce(t("memory.settings.personaSaved"));
+          setTimeout(() => setPersonaSaved(false), 1500);
+        } catch { /* ignore */ }
+      }
+      const setPersonaField = (key, value) => setPersona((c) => ({ ...c, [key]: value }));
 
       async function putRules(next) {
         await apiFetch("/api/dsh-mneme/rules", {
@@ -3681,7 +3745,7 @@ window.__ModuleLoader__.load({
       }
 
       return h("div", null,
-        // —— 个性化：画像 / 规则 / 自定义指令（Agent 怎么对你） ——
+        // —— 个性化：画像 / 人格 / 规则 / 自定义指令（Agent 怎么对你） ——
         h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.personal")),
         // 用户画像 — who the agent is talking to
         h("section", { className: "mneme-set-card" },
@@ -3697,6 +3761,61 @@ window.__ModuleLoader__.load({
             h("button", { className: "mneme-btn", onClick: saveProfile }, t("memory.settings.profileSave")),
             saved && h("span", { className: "mneme-saved" }, t("memory.settings.profileSaved"))
           )
+        ),
+        // 人格卡（beta）— who the agent is：名字/性格/回复要求 + 卡内开关。
+        // 卡内开关只是 persona.enabled 半边；总闸 personaEnabled 在功能开关的
+        // 「它什么时候写进去」组里，双闸同真才注入（设计稿④双层闸门）。
+        h("section", { className: "mneme-set-card" },
+          h("div", { className: "mneme-set-title" }, t("memory.settings.persona")),
+          h("div", { className: "mneme-set-desc" }, t("memory.settings.personaHint")),
+          h("div", { className: "mneme-set-row", style: { justifyContent: "space-between" } },
+            h("span", { className: "mneme-set-ruletext" }, t("memory.settings.personaEnabledToggle")),
+            h("input", {
+              type: "checkbox",
+              checked: persona.enabled === true,
+              "aria-label": t("memory.settings.personaEnabledToggle"),
+              onChange: (e) => {
+                const next = { ...persona, enabled: e.target.checked };
+                setPersona(next);
+                savePersona(next);
+              }
+            })
+          ),
+          h("input", {
+            className: "mneme-set-input",
+            value: persona.name,
+            placeholder: t("memory.settings.personaNamePlaceholder"),
+            "aria-label": t("memory.settings.personaName"),
+            onChange: (e) => setPersonaField("name", e.target.value)
+          }),
+          h("textarea", {
+            className: "mneme-set-input mneme-set-input--area",
+            value: persona.personality,
+            placeholder: t("memory.settings.personaPersonalityPlaceholder"),
+            "aria-label": t("memory.settings.personaPersonality"),
+            onChange: (e) => setPersonaField("personality", e.target.value)
+          }),
+          h("textarea", {
+            className: "mneme-set-input mneme-set-input--area",
+            value: persona.replyStyle,
+            placeholder: t("memory.settings.personaReplyStylePlaceholder"),
+            "aria-label": t("memory.settings.personaReplyStyle"),
+            onChange: (e) => setPersonaField("replyStyle", e.target.value)
+          }),
+          h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+            h("button", { className: "mneme-btn", onClick: () => savePersona(persona) }, t("memory.settings.personaSave")),
+            personaSaved && h("span", { className: "mneme-saved" }, t("memory.settings.personaSaved"))
+          )
+        ),
+        // Agent 眼中的画像（只读）— 注入生效文本：profile + rules 原样展示。
+        // 纯前端拼接（GET 已在 load 里拿到 profile/rules），零后端新请求。
+        h("section", { className: "mneme-set-card" },
+          h("div", { className: "mneme-set-title" }, t("memory.settings.personaView")),
+          h("div", { className: "mneme-set-desc" }, t("memory.settings.personaViewHint")),
+          (profile.trim() || rules.length)
+            ? h("pre", { className: "mneme-set-input mneme-set-input--area", style: { whiteSpace: "pre-wrap", minHeight: 0 } },
+                [profile.trim() ? "- " + profile.trim() : "", ...rules.map((r) => "- " + r)].filter(Boolean).join("\n"))
+            : h("div", { className: "mneme-xempty" }, t("memory.settings.personaViewEmpty"))
         ),
         // 规则 — numbered rows, hover reveals the delete affordance
         h("section", { className: "mneme-set-card" },

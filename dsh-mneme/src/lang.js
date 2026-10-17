@@ -122,6 +122,20 @@ export const STR = {
     zh: (rule) => `- 规则：${rule}`,
     en: (rule) => `- Rule: ${rule}`
   },
+  // 人格定义页（beta）：人格段行（renderUserSettings 拼装，双闸门开时渲染）。
+  // 设计稿⑥：人格段在 profile/rules 之前——特化指令后出、通用底座压轴，rules 恒最硬。
+  personaNameLine: {
+    zh: (name) => `- 你的人格名字：${name}`,
+    en: (name) => `- Your persona name: ${name}`
+  },
+  personaPersonalityLine: {
+    zh: (text) => `- 人格性格设定：${text}`,
+    en: (text) => `- Persona personality: ${text}`
+  },
+  personaReplyStyleLine: {
+    zh: (text) => `- 回复要求：${text}`,
+    en: (text) => `- Reply style: ${text}`
+  },
 
   // --- summarize.js：蒸馏转录标签（进入 LLM 上下文） --------------------------
   transcriptUser: { zh: (t) => `用户：${t}`, en: (t) => `User: ${t}` },

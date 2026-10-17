@@ -372,6 +372,42 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     }
   });
 
+  // --- agent persona（人格定义页，beta） -------------------------------------
+  // 形状照抄 /profile 路由（设计稿②）：写方法走 requireAuth + readBody + parseBody；
+  // setPersona 只挑白名单字段（settings.js PERSONA_FIELDS），坏体传非对象时
+  // setPersona 容错为空人格——面板口径是「坏值显示为空可重写」，不 500。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/persona",
+    handler(req, res) {
+      try {
+        if (req.method === "PUT" || req.method === "POST") {
+          if (!requireAuth(req, res, apiToken)) return;
+          return readBody(req).then((text) => {
+            // parseBody 对坏 JSON 回 {}（容错不抛），所以这里的守卫必须把
+            // 「坏体解析成的 {}」与「真的传了 {persona:{}}」区分开：文本解析
+            // 失败的体不该把人格清空。jsonOk=false 时保持库内现值原样回显。
+            let body;
+            let jsonOk = true;
+            try {
+              body = JSON.parse(text || "{}");
+            } catch {
+              body = {};
+              jsonOk = false;
+            }
+            if (jsonOk && body && typeof body === "object") {
+              settings.setPersona(body.persona && typeof body.persona === "object" ? body.persona : body);
+            }
+            sendJson(res, 200, { persona: settings.getPersona() });
+          });
+        }
+        sendJson(res, 200, { persona: settings.getPersona() });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
   // --- dream/sleep 模型连通性 + 模型发现（settings 面板）----------------------
   // Connectivity probe for a dream/sleep model route: runs one minimal LLM call
   // through the same harness path the consolidation uses and reports success /
