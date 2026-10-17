@@ -1098,20 +1098,45 @@ export function summarizeProposal(proposal) {
  * 计数与阈值全部来自 `pipeline.js`（那份是权威），这里只做两件事：把提议包成
  * **要人点头的形状**（带一个封闭问题），并把它和「新手法候选」放进同一条通路。
  */
-export function retirementProposals(pipeline, { runs = [], now = Date.now() } = {}) {
-  const items = suggestRetirements(pipeline, { runs, now }).map((s) => ({
+export function retirementProposals(pipeline, { runs = [], now = Date.now(), observed = null } = {}) {
+  // 四类提议各自的封闭问题与选项。判据都不能自动算（每类都是），把答案空间
+  // 写死成封闭选择——人点一下就行，不用自由发挥。新类不配问法就会落进
+  // 「岔路」那条不相关的问法里，所以这张表是**穷举**而不是默认分支。
+  const ASK = {
+    "drop-step": {
+      question: "这一步从没被执行、且总被跳过：是「它对这条流程已经没用了」还是「这几次正好不需要」？",
+      choices: ["这一步没用了", "这次不需要", "不知道"],
+      writeTo: "steps[].removedBy（人批后改 status/version）"
+    },
+    "rework-path": {
+      question: "从这一步岔出去已经成了常态，是这条路径过时了，还是岔路该并进图里？",
+      choices: ["路径过时了", "岔路该并进来", "不知道"],
+      writeTo: "新版本的 steps[]"
+    },
+    "violation-precedence": {
+      question: "做了后继却没做它的前置：是顺序写错了，还是这个前置根本不必要？",
+      choices: ["顺序写错了", "前置不必要", "不知道"],
+      writeTo: "steps[].needs（人批后改 version）"
+    },
+    "fix-step-tool": {
+      question: "你说做过这步，但声明的命令一次都没出现：是 tool 写过时了，还是这一步本来就不必敲它？",
+      choices: ["tool 过时了", "本来不必敲", "我记错了", "不知道"],
+      writeTo: "steps[].tool（人批后改 version）"
+    },
+    "optional-skip-ok": {
+      question: "这个 optional 步骤一直被跳：声明留着就好，还是干脆显式从流程里拿掉？",
+      choices: ["留着", "拿掉", "不知道"],
+      writeTo: "无（信息项；人若要拿掉，走删步流程）"
+    }
+  };
+  const items = suggestRetirements(pipeline, { runs, now, observed }).map((s) => ({
     kind: s.kind,
     pipelineId: pipeline.id,
     stepId: s.stepId,
     title: s.title,
     because: s.because,
     effect: s.effect,
-    question:
-      s.kind === "drop-step"
-        ? "这一步被跳过这么多次，是「这几次正好不需要」还是「它对这条流程已经没用了」？"
-        : "从这一步岔出去已经成了常态，是这条路径过时了，还是岔路该并进图里？",
-    choices: s.kind === "drop-step" ? ["这次不需要", "这一步没用了", "不知道"] : ["路径过时了", "岔路该并进来", "不知道"],
-    writeTo: s.kind === "drop-step" ? "steps[].removedBy（人批后改 status/version）" : "新版本的 steps[]"
+    ...(ASK[s.kind] ?? { question: "这一步要怎么处理？", choices: ["不知道"], writeTo: "新版本的 steps[]" })
   }));
   return { contract: "mneme.nudge/v1", pipelineId: pipeline.id, generatedAt: new Date(now).toISOString(), items };
 }

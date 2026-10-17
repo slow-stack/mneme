@@ -421,7 +421,7 @@ test("绕行不染色：被绕开不等于这一步坏了", () => {
   assert.equal(doc.nodes[0].credit.detoured, 1);
 });
 
-test(`跳过 ≥${RETIRE_AFTER_SKIPS} 次 → 提议删掉这一步`, () => {
+test(`必经步骤跳过 ≥${RETIRE_AFTER_SKIPS} 次 → drop-step 与 rework-path 并存（R2 新语义）`, () => {
   const pipeline = validatePipeline(minimal({
     steps: [
       { id: "A1", phase: "p", title: "这一步其实是多余的", when: "w", do: "d", who: "main", tool: "", done: "x", risk: "R0", needs: [], why: "y", evidence: ["e"] },
@@ -432,10 +432,24 @@ test(`跳过 ≥${RETIRE_AFTER_SKIPS} 次 → 提议删掉这一步`, () => {
                 { id: "r2", steps: [{ id: "A1", skipped: true }, { id: "A2" }] },
                 { id: "r3", steps: [{ id: "A1", skipped: true }, { id: "A2" }] }];
   const s = suggestRetirements(pipeline, { runs });
-  assert.equal(s.length, 1);
-  assert.equal(s[0].kind, "drop-step");
-  assert.equal(s[0].stepId, "A1");
-  assert.match(s[0].because, /跳过 3 次/);
+  // R2 新语义：必经的一步总被跳，删步（它可能多余）与修图（流程可能写错）两种读法
+  // **同时给人**——07 号文的教训：if/else 吞并会让一种提议永远发不出来。
+  assert.equal(s.some((x) => x.kind === "drop-step" && x.stepId === "A1"), true);
+  assert.equal(s.some((x) => x.kind === "rework-path" && x.stepId === "A1" && /必经/.test(x.because)), true);
+  assert.match(s.find((x) => x.kind === "drop-step").because, /跳过 3 次/);
+});
+
+test(`optional 步骤跳过再多次也绝不提议删（R2 新语义）`, () => {
+  const pipeline = validatePipeline(minimal({
+    steps: [
+      { id: "OPT", phase: "p", title: "可跑可不跑", when: "w", do: "d", who: "main", tool: "npm run lint", done: "x", risk: "R0", needs: [], why: "y", optional: true },
+      { id: "A2", phase: "p", title: "b", when: "w", do: "d", who: "main", tool: "", done: "x", risk: "R0", needs: ["OPT"], why: "y" }
+    ]
+  }));
+  const runs = [1, 2, 3, 4].map((i) => ({ id: `r${i}`, steps: [{ id: "OPT", skipped: true }, { id: "A2" }] }));
+  const s = suggestRetirements(pipeline, { runs });
+  assert.equal(s.some((x) => x.kind === "drop-step"), false, "可选步骤绝不提议删");
+  assert.equal(s.some((x) => x.kind === "optional-skip-ok"), true, "给信息项供人留意");
 });
 
 test(`绕开 ≥${RETIRE_AFTER_DETOURS} 次 → 提议重看这条路径（不是删节点）`, () => {
@@ -467,7 +481,7 @@ test("没到阈值就不提议；两种提议可以同时出现但各自独立",
                 { id: "r2", steps: [{ id: "A1", skipped: true, detoured: true }] },
                 { id: "r3", steps: [{ id: "A1", skipped: true, detoured: true }] }];
   const s = suggestRetirements(pipeline, { runs });
-  assert.deepEqual(s.map((x) => x.kind).sort(), ["drop-step", "rework-path"], "同一节点上两种提议互不吞并");
+  assert.deepEqual(s.map((x) => x.kind).sort(), ["drop-step", "rework-path", "rework-path"], "同一节点上两种提议互不吞并；必经被跳时 drop-step 与 rework-path 并存");
 });
 
 test("readPipelineDoc 带上 suggestions（没到阈值时是空数组，不是缺字段）", () => {
@@ -493,7 +507,7 @@ test("readPipelineDoc 带上 suggestions（没到阈值时是空数组，不是�
 // 首屏计数）。三处集合相应更新——**这道锁逼着人一次改完，正是它存在的理由**。
 
 const STEP_KEYS = [
-  "assert", "do", "done", "evidence", "gate", "id", "needs", "phase", "risk", "title", "tool", "when", "who", "why"
+  "assert", "do", "done", "evidence", "gate", "id", "needs", "optional", "phase", "risk", "title", "tool", "when", "who", "why"
 ];
 const NODE_KEYS = [
   "action", "assert", "counterfactual", "credit", "done", "id", "kind", "phase", "risk", "situation",

@@ -572,8 +572,10 @@ test("行为级：跳过与绕开各自独立累加，谁都不吞谁（两种�
     assert.equal(a1.credit.detoured, 3);
 
     // 计数到阈值就该冒出提议——这是执行链存在的理由：不用人等巡检。
+    // R2 新语义：A1 是必经（无 optional）且从未 uses、被跳 3 次 → drop-step 与
+    // rework-path **并存**（删与修图两种读法都给人，谁也不吞谁）。
     const kinds = doc.suggestions.map((s) => s.kind).sort();
-    assert.deepEqual(kinds, ["drop-step", "rework-path"].sort(), JSON.stringify(doc.suggestions));
+    assert.deepEqual(kinds, ["drop-step", "rework-path", "rework-path"].sort(), JSON.stringify(doc.suggestions));
     // 绕开不染色：染色要留给真正被推翻过的。
     assert.equal(a1.state, "stale");
   });

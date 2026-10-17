@@ -15,6 +15,8 @@ import { classify, fetchLatestVersion, PACKAGE_VERSION } from "./version-check.j
 import { parseReclaimQuery, parseReclaimJson, readReclaimFields, reclaimReply, RECLAIM_UNAVAILABLE } from "./reclaim-http.js";
 import { readPipelineDoc, loadPipelines, projectPipelineDir } from "./pipeline.js";
 import { loadRunsById, runsDir, RUNS_SUFFIX } from "./pipeline-runs.js";
+import { observationDir, loadObservationsById } from "./pipeline-observations.js";
+import { projectKey } from "./candidates.js";
 import { readCandidateDoc } from "./candidates.js";
 
 // headers：少数端点（/export 附件下载）需要追加 Content-Disposition 等响应头。
@@ -1739,7 +1741,24 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         }
         const { runsById, errors: runsErrors, statesById } = runsResult;
 
-        const doc = readPipelineDoc({ projectRoot: project, id, runsById });
+        // P3 投影的燃料：观察旁挂（与 /candidates 的 memoryDir 同源同默认）。
+        // 失败不连累图——旁挂是可再生的辅助数据，读不到就当没有，提议少一类而已。
+        let observationsById = {};
+        if (project !== null) {
+          try {
+            const memoryDir = (config && typeof config.memoryDir === "string" && config.memoryDir.trim() !== "")
+              ? config.memoryDir
+              : "~/.dsh/memory";
+            const odir = observationDir({ memoryDir, projectKey: projectKey(project) });
+            if (odir) {
+              observationsById = loadObservationsById(odir, ids.filter(Boolean));
+            }
+          } catch {
+            // 读旁挂失败不算账本问题：如实降级成「没有观察」，fix-step-tool 少发而已
+          }
+        }
+
+        const doc = readPipelineDoc({ projectRoot: project, id, runsById, observationsById });
 
         // 「读不出来」与「还没跑过」在节点状态上完全同形（都是全体 candidate），而且
         // **不带 id 的默认视图没有兜底**——那正是用户打开时看到的那一屏。所以状态按

@@ -106,6 +106,29 @@ export function loadObservations(dir, pipelineId) {
 }
 
 /**
+ * 批量读多个工作流的观察，压成 readPipelineDoc 要的形状：
+ *   { [pipelineId]: { latest: { activities } } }
+ *
+ * `latest` 取最后一条记录（confirmAt 升序写入，末条即最近一次确认）。
+ * 没有观察的 id 不出现在结果里——读侧用 `?? null` 降级，不制造空壳。
+ */
+export function loadObservationsById(dir, pipelineIds) {
+  const out = {};
+  for (const id of pipelineIds || []) {
+    if (typeof id !== "string" || id.trim() === "") continue;
+    const { records, unreadable } = loadObservations(dir, id);
+    if (records.length === 0) {
+      // 有文件但全坏也如实记一条空 latest？——不。空 = 没有观察，与坏文件同形处理，
+      //  unreadable 的计数只在单工作流读取时暴露，批量视图里降级为「没有」。
+      continue;
+    }
+    const last = records[records.length - 1];
+    out[id] = { latest: { activities: last.activities }, unreadable };
+  }
+  return out;
+}
+
+/**
  * 🔴 核心判据：从「人确认的执行集」与「本次观察到的动作」里算出 tool 不符。
  *
  * - `pipeline.steps[].tool`：人手写的声明（可能是 `git push`，或 `a / b` 多锚点）

@@ -109,20 +109,74 @@ export const RETIRE_AFTER_DETOURS = 3;
  * 两者的区别是这一版的核心：**跳过 = 这次不用；绕开 = 这条路整个不对。**
  * 只有绕开才动「路径」这一层。
  */
-export function suggestRetirements(pipeline, { runs = [], now = Date.now() } = {}) {
+export function suggestRetirements(pipeline, { runs = [], now = Date.now(), observed = null } = {}) {
   const credit = tallyRuns(runs);
   const out = [];
+  // 前置违规（R1）：跨整本账本查一次——某步被执行过，而它的某个 needs 前置
+  // 在**同一条 run 里**既没执行也没被跳过。查账本级而不是 run 级，
+  // 是因为 tallyRuns 已经把 run 边界抹掉了；这里要保住边界，所以单独扫 runs。
+  const violationSeen = new Set();
+  for (const run of runs || []) {
+    const doneIds = new Set((run.steps || []).filter((s) => s && !s.skipped && !s.detoured).map((s) => s.id));
+    for (const step of pipeline.steps) {
+      if (!doneIds.has(step.id) || !Array.isArray(step.needs)) continue;
+      for (const need of step.needs) {
+        if (doneIds.has(need)) continue;
+        const had = (run.steps || []).some((s) => s && s.id === need);
+        if (had) continue; // 前置做过（哪怕是 skipped）就不算违规
+        const vk = `${run.at ?? ""}|${step.id}|${need}`;
+        if (violationSeen.has(vk)) continue;
+        violationSeen.add(vk);
+        // 同一步对不同前置各报一条：修图的人需要知道**断在哪条边**上
+        out.push({
+          kind: "violation-precedence",
+          stepId: step.id,
+          title: step.title,
+          because: `执行过 ${step.id} 的那次（${run.at ?? "无时间"}）里，前置 ${need} 既没做也没标跳过`,
+          effect: `提议重看 ${need} → ${step.id} 这条依赖——要么顺序写错了，要么前置根本不必要`
+        });
+      }
+    }
+  }
   for (const step of pipeline.steps) {
     const c = credit.get(step.id);
     if (!c) continue;
-    if ((c.skipped || 0) >= RETIRE_AFTER_SKIPS) {
+    // R2：跳过的性质由步骤自己的 optional 声明决定，不再靠次数猜意图。
+    //   可选步骤跳过 = 设计如此，**永远不提议删**；
+    //   必经步骤被跳 = 违规信号，rework-path 与 drop-step **并存**——
+    //   同一事实「必经的一步总被跳」既可能是「这步多余」（删）也可能是「流程写错」
+    //   （修图），判要靠人。这里绝不能用 if/else 吞并：07 号文那条教训在本仓重演过。
+    if (step.optional !== true && (c.skipped || 0) >= RETIRE_AFTER_SKIPS && (c.uses || 0) === 0) {
+      // 必经、从未真正执行、且总被跳：最像「写进清单但实际从不执行」（08 号文实测
+      // gh pr merge --rebase 出现 0 次）。删步与修图两种读法都成立，同时给人。
       out.push({
         kind: "drop-step",
         stepId: step.id,
         title: step.title,
-        because: `被跳过 ${c.skipped} 次`,
-        effect: "提议删掉这一步——对这条流程它可能已经没用了"
+        because: `从未被执行过、且被跳过 ${c.skipped} 次`,
+        effect: "提议删掉这一步——写进清单但实际从不执行的步骤，最可能是清单过时"
       });
+    }
+    if (step.optional === true) {
+      if ((c.skipped || 0) >= RETIRE_AFTER_SKIPS) {
+        out.push({
+          kind: "optional-skip-ok",
+          stepId: step.id,
+          title: step.title,
+          because: `可选步骤，被跳过 ${c.skipped} 次`,
+          effect: "不提议改动——这是 optional 声明的正常行为（信息项，供人留意）"
+        });
+      }
+    } else {
+      if ((c.skipped || 0) >= RETIRE_AFTER_SKIPS) {
+        out.push({
+          kind: "rework-path",
+          stepId: step.id,
+          title: step.title,
+          because: `必经步骤被跳过 ${c.skipped} 次`,
+          effect: "提议重看这条路径——必经的一步总被跳，要么它是多余的（该删/改 optional），要么流程写错了"
+        });
+      }
     }
     if ((c.detoured || 0) >= RETIRE_AFTER_DETOURS) {
       out.push({
@@ -131,6 +185,31 @@ export function suggestRetirements(pipeline, { runs = [], now = Date.now() } = {
         title: step.title,
         because: `被绕开 ${c.detoured} 次`,
         effect: "提议重看这条路径——从这一步岔出去已经成了常态，图该重画"
+      });
+    }
+  }
+  // P3 投影（fix-step-tool）：人确认做过、但声明的 tool 在攒下的观察里从没出现。
+  // 观察是旁挂文件里的聚合（{key,count}，无命令原文），不泄露路径。
+  // **不做累计**：一次矛盾就报——人可以判「声明过时/本来不必敲/我记错了」。
+  // 纯人判步骤（无 tool 声明）与 optional 步骤不进判据：前者无从矛盾，
+  // 后者「这次没做」是正常，谈不上「做了但没看到」。
+  if (observed && typeof observed === "object" && observed.latest?.activities?.length) {
+    const seen = new Set(observed.latest.activities.map((a) => String(a?.key ?? "").toLowerCase()).filter(Boolean));
+    for (const step of pipeline.steps) {
+      if (step.optional === true) continue;
+      const declared = typeof step.tool === "string" ? step.tool.trim() : "";
+      if (declared === "") continue;
+      const anchors = declared.split("/").map((t) => t.trim().toLowerCase()).filter(Boolean);
+      if (anchors.some((a) => seen.has(a))) continue;
+      const c = credit.get(step.id);
+      if (!c || (c.uses || 0) === 0) continue; // 没被确认做过 → 无矛盾可言
+      out.push({
+        kind: "fix-step-tool",
+        stepId: step.id,
+        title: step.title,
+        because: `确认做过 ${c.uses} 次，但声明的 ${declared} 在最近的观察里一次都没出现`,
+        effect: "提议核对这个声明——是 tool 写过时了，还是这一步本来就不必敲那条命令",
+        observedTop: observed.latest.activities.slice(0, 3).map((a) => `${a.key} ×${a.count}`)
       });
     }
   }
@@ -214,6 +293,9 @@ export function validatePipeline(raw, file = "<pipeline>") {
     if (!ACTORS.includes(step.who)) bad(`${at}.who 必须是 ${ACTORS.join(" / ")}`);
     if (!Array.isArray(step.needs)) bad(`${at}.needs 必须是数组（可空，表示这是一段的入口）`);
     if (step.gate !== undefined && typeof step.gate !== "boolean") bad(`${at}.gate 只能是布尔`);
+    // 可选/必经声明（R2）：缺省 = 必经。有了它，「被跳过」才第一次有性质——
+    // 可选步骤跳过是正常，必经步骤被跳是违规。见 07 号文的语义对照与 15 号文拍板。
+    if (step.optional !== undefined && typeof step.optional !== "boolean") bad(`${at}.optional 只能是布尔`);
     if (step.evidence !== undefined && !Array.isArray(step.evidence)) {
       bad(`${at}.evidence 必须是字符串数组`);
     }
@@ -268,7 +350,10 @@ export function validatePipeline(raw, file = "<pipeline>") {
       // 缺省是空数组而不是 undefined：两类节点的区别用「有没有断言」表达，
       // 用缺键会让下游每处都得先判在不在。
       assert: Array.isArray(s.assert) ? s.assert.slice() : [],
-      gate: s.gate === true
+      gate: s.gate === true,
+      // 缺省 false（= 必经）：显式落键而非缺省缺键——「这步可不可跳」是判据要读的
+      // 语义，不是可有可无的装饰。读侧拿到的一律是布尔，不用到处判 undefined。
+      optional: s.optional === true
     }))
   };
 }
@@ -508,7 +593,12 @@ export function readPipelineDoc({
   id = null,
   runsById = {},
   now = Date.now(),
-  memoryLinks = {}
+  memoryLinks = {},
+  // P3 投影的燃料：观察旁挂（调用方用 loadObservations 读好后传进来）。
+  // 形状：{ [pipelineId]: { latest: { activities: [{key,count,flags?}] } } }。
+  // 设计成调用方预读而不是传 memoryDir——pipeline.js 保持零文件系统职责（只读
+  // 自己的 pipelines 目录），旁挂的路径规则归 observations 模块管。
+  observationsById = {}
 } = {}) {
   const sources = pipelineSources({ projectRoot, pluginDir });
   const ordered = [];
@@ -555,6 +645,6 @@ export function readPipelineDoc({
     ...toPipelineV1(chosen, { runs: runsById[chosen.id] || [], now, memoryLinks }),
     ...base,
     // 图的自我精简：计数到了就把提议冒出来，不用人等巡检。
-    suggestions: suggestRetirements(chosen, { runs: runsById[chosen.id] || [], now })
+    suggestions: suggestRetirements(chosen, { runs: runsById[chosen.id] || [], now, observed: observationsById[chosen.id] ?? null })
   };
 }

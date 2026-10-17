@@ -528,7 +528,7 @@ test("清单行：反事实覆盖率与风险下限照实投影", () => {
   assert.equal(row.verdict, null, "判据没有结论时清单里也是 null，不显示一个假结论");
 });
 
-test("自精简提议走同一条「要人点头」的通路（跳过 ≥3 次 → 提议删掉这一步）", () => {
+test("自精简提议走同一条「要人点头」的通路（必经步骤被跳 ≥3 次 → 修图+删步并存）", () => {
   const pipeline = {
     id: "demo",
     steps: [{ id: "S1", title: "第一步" }, { id: "S2", title: "第二步" }]
@@ -540,14 +540,19 @@ test("自精简提议走同一条「要人点头」的通路（跳过 ≥3 次 �
     { steps: [{ id: "S1" }] }
   ];
   const proposal = retirementProposals(pipeline, { runs });
-  assert.equal(proposal.items.length, 1);
-  assert.equal(proposal.items[0].kind, "drop-step");
-  assert.equal(proposal.items[0].stepId, "S2");
-  assert.match(proposal.items[0].because, /被跳过 3 次/);
-  assert.ok(proposal.items[0].question.length > 0, "提议不发问就只是通知，不叫要人点头");
-  assert.ok(proposal.items[0].choices.includes("不知道"));
+  // R2 新语义：S2 是必经（无 optional）、从未 uses、被跳 3 次 → 删步与修图两种读法并存
+  assert.equal(proposal.items.length, 2);
+  const kinds = proposal.items.map((x) => x.kind).sort();
+  assert.deepEqual(kinds, ["drop-step", "rework-path"]);
+  const drop = proposal.items.find((x) => x.kind === "drop-step");
+  assert.equal(drop.stepId, "S2");
+  assert.match(drop.because, /被跳过 3 次/);
+  for (const item of proposal.items) {
+    assert.ok(item.question.length > 0, "提议不发问就只是通知，不叫要人点头");
+    assert.ok(item.choices.includes("不知道"));
+  }
   // 记了 4 次 run 但只有 1 次真走过 S1：计数只数处置，不数次数。
-  assert.equal(retirementProposals(pipeline, { runs }).items[0].stepId, "S2");
+  assert.equal(retirementProposals(pipeline, { runs }).items.length, 2);
 });
 
 test("端到端：真实形状的会话日志 → 至少一条候选 → 落一个过校验的 draft 文件", () => {
