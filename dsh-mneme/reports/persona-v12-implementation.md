@@ -29,3 +29,7 @@
 
 - v1.5 协作式人格（提取→草稿→审批）不变，provenance 仍只预留。
 - byAgent 卡与 scope 隔离（strictScope）的联动验证留给实测：人格寻址按 agentPreset，记忆 scope 按 agent_scope，两者键同源（同一 header）天然对齐，但未加联动测试。
+
+## 上线记录（补）
+
+- PR #453（slow-stack/mneme）：CI 全绿（test 矩阵 6 条 + codecov/patch + gitleaks + dependency-review + CodeRabbit）后以 merge commit 8e06d81 合并入 main；test-all 车道（活宿主 junction 目标）已 ff 快进至 8e06d81。
