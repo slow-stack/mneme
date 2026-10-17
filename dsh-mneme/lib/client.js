@@ -3452,7 +3452,10 @@ window.__ModuleLoader__.load({
             .replace("{v}", updateInfo.latest)
             .replace("{c}", updateInfo.current);
         }
-        if (updateInfo.status === "latest" || updateInfo.status === "up_to_date") return t("memory.settings.update.latest");
+        // 后端 classify（src/version-check.js）返回的是 "up-to-date"（连字符）。
+        // 前端状态名必须与它逐字对齐：此前误写 "latest"/"up_to_date" 两个后端
+        // 从未返回过的名字，检测成功也掉进 error 兜底（复验实测踩中）。
+        if (updateInfo.status === "up-to-date") return t("memory.settings.update.latest");
         if (updateInfo.status === "ahead") return t("memory.settings.update.ahead");
         return t("memory.settings.update.error");
       }
@@ -4184,10 +4187,11 @@ window.__ModuleLoader__.load({
           ),
           updateInfo?.status === "outdated" && h("div", { className: "mneme-set-hint", style: { marginTop: 8 } },
             t("memory.settings.version.outdatedHint")),
-          // star 鼓励入口：给仓库点星是零成本的支持方式
+          // star 鼓励入口：链接到仓库主页而非 stargazers——前者右上角就有
+          // Star 按钮，后者只是「看谁点过」的名单页（复验实测反馈）。
           h("div", { className: "mneme-feedlist", style: { marginTop: 12 } },
             feedRow("star", t("memory.settings.star"), t("memory.settings.star.sub"),
-              { href: "https://github.com/slow-stack/mneme/stargazers", target: "_blank", rel: "noopener noreferrer" })
+              { href: "https://github.com/slow-stack/mneme", target: "_blank", rel: "noopener noreferrer" })
           ),
           h("div", { className: "mneme-set-foot" },
             h("span", null, `dsh-mneme v${pkgVersion}`)
@@ -8215,3 +8219,7 @@ window.__ModuleLoader__.load({
     return module.exports;
   }
 });
+
+
+
+

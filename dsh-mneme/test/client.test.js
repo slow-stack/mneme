@@ -2055,3 +2055,36 @@ test("persona card is multi-card with visible field labels and save-failure erro
   // 保存失败提示：personaError 状态有渲染路径（非仅 setState）
   assert.ok(clientSource.includes("t(\"memory.settings.personaSaveFailed\")"), "save failure must render an error line");
 });
+
+// 回归锁（复验实测踩中）：面板「检测更新」的状态名必须与后端 classify
+// （src/version-check.js）逐字对齐。此前前端误写 "latest"/"up_to_date"（后端
+// 从未返回过），检测成功也掉进 error 兜底——按钮永远报「检测失败」。
+// 这条缝两端各有测试（version-check.test.js 测 classify、面板测试测渲染），
+// 但契约本身没人管。锁三件事：①前端比较的字面量是后端真实返回值；②后端
+// classify 的返回集合没有前端漏接的成员；③apiFetch 的路由路径与后端注册一致。
+test("update-check status names match the backend classify contract verbatim", () => {
+  const vcSource = readFileSync(join(root, "src/version-check.js"), "utf8");
+  // ① 后端 classify 的全部返回字面量
+  const backendStatuses = new Set(
+    [...vcSource.matchAll(/return "([a-z-]+)";/g)].map((m) => m[1])
+  );
+  assert.ok(backendStatuses.has("up-to-date") && backendStatuses.has("outdated") && backendStatuses.has("ahead") && backendStatuses.has("unknown"),
+    `classify must return the known status set (saw ${[...backendStatuses].join(", ")})`);
+  // ② 前端 checkResultText 比较的每个状态名都必须 ∈ 后端集合（防再发明新名）
+  const iStart = clientSource.indexOf("function checkResultText");
+  assert.ok(iStart > 0, "checkResultText must exist");
+  // 函数块取到下一个同级 function 声明为止：indexOf("}") 会切在首个 if 的
+  // 右括号，比较分支被截断成 1 个（2026-10-17 实测）。
+  const iEnd = clientSource.slice(iStart).search(/\n {6}function /);
+  const block = clientSource.slice(iStart, iEnd > 0 ? iStart + iEnd : undefined);
+  const compared = [...block.matchAll(/updateInfo\.status === "([a-zA-Z_-]+)"/g)].map((m) => m[1]);
+  assert.ok(compared.length >= 2, `the panel must compare real statuses (saw ${compared.length})`);
+  const unknown = [...new Set(compared)].filter((s) => !backendStatuses.has(s));
+  assert.deepEqual(unknown, [], `前端比较了后端不会返回的状态名（检测成功也会显示失败）：${unknown.join(", ")}`);
+  // ③ 路由契约：前端 fetch 的路径必须与后端注册的 exact path 一致
+  assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/version-check")'),
+    "the panel must call the registered version-check route");
+  const apiSource = readFileSync(join(root, "src/api.js"), "utf8");
+  assert.ok(apiSource.includes('path: "/api/dsh-mneme/version-check"'),
+    "the backend must register the version-check route");
+});
