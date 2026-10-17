@@ -28,29 +28,59 @@ import { LocalReranker } from "./reranker.js";
  */
 export async function backfillMissingEmbeddings({
   store, embedder, vectorIndex, logger,
+  // maxTotal: 0 = no cap (drain the whole backlog this run). The default stays
+  // modest so a boot never floods a provider, but the cap is a caller choice
+  // now instead of a hardcoded one — the fixed 500 meant a 4k-row backlog
+  // needed nine restarts to clear, and nothing reported that it had been cut.
   maxTotal = 500, batchSize = 10, rateLimitMs = 200
 }) {
+  const startedAt = new Date().toISOString();
+  // Model-aware selector: rows whose vector came from another model (or
+  // predate per-row provenance) must be re-embedded too, otherwise a model
+  // switch leaves uncomparable vectors in the index forever.
+  const model = embedder.modelHash;
+  const pick = (n) => (typeof store.needsEmbeddingFor === "function"
+    ? store.needsEmbeddingFor(model, n)
+    : store.needsEmbedding(n));
+  const unlimited = !(maxTotal > 0);
   let indexed = 0;
-  for (let done = 0; done < maxTotal;) {
-    const rows = store.needsEmbedding(batchSize);
+  let processed = 0;
+  let failed = 0;
+  for (let done = 0; unlimited || done < maxTotal;) {
+    const rows = pick(batchSize);
     if (!rows.length) break;
     for (const row of rows) {
       try {
         const text = [row.title, row.content].filter(Boolean).join("\n");
         const vector = await embedder.embedSingle(text);
         if (vector?.length) {
-          store.setEmbedding(row.id, vector);
+          store.setEmbedding(row.id, vector, model);
           indexed++;
+        } else {
+          failed++;
         }
-      } catch { /* skip the bad row */ }
+      } catch { failed++; /* skip the bad row, but count it */ }
     }
     done += rows.length;
+    processed += rows.length;
     // Rate limit: space out batches so the provider is not hammered.
-    if (store.needsEmbedding(1).length) await new Promise((r) => setTimeout(r, rateLimitMs));
+    if (pick(1).length) await new Promise((r) => setTimeout(r, rateLimitMs));
   }
-  if (indexed > 0 && embedder.modelHash) vectorIndex.markModel?.(embedder.modelHash, embedder.dimension);
-  logger?.info?.(`[dsh-mneme] auto-reindex backfilled ${indexed} embeddings on boot`);
-  return indexed;
+  if (indexed > 0 && model) vectorIndex.markModel?.(model, embedder.dimension);
+  // stillStale answers "did it actually finish?". The old return value was a
+  // bare indexed count, so a run that hit the cap looked exactly like a run
+  // that drained the backlog.
+  const stillStale = pick(1).length > 0;
+  const finishReason = stillStale ? "capped" : (failed > 0 && indexed === 0 ? "all-failed" : "drained");
+  logger?.info?.(
+    `[dsh-mneme] auto-reindex backfilled ${indexed} embeddings (processed=${processed}, failed=${failed}, finish=${finishReason})`
+  );
+  return {
+    indexed, processed, failed, finishReason, stillStale,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    model: model ?? null
+  };
 }
 
 /**
@@ -74,6 +104,9 @@ export function createSemantic({ store, service, settings, cfg, logger, vectorIn
   // boot 回填首查计时器。搬移前在 index.js 是裸 setTimeout(不参与卸载清理);
   // 纳入 dispose 是修悬挂,不改变启动行为。
   let reindexTimer = null;
+  // Last boot-backfill summary, exposed via backfillStatus() so "did it
+  // finish?" has an answer other than a log line.
+  let lastBackfill = null;
 
   if (lightMode) {
     // Light mode: the whole vector pipeline stays off — no embedder (nothing
@@ -202,12 +235,31 @@ export function createSemantic({ store, service, settings, cfg, logger, vectorIn
           if (tries > 0) reindexTimer = setTimeout(() => attempt(tries - 1), 2000);
           return;
         }
-        if (!store.needsEmbedding(1).length) return; // nothing to backfill
+        const model = embedder.modelHash;
+        const stale = typeof store.hasStaleEmbedding === "function"
+          ? store.hasStaleEmbedding(model)
+          : store.needsEmbedding(1).length > 0;
+        if (!stale) return; // nothing missing and nothing from another model
         // Issue #128: no fingerprint gate here anymore — a matching fingerprint
         // used to return early and permanently orphan rows whose embed failed
         // at write time. See backfillMissingEmbeddings().
-        backfillMissingEmbeddings({ store, embedder, vectorIndex, logger })
+        // Cap and pacing are configuration now (reindexMaxPerBoot /
+        // reindexBatchSize / reindexRateLimitMs) instead of hardcoded 500/10/200.
+        lastBackfill = {
+          state: "running", startedAt: new Date().toISOString(),
+          maxTotal: cfg.reindexMaxPerBoot, batchSize: cfg.reindexBatchSize
+        };
+        backfillMissingEmbeddings({
+          store, embedder, vectorIndex, logger,
+          maxTotal: cfg.reindexMaxPerBoot,
+          batchSize: cfg.reindexBatchSize,
+          rateLimitMs: cfg.reindexRateLimitMs
+        })
+          .then((summary) => {
+            lastBackfill = { ...summary, state: "finished" };
+          })
           .catch((error) => {
+            lastBackfill = { state: "error", error: String(error), startedAt: lastBackfill?.startedAt };
             logger?.warn?.(`[dsh-mneme] auto-reindex failed: ${String(error)}`);
           });
       } catch (error) {
@@ -221,6 +273,10 @@ export function createSemantic({ store, service, settings, cfg, logger, vectorIn
   return {
     embedder,
     reranker,
+    /** Last backfill run: { state, indexed, failed, finishReason, stillStale, ... }. */
+    backfillStatus() {
+      return lastBackfill;
+    },
     dispose() {
       if (embedRetryTimer !== null) { clearTimeout(embedRetryTimer); embedRetryTimer = null; }
       if (reindexTimer !== null) { clearTimeout(reindexTimer); reindexTimer = null; }

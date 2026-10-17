@@ -415,6 +415,13 @@ export const Config = z.object({
   // in the background after a short delay, rate-limited in batches. On by
   // default; set false to keep the backfill manual only.
   autoReindexOnBoot: z.boolean().default(true),
+  // Backfill pacing (previously hardcoded 500 / 10 / 200 in semantic.js). A
+  // fixed 500-per-boot cap meant a 4k-row backlog needed nine restarts to
+  // clear, and nothing reported that the run had been capped.
+  // reindexMaxPerBoot = 0 means "no cap, drain the whole backlog this run".
+  reindexMaxPerBoot: z.natural().default(500),
+  reindexBatchSize: z.natural().min(1).max(64).default(10),
+  reindexRateLimitMs: z.natural().default(200),
   // Semantic-first injection (Bug4): when enabled, injectCandidates with a
   // non-empty query recalls via the vector index first and falls back to the
   // rule-based pick to fill/dedupe. Empty query / no vector → legacy behavior.

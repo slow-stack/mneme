@@ -69,9 +69,51 @@ export async function embedText({ baseUrl, apiKey, model }, text) {
  * successful embed the model that produced the vectors is recorded, so the
  * index can detect drift and the auto-reindex backfill knows what to rebuild.
  */
+/**
+ * Bounded receipt ring for embedding attempts.
+ *
+ * Why a ring instead of llm_audit_logs: a full backfill is thousands of
+ * attempts, and one audit row each would bury the LLM calls that table exists
+ * to trace. What the user actually needs in order to answer "is the vector
+ * layer silently dead right now?" is the recent window plus running totals —
+ * which costs nothing and cannot flood.
+ */
+const RECEIPT_LIMIT = 200;
+
+function createReceiptLedger() {
+  const recent = [];
+  const totals = { ok: 0, failed: 0, skipped: 0 };
+  let lastOkAt = null;
+  let lastFailAt = null;
+  let lastFailReason = null;
+  return {
+    record(entry) {
+      recent.push(entry);
+      if (recent.length > RECEIPT_LIMIT) recent.shift();
+      if (entry.status in totals) totals[entry.status]++;
+      if (entry.status === "ok") lastOkAt = entry.at;
+      else if (entry.status === "failed") {
+        lastFailAt = entry.at;
+        lastFailReason = entry.reason ?? null;
+      }
+    },
+    snapshot() {
+      return {
+        totals: { ...totals },
+        lastOkAt,
+        lastFailAt,
+        lastFailReason,
+        recent: recent.slice(-RECEIPT_LIMIT)
+      };
+    }
+  };
+}
+
 export function createEmbedder({ store, settings, logger, vectorIndex }) {
   // Dimension of the most recent successful embed, exposed for fingerprinting.
   let _dimension = 0;
+  // Per-write embed receipts (see createReceiptLedger above).
+  const ledger = createReceiptLedger();
 
   /** Record the producing model fingerprint in vector_meta (best-effort). */
   function markModel(cfg, dimension) {
@@ -85,19 +127,52 @@ export function createEmbedder({ store, settings, logger, vectorIndex }) {
   // ready/configured 两个 getter 共用，避免以后改一处漏一处。
   const configComplete = (cfg) => !!(cfg?.enabled && cfg.baseUrl && cfg.apiKey && cfg.model);
 
+  /**
+   * Embed one memory and store the vector. Never throws — a flaky endpoint
+   * must not break memory writes — but it now REPORTS what happened instead
+   * of returning undefined on both success and failure. Callers that ignore
+   * the result are unaffected; callers that care get a receipt.
+   *
+   * @returns {Promise<{status:"ok"|"failed"|"skipped", id:string,
+   *   at:string, reason?:string, dim?:number, model?:string}>}
+   */
   async function embedFor(id, title, content) {
+    const at = new Date().toISOString();
     const cfg = settings.getVectorConfig();
-    if (!configComplete(cfg)) return;
-    const text = [title, content].filter(Boolean).join("\n");
-    const vector = await embedText(cfg, text);
-    if (vector) {
-      store.setEmbedding(id, vector);
-      _dimension = vector.length;
-      // Bug3: record which model produced the current vectors so the index can
-      // detect drift and skip a redundant backfill when nothing changed.
-      markModel(cfg, vector.length);
-      logger?.info?.(`[dsh-mneme] embedded memory ${id} (dim=${vector.length})`);
+    if (!configComplete(cfg)) {
+      const entry = { status: "skipped", id, at, reason: "vector-config-incomplete" };
+      ledger.record(entry);
+      return entry;
     }
+    const text = [title, content].filter(Boolean).join("\n");
+    let vector = null;
+    try {
+      vector = await embedText(cfg, text);
+    } catch (error) {
+      const entry = { status: "failed", id, at, reason: String(error) };
+      ledger.record(entry);
+      logger?.warn?.(`[dsh-mneme] embed memory ${id} failed: ${String(error)}`);
+      return entry;
+    }
+    if (!vector) {
+      // embedText swallows the HTTP detail (404 / timeout / malformed body all
+      // resolve to null). The receipt still has to say "no vector", which is
+      // exactly the fact the write path never used to report.
+      const entry = { status: "failed", id, at, reason: "embedding-request-returned-no-vector" };
+      ledger.record(entry);
+      logger?.warn?.(`[dsh-mneme] embed memory ${id} produced no vector`);
+      return entry;
+    }
+    const model = modelHashOf(cfg.model);
+    store.setEmbedding(id, vector, model);
+    _dimension = vector.length;
+    // Bug3: record which model produced the current vectors so the index can
+    // detect drift and skip a redundant backfill when nothing changed.
+    markModel(cfg, vector.length);
+    const entry = { status: "ok", id, at, dim: vector.length, model };
+    ledger.record(entry);
+    logger?.info?.(`[dsh-mneme] embedded memory ${id} (dim=${vector.length})`);
+    return entry;
   }
 
   return {
@@ -120,10 +195,26 @@ export function createEmbedder({ store, settings, logger, vectorIndex }) {
     get configured() {
       return configComplete(settings.getVectorConfig());
     },
-    /** Fire-and-forget re-embed of a memory after any write. */
+    /**
+     * Re-embed a memory after any write. Still non-blocking — the caller does
+     * not have to await it — but it now RETURNS the receipt promise so a
+     * caller that wants to know can. Previously this returned undefined and
+     * swallowed the rejection, so "did this write get a vector?" had no answer
+     * anywhere in the process. Swallowing still applies to the rejection
+     * itself: a vector failure must never break the memory write.
+     */
     schedule(memory) {
-      if (!memory?.id) return;
-      embedFor(memory.id, memory.title, memory.content).catch(() => {});
+      if (!memory?.id) {
+        return Promise.resolve({ status: "skipped", id: null, at: new Date().toISOString(), reason: "no-id" });
+      }
+      return embedFor(memory.id, memory.title, memory.content).catch((error) => ({
+        status: "failed", id: memory.id, at: new Date().toISOString(), reason: String(error)
+      }));
+    },
+
+    /** Recent embed receipts + running totals (see createReceiptLedger). */
+    embedReceipts() {
+      return ledger.snapshot();
     },
 
     /** Embed one text and return its vector (null on failure/disabled). */
@@ -155,17 +246,27 @@ export function createEmbedder({ store, settings, logger, vectorIndex }) {
       return _dimension || undefined;
     },
 
-    /** Batch re-index rows still missing an embedding. */
+    /**
+     * Batch re-index rows whose vector is missing OR came from another model.
+     * Uses needsEmbeddingFor (not needsEmbedding) so a model switch actually
+     * re-embeds the old vectors instead of leaving them eligible for "has a
+     * vector" forever while they poison similarity ranking.
+     */
     async reindexMissing(limit = 50) {
       const cfg = settings.getVectorConfig();
       if (!cfg?.enabled) return { indexed: 0, skipped: 0 };
-      const rows = store.needsEmbedding(limit);
+      const model = modelHashOf(cfg.model);
+      // Fall back to the plain selector for stores that predate the
+      // provenance column (older hosts, test doubles).
+      const rows = typeof store.needsEmbeddingFor === "function"
+        ? store.needsEmbeddingFor(model, limit)
+        : store.needsEmbedding(limit);
       let indexed = 0;
       for (const row of rows) {
         const text = [row.title, row.content].filter(Boolean).join("\n");
         const vector = await embedText(cfg, text);
         if (vector) {
-          store.setEmbedding(row.id, vector);
+          store.setEmbedding(row.id, vector, model);
           _dimension = vector.length;
           indexed++;
         }

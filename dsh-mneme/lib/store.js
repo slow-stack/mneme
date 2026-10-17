@@ -835,6 +835,15 @@ export function createStore(path) {
   // 老库打开时 SCHEMA 的 CREATE TABLE 对既有表不生效，列还不存在，把索引写进 SCHEMA
   // 会直接报 no such column（与下方 llm_audit_logs.session_key 同理）。
   addColumn("memories", "content_hash", "ALTER TABLE memories ADD COLUMN content_hash TEXT");
+  // 每条向量的出身（行级 model hash，如 `qwen3.7-text-embedding-flash#17a6a0b1`）。
+  // 为什么必须行级：vector_meta 只有一个 model_hash，它记的是「最后一次成功写入
+  // 的模型」，换模型时被整表覆盖——于是上一代模型产出的向量在元数据上看起来完全
+  // 合规，实际与新模型的查询向量不可比。没有这一列，「这条向量是不是当前模型产
+  // 的」就无从判断（content_hash 是内容归一化哈希，与向量模型无关；dimension 在
+  // 同为 1024 维的模型间也区分不出来）。
+  // 存量行的值是 NULL，且**不推断**：按 updated_at 猜出的模型名会变成日后审计信
+  // 以为真的证据。NULL 一律读作「出身未知」，等价的补法是重算，不是猜。
+  addColumn("memories", "embedding_model", "ALTER TABLE memories ADD COLUMN embedding_model TEXT");
   // issue #24 块2（权重演化）：entity_relations 加 weight + source。存量关系
   // 行缺列 → 默认 manual 1.0（最保守：既有语义不因迁移而变弱）。
   addColumn("entity_relations", "weight", "ALTER TABLE entity_relations ADD COLUMN weight REAL NOT NULL DEFAULT 1.0");
@@ -1606,10 +1615,24 @@ export function createStore(path) {
     return rows.map((row) => row.content ?? "");
   }
 
-  /** Set (or clear with null) the embedding vector of a memory. */
-  function setEmbedding(id, vector) {
+  /** Set (or clear with null) the embedding vector of a memory.
+   *  `modelHash` records which model produced THIS vector (see the
+   *  embedding_model migration note). Clearing the vector clears the
+   *  provenance with it, so a NULL vector is never paired with a stale model
+   *  name; omitting modelHash leaves the column untouched (callers that
+   *  predate the column still work, their rows simply read as unknown). */
+  function setEmbedding(id, vector, modelHash) {
     const json = Array.isArray(vector) && vector.length ? JSON.stringify(vector) : null;
-    db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run(json, id);
+    if (json) {
+      if (modelHash !== undefined) {
+        db.prepare("UPDATE memories SET embedding = ?, embedding_model = ? WHERE id = ?")
+          .run(json, modelHash === null ? null : String(modelHash), id);
+      } else {
+        db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run(json, id);
+      }
+    } else {
+      db.prepare("UPDATE memories SET embedding = NULL, embedding_model = NULL WHERE id = ?").run(id);
+    }
     // Issue #202：单一写入口即单一失效点——重写缓存条目（向量在手上不必重解析），
     // 清空则移除，删除过的 id 不会被下一次 searchVector 的 id 集合选中。
     if (json) {
@@ -1660,6 +1683,54 @@ export function createStore(path) {
          AND forgotten = 0 AND archived = 0
        ORDER BY updated_at DESC LIMIT ?`
     ).all(limit);
+  }
+
+  /**
+   * Rows whose vector is missing OR was produced by a different model than
+   * `modelHash` — the selector the backfill should use whenever the caller
+   * knows which model the vectors are supposed to come from.
+   *
+   * Why `needsEmbedding` alone is not enough: it only matches empty vectors,
+   * so after a model switch every vector written by the previous model stays
+   * eligible for "has a vector" forever, while its similarity to the current
+   * query embedding is meaningless. Those rows keep inflating the status
+   * card's coverage while semantic recall silently degrades.
+   *
+   * `embedding_model IS NULL` counts as stale on purpose: NULL means "written
+   * before per-row provenance existed, producing model unknown", and an
+   * unknown origin cannot be proven to match. Those rows get re-embedded
+   * rather than assumed correct.
+   *
+   * When `modelHash` is falsy (embedder unconfigured / no fingerprint yet)
+   * this degrades to the plain missing-only selector instead of re-embedding
+   * the whole table against nothing.
+   */
+  function needsEmbeddingFor(modelHash, limit = 50) {
+    if (!modelHash) return needsEmbedding(limit);
+    return db.prepare(
+      `SELECT id, title, content, embedding_model FROM memories
+       WHERE ((embedding IS NULL OR embedding = '')
+              OR embedding_model IS NULL
+              OR embedding_model != ?)
+         AND forgotten = 0 AND archived = 0
+       ORDER BY updated_at DESC LIMIT ?`
+    ).all(String(modelHash), limit);
+  }
+
+  /** True when any active row would be picked by needsEmbeddingFor(). */
+  function hasStaleEmbedding(modelHash) {
+    return needsEmbeddingFor(modelHash, 1).length > 0;
+  }
+
+  /** Per-model provenance counts over active rows ('' = unknown origin). */
+  function embeddingModelBreakdown() {
+    return db.prepare(
+      `SELECT COALESCE(embedding_model, '') AS model, count(*) AS c
+         FROM memories
+        WHERE embedding IS NOT NULL AND embedding != ''
+          AND forgotten = 0 AND archived = 0
+        GROUP BY COALESCE(embedding_model, '')`
+    ).all();
   }
 
   function search(query, { limit = 20, includeArchived = false } = {}) {
@@ -3159,6 +3230,9 @@ export function createStore(path) {
     getParsedEmbedding,
     embeddedCount,
     needsEmbedding,
+    needsEmbeddingFor,
+    hasStaleEmbedding,
+    embeddingModelBreakdown,
     searchVector,
     saveDreamRun,
     lastDreamRunAt,
