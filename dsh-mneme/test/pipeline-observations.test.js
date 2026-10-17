@@ -32,6 +32,16 @@ test("observationDir：项目键分桶，空键拒绝", () => {
   assert.equal(observationDir({}), null);
 });
 
+test("observationDir：~ / ~/ 前缀展开到主目录（config 默认值是波浪线路径，不展开 readdir 永远落空）", () => {
+  // candidates.js 的 expandHome 同构先例；不带 ~ 的路径原样通过
+  assert.equal(observationDir({ memoryDir: "D:/mem", projectKey: "p" }), join("D:/mem", "observations", "p"));
+  const fromTilde = observationDir({ memoryDir: "~/.dsh/memory", projectKey: "p" });
+  assert.ok(!fromTilde.startsWith("~"), `tilde must be expanded, got: ${fromTilde}`);
+  assert.ok(fromTilde.endsWith(join(".dsh", "memory", "observations", "p")), fromTilde);
+  const fromTildeSlash = observationDir({ memoryDir: "~/mem", projectKey: "p" });
+  assert.ok(!fromTildeSlash.startsWith("~"), fromTildeSlash);
+});
+
 test("🔴 隐私闸：命令原文/参数/分段出现在观察行里一律拒收", () => {
   // 完整命令行含绝对路径（路径含本机用户名），这是第二道闸：上游漏了这里也不放行
   for (const bad of [

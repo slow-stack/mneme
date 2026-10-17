@@ -27,11 +27,22 @@
 
 import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+
+/** 展开 `~`；观察旁挂跟 candidates/proposals 一样是本地状态（candidates.js 的 expandHome 同构）。
+ *  config.memoryDir 的默认值是 "~/.dsh/memory"，不展开的话 readdir 在带 "~" 的字面路径上
+ *  永远落空——旁挂静默读不到，fix-step-tool 提议少一类（CodeRabbit #458 F2）。 */
+function expandHome(p) {
+  const s = String(p || "");
+  if (s === "~") return homedir();
+  if (s.startsWith("~/") || s.startsWith("~\\")) return join(homedir(), s.slice(2));
+  return s;
+}
 
 /** 观察旁挂的目录：`<memoryDir>/observations/<项目键>/`。与 candidates/proposals 同构。 */
 export function observationDir({ memoryDir, projectKey } = {}) {
   if (!projectKey || String(projectKey).trim() === "") return null;
-  const base = memoryDir && String(memoryDir).trim() ? memoryDir : "~/.dsh/memory";
+  const base = expandHome(memoryDir && String(memoryDir).trim() ? memoryDir : "~/.dsh/memory");
   return join(base, "observations", projectKey);
 }
 

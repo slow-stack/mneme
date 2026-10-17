@@ -1109,9 +1109,19 @@ export function retirementProposals(pipeline, { runs = [], now = Date.now(), obs
       writeTo: "steps[].removedBy（人批后改 status/version）"
     },
     "rework-path": {
-      question: "从这一步岔出去已经成了常态，是这条路径过时了，还是岔路该并进图里？",
-      choices: ["路径过时了", "岔路该并进来", "不知道"],
-      writeTo: "新版本的 steps[]"
+      // 同一 kind 有两种成因（pipeline.js 的 cause 字段）：detoured 问重画路径，
+      // skipped 问删步/改 optional——共用一句问法会让跳过场景答非所问
+      // （CodeRabbit #458 F3）。cause 缺失（旧提议/外部构造）退回 detoured 问法。
+      detoured: {
+        question: "从这一步岔出去已经成了常态，是这条路径过时了，还是岔路该并进图里？",
+        choices: ["路径过时了", "岔路该并进来", "不知道"],
+        writeTo: "新版本的 steps[]"
+      },
+      skipped: {
+        question: "这一必经步骤总被跳过：是这步该改成 optional（或删掉），还是流程本身写错了？",
+        choices: ["该改成 optional", "该删掉", "流程写错了", "不知道"],
+        writeTo: "steps[].optional（人批后改 version）"
+      }
     },
     "violation-precedence": {
       question: "做了后继却没做它的前置：是顺序写错了，还是这个前置根本不必要？",
@@ -1129,15 +1139,24 @@ export function retirementProposals(pipeline, { runs = [], now = Date.now(), obs
       writeTo: "无（信息项；人若要拿掉，走删步流程）"
     }
   };
-  const items = suggestRetirements(pipeline, { runs, now, observed }).map((s) => ({
-    kind: s.kind,
-    pipelineId: pipeline.id,
-    stepId: s.stepId,
-    title: s.title,
-    because: s.because,
-    effect: s.effect,
-    ...(ASK[s.kind] ?? { question: "这一步要怎么处理？", choices: ["不知道"], writeTo: "新版本的 steps[]" })
-  }));
+  const items = suggestRetirements(pipeline, { runs, now, observed }).map((s) => {
+    // rework-path 按 cause 二选一问法；其余 kind 直接查表。缺表项的兜底保持原样。
+    const askTable = ASK[s.kind];
+    const ask = askTable
+      ? (s.cause && askTable[s.cause]) || (typeof askTable.question === "string" ? askTable : askTable.detoured)
+      : { question: "这一步要怎么处理？", choices: ["不知道"], writeTo: "新版本的 steps[]" };
+    return {
+      kind: s.kind,
+      pipelineId: pipeline.id,
+      stepId: s.stepId,
+      title: s.title,
+      because: s.because,
+      effect: s.effect,
+      // cause 只有 rework-path 有；其余 kind 不带 undefined 键（消费方 deepEqual 会看到多余键）
+      ...(s.cause ? { cause: s.cause } : {}),
+      ...ask
+    };
+  });
   return { contract: "mneme.nudge/v1", pipelineId: pipeline.id, generatedAt: new Date(now).toISOString(), items };
 }
 

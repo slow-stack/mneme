@@ -1712,16 +1712,21 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
 
         // 只读**账本目录**来定「哪些 id 有账」：最新一条 run 可能属于一条刚被删掉或
         // 还没写完的 .json，这时工作流目录里问不到它的 id，而账本还在盘上。
+        // runIds 必须在 handler 级声明：下面观察旁挂块（同函数的另一个 if 分支）也按
+        // 这份 id 列表取观察——之前声明在账本分支的块级作用域里，旁挂块一引用就
+        // ReferenceError，被 catch 静默吞成「没有观察」（CodeRabbit #458 F1，
+        // 复盘注释见下方旁挂块）。
+        let runIds = [];
         let runsResult = { runsById: {}, errors: [], statesById: {} };
         if (project !== null) {
           const where = runsDir(project);
-          const ids = existsSync(where)
+          runIds = existsSync(where)
             ? readdirSync(where)
                 .filter((f) => f.endsWith(RUNS_SUFFIX))
                 .sort()
                 .map((f) => f.slice(0, -RUNS_SUFFIX.length))
             : [];
-          if (ids.length) {
+          if (runIds.length) {
             // step id 闸门：账本里出现「图上没有的 step id」时，credit 会落在一个没有节点的
             // 地方——**记了、数得出来、面板上永远看不见**，症状与「从没跑过」同形。
             // 这里把每条工作流的步骤表读出来当白名单，让那种行变成看得见的噪音。
@@ -1736,7 +1741,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
               // 也绝不因此让整个面板打不开——闸门退化成「没有白名单」，账本照读。
               stepIdsById = null;
             }
-            runsResult = loadRunsById(project, ids, { expectedStepIdsById: stepIdsById });
+            runsResult = loadRunsById(project, runIds, { expectedStepIdsById: stepIdsById });
           }
         }
         const { runsById, errors: runsErrors, statesById } = runsResult;
@@ -1751,7 +1756,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
               : "~/.dsh/memory";
             const odir = observationDir({ memoryDir, projectKey: projectKey(project) });
             if (odir) {
-              observationsById = loadObservationsById(odir, ids.filter(Boolean));
+              observationsById = loadObservationsById(odir, runIds.filter(Boolean));
             }
           } catch {
             // 读旁挂失败不算账本问题：如实降级成「没有观察」，fix-step-tool 少发而已

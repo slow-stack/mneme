@@ -1871,3 +1871,92 @@ test("GET /api/dsh-mneme/inject-preview: returns last assembly snapshot (issue #
   assert.equal(res.statusCode, 404);
   injector(); // 快照是模块全局：用完即清，不污染后续用例
 });
+
+// --- /pipeline：观察旁挂能真的挂进投影（CodeRabbit #458 F1 的锁）--------------
+
+test("GET /api/dsh-mneme/pipeline 带观察旁挂：observationsById 真的进了投影而不是被 catch 吞掉", async () => {
+  // 锁 F1：ids 原本声明在账本分支的块级作用域里，旁挂块一引用就 ReferenceError，
+  // 被 catch 静默吞成「没有观察」——面板上一切正常，fix-step-tool 提议却永远少一类。
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { saveObservations } = await import("../src/pipeline-observations.js");
+
+  const root = mkdtempSync(join(tmpdir(), "mo-api-f1-"));
+  try {
+    const project = join(root, "proj");
+    const pipeline = {
+      id: "demo-f1",
+      name: "演示F1",
+      project: "someone/repo",
+      version: 0,
+      status: "active",
+      done: "做完",
+      trigger: [{ kind: "phrase", value: "跑一下" }],
+      steps: [{
+        id: "S1",
+        phase: "做",
+        title: "跑测试",
+        when: "有人要跑",
+        do: "npm test",
+        who: "main",
+        tool: "npm test",
+        done: "测试全绿",
+        risk: "R0",
+        needs: [],
+        why: "没有它后面没得跑",
+        evidence: ["跑过"]
+      }]
+    };
+    // 项目层工作流（<project>/.mneme/pipelines/*.json）
+    mkdirSync(join(project, ".mneme", "pipelines"), { recursive: true });
+    writeFileSync(join(project, ".mneme", "pipelines", "demo-f1.json"), JSON.stringify(pipeline));
+    // 运行账：<project>/.mneme/pipelines/<id>.runs.jsonl（有账才走到旁挂分支）。
+    // 行形状走 normalizeRun 契约：run.at/by + step.at 全必填（时间不补默认）。
+    writeFileSync(
+      join(project, ".mneme", "pipelines", "demo-f1.runs.jsonl"),
+      JSON.stringify({ at: "2026-10-17T01:00:00.000Z", by: "main", steps: [{ id: "S1", at: "2026-10-17T01:00:00.000Z", skipped: false, detoured: false, refuted: false }] }) + "\n"
+    );
+    // 观察旁挂：<memoryDir>/observations/<项目键>/demo-f1.jsonl。项目键走 candidates.js
+    // 的 projectKey(projectRoot)（sha256 前 8 位 + 清洗名），与 api.js 同源——不能用
+    // 裸 observations/ 目录，那不是 api 侧会查的桶。
+    const { projectKey } = await import("../src/candidates.js");
+    const memoryDir = join(root, "memory");
+    const odir = join(memoryDir, "observations", projectKey(project));
+    const saved = saveObservations({
+      dir: odir,
+      pipelineId: "demo-f1",
+      confirmAt: "2026-10-17T02:00:00.000Z",
+      activities: [{ key: "git push", count: 2 }]
+    });
+    assert.equal(saved.ok, true);
+
+    const { routes } = setup(undefined, "", { memoryDir });
+    const route = routes.find((r) => r.path === "/api/dsh-mneme/pipeline");
+    const res = new FakeRes();
+    await route.handler(req(`/api/dsh-mneme/pipeline?id=demo-f1&project=${encodeURIComponent(project)}`), res);
+    assert.equal(res.statusCode, 200);
+    const data = JSON.parse(res.body);
+    const row = (data.available || []).find((r) => r.id === "demo-f1");
+    assert.ok(row, "工作流要出现在清单里");
+    assert.ok(data.pipeline, "选中投影要存在");
+    // F1 的直接断言：观察旁挂真的喂进了 suggestions 的判据（修复前 observationsById
+    // 恒为 {}——ReferenceError 被 catch 吞掉，观察永远空）。
+    // 观察里只写了 git push，而 S1 声明 tool=npm test 且账本确认走过 1 次 → 矛盾
+    // 成立，fix-step-tool 必须冒头（下方正向锁）；观察为空时它不该冒，那是
+    // pipeline.test.js 的判据锁。
+    // runsState 是账本健康度（RUNS_STATES: absent/empty/ok/partial/broken），
+    // 不是节点状态——账本一行合法 run 即为 ok。节点级 trusted 由 deriveState 管，
+    // 在 summarizePipeline 的 perNode 里，这里不重复锁。
+    assert.equal(row.runsState, "ok", "账本一行合法 run，健康度应是 ok");
+    // suggestions 在投影顶层（不在 pipeline 对象下）。
+    assert.ok(Array.isArray(data.suggestions), "投影必须带 suggestions 数组");
+    // 正向锁：观察里只有 git push、S1 声明 npm test 且确认走过 → fix-step-tool 必须冒头。
+    // F1 未修时 observationsById 恒为空，这条断言必挂——正是要抓的回归。
+    const fix = data.suggestions.find((s) => s.kind === "fix-step-tool");
+    assert.ok(fix, "观察进了判据（npm test 未见于观察）→ 必须有 fix-step-tool 提议");
+    assert.equal(fix.stepId, "S1");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

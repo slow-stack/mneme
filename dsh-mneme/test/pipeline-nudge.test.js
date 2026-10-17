@@ -555,6 +555,29 @@ test("自精简提议走同一条「要人点头」的通路（必经步骤被�
   assert.equal(retirementProposals(pipeline, { runs }).items.length, 2);
 });
 
+test("rework-path 按 cause 分流问法：skipped 问删步/改 optional，detoured 问重画路径", () => {
+  // 锁的是 CodeRabbit #458 F3：同 kind 两种成因（pipeline.js 的 skipped/detoured
+  // 两个触发点）若共用一句问法，跳过场景的人会被问「岔路」——答非所问。
+  const pipeline = { id: "demo", steps: [{ id: "S1", title: "第一步" }, { id: "D1", title: "岔口" }] };
+  // S1：必经、从未 uses、被跳 3 次 → rework-path(cause=skipped)
+  // D1：被绕开 3 次 → rework-path(cause=detoured)
+  const runs = [
+    { steps: [{ id: "S1", skipped: true }, { id: "D1", detoured: true }] },
+    { steps: [{ id: "S1", skipped: true }, { id: "D1", detoured: true }] },
+    { steps: [{ id: "S1", skipped: true }, { id: "D1", detoured: true }] }
+  ];
+  const items = retirementProposals(pipeline, { runs }).items.filter((x) => x.kind === "rework-path");
+  assert.equal(items.length, 2);
+  const byCause = Object.fromEntries(items.map((x) => [x.cause, x]));
+  assert.deepEqual(items.map((x) => x.cause).sort(), ["detoured", "skipped"], "cause 字段必须区分两种成因");
+  assert.match(byCause.skipped.question, /optional|流程/);
+  assert.ok(!/岔/.test(byCause.skipped.question), "跳过场景不该被问岔路的事");
+  assert.match(byCause.detoured.question, /岔/);
+  for (const item of items) {
+    assert.ok(item.choices.includes("不知道"));
+  }
+});
+
 test("端到端：真实形状的会话日志 → 至少一条候选 → 落一个过校验的 draft 文件", () => {
   withDir((dir) => {
     const sessions = join(dir, "sessions");

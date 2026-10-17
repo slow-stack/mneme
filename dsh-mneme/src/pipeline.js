@@ -171,6 +171,10 @@ export function suggestRetirements(pipeline, { runs = [], now = Date.now(), obse
       if ((c.skipped || 0) >= RETIRE_AFTER_SKIPS) {
         out.push({
           kind: "rework-path",
+          // cause 区分同 kind 的两种成因：nudge 侧按它选封闭问法——「必经的一步总
+          // 被跳」问的是删步/改 optional，「被绕开成常态」问的是重画路径，共用一句
+          // 问法会答非所问（CodeRabbit #458 F3）。
+          cause: "skipped",
           stepId: step.id,
           title: step.title,
           because: `必经步骤被跳过 ${c.skipped} 次`,
@@ -181,6 +185,7 @@ export function suggestRetirements(pipeline, { runs = [], now = Date.now(), obse
     if ((c.detoured || 0) >= RETIRE_AFTER_DETOURS) {
       out.push({
         kind: "rework-path",
+        cause: "detoured",
         stepId: step.id,
         title: step.title,
         because: `被绕开 ${c.detoured} 次`,
