@@ -122,6 +122,20 @@ export const STR = {
     zh: (rule) => `- 规则：${rule}`,
     en: (rule) => `- Rule: ${rule}`
   },
+  // 人格定义页（beta）：人格段行（renderUserSettings 拼装，双闸门开时渲染）。
+  // 设计稿⑥：人格段在 profile/rules 之前——特化指令后出、通用底座压轴，rules 恒最硬。
+  personaNameLine: {
+    zh: (name) => `- 你的人格名字：${name}`,
+    en: (name) => `- Your persona name: ${name}`
+  },
+  personaPersonalityLine: {
+    zh: (text) => `- 人格性格设定：${text}`,
+    en: (text) => `- Persona personality: ${text}`
+  },
+  personaReplyStyleLine: {
+    zh: (text) => `- 回复要求：${text}`,
+    en: (text) => `- Reply style: ${text}`
+  },
 
   // --- summarize.js：蒸馏转录标签（进入 LLM 上下文） --------------------------
   transcriptUser: { zh: (t) => `用户：${t}`, en: (t) => `User: ${t}` },
@@ -221,6 +235,116 @@ export const STR = {
   commandSubmitFailed: {
     zh: (name) => `指令 ${name} 提交失败，详见日志`,
     en: (name) => `Failed to submit command ${name}; see logs`
+  },
+
+  // --- pipeline-command.js：/mo-run 的开窗命令 -----------------------------------
+  // 回执是这个功能唯一的对外窗口（面板侧还没做），所以每一条都要说清「发生了什么、
+  // 为什么」——尤其失败时不许含糊成「完成」。
+  moRunDescription: {
+    zh: "M.O. 记账：显式开一次执行窗口，之后跑过的命令才可能被记下来",
+    en: "M.O. ledger: explicitly open an execution window; only commands run inside it can be recorded"
+  },
+  moRunInputHint: {
+    zh: "start <工作流 id> | stop | confirm <做了的步骤> | status",
+    en: "start <pipeline id> | stop | confirm <steps that ran> | status"
+  },
+  moRunUsage: {
+    zh: "用法：/mo-run start <工作流 id> → 走一遍 → /mo-run stop → /mo-run confirm <做了的步骤 id>\n\n停止时会给出一份待确认清单（含本次观察到的业务动作）；**确认之后才写账**。\n确认写法：`/mo-run confirm P6 V2` 表示这两步做了；`V2:-` 表示没做（记 skipped），`V2:?` 表示不确定（不写）。\n未提到的步骤什么都不写——「没确认」不等于「没发生」。\n\n它不会自己判断「你是不是在走某条流程」，也不会自己判断「哪几步走了」：这两件事都会猜错。",
+    en: "Usage: /mo-run start <pipeline id> → walk through it → /mo-run stop → /mo-run confirm <step ids that ran>\n\nStop gives you a checklist (with the business actions observed); **the ledger is only written after you confirm**.\nConfirm syntax: `/mo-run confirm P6 V2` means both ran; `V2:-` means not done (recorded as skipped), `V2:?` means unsure (not written).\nSteps you do not mention are written as nothing — unconfirmed is not the same as not-happened.\n\nIt never guesses whether you are walking a workflow, nor which steps ran: both guesses would be wrong."
+  },
+  moRunStart: {
+    zh: {
+      ok: (id, steps) => `已开窗：${id}（${steps} 步）。走完用 /mo-run stop 结账——它会给你一份待确认清单，**确认之后才写账**。`,
+      alreadyOpen: (id) => `这个会话已经开着窗口了：${id}。先用 /mo-run stop 结账，再开新的。`,
+      notFound: (ids) => `找不到这条工作流。可用：${ids}`,
+      noneAvailable: "（当前项目里没有读到任何工作流）",
+      unreadable: (detail) => `工作流读不出来：${detail}`,
+      noProject: "拿不到这个会话的工作目录，无法定位工作流。",
+      noSession: "拿不到会话身份，无法记账。",
+      failed: (reason) => `开窗失败：${reason}`
+    },
+    en: {
+      ok: (id, steps) => `Window opened: ${id} (${steps} steps). When done, run /mo-run stop — it gives you a checklist, and **the ledger is only written after you confirm**.`,
+      alreadyOpen: (id) => `This session already has an open window: ${id}. Run /mo-run stop first.`,
+      notFound: (ids) => `No such workflow. Available: ${ids}`,
+      noneAvailable: "(no workflow found in this project)",
+      unreadable: (detail) => `Workflow unreadable: ${detail}`,
+      noProject: "Cannot determine this session's working directory, so the workflow cannot be located.",
+      noSession: "No session identity available; nothing can be recorded.",
+      failed: (reason) => `Failed to open window: ${reason}`
+    }
+  },
+  moRunStop: {
+    zh: {
+      ok: (id, steps) => `已结账并落盘：${id}，记下 ${steps} 步。`,
+      awaiting: (id, steps) => `已结账：${id}（${steps} 步）。**还没有写账**——请确认哪几步真的走了：`,
+      confirmHow: (sample) =>
+        `\n用 /mo-run confirm ${sample} 列出「做了」的步骤；要标「没做」就写 ${String(sample).split(" ")[0]}:-\n未提到的步骤什么都不写（「没确认」不等于「没发生」）。`,
+      notCommands: (n) => `${n} 次调用不是命令执行器（读文件、检索这类），与工作流步骤无关。`,
+      truncated: "⚠️ 事件缓冲到上限被截断，这次记账可能不完整。",
+      noWindow: "这个会话没有开着窗口，没什么可结账的。",
+      activities: (n) => `本次观察到 ${n} 种业务动作（只留动作与旗标，位置参数略去）：`,
+      shellNoise: (n) => `另有 ${n} 段是 shell 语法（赋值、管道、输出），不是工作流的一步。`,
+      writeFailed: (detail) => `写盘失败：${detail}`,
+      failed: (reason) => `结账失败：${reason}`
+    },
+    en: {
+      ok: (id, steps) => `Closed and persisted: ${id}, ${steps} step(s) recorded.`,
+      awaiting: (id, steps) => `Closed: ${id} (${steps} steps). **Nothing persisted yet** — confirm which steps really ran:`,
+      confirmHow: (sample) =>
+        `\nUse /mo-run confirm ${sample} to list the steps that ran; mark one as not-done with ${String(sample).split(" ")[0]}:-\nSteps you do not mention are written as nothing (unconfirmed is not the same as not-happened).`,
+      notCommands: (n) => `${n} call(s) were not command executors (file reads, searches) and are irrelevant to workflow steps.`,
+      truncated: "⚠️ Event buffer hit its cap and was truncated; this record may be incomplete.",
+      noWindow: "No window is open for this session, so there is nothing to close.",
+      activities: (n) => `${n} kind(s) of business action observed this pass (actions and flags only; positional arguments omitted):`,
+      shellNoise: (n) => `Another ${n} segment(s) were shell syntax (assignments, pipes, output), not steps of a workflow.`,
+      writeFailed: (detail) => `Failed to write: ${detail}`,
+      failed: (reason) => `Failed to close: ${reason}`
+    }
+  },
+  moRunConfirm: {
+    zh: {
+      ok: (id, steps) => `已记入账本：${id}，${steps} 步。`,
+      notDone: (list) => `记为「这次没做」（skipped）：${list}`,
+      unsure: (list) => `你说不确定，没有写进账：${list}`,
+      unanswered: (list) => `没提到的步骤没有写进账：${list}`,
+      nothingToConfirm: "没有待确认的清单。先 /mo-run start <工作流 id>，走一遍，再 /mo-run stop。",
+      mismatch: (n, rows) => `⚠️ 有 ${n} 步你说做了、但声明的命令这次一次都没出现（是声明该改、还是本来不必敲？由你判）：\n${rows}`,
+      obsSaved: (file) => `本次观察已旁挂：${file}`,      noAnswers: (notDone, unsure, unanswered) =>
+        `一条都没确认，**没有落盘**。你说「没做」的 ${notDone} 步、不确定的 ${unsure} 步、没提到的 ${unanswered} 步。\n确认「做了」的步骤才会写账：/mo-run confirm <步骤 id>`,
+      badValue: (stepId, value) => `${stepId} 的回答「${value}」不合法。只认「做了」（或不写标记）/「没做」写作 -/「不确定」写作 ?`,
+      unknownStep: (stepId) => `没有这一步：${stepId}`,
+      writeFailed: (detail) => `写盘失败：${detail}`,
+      failed: (reason) => `确认失败：${reason}`
+    },
+    en: {
+      ok: (id, steps) => `Recorded: ${id}, ${steps} step(s).`,
+      notDone: (list) => `Marked as not done this pass (skipped): ${list}`,
+      unsure: (list) => `You were unsure; not written to the ledger: ${list}`,
+      unanswered: (list) => `Steps you did not mention were not written to the ledger: ${list}`,
+      nothingToConfirm: "Nothing to confirm. Run /mo-run start <pipeline id>, walk through it, then /mo-run stop.",
+      mismatch: (n, rows) => `⚠️ ${n} step(s) you marked done never showed their declared command this pass (stale declaration, or simply not needed? your call):\n${rows}`,
+      obsSaved: (file) => `Observations side-written to: ${file}`,      noAnswers: (notDone, unsure, unanswered) =>
+        `Nothing was confirmed; **nothing was persisted**. Not-done: ${notDone}, unsure: ${unsure}, unmentioned: ${unanswered}.\nOnly steps confirmed as done are recorded: /mo-run confirm <step id>`,
+      badValue: (stepId, value) => `Answer "${value}" for ${stepId} is invalid. Use done (no marker) / - for not-done / ? for unsure.`,
+      unknownStep: (stepId) => `No such step: ${stepId}`,
+      writeFailed: (detail) => `Failed to write: ${detail}`,
+      failed: (reason) => `Failed to confirm: ${reason}`
+    }
+  },
+  moRunStatus: {
+    zh: {
+      closed: "当前没有开着的执行窗口。用 /mo-run start <工作流 id> 开一个。",
+      awaiting: (id, steps) => `等你在确认：${id}（${steps} 步）。用 /mo-run confirm <做了的步骤 id> 写账。`,
+      open: (s, recorded) => `窗口开着：${s.pipelineId}\n开始于 ${s.startedAt}\n已缓冲 ${s.bufferedEvents} 条事件，识别出 ${recorded} 步${s.truncated ? "（缓冲已截断）" : ""}\n认不出 ${s.unattributed}，待确认 ${s.ambiguous}`,
+      none: "（还没有）"
+    },
+    en: {
+      closed: "No execution window is open. Open one with /mo-run start <pipeline id>.",
+      awaiting: (id, steps) => `Waiting for your confirmation: ${id} (${steps} steps). Write the ledger with /mo-run confirm <step ids that ran>.`,
+      open: (s, recorded) => `Window open: ${s.pipelineId}\nStarted ${s.startedAt}\n${s.bufferedEvents} event(s) buffered, ${recorded} step(s) recognized${s.truncated ? " (buffer truncated)" : ""}\nUnattributed ${s.unattributed}, ambiguous ${s.ambiguous}`,
+      none: "(none yet)"
+    }
   },
 
   // --- mirror.js：镜像文件标签（渲染随实例语言；解析两种语言都认） ----------------

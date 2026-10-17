@@ -1,5 +1,6 @@
 import { URL } from "node:url";
 import { isAbsolute } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { FEATURE_FLAG_SPEC } from "./settings.js";
 import { TYPES } from "./store.js";
@@ -12,7 +13,8 @@ import { describeLocalRuntime, publicRuntimeStatus } from "./runtime/loader.js";
 import { hostModulesDir, provisionRuntime } from "./runtime/provision.js";
 import { classify, fetchLatestVersion, PACKAGE_VERSION } from "./version-check.js";
 import { parseReclaimQuery, parseReclaimJson, readReclaimFields, reclaimReply, RECLAIM_UNAVAILABLE } from "./reclaim-http.js";
-import { readPipelineDoc } from "./pipeline.js";
+import { readPipelineDoc, loadPipelines, projectPipelineDir } from "./pipeline.js";
+import { loadRunsById, runsDir, RUNS_SUFFIX } from "./pipeline-runs.js";
 import { readCandidateDoc } from "./candidates.js";
 
 // headers：少数端点（/export 附件下载）需要追加 Content-Disposition 等响应头。
@@ -366,6 +368,43 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           });
         }
         sendJson(res, 200, { profile: settings.getProfile() });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  // --- agent persona（人格定义页，beta） -------------------------------------
+  // 形状照抄 /profile 路由（设计稿②）：写方法走 requireAuth + readBody + parseBody。
+  // v1.2 多卡：GET 回全量 { default, byAgent }；PUT 双形——单对象形（旧面板）只更新
+  // default 且 byAgent 保留（合并语义，settings.setPersona 内判形状），多卡形全量
+  // 替换。坏体守卫：jsonOk=false 时保值回显，不清空库内现值。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/persona",
+    handler(req, res) {
+      try {
+        if (req.method === "PUT" || req.method === "POST") {
+          if (!requireAuth(req, res, apiToken)) return;
+          return readBody(req).then((text) => {
+            // parseBody 对坏 JSON 回 {}（容错不抛），所以这里的守卫必须把
+            // 「坏体解析成的 {}」与「真的传了 {persona:{}}」区分开：文本解析
+            // 失败的体不该把人格清空。jsonOk=false 时保持库内现值原样回显。
+            let body;
+            let jsonOk = true;
+            try {
+              body = JSON.parse(text || "{}");
+            } catch {
+              body = {};
+              jsonOk = false;
+            }
+            if (jsonOk && body && typeof body === "object") {
+              settings.setPersona(body.persona && typeof body.persona === "object" ? body.persona : body);
+            }
+            sendJson(res, 200, { persona: settings.getPersona() });
+          });
+        }
+        sendJson(res, 200, { persona: settings.getPersona() });
       } catch {
         sendJson(res, 500, { error: "internal" });
       }
@@ -1647,6 +1686,9 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   // 只读端点，读的是**项目里**的 `<项目>/.mneme/pipelines/*.json`（文件头在
   // src/pipeline.js），项目层优先、插件包里那份降级成全局层；投影成
   // mneme.pipeline/v1 交给面板与 agent——两边读同一份，画面只是它的投影。
+  // 运行账（`<id>.runs.jsonl`，文件头在 src/pipeline-runs.js）也在这里读：**没有账，
+  // 读侧算不出任何状态**（`tallyRuns` 拿空数组时全体节点恒为 candidate），所以喂不喂
+  // runs 决定的是「面板上有没有一句实话」，不是多一个可选装饰。
   // 刻意不做旗标闸门：旗标管的是**客户端座位**（关=一个座位都不注册），不是数据面；
   // 多一个只读端点不会让任何人看见它，而给它加闸门只会让「为什么面板打不开」多一种成因。
   register({
@@ -1665,7 +1707,54 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           sendJson(res, 400, { error: "project-not-absolute", detail: project });
           return;
         }
-        sendJson(res, 200, readPipelineDoc({ projectRoot: project, id }));
+
+        // 只读**账本目录**来定「哪些 id 有账」：最新一条 run 可能属于一条刚被删掉或
+        // 还没写完的 .json，这时工作流目录里问不到它的 id，而账本还在盘上。
+        let runsResult = { runsById: {}, errors: [], statesById: {} };
+        if (project !== null) {
+          const where = runsDir(project);
+          const ids = existsSync(where)
+            ? readdirSync(where)
+                .filter((f) => f.endsWith(RUNS_SUFFIX))
+                .sort()
+                .map((f) => f.slice(0, -RUNS_SUFFIX.length))
+            : [];
+          if (ids.length) {
+            // step id 闸门：账本里出现「图上没有的 step id」时，credit 会落在一个没有节点的
+            // 地方——**记了、数得出来、面板上永远看不见**，症状与「从没跑过」同形。
+            // 这里把每条工作流的步骤表读出来当白名单，让那种行变成看得见的噪音。
+            let stepIdsById = null;
+            try {
+              stepIdsById = Object.create(null);
+              for (const p of loadPipelines(projectPipelineDir(project), { scope: "project" })) {
+                stepIdsById[p.id] = p.steps.map((s) => s.id);
+              }
+            } catch {
+              // 项目层有坏 .json 时 readPipelineDoc 会把它记进 `unreadable`；这里不重复报，
+              // 也绝不因此让整个面板打不开——闸门退化成「没有白名单」，账本照读。
+              stepIdsById = null;
+            }
+            runsResult = loadRunsById(project, ids, { expectedStepIdsById: stepIdsById });
+          }
+        }
+        const { runsById, errors: runsErrors, statesById } = runsResult;
+
+        const doc = readPipelineDoc({ projectRoot: project, id, runsById });
+
+        // 「读不出来」与「还没跑过」在节点状态上完全同形（都是全体 candidate），而且
+        // **不带 id 的默认视图没有兜底**——那正是用户打开时看到的那一屏。所以状态按
+        // pipeline 逐条显式带出去（清单行的 `runsState` 与选中那条的顶层 `runsState`），
+        // 客户端不必靠顶层噪音猜。也刻意**不再**对坏账本回 500：那会让客户端把它当成
+        // 「离线」，还顺手吞掉本来读得出来的那张图（账本坏了，工作流本身没坏）。
+        // 没有项目根时账本层无从读起，如实给 null，而不是谎称「没有账本文件」。
+        const chosenId = doc.pipeline ? doc.pipeline.id : null;
+        const runsState = project !== null && chosenId !== null ? statesById[chosenId] || "absent" : null;
+        const available =
+          project === null
+            ? doc.available
+            : doc.available.map((row) => ({ ...row, runsState: statesById[row.id] || "absent" }));
+
+        sendJson(res, 200, { ...doc, available, runsState, runsErrors });
       } catch (error) {
         // 工作流是人手写的 JSON，报错本身就是给人看的：说清哪一条、坏在哪，
         // 而不是回一句 internal 让人去翻日志。

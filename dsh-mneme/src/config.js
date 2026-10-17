@@ -874,7 +874,27 @@ export const Config = z.object({
   // 它只是只读视图、不引入任何重型后台路径，轻量档用户显式勾选仍然赢（预设
   // 该关的是重型能力，不该替用户关掉一个纯 UI 入口）。
   // 也走 feature_flags（FEATURE_FLAG_BOOLEANS 白名单），面板可启停=线上回滚开关。
-  actionPipelineEnabled: z.boolean().default(false)
+  actionPipelineEnabled: z.boolean().default(false),
+
+  // M.O. 执行记账（v0.9.0 第二批）：`/mo-run` 显式开一次执行窗口，窗口内的命令执行
+  // 才可能被记成一条 run。与上面那个键**分开**：上面管「看图的座位」，这个管
+  // 「往账本里写」——看图和写账是两件事，混成一个键会让「只想看图」的人不知不觉
+  // 获得写入能力。
+  //
+  // 默认关（beta 必须 opt-in）。它挂在热路径上（每个会话事件都过一次监听），
+  // 所以轻量档要关掉：`LIGHT_MODE_OFF` 里有它。
+  actionRunEnabled: z.boolean().default(false),
+
+  // --- 人格定义页（beta）---------------------------------------------------
+  // 注入器渲染人格段的顶层总闸（双闸门的 config 半边；user_settings "persona"
+  // 键内的 persona.enabled 是 per-agent 半边，两闸同真才渲染）。API 的 effective
+  // 必须含这个键——schema 里没有它 effective 就静默少键，面板开关形同虚设
+  // （#254 漏登记 NESTED_FLAG_PATHS 是同一个坑，计数锁 test/api.test.js 钉住）。
+  // 默认关：beta 功能必须 opt-in，老用户行为逐字节不变。不进 LIGHT_MODE_OFF——
+  // 人格段是用户自写的一小段轻量常驻文本，不引入任何重型后台路径，轻量档用户
+  // 显式勾选仍然赢（同 actionPipelineEnabled 的定性）。
+  // 也走 feature_flags（FEATURE_FLAG_BOOLEANS 白名单），面板可启停=线上回滚开关。
+  personaEnabled: z.boolean().default(false)
 });
 
 // Fields forced to false by the light-mode preset. Everything not listed here
@@ -921,7 +941,11 @@ const LIGHT_MODE_OFF = [
   // #399：轻量档不开蒸馏原文留存——它是一份对话原文副本（磁盘 + 暴露面），
   // 与轻量档「小模型 / 小上下文 / 少留痕」的取向相反。默认关，这里只是
   // 轻量预设再确认一次；用户显式勾选仍然赢（合并顺序同 continuityRescueEnabled）。
-  "distillRecords.enabled"
+  "distillRecords.enabled",
+  // M.O. 执行记账：它挂在**热路径**上（每个会话事件都过一次监听）。轻量档的取向
+  // 是「小模型 / 小上下文 / 少常驻路径」，这与一个每事件都过一遍的监听器相冲突。
+  // 默认关，这里只是轻量预设再确认一次；用户显式勾选仍然赢（合并顺序同上面两条）。
+  "actionRunEnabled"
 ];
 
 /**

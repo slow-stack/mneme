@@ -1989,3 +1989,69 @@ test("panel copy and icons must not silently vanish (missing dict lines, unregis
   const noIcon = [...iconNames].filter((n) => !registered.has(n)).sort();
   assert.deepEqual(noIcon, [], `Icon 静默 return null 的未注册名：${noIcon.join(", ")}`);
 });
+
+// 人格定义页（beta）面板面回归：形状沿用 A4 的「分组 + i18n 双语 occurrences ≥ 2
+// + 关键接线」断言风格（只做源码断言，不挂 React 渲染环境）。
+test("persona page ships settings card, master switch and i18n (beta v1)", () => {
+  // 开关进 FEATURE_GROUPS 的 enhance 组（行为开关非座位闸门）
+  assert.ok(
+    /group\.enhance", items: \[(?:[^\]]|\n)*"personaEnabled"\]/.test(clientSource),
+    "FEATURE_GROUPS group.enhance must carry personaEnabled"
+  );
+  // i18n 键中英双语齐备（occurrences ≥ 2 模式；label + .hint 两路由字典锁统一覆盖）
+  for (const key of [
+    "memory.features.personaEnabled",
+    "memory.features.personaEnabled.hint",
+    "memory.settings.persona",
+    "memory.settings.personaHint",
+    "memory.settings.personaName",
+    "memory.settings.personaPersonality",
+    "memory.settings.personaReplyStyle",
+    "memory.settings.personaSave",
+    "memory.settings.personaSaved",
+    "memory.settings.personaEnabledToggle",
+    "memory.settings.personaView",
+    "memory.settings.personaViewHint",
+    "memory.settings.personaViewEmpty"
+  ]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  // 设置卡接线：保存走 PUT /persona、卡内开关改 enabled 即保存、只读卡渲染
+  assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/persona"'), "persona card must talk to /persona");
+  assert.ok(clientSource.includes("method: \"PUT\""), "persona save must PUT");
+  assert.ok(clientSource.includes("t(\"memory.settings.personaView\")"), "read-only injected-view card must exist");
+  // 双闸门提示：hint 文案必须说明「总闸与卡内开关同时打开才生效」
+  assert.ok(
+    clientSource.includes("memory.features.personaEnabled.hint"),
+    "the master-switch hint must document the two-gate semantics"
+  );
+});
+
+// v1.2 多卡回归：卡列表 CRUD 可见、字段标签渲染为可见元素（v1.1 反馈：
+// aria-label 看不见）、保存失败必须冒可见错误（v1 静默 catch 吞 404 教训）。
+test("persona card is multi-card with visible field labels and save-failure error", () => {
+  for (const key of [
+    "memory.settings.personaDefaultCard",
+    "memory.settings.personaAdd",
+    "memory.settings.personaAddPlaceholder",
+    "memory.settings.personaEditingDefault",
+    "memory.settings.personaEditingFor",
+    "memory.settings.personaDeleteCard",
+    "memory.settings.personaSaveFailed",
+    "memory.settings.personaEnabledOn",
+    "memory.settings.personaEnabledOff"
+  ]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  // 多卡接线：加卡/删卡/切换/保存全链函数存在
+  for (const fn of ["addPersonaCard", "removePersonaCard", "savePersonaCards", "setPersonaEditing"]) {
+    assert.ok(clientSource.includes(fn), `multi-card wiring must include ${fn}`);
+  }
+  // 可见字段标签：三个字段名的 t() 调用出现在 label 元素（mneme-featnumlabel）
+  const labelBlock = clientSource.match(/mneme-featnumlabel[^]{0,120}personaName/);
+  assert.ok(labelBlock, "persona field labels must be visible (featnumlabel class), not aria-only");
+  // 保存失败提示：personaError 状态有渲染路径（非仅 setState）
+  assert.ok(clientSource.includes("t(\"memory.settings.personaSaveFailed\")"), "save failure must render an error line");
+});

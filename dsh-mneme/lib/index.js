@@ -22,6 +22,8 @@ import { createStandaloneApi } from "./api-standalone.js";
 import { createMaintenance } from "./maintenance.js";
 import { createSettings } from "./settings.js";
 import { createCommandManager } from "./commands.js";
+import { createExecutionRecorder } from "./pipeline-runner.js";
+import { registerMoRunCommand } from "./pipeline-command.js";
 import { createVectorIndex } from "./vector-index.js";
 // semantic(embedder/reranker/boot 回填)纯搬移至 src/semantic.js(PR2):宿主与
 // daemon(dsh-mneme-serve,#363)共用同一套装配,原文件保留 barrel 出口。
@@ -388,9 +390,38 @@ export const apply = (ctx, config) => {
   // Custom commands: register persisted commands into the DSH command registry
   // on boot; add/remove re-register live through the API.
   let commands = null;
+  // M.O. 执行记账器：默认 null（旗标关），开了才装配。
+  let recorder = null;
   if (ctx.commands) {
     commands = createCommandManager({ ctx, settings, logger: ctx.logger, language: langOf(cfg) });
     commands.sync();
+  }
+
+  // M.O. 执行记账（v0.9.0 第二批）：`/mo-run` 显式开一次执行窗口，窗口内的命令执行
+  // 才可能被记成一条 run。挂的是 `session/event`——本仓已有三处消费者（continuity /
+  // summarize / api），不是新引入的宿主依赖。
+  //
+  // 为什么必须显式开窗：工作流的 trigger 是人话，拿它去猜「用户这句话是不是要开始走
+  // 某条流程」只能猜错，而猜错会把一条从没跑过的流程记成跑过。所以窗口边界由人的
+  // 显式动作划，**没开窗时一个字都不记**。
+  //
+  // 门控：默认关（actionRunEnabled），并且它挂热路径，轻量档也关。
+  if (cfg.actionRunEnabled === true) {
+    recorder = createExecutionRecorder({ ctx, logger: ctx.logger });
+    const disposeMoRun = registerMoRunCommand({
+      ctx,
+      recorder,
+      enabled: true,
+      language: () => langOf(cfg)
+    });
+    if (disposeMoRun) {
+      disposers.push(disposeMoRun);
+    } else {
+      // 注册不上（宿主没有命令注册表）时别留一个只开着窗口却没人能操作的记录器。
+      recorder.dispose();
+      recorder = null;
+      ctx.logger?.warn?.("[dsh-mneme] actionRunEnabled=true 但宿主没有命令注册表，M.O. 记账未启用");
+    }
   }
 
   // Dream scheduler: automatic consolidation + summary runs, triggered by
@@ -582,6 +613,7 @@ export const apply = (ctx, config) => {
       if (typeof dispose === "function") dispose();
     }
     commands?.dispose();
+    recorder?.dispose();
     if (dream) await dream.dispose();
     if (sleep) sleep.dispose();
     store.close();

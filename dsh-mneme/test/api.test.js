@@ -682,9 +682,12 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 溯源：开关与保留期都在嵌套对象里，两个都进 NESTED_FLAG_PATHS））
   // v0.9.0 新增 actionPipelineEnabled（M.O. beta 门控；顶层扁平键，
   // 走 configFlagValue 默认分支，不需要 NESTED_FLAG_PATHS 条目）。
+  // v0.9.0 第二批新增 actionRunEnabled（M.O. 执行记账；同样顶层扁平键）。
+  // persona 页新增 personaEnabled（人格注入顶层总闸；顶层扁平键，同上）。
   // 计数锁钉的是「白名单键 ↔ config schema 成对」：schema 加了键而漏了白名单
   // （或反过来）时，effective 会静默少键/多键，面板读不到也报不出来。
-  assert.equal(Object.keys(data.effective).length, 59 + 3 + 2 + 1 + 2 + 2 + 2 + 1 + 1 + 1 + 2 + 1 + 2 + 1 + 3 + 2 + 2 + 1 + 1 + 1 + 1 + 2 + 1 + 2 + 1);
+  // 合并 #451（人格页）后的真实计数：98（本批前）+ actionRunEnabled + personaEnabled = 99
+  assert.equal(Object.keys(data.effective).length, 99);
   assert.equal(data.effective.dreamSkipInvalid, true);
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, true);
@@ -721,6 +724,11 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // v0.9.0：M.O. beta 门控默认关——客户端 GET /features 必须能读到这个键
   // （读不到就静默不注册任何座位），且默认值必须是 false（beta opt-in）。
   assert.equal(data.effective.actionPipelineEnabled, false);
+  // v0.9.0 第二批：M.O. 执行记账同样默认关，且**是独立的一个键**——看图与写账
+  // 分开，避免「只想看图」的人不知不觉获得热路径上的写入能力。
+  assert.equal(data.effective.actionRunEnabled, false);
+  // 人格页（beta）：注入总闸默认关，effective 必须能读到（同 #254 坑形防线）。
+  assert.equal(data.effective.personaEnabled, false);
   // 新增字符串 / URL / 枚举键
   assert.equal(data.effective.localEmbedModel, "Xenova/bge-small-zh-v1.5");
   assert.equal(data.effective.ollamaBaseUrl, "http://localhost:11434");

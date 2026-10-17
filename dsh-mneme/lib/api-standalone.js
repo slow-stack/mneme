@@ -323,6 +323,37 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
         return;
       }
 
+      // --- GET /persona: agent persona（人格定义页，beta；v1.2 多卡形） --------
+      if (req.method === "GET" && pathname === "/persona") {
+        sendJson(res, 200, { persona: settings?.getPersona?.() ?? { default: {}, byAgent: {} } });
+        return;
+      }
+
+      // --- PUT /persona: write default (single-object form) or full multi-card
+      // 形状判定在 setPersona 内（settings.js 双形兼容：单对象=合并 default、
+      // 多卡=全量替换）；坏 JSON 回 400（与 /memories 写路径同口径）。
+      if (req.method === "PUT" && pathname === "/persona") {
+        void readBody(req).then((text) => {
+          let body;
+          try {
+            body = JSON.parse(text || "{}");
+          } catch {
+            sendJson(res, 400, { error: "invalid-json" });
+            return;
+          }
+          const persona = body && typeof body === "object" && !Array.isArray(body) && body.persona && typeof body.persona === "object"
+            ? body.persona
+            : body;
+          try {
+            settings?.setPersona?.(persona && typeof persona === "object" ? persona : {});
+            sendJson(res, 200, { persona: settings?.getPersona?.() ?? { default: {}, byAgent: {} } });
+          } catch {
+            sendJson(res, 500, { error: "internal" });
+          }
+        });
+        return;
+      }
+
       // --- GET /rules: agent behavior rules -----------------------------------
       if (req.method === "GET" && pathname === "/rules") {
         sendJson(res, 200, { rules: settings?.getRules?.() ?? [] });

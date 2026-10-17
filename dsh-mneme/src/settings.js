@@ -31,6 +31,67 @@ function parseList(raw) {
   }
 }
 
+// persona 对象的字段白名单：写入时只挑这些键，未知字段丢弃（设计稿①：字段从简，
+// beta 收到真实反馈再加；provenance 是 v1.5 协作式人格的预留位，v1 不写管道）。
+// 读侧损坏即回空对象——同一容错口径照 parseList（坏值不抛错、面板显示为空可重写）。
+const PERSONA_FIELDS = ["name", "personality", "replyStyle", "enabled", "provenance"];
+
+function parsePersona(raw) {
+  try {
+    const value = JSON.parse(raw);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+    const out = {};
+    for (const key of PERSONA_FIELDS) {
+      if (value[key] !== undefined) out[key] = value[key];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+// 多卡模型（v1.2）：存储形为 { default: <卡>, byAgent: { <agentId>: <卡>, … } }。
+// 兼容层：v1 存的是单对象（有 PERSONA_FIELDS 键、无 default/byAgent 键），读侧
+// 判形状——单对象原样落 default 位，旧数据零迁移。byAgent 的键是 agent 身份
+// id（注入时按会话身份寻址，取不到落 default）。default 卡不可删（兜底位）。
+function parsePersonaStore(raw) {
+  try {
+    const value = JSON.parse(raw);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return { default: {}, byAgent: {} };
+    }
+    // 新形：含 default 或 byAgent 键 → 按多卡解析
+    if ("default" in value || "byAgent" in value) {
+      const byAgent = {};
+      if (value.byAgent && typeof value.byAgent === "object" && !Array.isArray(value.byAgent)) {
+        for (const [agentId, card] of Object.entries(value.byAgent)) {
+          const parsed = parsePersona(JSON.stringify(card ?? {}));
+          if (Object.keys(parsed).length) byAgent[String(agentId)] = parsed;
+        }
+      }
+      return { default: parsePersona(JSON.stringify(value.default ?? {})), byAgent };
+    }
+    // 旧形：v1 单对象 → 整体作 default（字段白名单在 parsePersona 内裁）
+    return { default: parsePersona(raw), byAgent: {} };
+  } catch {
+    return { default: {}, byAgent: {} };
+  }
+}
+
+function serializePersonaStore(store) {
+  const out = {
+    default: parsePersona(JSON.stringify(store?.default ?? {})),
+    byAgent: {}
+  };
+  if (store?.byAgent && typeof store.byAgent === "object") {
+    for (const [agentId, card] of Object.entries(store.byAgent)) {
+      const parsed = parsePersona(JSON.stringify(card ?? {}));
+      if (Object.keys(parsed).length) out.byAgent[String(agentId)] = parsed;
+    }
+  }
+  return JSON.stringify(out);
+}
+
 // --- feature flags（功能开关）白名单 -----------------------------------------
 // 面板可逐项开关的后端能力。设计约束：
 // 1. 键名与类型必须和 config.js schema 同名同型，这份白名单是唯一校验源
@@ -146,7 +207,18 @@ const FEATURE_FLAG_BOOLEANS = [
   // 决定是否注册座位（会话头图标 / 浮层 / 右栏 / 对话行卡片），服务端只负责把
   // 这个键稳定暴露出来——键若不在 effective 里，客户端静默少键、一个座位都不注册。
   // 默认关（beta、opt-in）；顶层扁平键，因此不需要 NESTED_FLAG_PATHS 条目。
-  "actionPipelineEnabled"
+  "actionPipelineEnabled",
+  // v0.9.0 第二批：M.O. 执行记账（`/mo-run` 开窗 → 窗口内命令被记成一条 run）。
+  // 与上面那个键分开：那个管「看图的座位」，这个管「往账本里写」。默认关（beta、
+  // opt-in），顶层扁平键，不需要 NESTED_FLAG_PATHS 条目。
+  "actionRunEnabled",
+  // 人格定义页（beta）：注入器渲染人格段的顶层总闸（双闸门的 config 半边；对象内
+  // 的 persona.enabled 是 per-agent 半边，存 user_settings 的 "persona" 键，见
+  // getPersona/setPersona）。默认关（beta、opt-in，老用户行为逐字节不变）；不进
+  // LIGHT_MODE_OFF——人格段是用户自写的一小段轻量常驻文本，不引入任何重型后台
+  // 路径，轻量档用户显式勾选仍然赢（同 actionPipelineEnabled 的定性）。顶层扁平
+  // 键，不需要 NESTED_FLAG_PATHS 条目。
+  "personaEnabled"
 ];
 // 整数开关的闭区间，与 config.js 里 z.natural().min().max() 对齐。
 const FEATURE_FLAG_INT_RANGES = {
@@ -401,6 +473,65 @@ export function createSettings(db) {
     setRules(rules) {
       const list = Array.isArray(rules) ? rules.filter((r) => typeof r === "string") : [];
       setSetting("rules", JSON.stringify(list));
+    },
+
+    /**
+     * Agent persona (name / personality / replyStyle + enabled gate), stored as
+     * one JSON key. v1.2 多卡：存储形 { default, byAgent }，旧 v1 单对象读作
+     * default 兼容。getPersona 返回全量多卡形（面板用）；getPersonaFor 按 agent
+     * 身份取卡（注入用），身份缺失/无卡/卡 enabled=false 均落 default。
+     */
+    getPersona() {
+      return parsePersonaStore(getSetting("persona") ?? "{}");
+    },
+    setPersona(input) {
+      // 双形兼容：单对象形 = 只更新 default、byAgent 保留（旧面板/旧调用方合并语义）；
+      // 多卡形 = 全量替换。坏体（非对象）在此不落库不抛错，保值由调用方守卫。
+      if (typeof input !== "object" || input === null || Array.isArray(input)) return;
+      if ("default" in input || "byAgent" in input) {
+        setSetting("persona", serializePersonaStore(input));
+        return;
+      }
+      const current = parsePersonaStore(getSetting("persona") ?? "{}");
+      current.default = parsePersona(JSON.stringify(input));
+      setSetting("persona", serializePersonaStore(current));
+    },
+    /** Per-agent lookup for the injector: id card → default fallback. */
+    getPersonaFor(agentId) {
+      const store = parsePersonaStore(getSetting("persona") ?? "{}");
+      const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "";
+      if (id) {
+        const card = store.byAgent[id];
+        if (card && card.enabled === true) return card;
+      }
+      return store.default;
+    },
+    /** Replace one byAgent card wholesale (panel save); default 不可经此改。 */
+    setPersonaFor(agentId, card) {
+      const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "";
+      if (!id || id === "default") return false;
+      const store = parsePersonaStore(getSetting("persona") ?? "{}");
+      const clean = parsePersona(JSON.stringify(
+        typeof card === "object" && card !== null && !Array.isArray(card) ? card : {}
+      ));
+      if (Object.keys(clean).length) store.byAgent[id] = clean;
+      else delete store.byAgent[id];
+      setSetting("persona", serializePersonaStore(store));
+      return true;
+    },
+    /** byAgent 键列表（面板卡列表用，default 不在其中）。 */
+    listPersonas() {
+      return Object.keys(parsePersonaStore(getSetting("persona") ?? "{}").byAgent);
+    },
+    /** 删一张 byAgent 卡；default 不可删（返回 false）。 */
+    removePersona(agentId) {
+      const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "";
+      if (!id || id === "default") return false;
+      const store = parsePersonaStore(getSetting("persona") ?? "{}");
+      if (!(id in store.byAgent)) return false;
+      delete store.byAgent[id];
+      setSetting("persona", serializePersonaStore(store));
+      return true;
     },
 
     /** All custom commands, sorted by name. */

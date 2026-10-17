@@ -217,6 +217,17 @@ export function validatePipeline(raw, file = "<pipeline>") {
     if (step.evidence !== undefined && !Array.isArray(step.evidence)) {
       bad(`${at}.evidence 必须是字符串数组`);
     }
+    // 断言（可断言节点）：一条一条写「这一步怎么算做完」，且要求**机器能判**。
+    // 没有它就等于判断节点——完成与否只能由人认。这不是缺失，是两类节点之一。
+    if (step.assert !== undefined) {
+      if (!Array.isArray(step.assert)) {
+        bad(`${at}.assert 必须是字符串数组`);
+      } else {
+        step.assert.forEach((entry, i) => {
+          if (!isNonEmptyString(entry)) bad(`${at}.assert[${i}] 必须是非空字符串`);
+        });
+      }
+    }
   }
 
   // 先把 id 收集齐再校验引用，否则会按声明顺序报一堆假错。
@@ -254,6 +265,9 @@ export function validatePipeline(raw, file = "<pipeline>") {
       needs: s.needs.slice(),
       why: s.why,
       evidence: Array.isArray(s.evidence) ? s.evidence.slice() : [],
+      // 缺省是空数组而不是 undefined：两类节点的区别用「有没有断言」表达，
+      // 用缺键会让下游每处都得先判在不在。
+      assert: Array.isArray(s.assert) ? s.assert.slice() : [],
       gate: s.gate === true
     }))
   };
@@ -375,10 +389,14 @@ function summarizePipeline(pipeline, runs, now) {
   const states = { candidate: 0, trusted: 0, stale: 0, refuted: 0 };
   let gates = 0;
   let contrast = 0;
+  let assertable = 0;
   for (const step of pipeline.steps) {
     states[deriveState(credit.get(step.id) || null, now)] += 1;
     if (step.gate) gates += 1;
     if (step.evidence.length) contrast += 1;
+    // 可断言节点数：与 contrast 并列的首屏指标。两者含义不同——contrast 数的是
+    // 「写了没有」（内容靠人判），assertable 数的是「机器能不能判」。
+    if (step.assert.length) assertable += 1;
   }
   return {
     id: pipeline.id,
@@ -395,6 +413,9 @@ function summarizePipeline(pipeline, runs, now) {
     gates,
     // 反事实对照覆盖率：19/19 与 6/19 是两条完全不同的工作流，清单上就该看得出来。
     contrast,
+    // 可断言节点数：机器能自动验完的有几步。「0/19」说明这条流程全靠人判——
+    // 那是实话，不是缺陷，但清单上必须看得见。
+    assertable,
     states
   };
 }
@@ -428,6 +449,11 @@ export function toPipelineV1(pipeline, { runs = [], now = Date.now(), memoryLink
       risk: step.risk,
       state: deriveState(c, now),
       credit: c ? { uses: c.uses, refuted: c.refuted, skipped: c.skipped || 0, detoured: c.detoured || 0, lastUsedAt: c.lastUsedAt } : null,
+      // 可断言节点 vs 判断节点：这是两类节点的**唯一**区分点，也是一张图里
+      // 「哪些步骤能被机器盯着」的全部依据。**必须投影成 null 而不是空数组**：
+      // 空数组会让「作者没写断言」与「写了但一条都没通过」长得一样，而这两件事
+      // 在验收时完全不同（前者是判断节点，后者是失败）。
+      assert: step.assert.length ? { checks: step.assert.slice(), count: step.assert.length } : null,
       // 反事实对照是**准入判据**的载体（「没有它这次会不会失败」），不是备注：
       // 答不出来的步骤在图上要显得比答得出来的虚。
       counterfactual: step.evidence.length
