@@ -1736,8 +1736,8 @@ window.__ModuleLoader__.load({
       // 类型分组头 sticky——长列表滚动时分组归属始终可见。
       ".mneme-entrailhead{flex:none;padding:0 12px 10px;display:flex;flex-direction:column;gap:4px;border-bottom:1px solid var(--dsw-alias-border-l1)}",
       ".mneme-entrailbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:4px 12px 12px;display:flex;flex-direction:column;gap:4px}",
-      ".mneme-enttype{position:sticky;top:0;z-index:1;background:var(--dsw-alias-bg-layer-1);display:flex;align-items:center;gap:6px;width:100%;padding:8px 8px 2px;border:none;color:var(--mneme-fg-dim);cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;line-height:16px;text-align:left;letter-spacing:.02em}",
-      ".mneme-entitem{display:flex;align-items:center;gap:8px;width:100%;padding:5px 8px;border:none;border-radius:8px;background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:13px;line-height:18px;text-align:left}",
+      ".mneme-enttype{position:sticky;top:0;z-index:1;background:var(--dsw-alias-bg-layer-1);display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:8px 8px 2px;border:none;color:var(--mneme-fg-dim);cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;line-height:16px;text-align:left;letter-spacing:.02em}",
+      ".mneme-entitem{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:5px 8px;border:none;border-radius:8px;background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:13px;line-height:18px;text-align:left}",
       ".mneme-entitem:hover{background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-entitem.mneme-active{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary)}",
       ".mneme-entname{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
@@ -2042,8 +2042,14 @@ window.__ModuleLoader__.load({
       ".mneme-barcol:hover .mneme-bar{opacity:.8}",
       ".mneme-barlabels{display:flex;gap:8px;padding:6px 2px 0}",
       ".mneme-barlabels span{flex:1;min-width:0;text-align:center;font-size:10.5px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums}",
-      ".mneme-heatgrid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,12px);gap:3px;margin-top:12px}",
-      ".mneme-heatcell{width:12px;height:12px;border-radius:3px;background:var(--dsw-alias-interactive-bg-hover)}",
+      // GitHub 贡献图式紧凑网格（复验第三轮「间距太大」）：11px 格 + 2px 缝；
+      // heatrows 是左侧星期标签列（一/三/五），heatmonths 是顶部月份标签行
+      // （列主序网格下月份行须与格子列对齐，所以同用 auto-flow:column）。
+      ".mneme-heatgrid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,11px);gap:2px;margin-top:12px}",
+      ".mneme-heatcell{width:11px;height:11px;border-radius:2px;background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-heatwrap{display:flex;gap:4px}",
+      ".mneme-heatrows{display:grid;grid-template-rows:repeat(7,11px);gap:2px;margin-top:12px;font-size:9.5px;line-height:11px;color:var(--mneme-fg-dim);text-align:right}",
+      ".mneme-heatmonths{display:grid;grid-auto-flow:column;grid-auto-columns:11px;gap:2px;margin-top:0;font-size:9.5px;line-height:14px;color:var(--mneme-fg-dim)}",
       // 类名编号=视觉档位（l1 最浅…l4 最深），变量编号=business 占比降序，故交叉引用。
       ".mneme-heatcell.l1{background:var(--mneme-heat-4)}",
       ".mneme-heatcell.l2{background:var(--mneme-heat-3)}",
@@ -4634,7 +4640,18 @@ window.__ModuleLoader__.load({
       if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
       return String(n);
     };
-    const heatLevel = (n) => (n > 2500000 ? 4 : n > 1500000 ? 3 : n > 750000 ? 2 : n > 0 ? 1 : 0);
+    // 热力分档：固定阈值（75万/150万/250万）在低用量库里整片落在 l1，档位失真
+    // （复验第三轮「颜色不怎么明显」）。改按 56 天窗口内的非零日做三分位切四档
+    // ——GitHub 贡献图同思路，档次随库的实际用量自适应拉开；全零/无数据退化
+    // 为全 0 档（不留空档位）。边界是三个分位值（q 只返回 3 个）：n>p75 → l4、
+    // >p50 → l3、>p25 → l2、其余非零 → l1，四档都有 populated。
+    const heatLevel = (n, q) => (n <= 0 ? 0 : n > q[2] ? 4 : n > q[1] ? 3 : n > q[0] ? 2 : 1);
+    const heatQuartiles = (days) => {
+      const pos = days.map((d) => d.total).filter((v) => v > 0).sort((a, b) => a - b);
+      if (!pos.length) return [0, 0, 0];
+      const pick = (p) => pos[Math.min(pos.length - 1, Math.floor(p * pos.length))];
+      return [pick(0.25), pick(0.5), pick(0.75)];
+    };
 
     function TokenFlowSection({ t }) {
       const [stats, setStats] = useState(null);
@@ -4744,6 +4761,33 @@ window.__ModuleLoader__.load({
           heatCells.push({ key, total: byDayMap.get(key) ?? 0 });
         }
       }
+      // 分档阈值取自本窗口真实分布（见 heatQuartiles 注释），空窗口退化全 0 档。
+      const heatQ = heatQuartiles(heatCells);
+      // 月份标签：GitHub 同款——按周列贴，列首日期属于哪个月，那列就标那个
+      // 月；连续同月的列合并成一段（gridColumn: from / span）。月不在列首
+      // 开始时其首列仍标上一月（列首归属优先），这是贡献图的通行近似。
+      const monthLabels = (() => {
+        if (!heatCells.length) return [];
+        const spans = [];
+        heatCells.forEach((c, i) => {
+          if (i % 7 !== 0) return; // 只看列首
+          const ym = c.key.slice(0, 7);
+          const col = Math.floor(i / 7) + 1;
+          const label = `${Number(ym.slice(5, 7))}月`;
+          const lastSpan = spans[spans.length - 1];
+          if (lastSpan && lastSpan.key === ym) { lastSpan.last = col; return; }
+          spans.push({ key: ym, label, from: col, last: col });
+        });
+        return spans.map((m) => ({ ...m, span: m.last - m.from + 1 }));
+      })();
+      // 行标签：行 r 的星期 = (首列星期 + r) % 7（getUTCDay 周日=0）。一/三/五
+      // 三行有字（GitHub 同款），其余留空。
+      const heatRowLabels = (() => {
+        const startDow = heatCells.length ? new Date(`${heatCells[0].key}T00:00:00Z`).getUTCDay() : 0;
+        const rows = new Array(7).fill("");
+        for (const d of [1, 3, 5]) rows[(d - startDow + 7) % 7] = ["一", "三", "五"][[1, 3, 5].indexOf(d)];
+        return rows;
+      })();
       const kpi = (title, num, cap) =>
         h(StatusCard, { t, title, loading, error: statsError, num, cap });
       const segClass = (s) =>
@@ -4837,12 +4881,22 @@ window.__ModuleLoader__.load({
             days.map((d) => h("span", { key: d.day }, d.day.slice(5)))
           ),
           h("h3", { className: "mneme-xcolhead" }, t("memory.status.token.heat")),
-          h("div", { className: "mneme-heatgrid" },
-            heatCells.map((c) => h("div", {
-              key: c.key,
-              className: heatLevel(c.total) ? `mneme-heatcell l${heatLevel(c.total)}` : "mneme-heatcell",
-              title: `${c.key} · ${c.total.toLocaleString()}`
-            }))
+          // 月份行与格子列同用列主序网格对齐：每月占的列数 = 该月在这个
+          // 56 天窗口里的列数（按列的起始日期算），标签只在该列起点画一次。
+          h("div", { className: "mneme-heatmonths" },
+            monthLabels.map((m) => h("span", { key: m.key, style: { gridColumn: `${m.from} / span ${m.span}` } }, m.label))
+          ),
+          h("div", { className: "mneme-heatwrap" },
+            h("div", { className: "mneme-heatrows", "aria-hidden": "true" },
+              heatRowLabels.map((d, i) => h("span", { key: i }, d))
+            ),
+            h("div", { className: "mneme-heatgrid" },
+              heatCells.map((c) => h("div", {
+                key: c.key,
+                className: heatLevel(c.total, heatQ) ? `mneme-heatcell l${heatLevel(c.total, heatQ)}` : "mneme-heatcell",
+                title: `${c.key} · ${c.total.toLocaleString()}`
+              }))
+            )
           ),
           h("div", { className: "mneme-heatlegend" },
             h("span", null, t("memory.status.token.heatLess")),
