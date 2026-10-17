@@ -137,7 +137,7 @@ export function createRouteRegistrar(webServer, apiToken, disposers) {
  * 收到一个明确的 400，而不是连接被掐断）；解析空串得到 {}，调用方的字段校验
  * 会把它变成 invalid-* 400，与「body 不合法」同一条路径。
  */
-function readBody(req) {
+function readBody(req, res) {
   return new Promise((resolve) => {
     let body = "";
     let bytes = 0;
@@ -145,10 +145,15 @@ function readBody(req) {
     req.on("data", (chunk) => {
       if (overflow) return;
       bytes += chunk.length;
-      if (bytes > MAX_REQUEST_BODY_BYTES) { overflow = true; body = ""; return; }
+      if (bytes > MAX_REQUEST_BODY_BYTES) {
+        overflow = true;
+        body = "";
+        sendJson(res, 413, { error: "payload-too-large", limit: MAX_REQUEST_BODY_BYTES });
+        return;
+      }
       body += chunk;
     });
-    req.on("end", () => resolve(body));
+    req.on("end", () => resolve(overflow ? null : body));
     req.on("error", () => resolve(""));
   });
 }
@@ -430,7 +435,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     handler(req, res) {
       try {
         if (req.method === "PUT" || req.method === "POST") {
-          return readBody(req).then((text) => {
+          return readBody(req, res).then((text) => {
+            if (text === null) return;
             const body = parseBody(text);
             settings.setProfile(typeof body.profile === "string" ? body.profile : "");
             sendJson(res, 200, { profile: settings.getProfile() });
@@ -455,7 +461,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     handler(req, res) {
       try {
         if (req.method === "PUT" || req.method === "POST") {
-          return readBody(req).then((text) => {
+          return readBody(req, res).then((text) => {
+            if (text === null) return;
             // parseBody 对坏 JSON 回 {}（容错不抛），所以这里的守卫必须把
             // 「坏体解析成的 {}」与「真的传了 {persona:{}}」区分开：文本解析
             // 失败的体不该把人格清空。jsonOk=false 时保持库内现值原样回显。
@@ -612,7 +619,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     handler(req, res) {
       try {
         if (req.method !== "POST") return sendJson(res, 404, { error: "not-found" });
-        return readBody(req).then(async (text) => {
+        return readBody(req, res).then(async (text) => {
+          if (text === null) return;
           const body = parseBody(text);
           let provider = typeof body.provider === "string" ? body.provider.trim() : "";
           let model = typeof body.model === "string" ? body.model.trim() : "";
@@ -650,7 +658,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        return readBody(req).then((text) => {
+        return readBody(req, res).then((text) => {
+          if (text === null) return;
           const body = parseBody(text);
           const id = typeof body.id === "string" ? body.id.trim() : "";
           if (!id) {
@@ -687,7 +696,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        return readBody(req).then((text) => {
+        return readBody(req, res).then((text) => {
+          if (text === null) return;
           const body = parseBody(text);
           const id = typeof body.id === "string" ? body.id.trim() : "";
           if (!id) {
@@ -793,7 +803,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        return readBody(req).then((text) => {
+        return readBody(req, res).then((text) => {
+          if (text === null) return;
           const body = parseBody(text);
           if (!TYPES.has(body.type)) {
             sendJson(res, 400, { error: "invalid-type" });
@@ -894,7 +905,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        return readBody(req).then((text) => {
+        return readBody(req, res).then((text) => {
+          if (text === null) return;
           const parsed = parseReclaimJson(text);
           if (!parsed.ok) {
             sendJson(res, 400, { error: parsed.error });
@@ -933,7 +945,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     handler(req, res) {
       try {
         if (req.method === "PUT" || req.method === "POST") {
-          return readBody(req).then((text) => {
+          return readBody(req, res).then((text) => {
+            if (text === null) return;
             const body = parseBody(text);
             settings.setRules(Array.isArray(body.rules) ? body.rules : []);
             sendJson(res, 200, { rules: settings.getRules() });
@@ -955,7 +968,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
       try {
         // Secret-bearing endpoint: fully protected when apiToken is set.
         if (req.method === "PUT" || req.method === "POST") {
-          return readBody(req).then((text) => {
+          return readBody(req, res).then((text) => {
+            if (text === null) return;
             const body = parseBody(text);
             // An empty apiKey, or one that already looks masked (round-trips
             // through maskApiKey unchanged), means "keep the existing key".
@@ -1087,7 +1101,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           sendJson(res, 405, { error: "method-not-allowed" });
           return;
         }
-        return readBody(req).then(async (text) => {
+        return readBody(req, res).then(async (text) => {
+          if (text === null) return;
           const body = parseBody(text);
           const runtimeDir = config?.runtimeDir ?? "";
           // 三档来源依次尝试（收编本机 node_modules → 本地 .tgz 目录 → registry）。
@@ -1393,7 +1408,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        return readBody(req).then((text) => {
+        return readBody(req, res).then((text) => {
+          if (text === null) return;
           const body = parseBody(text);
           if (typeof body.type !== "string" || !Object.hasOwn(TYPE_FILE, body.type)) {
             sendJson(res, 400, { error: "invalid-type" });
@@ -1500,7 +1516,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        return readBody(req).then((text) => {
+        return readBody(req, res).then((text) => {
+          if (text === null) return;
           let body = {};
           try { body = JSON.parse(text || "{}"); } catch { /* 坏 JSON → 走缺参分支 */ }
           const id = typeof body.id === "string" ? body.id.trim() : "";
@@ -1583,7 +1600,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     handler(req, res) {
       try {
         if (req.method === "PUT" || req.method === "POST") {
-          return readBody(req).then((text) => {
+          return readBody(req, res).then((text) => {
+            if (text === null) return;
             const body = parseBody(text);
             if (body.mode !== "light" && body.mode !== "standard") {
               sendJson(res, 400, { error: "invalid-mode" });
@@ -1608,7 +1626,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     handler(req, res) {
       try {
         if (req.method === "PUT" || req.method === "POST") {
-          return readBody(req).then((text) => {
+          return readBody(req, res).then((text) => {
+            if (text === null) return;
             const body = parseBody(text);
             const patch = {};
             if (body.enabled !== undefined) patch.enabled = body.enabled === true;
@@ -1663,7 +1682,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     handler(req, res) {
       try {
         if (req.method === "PUT" || req.method === "POST") {
-          return readBody(req).then((text) => {
+          return readBody(req, res).then((text) => {
+            if (text === null) return;
             const body = parseBody(text);
             if (typeof body !== "object" || body === null || Array.isArray(body) || Object.keys(body).length === 0) {
               sendJson(res, 400, { error: "invalid-patch" });
@@ -1740,7 +1760,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     handler(req, res) {
       try {
         if (req.method === "POST") {
-          return readBody(req).then((text) => {
+          return readBody(req, res).then((text) => {
+            if (text === null) return;
             const body = parseBody(text);
             try {
               const command = commands.add({

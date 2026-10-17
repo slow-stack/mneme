@@ -122,11 +122,12 @@ We follow the [CVSS v3.1](https://www.first.org/cvss/v3.1/specification-document
 
 ## Security Design Principles
 
-### 1. Local-First, Zero-Network
+### 1. Local-First (not zero-network)
 
-- All embeddings, reranking, and memory consolidation run locally
-- Memory text **never** leaves the device
-- No telemetry, no analytics, no remote logging
+- Storage, keyword/BM25 search, mirroring and the injection pipeline are entirely local
+- Embeddings and consolidation **run locally only when configured to**: `embedProvider` defaults to `openai`, which POSTs memory text to the endpoint you configure; `autoDream` / `autoSummarize` send text through the host LLM. Set `embedProvider: local` (plus the local runtime) if text must not leave the machine
+- Other outbound calls: the npm registry version check, and local model downloads when the runtime is provisioned
+- No telemetry, no analytics, no remote logging of memory content
 
 ### 2. Fail-Safe by Default
 

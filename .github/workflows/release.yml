@@ -29,11 +29,11 @@ on:
         type: boolean
         default: false
 
+# 权限按 job 发放：只有 publish 需要 contents: write（建 Release 前的 tag 校验）
+# 与 id-token: write（npm provenance 走 OIDC）。verify/test/notify 只读代码，
+# 工作流级给写权限等于把它们全变成可被依赖链利用的提权面（CWE-250）。
 permissions:
-  contents: write
-  # npm provenance 用 OIDC 而不是长期 token 签名：publish 步骤要能取 id-token，
-  # 否则 --provenance 会直接报错（2026-10 审计的供应链项）。
-  id-token: write
+  contents: read
 
 jobs:
   # ── 1. 版本号管理：tag ↔ package.json ↔ CHANGELOG 三方一致 ──────────────
@@ -109,6 +109,11 @@ jobs:
     needs: [verify, test]
     if: github.event_name == 'push' || inputs.dry_run != true
     runs-on: ubuntu-latest
+    # npm provenance 用 OIDC 而不是长期 token 签名：--provenance 需要 id-token。
+    # 挂在 job 上而不是 workflow 上，别的 job 拿不到这个能力。
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -159,6 +164,9 @@ jobs:
     needs: [verify, test, publish]
     if: github.event_name == 'push' || inputs.dry_run != true
     runs-on: ubuntu-latest
+    # 建/改 GitHub Release 要写权限，只有这个 job 需要。
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 

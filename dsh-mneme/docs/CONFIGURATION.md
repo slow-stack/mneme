@@ -293,6 +293,7 @@
 `autoReindexOnBoot` · `hybridInject` · `injectGuidanceEnabled` · `searchSemanticDedup` ·
 `selectiveInjectEnabled` · `bm25SearchEnabled` · `entityRecallEnabled` ·
 `graphAnchoringEnabled` · `graphWeightEnabled` · `graphInjectHint` · `graphPassiveConfirm` ·
+`actionRunEnabled` ·
 `dreamNarrativeEnabled` · `documentMemoryEnabled` · `heatEnabled` · `continuityRescueEnabled` ·
 `preInjectGate.enabled`（#380） · `distillRecords.enabled`（#399）
 

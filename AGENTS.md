@@ -37,7 +37,7 @@ dsh-mneme 是 DSH 宿主的记忆插件（蒸馏 / 注入 / 检索 / 巩固 / sc
 | 存储生命周期 | `src/maintenance.js` | 无损回收维护入口（#275 第一批；`dsh-mneme reclaim`，默认 dry-run，VACUUM 单独指定） |
 | 回收 HTTP 口径 | `src/reclaim-http.js` | 面板路由与 Bearer 数据面共用的唯一一份解析与答复（#411）；两张皮只许剩鉴权与路径不同 |
 | 服务层 | `src/service.js` | saveWithDedupe（去重键 type+title+scope 三元组）、fuseRecall 检索融合（keyword/vector/bm25/entity）、注入候选、镜像同步、冲突队列 |
-| 写入准入 | `src/write-admission.js` | 写入前的会话写入预算与同话题冷却（#254）；第 1 级确定性判据（空白 / 噪声 / 密钥 PII）在 `writeAdmission.enforce` 打开时**会真拒绝**（`ADMISSION_DECISION_DENY`），默认只计量，测量点落 `llm_audit_logs` |
+| 写入准入 | `src/write-admission.js` | 写入前的会话写入预算与同话题冷却（#254）。第 1 级确定性判据（空白 / 噪声 / 密钥 PII）只在三个条件同时成立时才跑：有 `sessionKey`、`llmAudit.enabled` 未被显式关、`writeAdmission.enabled === true`；都成立且**命中**时，再由 `writeAdmission.enforce` 决定是否真拒绝（`ADMISSION_DECISION_DENY`）。只开 `enforce` 不跑判据、也不拦写入。默认只计量，测量点落 `llm_audit_logs` |
 | 注入 | `src/inject.js` | 注入位构造、内容截断、跨轮轮换 |
 | 蒸馏 | `src/summarize.js` + `src/quality-filter.js` | 会话 → 记忆；质量打分与处置（归档/降权） |
 | 巩固与睡眠 | `src/dream.js` + `src/dream/{decisions,clustering,sleep}.js` | LLM 巩固决策、dream_runs 审计回执 |

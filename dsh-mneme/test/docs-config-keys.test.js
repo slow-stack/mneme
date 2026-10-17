@@ -24,12 +24,33 @@ function leafKeys(obj, prefix) {
   return out;
 }
 
+// 父路径回退是给「整表说明」用的例外，白名单写死在这里而不是「任何父路径都
+// 放行」——否则往 writeAdmission 里加个子键，只要文档提到 writeAdmission 就过，
+// 测试原本要防的漏键会静默复发（评审指出的漏洞）。新增例外必须显式加一行。
+const PARENT_ONLY_OK = new Set(["heatTypeDecay"]);
+
 test("CONFIGURATION.md 覆盖 schema 的每一个键", () => {
   const keys = leafKeys(Config({}), "");
   assert.ok(keys.length > 150, "键枚举失败会静默返回 0 项，先锁下限");
-  const missing = keys.filter((k) => !doc.includes(k.leaf) && !(k.parent && doc.includes(k.parent)));
+  const missing = keys.filter((k) => {
+    // 完整路径优先（"writeAdmission.enabled"），其次才是显式白名单里的整表父路径。
+    if (doc.includes(k.path)) return false;
+    if (k.parent && PARENT_ONLY_OK.has(k.parent) && doc.includes(k.parent)) return false;
+    // 表里写的是裸键名也认（绝大多数顶层键就是这么写的）。
+    return !doc.includes(k.leaf);
+  });
   assert.deepEqual(missing.map((m) => m.path), []);
 });
+
+// lightMode 清单是有边界的一节：整份文档 grep 会让「删掉清单里的某一行」照样
+// 通过（图谱表里还留着同名键），测试要盯的漏项就藏在那个缝里。
+function lightSection(text) {
+  const start = text.indexOf("lightMode 强制关闭清单");
+  assert.ok(start >= 0, "文档里应有「lightMode 强制关闭清单」一节");
+  const rest = text.slice(start);
+  const end = rest.indexOf("预设只是默认值");
+  return end > 0 ? rest.slice(0, end) : rest;
+}
 
 test("LIGHT_MODE_OFF 的每一项都写进了文档的轻量档清单", () => {
   // LIGHT_MODE_OFF 没有导出，只能解析源码文本；先锁解析结果的长度，防止
@@ -38,6 +59,7 @@ test("LIGHT_MODE_OFF 的每一项都写进了文档的轻量档清单", () => {
   assert.ok(m, "LIGHT_MODE_OFF 应从 src/config.js 中解析出来");
   const names = [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
   assert.ok(names.length >= 20, "解析到 " + names.length + " 项，少于预期的 21 项");
-  const missing = names.filter((n) => !doc.includes(n));
+  const section = lightSection(doc);
+  const missing = names.filter((n) => !section.includes(n));
   assert.deepEqual(missing, []);
 });

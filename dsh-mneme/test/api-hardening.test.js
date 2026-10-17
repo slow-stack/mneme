@@ -113,19 +113,42 @@ test("search 的 topK 被上界钳制", async () => {
   service.searchMemories = original;
 });
 
-test("超大请求体不会让 readBody 无界累积", async () => {
-  // 4 MiB 上限：超限后停止累积、继续排空，handler 拿到空 body → 走既有字段
-  // 校验的 400，而不是把内存交给 Content-Length 决定。
-  const { routes } = setup();
-  const route = handler(routes, "/api/dsh-mneme/create");
+function oversizedPost(path, method = "POST") {
   const huge = Buffer.from("{\"content\":\"" + "x".repeat(5 * 1024 * 1024) + "\"}");
   const r = new EventEmitter();
-  r.url = "/api/dsh-mneme/create";
-  r.method = "POST";
+  r.url = path;
+  r.method = method;
   r.headers = {};
-  const res = new FakeRes();
-  const done = route.handler(r, res);
   process.nextTick(() => { r.emit("data", huge); r.emit("end"); });
-  await done;
-  assert.notEqual(res.statusCode, 200, "超限 body 不得被当成合法写入");
+  return r;
+}
+
+test("超大请求体回 413，且不落库", async () => {
+  // 4 MiB 上限。断言必须是**明确的 413**：旧写法只断言 notEqual(200)，而 /create
+  // 成功时回 201——一个真被写进去的超限请求也能让那条断言通过（评审指出的空断言）。
+  const { routes, service } = setup();
+  const before = service.all().length;
+  const res = new FakeRes();
+  await handler(routes, "/api/dsh-mneme/create").handler(oversizedPost("/api/dsh-mneme/create"), res);
+  assert.equal(res.statusCode, 413);
+  assert.equal(JSON.parse(res.body).error, "payload-too-large");
+  assert.equal(service.all().length, before, "超限请求不得留下任何记忆");
+});
+
+test("超大请求体不会清空画像／规则", async () => {
+  // 这是最要命的一条：readBody 旧实现超限回空串 → parseBody 得到 {} →
+  // setProfile("") / setRules([]) 把既有内容静默清掉。413 必须在碰 store 之前。
+  const { routes, settings } = setup("secret-token");
+  settings.setProfile("原有画像");
+  settings.setRules(["原有规则"]);
+
+  for (const [path, method] of [["/api/dsh-mneme/profile", "PUT"], ["/api/dsh-mneme/rules", "PUT"]]) {
+    const res = new FakeRes();
+    const req = oversizedPost(path, method);
+    req.headers = { authorization: "Bearer secret-token" };
+    await handler(routes, path).handler(req, res);
+    assert.equal(res.statusCode, 413, path + " 超限应回 413");
+  }
+  assert.equal(settings.getProfile(), "原有画像", "超限请求不得清空画像");
+  assert.deepEqual(settings.getRules(), ["原有规则"], "超限请求不得清空规则");
 });

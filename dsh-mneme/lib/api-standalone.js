@@ -98,7 +98,7 @@ function isAuthorized(req, apiToken) {
  * 超过 MAX_REQUEST_BODY_BYTES 后停止累积、继续排空连接：解析空串得到 {}，
  * 调用方的字段校验会把它变成 invalid-* 400，内存不随 Content-Length 增长。
  */
-function readBody(req) {
+function readBody(req, res) {
   return new Promise((resolve) => {
     let body = "";
     let bytes = 0;
@@ -106,10 +106,15 @@ function readBody(req) {
     req.on("data", (chunk) => {
       if (overflow) return;
       bytes += chunk.length;
-      if (bytes > MAX_REQUEST_BODY_BYTES) { overflow = true; body = ""; return; }
+      if (bytes > MAX_REQUEST_BODY_BYTES) {
+        overflow = true;
+        body = "";
+        sendJson(res, 413, { error: "payload-too-large", limit: MAX_REQUEST_BODY_BYTES });
+        return;
+      }
       body += chunk;
     });
-    req.on("end", () => resolve(body));
+    req.on("end", () => resolve(overflow ? null : body));
     req.on("error", () => resolve(""));
   });
 }
@@ -351,7 +356,8 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
       // 形状判定在 setPersona 内（settings.js 双形兼容：单对象=合并 default、
       // 多卡=全量替换）；坏 JSON 回 400（与 /memories 写路径同口径）。
       if (req.method === "PUT" && pathname === "/persona") {
-        void readBody(req).then((text) => {
+        void readBody(req, res).then((text) => {
+          if (text === null) return;
           let body;
           try {
             body = JSON.parse(text || "{}");
@@ -434,7 +440,8 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
         // 整个异步回调套 try/catch：service 抛错不能变成未处理拒绝（Node 默认
         // 策略下会终止宿主进程）或悬着不回的请求（外层同步 try 捕不到这里）。
         if (req.method === "PUT") {
-          void readBody(req).then(async (text) => {
+          void readBody(req, res).then(async (text) => {
+            if (text === null) return;
             try {
               await handlePutBody(res, service, logger, id, text);
             } catch (error) {
@@ -450,7 +457,8 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
 
       // --- POST /memories: save with title-dedupe (safer than raw save) ------
       if (req.method === "POST" && pathname === "/memories") {
-        void readBody(req).then((text) => {
+        void readBody(req, res).then((text) => {
+          if (text === null) return;
           let body;
           try {
             body = JSON.parse(text || "{}");
@@ -538,7 +546,8 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
       // /api/dsh-mneme/maintenance/reclaim 共用 src/reclaim-http.js，两张皮只有鉴权
       // 与路径不同。这条曾经是整段复制的，于是面板侧修好之后这边还停在旧形态（#411）。
       if (req.method === "POST" && pathname === "/maintenance/reclaim") {
-        void readBody(req).then((text) => {
+        void readBody(req, res).then((text) => {
+          if (text === null) return;
           const parsed = parseReclaimJson(text);
           if (!parsed.ok) {
             sendJson(res, 400, { error: parsed.error });
@@ -571,7 +580,8 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
       // 显式收 dir（插件没有工作区根目录概念，不猜路径）；确定性解析零 LLM；
       // 幂等骑 saveWithDedupe 的 (type, title, scope) 去重 + _overwrite 刷新。
       if (req.method === "POST" && pathname === "/bootstrap") {
-        void readBody(req).then((text) => {
+        void readBody(req, res).then((text) => {
+          if (text === null) return;
           let body;
           try {
             body = JSON.parse(text || "{}");
