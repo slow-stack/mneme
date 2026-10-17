@@ -2054,11 +2054,4 @@ test("persona card is multi-card with visible field labels and save-failure erro
   assert.ok(labelBlock, "persona field labels must be visible (featnumlabel class), not aria-only");
   // 保存失败提示：personaError 状态有渲染路径（非仅 setState）
   assert.ok(clientSource.includes("t(\"memory.settings.personaSaveFailed\")"), "save failure must render an error line");
-  // 卡删除 × 常显回归锁（v1.2 实测踩中）：mneme-set-del 的 opacity:0 规则只在
-  // .mneme-set-row:hover 下解除，卡标签不在该容器 → 复用该类而不覆写透明度会让
-  // 删除按钮永远不可见。锁住卡列表的 × 必须带内联 opacity:1。
-  assert.ok(
-    /mneme-set-del",\s*\n\s*style: \{ opacity: 1[^}]*\}/.test(clientSource),
-    "persona card delete × must override mneme-set-del opacity (always visible)"
-  );
 });

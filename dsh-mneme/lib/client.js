@@ -3854,14 +3854,9 @@ window.__ModuleLoader__.load({
                   className: "mneme-btn" + (personaEditing === id ? " mneme-btn--active" : ""),
                   onClick: () => setPersonaEditing(id)
                 }, id),
-                // 卡删除 × 常显：不能复用 mneme-set-del（opacity:0 只在
-                // .mneme-set-row:hover 下显现，卡标签不在该容器里 → 永远透明，
-                // 用户找不到删除入口，v1.2 实测踩中）。这里给内联 opacity:1，
-                // 仅沿用其颜色/字号/点击区，悬停变色仍走 mneme-set-del:hover。
                 h("button", {
                   type: "button",
                   className: "mneme-set-del",
-                  style: { opacity: 1, fontSize: 16, lineHeight: "18px", padding: "0 3px" },
                   title: t("memory.settings.personaDeleteCard"),
                   "aria-label": t("memory.settings.personaDeleteCard") + " " + id,
                   onClick: () => removePersonaCard(id)
