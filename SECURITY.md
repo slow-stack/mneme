@@ -156,6 +156,7 @@ The token is a lock on the **write** surface, not a wall around the whole API.
 - **Gated routes (when a token is configured)**: all writes (`/create`, `/update`, `/delete`, `/import`, `/mode`, `/features`, `/commands`, `/conflicts/resolve`, `PUT /profile`, `PUT /rules`, `/vector-config`, `/vector-reindex`, `/runtime/provision`, `/maintenance/reclaim`, `/test-model`, `/health`) and the sensitive reads `/export` and `/external-api`.
 - **The standalone data plane** (`127.0.0.1:8790`) is the opposite shape: every route except `GET /health` requires its own Bearer token. Pointing `externalApiHost` at a non-loopback address therefore turns it into a plaintext, token-only HTTP surface — an explicit operator decision.
 - **Consequence**: if you expose the plugin beyond loopback (reverse proxy, non-loopback bind), set `apiToken` *and* check that the plain reads above are acceptable to expose — they are not covered by it.
+- **How this list stays true**: every route declares its own `policy` (`open` / `token` / `token-write`) at registration, and `createRouteRegistrar` throws when a route has none or reuses a path. A new route that forgets its classification **fails to boot** instead of silently opening — the matrix above is derived from code, not from anyone's memory.
 
 ---
 

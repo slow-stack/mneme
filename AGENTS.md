@@ -65,7 +65,8 @@ dsh-mneme 是 DSH 宿主的记忆插件（蒸馏 / 注入 / 检索 / 巩固 / sc
 6. 提交署名可归属与 AI 内容核验义务见 [CONTRIBUTING](CONTRIBUTING.md)（硬性要求）；
 7. **发布/打包只在 `dsh-mneme/` 包目录内执行**——根目录历史上发出过坏包（0.6.9、0.7.0–0.7.10），此条为防复发红线；
 8. **注释写「为什么」，不写「是什么」**：非常规实现、防御段、行为开关的动机（issue 编号、消融数据、基准数字）必须落注释，代码含义靠命名与测试名表达；测试同样适用——锁形状/锁字面量的用例要注释写清它在防哪类回归（例：`test/recall-evals.test.js` 的 signals 形状锁）。
-9. **面板配色走 `--mneme-*` 语义色层**：宿主 `label-tertiary` / `label-dimmed` 是分隔线/占位符用的低对比层，**不是正文色**，直接拿来当 `color` 会在浅色或深色主题下掉到 AA 以下（#178 实测 70 条）。正文与图形一律用 `.mneme-x,.mneme-overlay,.mneme-triggerwrap,.mneme-topentry` 上定义的语义变量；新增或改动颜色后 `test/contrast.test.js` 会自动重算全部 `color` 声明的对比度（解析不出的颜色记失败，不静默跳过），并锁死「引用的 `--dsw-*` 必须真实存在」「四个渲染根一个不少」「图形色按 3:1」「虚线边不得靠 `opacity` 区分」。
+9. **新路由必须声明 `policy`**（`open` / `token` / `token-write`）：`src/api.js` 的 `createRouteRegistrar` 对漏声明与重复路径直接抛错，插件起不来。归完类同步 `SECURITY.md` 的安全模型表——那张表是代码的投影，不是愿望清单；
+10. **面板配色走 `--mneme-*` 语义色层**：宿主 `label-tertiary` / `label-dimmed` 是分隔线/占位符用的低对比层，**不是正文色**，直接拿来当 `color` 会在浅色或深色主题下掉到 AA 以下（#178 实测 70 条）。正文与图形一律用 `.mneme-x,.mneme-overlay,.mneme-triggerwrap,.mneme-topentry` 上定义的语义变量；新增或改动颜色后 `test/contrast.test.js` 会自动重算全部 `color` 声明的对比度（解析不出的颜色记失败，不静默跳过），并锁死「引用的 `--dsw-*` 必须真实存在」「四个渲染根一个不少」「图形色按 3:1」「虚线边不得靠 `opacity` 区分」。
 
 ## 闸门清单
 

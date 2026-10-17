@@ -84,13 +84,50 @@ function isAuthorized(req, apiToken) {
 }
 
 /**
- * Reject a request with 401 when auth is enabled and the token is missing or
- * wrong. Returns true when the request may proceed.
+ * 路由鉴权策略（2026-10 审计的结构性修法）。三条：
+ *   open        永不鉴权——「公开读面」，必须写进 SECURITY.md 的安全模型表
+ *   token       配置了 apiToken 就整条要带（写路由 + 敏感读）
+ *   token-write 只有非 GET/HEAD 才要 token（面板要读、只有写才有副作用）
+ *
+ * 少声明不是「默认开放」：register 直接抛错，插件起不来。这是本方案的要点——
+ * 「新增路由忘了加鉴权」从运行期静默漏洞变成装配期硬失败，不依赖谁记得写、也
+ * 不依赖测试有没有覆盖到（/export 就是这么漏的，见 2026-10 审计 P0）。
  */
-function requireAuth(req, res, apiToken) {
-  if (isAuthorized(req, apiToken)) return true;
-  sendJson(res, 401, { error: "unauthorized" });
-  return false;
+export const ROUTE_POLICIES = Object.freeze(["open", "token", "token-write"]);
+
+/** True when this request must present the apiToken under the route's policy. */
+function needsToken(req, policy, apiToken) {
+  if (policy === "open") return false;
+  const method = String(req.method || "GET").toUpperCase();
+  if (policy === "token-write" && (method === "GET" || method === "HEAD")) return false;
+  return !isAuthorized(req, apiToken);
+}
+
+/**
+ * 唯一的登记入口：校验 policy、拒绝重复路径、把 handler 包上鉴权。
+ * 返回的 count() 供 createApi 汇报真实路由数（此前的字面量 36 已经和现实脱节）。
+ */
+export function createRouteRegistrar(webServer, apiToken, disposers) {
+  const seen = new Set();
+  const register = (route) => {
+    if (!ROUTE_POLICIES.includes(route.policy)) {
+      throw new Error(
+        `[dsh-mneme] 路由 ${route.path} 必须声明 policy（${ROUTE_POLICIES.join(" / ")}），` +
+        `实际是 ${JSON.stringify(route.policy)}。先想清楚它属于哪一类，再同步 SECURITY.md 的安全模型表。`
+      );
+    }
+    const key = `${route.kind}:${route.path}`;
+    if (seen.has(key)) throw new Error(`[dsh-mneme] 路由 ${key} 被重复登记`);
+    seen.add(key);
+    const inner = route.handler;
+    const handler = (req, res) => {
+      if (!needsToken(req, route.policy, apiToken)) return inner(req, res);
+      sendJson(res, 401, { error: "unauthorized" });
+      return undefined;
+    };
+    disposers.push(webServer.register({ ...route, handler }));
+  };
+  return { register, count: () => seen.size };
 }
 
 /**
@@ -214,14 +251,14 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     service.setEmbedder(embedder);
   }
 
-  const register = (route) => {
-    disposers.push(webServer.register(route));
-  };
+  // 所有路由都经这一处登记：policy 必填、鉴权在这里统一判定（见 createRouteRegistrar）。
+  const { register, count: countRoutes } = createRouteRegistrar(webServer, apiToken, disposers);
 
   // /api/dsh-mneme prefix fallback → 404 JSON for unknown sub-paths
   register({
     kind: "prefix",
     path: "/api/dsh-mneme",
+    policy: "open",
     handler(req, res) {
       sendJson(res, 404, { error: "not-found" });
     }
@@ -232,6 +269,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/info",
+    policy: "open",
     handler(req, res) {
       sendJson(res, 200, { version: PACKAGE_VERSION });
     }
@@ -244,6 +282,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/version-check",
+    policy: "open",
     handler(req, res) {
       if (req.method !== "GET") {
         sendJson(res, 404, { error: "not-found" });
@@ -263,6 +302,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/list",
+    policy: "open",
     handler(req, res) {
       try {
         const url = new URL(req.url, "http://localhost");
@@ -320,6 +360,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/recall-stats",
+    policy: "open",
     handler(req, res) {
       if (req.method !== "GET") {
         sendJson(res, 404, { error: "not-found" });
@@ -339,6 +380,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/search",
+    policy: "open",
     handler(req, res) {
       try {
         const url = new URL(req.url, "http://localhost");
@@ -384,10 +426,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/profile",
+    policy: "token-write",
     handler(req, res) {
       try {
         if (req.method === "PUT" || req.method === "POST") {
-          if (!requireAuth(req, res, apiToken)) return;
           return readBody(req).then((text) => {
             const body = parseBody(text);
             settings.setProfile(typeof body.profile === "string" ? body.profile : "");
@@ -409,10 +451,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/persona",
+    policy: "token-write",
     handler(req, res) {
       try {
         if (req.method === "PUT" || req.method === "POST") {
-          if (!requireAuth(req, res, apiToken)) return;
           return readBody(req).then((text) => {
             // parseBody 对坏 JSON 回 {}（容错不抛），所以这里的守卫必须把
             // 「坏体解析成的 {}」与「真的传了 {persona:{}}」区分开：文本解析
@@ -537,6 +579,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/llm-providers",
+    policy: "open",
     handler(req, res) {
       try {
         const llm = ctx.llm;
@@ -565,10 +608,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/test-model",
+    policy: "token",
     handler(req, res) {
       try {
         if (req.method !== "POST") return sendJson(res, 404, { error: "not-found" });
-        if (!requireAuth(req, res, apiToken)) return;
         return readBody(req).then(async (text) => {
           const body = parseBody(text);
           let provider = typeof body.provider === "string" ? body.provider.trim() : "";
@@ -600,13 +643,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/delete",
+    policy: "token",
     handler(req, res) {
       try {
         if (req.method !== "POST") {
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        if (!requireAuth(req, res, apiToken)) return;
         return readBody(req).then((text) => {
           const body = parseBody(text);
           const id = typeof body.id === "string" ? body.id.trim() : "";
@@ -637,13 +680,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/update",
+    policy: "token",
     handler(req, res) {
       try {
         if (req.method !== "POST") {
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        if (!requireAuth(req, res, apiToken)) return;
         return readBody(req).then((text) => {
           const body = parseBody(text);
           const id = typeof body.id === "string" ? body.id.trim() : "";
@@ -743,13 +786,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/create",
+    policy: "token",
     handler(req, res) {
       try {
         if (req.method !== "POST") {
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        if (!requireAuth(req, res, apiToken)) return;
         return readBody(req).then((text) => {
           const body = parseBody(text);
           if (!TYPES.has(body.type)) {
@@ -825,10 +868,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/maintenance/reclaim",
+    policy: "token",
     handler(req, res) {
       try {
         if (req.method === "GET") {
-          if (!requireAuth(req, res, apiToken)) return;
           if (!maintenance) {
             sendJson(res, 503, { error: RECLAIM_UNAVAILABLE });
             return;
@@ -851,7 +894,6 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        if (!requireAuth(req, res, apiToken)) return;
         return readBody(req).then((text) => {
           const parsed = parseReclaimJson(text);
           if (!parsed.ok) {
@@ -887,10 +929,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/rules",
+    policy: "token-write",
     handler(req, res) {
       try {
         if (req.method === "PUT" || req.method === "POST") {
-          if (!requireAuth(req, res, apiToken)) return;
           return readBody(req).then((text) => {
             const body = parseBody(text);
             settings.setRules(Array.isArray(body.rules) ? body.rules : []);
@@ -908,10 +950,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/vector-config",
+    policy: "token",
     handler(req, res) {
       try {
         // Secret-bearing endpoint: fully protected when apiToken is set.
-        if (!requireAuth(req, res, apiToken)) return;
         if (req.method === "PUT" || req.method === "POST") {
           return readBody(req).then((text) => {
             const body = parseBody(text);
@@ -945,9 +987,9 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/vector-reindex",
+    policy: "token",
     handler(req, res) {
       try {
-        if (!requireAuth(req, res, apiToken)) return;
         if (!embedder) {
           sendJson(res, 200, { indexed: 0, skipped: 0, error: "vector-unavailable" });
           return;
@@ -977,6 +1019,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/semantic",
+    policy: "open",
     handler(req, res) {
       try {
         const stats = semantic?.vectorIndex?.getStats?.() ?? null;
@@ -1037,13 +1080,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/runtime/provision",
+    policy: "token",
     handler(req, res) {
       try {
         if (req.method !== "POST") {
           sendJson(res, 405, { error: "method-not-allowed" });
           return;
         }
-        if (!requireAuth(req, res, apiToken)) return;
         return readBody(req).then(async (text) => {
           const body = parseBody(text);
           const runtimeDir = config?.runtimeDir ?? "";
@@ -1074,6 +1117,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/semantic/llm-audit",
+    policy: "open",
     handler(req, res) {
       try {
         const url = new URL(req.url, "http://localhost");
@@ -1096,6 +1140,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/semantic/llm-audit/stats",
+    policy: "open",
     handler(req, res) {
       try {
         const url = new URL(req.url, "http://localhost");
@@ -1119,6 +1164,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/semantic/graph/ego",
+    policy: "open",
     handler(req, res) {
       try {
         const url = new URL(req.url, "http://localhost");
@@ -1196,6 +1242,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/semantic/graph/entity-attrs",
+    policy: "open",
     handler(req, res) {
       try {
         const url = new URL(req.url, "http://localhost");
@@ -1234,6 +1281,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/entities",
+    policy: "open",
     handler(req, res) {
       try {
         const url = new URL(req.url, "http://localhost");
@@ -1253,6 +1301,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/memories/entities",
+    policy: "open",
     handler(req, res) {
       try {
         const url = new URL(req.url, "http://localhost");
@@ -1283,12 +1332,12 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/export",
+    policy: "token",
     handler(req, res) {
       try {
         // 导出是「全库 + 含 archived/forgotten 的全字段」的一次读，敏感度不低于
         // 写面：它必须与写路由同门。历史漏项——这条路由长期没有鉴权分支，配了
         // apiToken 也照旧对任何调用方开放（2026-10 审计 P0）。
-        if (!requireAuth(req, res, apiToken)) return;
         const url = new URL(req.url, "http://localhost");
         const format = url.searchParams.get("format") ?? "json";
         if (format !== "json" && format !== "markdown") {
@@ -1337,13 +1386,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/import",
+    policy: "token",
     handler(req, res) {
       try {
         if (req.method !== "POST") {
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        if (!requireAuth(req, res, apiToken)) return;
         return readBody(req).then((text) => {
           const body = parseBody(text);
           if (typeof body.type !== "string" || !Object.hasOwn(TYPE_FILE, body.type)) {
@@ -1378,6 +1427,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/dream-status",
+    policy: "open",
     handler(req, res) {
       try {
         const runs = (service.listDreamRuns?.({ limit: 5 }) ?? []).map((r) => ({
@@ -1422,13 +1472,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/conflicts",
+    policy: "token",
     handler(req, res) {
       try {
         if (req.method !== "GET") {
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        if (!requireAuth(req, res, apiToken)) return;
         const url = new URL(req.url, "http://localhost");
         const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 50) || 50));
         const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
@@ -1443,13 +1493,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/conflicts/resolve",
+    policy: "token",
     handler(req, res) {
       try {
         if (req.method !== "POST") {
           sendJson(res, 404, { error: "not-found" });
           return;
         }
-        if (!requireAuth(req, res, apiToken)) return;
         return readBody(req).then((text) => {
           let body = {};
           try { body = JSON.parse(text || "{}"); } catch { /* 坏 JSON → 走缺参分支 */ }
@@ -1480,8 +1530,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/health",
+    policy: "token",
     handler(req, res) {
-      if (!requireAuth(req, res, apiToken)) return;
       let state = null;
       try {
         state = service.getMirrorHealth?.() ?? null;
@@ -1529,10 +1579,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/mode",
+    policy: "token-write",
     handler(req, res) {
       try {
         if (req.method === "PUT" || req.method === "POST") {
-          if (!requireAuth(req, res, apiToken)) return;
           return readBody(req).then((text) => {
             const body = parseBody(text);
             if (body.mode !== "light" && body.mode !== "standard") {
@@ -1554,10 +1604,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/external-api",
+    policy: "token",
     handler(req, res) {
       try {
         if (req.method === "PUT" || req.method === "POST") {
-          if (!requireAuth(req, res, apiToken)) return;
           return readBody(req).then((text) => {
             const body = parseBody(text);
             const patch = {};
@@ -1584,7 +1634,6 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         // GET 回的是能解锁整个 8790 数据面的 Bearer，敏感度等同写面：必须与
         // PUT 同门。未配置 apiToken 时 isAuthorized 恒真（既有的 fail-open 模型，
         // 见 SECURITY.md「安全模型」一节），所以默认配置下面板仍旧即装即用。
-        if (!requireAuth(req, res, apiToken)) return;
         // GET: hand back a token — the standalone server generates its own on
         // first enabled boot, but the panel displays it before that, so
         // materialize and persist one here. 只有通过上面那道门才会走到这里，
@@ -1610,10 +1659,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/features",
+    policy: "token-write",
     handler(req, res) {
       try {
         if (req.method === "PUT" || req.method === "POST") {
-          if (!requireAuth(req, res, apiToken)) return;
           return readBody(req).then((text) => {
             const body = parseBody(text);
             if (typeof body !== "object" || body === null || Array.isArray(body) || Object.keys(body).length === 0) {
@@ -1644,6 +1693,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/inject-status",
+    policy: "open",
     handler(req, res) {
       try {
         if (req.method !== "GET") {
@@ -1668,6 +1718,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/inject-preview",
+    policy: "open",
     handler(req, res) {
       try {
         if (req.method !== "GET") {
@@ -1685,10 +1736,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/commands",
+    policy: "token-write",
     handler(req, res) {
       try {
         if (req.method === "POST") {
-          if (!requireAuth(req, res, apiToken)) return;
           return readBody(req).then((text) => {
             const body = parseBody(text);
             try {
@@ -1704,7 +1755,6 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           });
         }
         if (req.method === "DELETE") {
-          if (!requireAuth(req, res, apiToken)) return;
           const url = new URL(req.url, "http://localhost");
           const id = url.searchParams.get("id");
           const removed = id ? commands.remove(id) : false;
@@ -1730,6 +1780,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/pipeline",
+    policy: "open",
     handler(req, res) {
       try {
         const url = new URL(req.url, "http://localhost");
@@ -1837,6 +1888,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   register({
     kind: "exact",
     path: "/api/dsh-mneme/candidates",
+    policy: "open",
     handler(req, res) {
       try {
         const url = new URL(req.url, "http://localhost");
@@ -1860,7 +1912,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   });
 
   return {
-    routes: 36,
+    routes: countRoutes(),
     dispose: () => {
       for (const dispose of disposers) dispose();
     }
