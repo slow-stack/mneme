@@ -514,8 +514,7 @@ export function createSummarizer(ctx, service, config, deps = {}) {
   const clearTimer = typeof deps.clearTimeoutFn === "function" ? deps.clearTimeoutFn : clearTimeout;
 
   // v0.9.0（M.O. 项目记忆）：蒸馏写入也要盖作用域章。此前只有 memory_save 那条工具
-  // 路径盖章（tools.js 的 memory_save 里 resolveSessionScope 到 workspaceLabel 那一段，
-  // 2026-10-13 在 :173-193），而机器提炼是写入量的绝大多数——于是「项目记忆」
+  // 路径盖章（tools.js 的 resolveSessionScope 盖章块，2026-10-14 在 :174-181），而机器提炼是写入量的绝大多数——于是「项目记忆」
   // 在库里根本不存在（全库带 scope 的行不足 3%，且带 scope 的全部来自工具路径）。
   // 这里不另造口径：同一把解析器（scope.js 的 createScopeResolver，2026-10-13 在 :24）、同一把闸门
   // （config.scopeEnabled === true）、同一对列（*_scope + *_scope_source='auto'），
@@ -888,7 +887,7 @@ export function createSummarizer(ctx, service, config, deps = {}) {
       // v0.9.0（M.O. 项目记忆）：一次窗口解析一次——同一蒸馏窗口里所有条目同属一个
       // 工作区、一个 agent 身份，逐条解析是白花钱。解析不到就落 NULL（NULL = 未标注 =
       // 全局可见），且解析器绝不抛错（scope.js 的硬约束：记忆写入不该被作用域拖挂）。
-      // 闸门与 tools.js 的 autoStamping（2026-10-13 在 :180）同一把：关着就一个字段都不加，老行为不变。
+      // 闸门与 tools.js 的 autoStamping（2026-10-14 在 :175）同一把：关着就一个字段都不加，老行为不变。
       const writeScope = config?.scopeEnabled === true
         ? resolveSessionScope({ agent: { session } })
         : null;
