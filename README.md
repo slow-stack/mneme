@@ -262,7 +262,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 | **v0.6** | 会话生命周期：删对话 ≠ 删记忆 | ✅ |
 | **v0.7** | 自进化记忆：热度衰减 + 睡眠双保护 + 桌面端工作台/功能开关 | ✅ |
 | **v0.8** | 作用域隔离（agent/workspace 双维隔离 + 检索加权 + opt-in 硬过滤）+ 冲突队列人工裁决 + 归属显式声明 + 生态化（stdio MCP server / 图召回轴 / 冷启动 / 注入截断与状态条 / 蒸馏可靠性 / 注入形态与 agent 主动整理接口 / 配置说明与 issue 模板） | ✅ 已发布（至 v0.8.16） |
-| **v0.9** | M.O.（Modus Operandi · 手法）beta：项目级工作流本体 + 候选分层与升格判据 + 面板清单/图同屏；设置面板按「新手之外」重划折叠线（#427）；安全审计与供应链加固（声明式路由鉴权、OSV 阻断、发布签名）；**v0.9.1 补上写侧**：执行窗口、运行账、归属候选、观察旁挂与脱节检出、步骤 `assert`/`optional`、沉淀链草稿挖掘、人格定义页（按 agent 多卡） | ✅ 已发布（v0.9.0） |
+| **v0.9** | M.O.（Modus Operandi · 手法）beta：项目级工作流本体 + 候选分层与升格判据 + 面板清单/图同屏；设置面板按「新手之外」重划折叠线（#427）；安全审计与供应链加固（声明式路由鉴权、OSV 阻断、发布签名）；**v0.9.1 补上写侧**：执行窗口、运行账、归属候选、观察旁挂与脱节检出、步骤 `assert`/`optional`、沉淀链草稿挖掘、人格定义页（按 agent 多卡） | ✅ 已发布（v0.9.1） |
 
 > 完整逐小版本说明见 [CHANGELOG](dsh-mneme/CHANGELOG.md)。
 
@@ -542,7 +542,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 | **v0.6** | Session lifecycle: delete session ≠ delete memory | ✅ |
 | **v0.7** | Self-evolving memory: heat decay + sleep dual-protection + desktop workbench/feature toggles | ✅ |
 | **v0.8** | Scope isolation (agent/workspace stamping + retrieval weighting + opt-in hard filter) + conflict review queue + explicit attribution + ecosystem (stdio MCP server / graph recall axis / cold-start bootstrap / injection truncation & status bar / distill reliability / injection shaping & agent-driven organize / configuration reference & issue templates) | ✅ Released (up to v0.8.16) |
-| **v0.9** | M.O. (Modus Operandi) beta: project-level workflows + candidate tiering & promotion criteria + panel list-and-graph view; settings panel re-folded at "beyond the newcomer" (#427); security & supply-chain hardening (declarative route auth, OSV gate, signed releases); **v0.9.1 adds the write side**: execution windows, run ledger, attribution candidates, observation sidecar with drift detection, step `assert`/`optional`, draft mining from session logs, persona page (per-agent cards) | ✅ Released (v0.9.0) |
+| **v0.9** | M.O. (Modus Operandi) beta: project-level workflows + candidate tiering & promotion criteria + panel list-and-graph view; settings panel re-folded at "beyond the newcomer" (#427); security & supply-chain hardening (declarative route auth, OSV gate, signed releases); **v0.9.1 adds the write side**: execution windows, run ledger, attribution candidates, observation sidecar with drift detection, step `assert`/`optional`, draft mining from session logs, persona page (per-agent cards) | ✅ Released (v0.9.1) |
 
 > Full per-minor-version changelog in [CHANGELOG](dsh-mneme/CHANGELOG.md).
 
