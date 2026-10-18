@@ -8,6 +8,10 @@ import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { createStore } from "../src/store.js";
+import { createService } from "../src/service.js";
+import { createSettings } from "../src/settings.js";
+import { createApi } from "../src/api.js";
 
 const pkgRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const repoRoot = path.dirname(pkgRoot);
@@ -67,4 +71,69 @@ test("SECURITY.md 不再把供应商写成已停用的那家", () => {
   // 依赖扫描的实况是 gitleaks + dependency-review + OSV-Scanner + Dependabot，
   // 文档里曾长期写着第三方商业扫描平台（该平台并不在 CI 里跑）。
   assert.ok(!/OrbisAI/i.test(doc), "依赖扫描工具应写 CI 里真实在跑的那几个，不能留旧供应商名");
+});
+
+// 安全模型节那两张路由清单是「从代码抄出来的」，抄错了没人会发现：
+// 实测就漏过 /persona（token-write，GET 开放）与 /conflicts（token，只读也要 token）。
+// 这里不重跑鉴权逻辑（那是 route-policy.test.js 的事），只锁「文档清单 == 代码里的 policy 声明」：
+// 以真实装配出来的路由为准，双向比对——文档少写、多写、写错边，都红。
+function declaredRoutes() {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  const settings = createSettings(store.db);
+  const mounted = [];
+  createApi(
+    { webServer: { register(route) { mounted.push(route); return () => {}; } } },
+    service, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "secret-token"
+  );
+  // 路由名去掉公共前缀，文档里写的是 /export 而不是 /api/dsh-mneme/export。
+  return mounted.map((route) => ({
+    name: route.path.replace("/api/dsh-mneme", "") || "/",
+    policy: route.policy
+  }));
+}
+
+// 从清单行里抠出反引号包着的路由。只认「可选方法 + 斜杠开头」的形状，
+// 这样 `GET`/`HEAD` 这种纯方法名不会被当成路径。
+function routesInBullet(line) {
+  const out = [];
+  for (const m of line.matchAll(/`([^`]+)`/g)) {
+    const hit = m[1].trim().match(/^(?:GET|HEAD|POST|PUT|PATCH|DELETE)?\s*(\/\S*)$/);
+    if (hit) out.push(hit[1]);
+  }
+  return out;
+}
+
+function bullet(prefix) {
+  const line = doc.split(/\r?\n/).find((l) => l.startsWith(prefix));
+  assert.ok(line, `SECURITY.md 里应有以「${prefix}」开头的清单行`);
+  return routesInBullet(line);
+}
+
+// 文档里的 /semantic/graph/* 覆盖代码里的 /semantic/graph/ego 与 /semantic/graph/entity-attrs。
+function covers(docEntry, name) {
+  if (docEntry === name) return true;
+  return docEntry.endsWith("/*") && name.startsWith(docEntry.slice(0, -1));
+}
+
+test("SECURITY.md 的开放读清单与代码里的 policy 声明一致", () => {
+  const open = declaredRoutes().filter((r) => r.policy === "open" || r.policy === "token-write");
+  for (const prefix of ["- **Open reads", "- **开放读"]) {
+    const listed = bullet(prefix);
+    const missing = open.filter((r) => !listed.some((e) => covers(e, r.name))).map((r) => r.name);
+    assert.deepEqual(missing, [], `${prefix} 漏了这些实际开放的路由：${missing.join(", ")}`);
+    const stale = listed.filter((e) => !open.some((r) => covers(e, r.name)));
+    assert.deepEqual(stale, [], `${prefix} 写了代码里并不开放的路由：${stale.join(", ")}`);
+  }
+});
+
+test("SECURITY.md 的受门控清单与代码里的 policy 声明一致", () => {
+  const gated = declaredRoutes().filter((r) => r.policy === "token" || r.policy === "token-write");
+  for (const prefix of ["- **Gated routes", "- **受门控的路由"]) {
+    const listed = bullet(prefix);
+    const missing = gated.filter((r) => !listed.some((e) => covers(e, r.name))).map((r) => r.name);
+    assert.deepEqual(missing, [], `${prefix} 漏了这些实际受门控的路由：${missing.join(", ")}`);
+    const stale = listed.filter((e) => !gated.some((r) => covers(e, r.name)));
+    assert.deepEqual(stale, [], `${prefix} 写了代码里并不受门控的路由：${stale.join(", ")}`);
+  }
 });
