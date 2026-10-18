@@ -70,6 +70,11 @@ const MIN_LEDE = 24;
  */
 export function lede(body, cap = 150) {
   if (!body) return { lede: "", consumed: 0 };
+  // 正文本身不比 cap 长：整段就是导语。这一条必须排在软断点搜索**之前**——否则短正文里
+  // 只要有个逗号就会被加上省略号，凭空说「后面还有」；逗号恰是最后一个字符时更荒唐：
+  // 省略号后面什么也没有，折叠块是空的。原先这条守在函数末尾，靠句末标点分支侥幸躲过多数
+  // 情况，只有「短且没有句末标点」的正文才会踩到。
+  if (body.length <= cap) return { lede: body, consumed: body.length };
   for (let i = 0; i < body.length && i < cap; i += 1) {
     if (END.test(body[i]) && i + 1 >= MIN_LEDE) return { lede: body.slice(0, i + 1), consumed: i + 1 };
   }
@@ -89,9 +94,6 @@ export function lede(body, cap = 150) {
     }
   }
 
-  // 正文本身就比 cap 短：整段就是导语，再加省略号等于凭空说「后面还有」。
-  // consumed 也不能记 cap —— 那会超过正文长度，折叠块切片就落空了。
-  if (body.length <= cap) return { lede: body, consumed: body.length };
   return { lede: body.slice(0, cap) + "\u2026", consumed: cap };
 }
 
@@ -102,18 +104,43 @@ export function lede(body, cap = 150) {
  * 折叠块的缩进按 GitHub 列表项的规则写成两个空格；少缩进一级会被渲染成独立段落，
  * 整条子弹的视觉归属就断了。列表项内 details 与正文之间必须有空行，否则内部 Markdown 不解析。
  */
+/**
+ * 把一个小节切成「块」：一个块 = 一条子弹 + 它下面所有缩进续行（含缩进的子列表）。
+ *
+ * 为什么必须先切块再渲染：CHANGELOG 里有 179 行缩进续行（0.8.6 / 0.8.7 / 0.8.12 等老版本集中
+ * 出现，另有 59 行 `  - ` 子列表）。逐行 trim 的写法会把续行当成独立段落甩到条目的
+ * `<details>` 外面——读者看到的是「条目正文只有一句，剩下的莫名其妙散在下面」，而且缩进没了、
+ * 子列表变成平铺段落。渲染的单位是**条目**，不是行。
+ */
+export function splitBlocks(sectionText) {
+  const blocks = [];
+  for (const raw of sectionText.split(/\r?\n/)) {
+    if (!raw.trim()) continue;
+    // 缩进行且当前有可挂靠的块 → 续行；否则（块首行之外的单行文本）另起一块。
+    if (/^[ \t]+\S/.test(raw) && blocks.length) {
+      blocks[blocks.length - 1].lines.push(raw.replace(/\s+$/, ""));
+      continue;
+    }
+    blocks.push({ lines: [raw.trim()] });
+  }
+  return blocks;
+}
+
 export function renderNotes(sectionText, opts = {}) {
   const cap = opts.cap || 150;
   const out = [];
-  for (const raw of sectionText.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) continue;
+  for (const block of splitBlocks(sectionText)) {
+    const line = block.lines[0];
     if (/^## /.test(line)) { out.push("", line, ""); continue; }
     const b = parseBullet(line);
     if (!b) { out.push(line); continue; }
+    // 导语**只从条目首行取**：可见行必须是单行，混进换行就等于把续行又推回 details 外面。
+    // 首行剩下的部分 + 全部续行（各自保留缩进，子列表才不会塌成段落）一起进折叠块。
     const { lede: l, consumed } = lede(b.body, cap);
     out.push("- **" + b.title + "**" + (l ? " — " + l : ""));
-    const rest = b.body.slice(consumed).trim();
+    const rest = [b.body.slice(consumed).trim(), ...block.lines.slice(1).map((c) => c.replace(/\s+$/, ""))]
+      .filter(Boolean)
+      .join("\n");
     if (rest) out.push("  <details><summary>细节</summary>", "", "  " + rest.replace(/\n/g, "\n  "), "", "  </details>");
   }
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";

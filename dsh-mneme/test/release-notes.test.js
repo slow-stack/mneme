@@ -8,7 +8,9 @@
 //   1. 分层而不是截断：标题 + 一句导语默认可见，其余折进 details，完整正文一条不丢；
 //   2. 导语与折叠块不重复：consumed 记错就会让同一句话出现两次；
 //   3. 导语不在未闭合的括号里断开，也不采用短到无法独立表意的首句；
-//   4. 找不到小节必须非零退出、不写正文——退回空正文就是假成功。
+//   4. 找不到小节必须非零退出、不写正文——退回空正文就是假成功；
+//   5. 缩进续行跟着它所属的条目一起进折叠块，不散落到外面（老版本 CHANGELOG 里有 179 行）；
+//   6. 正文本身不长时整段就是导语，不许凭空加省略号（短正文里也常有逗号）。
 // 第 4 条走真进程（spawnSync）端到端：工作流只认退出码与 notes/body.md 这个文件。
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -73,9 +75,12 @@ test("parseBullet：拆出标题与正文；非该形状返回 null 由调用方
 });
 
 test("lede：cap 内第一个达标的句末标点处收尾，consumed 与导语等长", () => {
-  const body = "这是一个足够长的句子，用来验证导语会在句末标点处停下来。后面还有别的内容。";
+  // 正文必须真的长于 cap：短于 cap 时整段就是导语（见下一条用例），那样根本走不到本分支。
+  const first = "这是一个足够长的句子，用来验证导语会在句末标点处停下来。";
+  const body = first + "后面还有别的内容，".repeat(20);
+  assert.ok(body.length > 150, "构造本身要求正文长于 cap");
   const r = lede(body, 150);
-  assert.equal(r.lede, "这是一个足够长的句子，用来验证导语会在句末标点处停下来。");
+  assert.equal(r.lede, first);
   assert.equal(r.consumed, r.lede.length, "consumed 必须等于导语长度，否则折叠块会错位或重复");
 });
 
@@ -118,8 +123,23 @@ test("lede：正文本身比 cap 短时，整段就是导语，不加省略号�
   assert.equal(r.consumed, body.length, "consumed 不能超过正文长度");
 });
 
+test("lede：正文比 cap 短且以逗号结尾时，仍是整段导语 —— 不加省略号说「后面还有」", () => {
+  // 这条钉的是「短正文保护」的位置：它必须排在软断点搜索之前。原先守在函数末尾，短正文里
+  // 只要有个逗号就会被加省略号；逗号恰是最后一个字符时更荒唐——省略号后面什么也没有，
+  // 折叠块是空的。实测语料里 25 字的短条就被切成了这个样子。
+  const body = Array.from({ length: 4 }, () => "\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03\u516B\u4E5D\u5341").join("") + "\uFF0C";
+  const r = lede(body, 150);
+  assert.equal(r.lede, body, "整段即导语，不该被软断点截断");
+  assert.equal(r.lede.includes("\u2026"), false, "不该加省略号");
+  assert.equal(r.consumed, body.length, "consumed 要覆盖整段");
+  assert.equal(body.slice(r.consumed), "", "没有剩余正文可折 —— 折叠块必须为空");
+});
+
 test("renderNotes：标题 + 导语默认可见，其余折进 details，且导语不重复出现", () => {
-  const section = "- **标题甲**：第一句要足够长，所以会被当作导语留下来并在此收尾。第二句只应该出现在折叠块里，不该在可见行重复。";
+  // 正文要长于 cap，否则整段展开（没有可折的东西时，多一步点击毫无收益）。
+  const section =
+    "- **标题甲**：第一句要足够长，所以会被当作导语留下来并在此收尾。" +
+    "第二句只应该出现在折叠块里，不该在可见行重复。".repeat(12);
   const out = renderNotes(section, { cap: 150 });
   const [head, ...rest] = out.split("\n");
   assert.ok(head.startsWith("- **标题甲** \u2014 "), "可见行是标题 + 导语：" + head);
@@ -130,7 +150,9 @@ test("renderNotes：标题 + 导语默认可见，其余折进 details，且导�
 });
 
 test("renderNotes：details 缩进两级且与正文之间空行 —— 否则内部 Markdown 不解析、视觉归属也断", () => {
-  const section = "- **标题乙**：第一句要足够长，所以会被当作导语留下来并在此收尾。后面这句进折叠块。";
+  const section =
+    "- **标题乙**：第一句要足够长，所以会被当作导语留下来并在此收尾。" +
+    "后面这句进折叠块。".repeat(20);
   const lines = renderNotes(section).split("\n");
   const open = lines.findIndex((l) => l.includes("<details"));
   const close = lines.findIndex((l) => l.includes("</details"));
@@ -140,6 +162,42 @@ test("renderNotes：details 缩进两级且与正文之间空行 —— 否则�
   assert.equal(lines[open + 1], "", "details 与正文之间必须空行，否则内部 Markdown 不解析");
   assert.equal(lines[close - 1], "", "正文与闭合标签之间也要空行");
   assert.ok(lines[open + 2].startsWith("  "), "折叠正文缩进两格：" + lines[open + 2]);
+});
+
+test("renderNotes：缩进续行随条目一起进 details，不散落到外面也不丢缩进", () => {
+  // CHANGELOG 里有 179 行缩进续行（0.8.6 / 0.8.7 / 0.8.12 等老版本集中出现）与 59 行
+  // "  - " 子列表。逐行 trim 的写法会把续行当成独立段落甩到条目的 details 外面，
+  // 子列表还会塌成平铺段落——读者看到的是「正文只有一句，剩下的莫名其妙散在下面」。
+  // 渲染的单位是条目，不是行。
+  // 首行刻意写得短且没有句末标点：这样"句末标点落在续行上"才可达，用例才能抓到
+  // "把续行拼回正文再切导语"这种写法——那种写法会把换行混进可见行。
+  const section = [
+    "- **标题丙**：首行很短",
+    "  这一句续行足够长，句末标点落在续行上，好让拼接式的导语切分会把换行混进可见行。",
+    "  这是续行二，属于上一条子弹。",
+    "  - 子列表项不应塌成段落",
+    "- **标题丁**：另起一条，用来确认块边界。",
+  ].join("\n");
+  const lines = renderNotes(section).split("\n");
+  const firstClose = lines.findIndex((l) => l.includes("</details"));
+  const secondHead = lines.findIndex((l) => l.includes("**标题丁**"));
+  assert.notEqual(firstClose, -1, "带续行的条目必须被折叠");
+  assert.ok(secondHead > firstClose, "第二条子弹应排在第一条的 details 之后，块边界不能串");
+  const folded = lines.slice(0, firstClose).join("\n");
+  assert.ok(folded.includes("这一句续行足够长"), "续行一在第一条的折叠块里");
+  assert.ok(folded.includes("这是续行二"), "续行二在第一条的折叠块里");
+  assert.ok(folded.includes("- 子列表项不应塌成段落"), "子列表在折叠块里且保留列表形状");
+  const outside = lines.slice(secondHead).join("\n");
+  assert.equal(outside.includes("这一句续行足够长"), false, "续行不该跑到下一条子弹那边");
+  const visible = lines.find((l) => l.includes("**标题丙**"));
+  assert.ok(visible.startsWith("- **标题丙** \u2014 "), "可见行仍是单行标题 + 导语：" + visible);
+  assert.equal(visible.includes("续行"), false, "续行不许挤进可见行，否则可见行撑成多行：" + visible);
+  // 这一条抓的是「把续行拼回正文再切导语」的写法：导语里混进换行后，可见行后面会多出一行
+  // 没有任何缩进的裸行，续行又散到了 details 外面。判别方法是看可见行之后紧跟什么——
+  // 正常只可能是 details 标签本身。
+  const headIdx = lines.indexOf(visible);
+  assert.ok(lines[headIdx + 1].startsWith("  <details"), "可见行之后必须直接是折叠块，不许有裸行：" + lines[headIdx + 1]);
+  assert.equal(visible.includes("\u2026"), false, "首行没有句末标点时，导语只能是首行本身，不该跨行取到续行的句号：" + visible);
 });
 
 test("renderNotes：分类小节原样保留，非子弹行不加工", () => {
