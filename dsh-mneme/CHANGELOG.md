@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## 🔐 安全
+
+- **外部访问 API 的鉴权从「每个 handler 自己记得写」变成「路由注册的必填字段」（#462 / #464）**：审计前的实际形状是 39 条路由里 20 条有 `requireAuth`，其中 6 条只写了写方法、读方法裸奔；`GET /export`（导出整库，含 `archived` / `forgotten`）与 `GET /external-api`（明文回吐 Bearer，且会在**未鉴权**的请求里就地铸造 token）两条最贵重的路由都没有门。根因不是「忘了写」，而是**漏写不会响**：鉴权写在 handler 内部，少写一行的表现是「功能正常」。改法是把鉴权搬到结构上——新增 `export const ROUTE_POLICIES = Object.freeze(["open","token","token-write"])` 与 `export function createRouteRegistrar(webServer, apiToken, disposers)`，每条路由注册时必须声明 policy，**漏声明或写错值 → `createApi` 装配期直接抛**，而不是运行时静默放行；`token-write` 的语义是「只有非 GET/HEAD 才要 token」。39 条逐条归档为 open 19 / token-write 6 / token 14，23 处手写 `requireAuth` 与函数本体一并删除（grep 归零），`routes: 36` 这个会腐化的字面量改成 `count()`。**唯一行为差异**：少数「方法不对 + 未鉴权」的请求由 404 变 401（先判门再进 handler），方向是收紧。回归锁 6 条进新增的 `test/route-policy.test.js`（漏声明必抛 / 重复 `kind:path` 必抛 / 三种 policy 语义 / 装配后全部合法 / `count()` 与挂载数一致）。**这组锁替代了原计划的权限矩阵测试**：矩阵要抓的「新增路由忘了加鉴权」在结构上已经写不出来，测试只需锁住「结构本身还在」。
+
+- **请求体上限从「没有」改成 4 MiB，超限回 413 而不是静默截断（#462 评审跟进）**：`readBody` 原先无上限，且超限时返回**空串**——`parseBody` 把空串解析成 `{}`，而 `PUT /profile`、`/rules`、`/persona` 把「字段缺失」当成「用户要清空」，于是一个 5 MiB 的请求可以**静默清空画像 / 规则 / 人格**。现在超限 `resolve(null)` 并由 21 处调用点统一早退回 413；错误分支同时改成 `resolve(overflow ? null : "")`，避免 413 之后又被空串抹掉状态、让调用点拿空串继续写。两条既有测试原先是空断言（旧超限用例只断言 `notEqual(200)`，而 `/create` 成功返回 201），改为明确断言 413 + 库里没新增 + 画像/规则原样保留。
+
+- **供应链三处收紧**：`security.yml` 的 OSV 扫描由 `fail-on-vuln: false` 改为 `true`（有漏洞即红，不再只报告）；`release.yml` 的 npm 发布加 `id-token: write` 与 `--provenance`（发布产物带可验证来源）；仓库侧打开 secret scanning、push protection 与 Dependabot security updates。`main` 的保护规则 required checks 追加 gitleaks 与 dependency-review 两条（`enforce_admins` 仍为 false，这是刻意留的：紧急修复通道要留着）。
+
+- **secret scanning 告警 #1 结案：不是泄露，是语料漏改，修法给语料加锁（#465）**：告警说 `dsh-mneme/test/helpers/write-admission-samples.js:76` 有明文 OpenAI Key，实际是刻意构造的形状样本（`sk-proj-` + 26 个顺序字母 + 10 个顺序数字 + `ABCD`）。该文件里 GitHub PAT / Slack / JWT / Stripe 四条凭据早已用 `assemble()` 拆成两段拼接（注释写明理由：push protection 会以 GH013 拒推、gitleaks 全历史扫描会红），唯独第五条漏了——**「逐条记得改」本身不可靠**。改为同样走 `assemble()`，并新增一条守卫用例：扫 `test/helpers/` 下所有 `.js`，任何完整形状的凭据字面量都会让测试变红。守卫的规则前缀与生产 `src/sensitive-scan.js` 对齐（`ghp|gho|ghu|ghs|ghr` / `xox[abprs]-` / `sk-(?:proj-)?`），并加**同源反查**：每条规则给一个探针，断言探针同时被守卫自己的正则与生产 `scanSensitive` 命中——只查一边的话，任一侧收窄都不会红，正是这次漏掉的失效模式。双向变异验证过（守卫去 `ghs` → 红；生产去 `ghs` → 红）。
+
 ## [0.9.0] - 2026-10-17
 
 ## 🆕 新增

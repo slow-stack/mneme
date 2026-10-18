@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/@modusensus/dsh-mneme?color=blue&label=npm)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Awesome](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
-[![tests](https://img.shields.io/badge/tests-2110%20passed-success)](https://github.com/slow-stack/mneme)
+[![tests](https://img.shields.io/badge/tests-2131%20passed-success)](https://github.com/slow-stack/mneme)
 [![CI](https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml)](https://github.com/slow-stack/mneme/actions)
 [![node](https://img.shields.io/badge/node-22%2B-blue)](https://nodejs.org)
 [![npm downloads](https://img.shields.io/npm/d18m/@modusensus/dsh-mneme.svg?color=blue&label=downloads)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
@@ -17,7 +17,7 @@
 
 ## ⏱️ 30 秒理解
 
-**一句话**：给 Agent 装上跨会话记忆——记住你、记住项目，并在后台自动整理，越用越懂你；**v0.8.0 起**记忆可按 agent 与工作区隔离（`scopeEnabled`），多 Agent / 多项目互不串台。
+**一句话**：给 Agent 装上跨会话记忆——记住你、记住项目，并在后台自动整理，越用越懂你；**v0.8.0 起**记忆可按 agent 与工作区隔离（`scopeEnabled`），多 Agent / 多项目互不串台；**v0.9.0 起**「这件事怎么跑」也能落进项目仓库（M.O.，`actionPipelineEnabled`，默认关）。
 
 | ① 写入 | ② 存储 | ③ 进化 |
 |--------|--------|--------|
@@ -42,14 +42,14 @@ dsh web
 
 - **SQLite 主存储**：`~/.dsh/memory/memory.db`，`node:sqlite` 内置，零原生依赖
 - **Markdown 镜像**：按类型分文件（`preferences.md` / `projects.md` / `decisions.md` / `history.md` / `summary.md` / `patterns.md` / `pitfalls.md` / `constraints.md` / `rejected-solutions.md`，外加只读视图 `documents.md`），文件头是 YAML frontmatter（`type` / `generated.by` / `generated.at` / `covered` / `coverage` / `tags`）。人类可读，条目标题与正文可手工编辑（**人工修改优先**合并回库）；`documents.md` 例外：它只有 document 指针行（id、标题、摘要首句、文件路径），不含正文也不参与人工回填。文件头与条目元数据行由机器维护
-- **9 种记忆类型**：`preference` 偏好 / `project` 项目 / `decision` 决策 / `history` 历史 / `summary` 会话总览 / `pattern` 模式 + 编码记忆三型 `rejected_solution` 被否方案 / `pitfall` 踩坑 / `constraint` 约束（v0.7.13 起，`codingRetrospect` 默认关；v0.7.11 近重写已收窄删除 user/fact 两型）
+- **10 种记忆类型**：`preference` 偏好 / `project` 项目 / `decision` 决策 / `history` 历史 / `summary` 会话总览 / `pattern` 模式 + 编码记忆三型 `rejected_solution` 被否方案 / `pitfall` 踩坑 / `constraint` 约束（v0.7.13 起，`codingRetrospect` 默认关；v0.7.11 近重写已收窄删除 user/fact 两型）+ `document` 文档指针（#230，只存摘要与 `doc_path`，正文留在磁盘由 agent 自管）
 - **镜像同步状态机（v0.3.6+）**：mirror 与主库强一致，用 `generation`（期望轮次）/ `applied_generation`（已应用轮次）建模同步债务
   - 业务写操作在**自身事务内原子递增** desired generation——崩溃在 COMMIT 后、渲染前，重启也能凭 durable 债务恢复，绝不静默跳过（v0.3.8）
   - `generation` 用 SQLite 原子语句递增，多进程并发零丢失；带 `CHECK` 上界，负数/溢出拒绝
   - 逐 type 记录 `committed / failed / pending` 回执，健康端点区分 `ok / degraded / unknown`
   - 状态写失败不静默：同步失败落日志并留债务，重启自动收敛
 
-### 模型工具（9 个）
+### 模型工具（10 个）
 
 | 工具 | 功能 |
 |------|------|
@@ -63,6 +63,23 @@ dsh web
 | `memory_archive` | 归档/恢复记忆（v0.2.5；归档后隐藏于列表/搜索/注入/整理，`archived=false` 可恢复） |
 | `memory_register_document` | 登记 agent 产长文档的指针行（#230：摘要 + `doc_path` + evidence 落 `document` 类型；正文留在磁盘、由 agent 自管，注册口唯一，旁路写入被拒） |
 | `memory_runtime` | 本地推理运行时的状态 / 供给 / 校验（v0.7.32，自管运行时三档取件） |
+
+### 工作流（M.O. · 手法，v0.9 beta）
+
+记忆库答的是「这件事**为什么**这么办」，答不了「这件事**到底怎么跑**」。v0.9 把后者从记忆库里的一行文字变成项目里可提交、可 review、可被 CI 读的一份文件——一条工作流一个 JSON：
+
+```
+<项目>/.mneme/pipelines/<id>.json     ← 项目层（默认；跟着项目提交）
+<插件包>/pipelines/<id>.json          ← 全局层（兜底；今天包里没有这个目录，有意为空）
+```
+
+- **两层来源，顺序即优先级**：同 id 两处都有，项目层赢，被挡住的那份进 `shadowed` 报出来（不静默丢弃）；项目层的坏文件进 `unreadable` 而不拖死全局层——一层写坏不该让人连兜底那份也看不见
+- **校验很硬**：`id` / `name` / `project` / `version` / `status` / `done` 与每一步的 `phase` / `title` / `when` / `do` / `done` / `why` 缺一不可，`risk` 限 R0–R3、`needs` 必须指向存在的步骤、图里有环直接报错——任何一处不合规**整条读不出来**，不做「跳过坏文件继续」：半个工作流比没有更危险
+- **护栏，不是轨道**：绕行要留出口。自报 R0/R1 **且**不跨闸门 **且**兜底清单（`IRREVERSIBLE_PATTERNS`，机械匹配、不看自报）没命中 → 记账先走；其余 → 停下问人
+- **候选分层**：草稿住 `<memoryDir>/candidates/<项目键>/`，只在本地。升格要同时满足「走过两次（至少一次成功）」**且**「写得出反事实」；够格之后系统只**提议**，`promoteCandidate()` 只返回内容不写盘，提交与推送是人握着的那道门
+- **两个指标分开数**：跳过（这次不用这一步，≥3 次提议删**这一步**）与绕开（这条路整个不对，≥3 次提议重看**这条路径**）各自累加，混在一起两种提议都发不出来
+- **只读路由** `GET /api/dsh-mneme/pipeline[?id=&project=]`（`project` 非绝对路径回 400 `project-not-absolute`，不回退 `process.cwd()`）；答复契约 `mneme.pipeline/v1`，面板渲染与 agent 读的是同一份数据
+- 默认关（`actionPipelineEnabled`），设计取舍见 [docs/WORKFLOWS.md](docs/WORKFLOWS.md)
 
 ### 自动注入 + 会话摘要
 
@@ -250,7 +267,12 @@ v0.3.0 起新增**记忆基因**层：从记忆里抽取**命名实体**、**带
 
 > 完整版本说明见 [CHANGELOG](CHANGELOG.md) 与各版本 [GitHub Release](https://github.com/slow-stack/mneme/releases)；当前特性以本 README 正文与[配置表](#-配置)为准。早期版本中的实验性功能（Wiki-Link、tag 系统等）已在 v0.7.11 移除，详见 CHANGELOG 对应条目。
 
-🧬 Gene → 🛡️ 审计加固 → 💤 Sleep Mode → 🕸️ 召回融合与图谱 → ✨ 面板体验 → 🌡️ 自进化记忆 → 🔐 作用域隔离 → 🌐 MCP 生态
+🧬 Gene → 🛡️ 审计加固 → 💤 Sleep Mode → 🕸️ 召回融合与图谱 → ✨ 面板体验 → 🌡️ 自进化记忆 → 🔐 作用域隔离 → 🌐 MCP 生态 → 🧭 M.O. 手法（项目级工作流，v0.9 beta）
+
+| 版本 | 主题 |
+|------|------|
+| **v0.9.0**（2026-10-17） | M.O.（Modus Operandi · 手法）beta：工作流本体住 `<项目>/.mneme/pipelines/`、候选分层与升格判据、面板清单与图同屏（`actionPipelineEnabled` 默认关）；设置面板折叠线挪到「新手之外」并按人话重写 22 个条目名（#427）；安全与供应链加固（39 条路由声明式鉴权、OSV 有漏洞即失败、发布带 provenance） |
+| **v0.8.x** | 作用域隔离（agent / workspace 双维 + opt-in 硬过滤）、冲突队列人工裁决、生态化（stdio MCP server / 图召回轴 / 冷启动 / 注入截断） |
 
 ## 📦 安装
 
@@ -275,14 +297,43 @@ dsh web
 
 > 如需自定义配置（阈值、延迟等），可在 `~/.dsh/profiles/web/cordis.patch.yml` 中按 `id: dsh-mneme` 覆盖默认值（见下方配置表）。
 
-#### 方式二：从源码安装
+#### 方式二：从源码安装（本地目录）
 
 ```bash
 git clone https://github.com/slow-stack/mneme.git
 cd dsh-mneme
-dsh plugin --profile web add .
+dsh plugin --profile web add "$(pwd)"
 dsh web
 ```
+
+> **路径必须绝对**：宿主对 `dsh plugin add` 的本地路径有一条硬校验（`parseInstallSpec` 里的 `a local path must be absolute`），相对路径（含 `.`、`..`）一律拒掉。上面用 `"$(pwd)"` 就地展开，就是为了不给它相对路径。
+
+#### 方式三：直接从 Git 仓库安装
+
+本仓库是**子目录包**（插件本体在 `dsh-mneme/`，仓库根没有 `package.json`），所以 Git 地址必须带 `#path:` 指到子目录：
+
+```bash
+dsh plugin --profile web add 'git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme'
+dsh web
+```
+
+| 写法 | 结果 |
+|------|------|
+| `git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme` | ✅ 装出 `@modusensus/dsh-mneme`（实测 0.9.0，38 个包） |
+| `https://github.com/slow-stack/mneme#path:/dsh-mneme` | ✅ 同上；lockfile 会归一成 `github:slow-stack/mneme#path:/dsh-mneme` |
+| `git+https://github.com/slow-stack/mneme.git` | ❌ 装出 `mneme.git 0.0.0` 空壳（仓库根没有 `package.json`） |
+
+`#path:` 是 pnpm 的 git 参数（`parseGitParams` 里按 `path:` 前缀解析），**不是**本仓库自定义的语法；pnpm 官方文档没写这一条，所以这里给出实测结果。
+
+#### 方式四：tarball
+
+```bash
+cd dsh-mneme
+npm pack                       # 产出 modusensus-dsh-mneme-<版本>.tgz
+dsh plugin --profile web add "C:/path/to/modusensus-dsh-mneme-0.9.0.tgz"
+```
+
+> 必须用 `npm pack`，别用 `pnpm pack`：`bin/cli.mjs` 在工作区里是 CRLF，pnpm 会以 `ERR_PNPM_BIN_CRLF` 直接失败。
 
 #### 自定义配置（可选）
 
@@ -622,7 +673,7 @@ src/
 ├── api.js            # HTTP 路由（Web 面板数据通道，含 /conflicts 冲突队列）
 └── index.js          # 插件接线
 lib/                  # src 的同步分发产物（npm run sync；发布前由 root prepack 的 check-sync.js 校验一致性；唯一手写例外 lib/client.js——Web 面板 bundle，sync 不覆盖）
-test/                 # 2110 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
+test/                 # 2131 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
 scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压测 · sync-lib.js 同步 · check-sync.js 发布闸门 · benchmark-recall.js / benchmark-embed.js / benchmark-rerank.js 基准 · sync-test-badge.mjs 测试徽章 · build-runtime-manifest.mjs 运行时清单
 ```
 
@@ -631,7 +682,7 @@ scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压
 ```bash
 cd dsh-mneme
 npm install        # 安装 peer 依赖（以 devDependencies 形式，用于本地测试）
-npm test           # 运行 2110 个测试
+npm test           # 运行 2131 个测试
 npm run stress     # 三轴线压测：长会话检索 / 冲突仲裁 / 多 Agent 并发（离线 mock LLM）
 npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动执行）
 ```
@@ -645,10 +696,16 @@ npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动
 > 设计文档位于仓库根 `docs/`，链接以 `../docs/` 相对路径指向（GitHub 上从本目录打开可正常跳转）。
 
 - [配置说明（全键参考）](docs/CONFIGURATION.md)
-- [蒸馏原文留存与记忆级溯源](docs/DISTILL.md)
+- [蒸馏原文留存与记忆级溯源](docs/DISTILL.md)（#399）
 - [实体结构化记忆设计](docs/ENTITIES.md)
 - [语义增强架构](docs/SEMANTIC.md)
 - [本地模型部署指南](docs/LOCAL_MODEL.md)
+- [工作流（M.O. · 手法）：本体住项目，证据住记忆库](docs/WORKFLOWS.md)
+- [连续性抢救（#249 N3）：触发器口径与事件契约](docs/CONTINUITY.md)
+- [Sleep Mode：空闲四阶段深度维护](docs/SLEEP.md)
+- [存储与回收：表结构、保留期、`dsh-mneme reclaim`](docs/STORAGE.md)
+- [独立服务 daemon（`dsh-mneme-serve`）](docs/DAEMON.md)
+- [与 Zep / Graphiti / Mem0 / Letta / Hindsight 的能力对比](../docs/COMPARISON.md)
 
 ## 🙏 致谢
 

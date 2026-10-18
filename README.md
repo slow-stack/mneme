@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3E63DD?style=flat-square" alt="license"></a>
   <a href="https://github.com/slow-stack/mneme/actions"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI" alt="CI"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22%2B-3E63DD?style=flat-square&logo=nodedotjs&logoColor=white" alt="node"></a>
-  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-2110%20passed-3E63DD?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-2131%20passed-3E63DD?style=flat-square" alt="tests"></a>
   <a href="https://codecov.io/gh/slow-stack/mneme"><img src="https://img.shields.io/codecov/c/github/slow-stack/mneme/main?style=flat-square" alt="coverage"></a>
   <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
@@ -26,6 +26,18 @@
 **dsh-mneme** 是 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 的跨会话记忆插件。它不只「存得下」，更「管得好」：后台自动去重合并、矛盾先冻结等你裁决、全程可回放审计、默认全离线，还支持导出成人可读的 Markdown。
 
 > **Mneme**（Μνήμη）源自希腊记忆女神 **Mnemosyne**。她掌管记忆与梦境——正如 `autoDream` 在后台默默巩固你的记忆库。
+
+## 📰 最近更新
+
+| 日期 | 版本 | 头条 |
+|------|------|------|
+| 2026-10-17 | **v0.9.0** | **M.O.（手法）beta** — 你的操作手法不再住在记忆库的一行文字里，而是住进项目仓库的 `.mneme/pipelines/<id>.json`：能提交、能 diff、能 PR、能被 CI 读。面板画的图和 agent 读的是同一份数据。配套「候选分层」：草稿先在 `<memoryDir>/candidates/` 攒着，走过两次**且**写得出反事实才提议升格——**升格不是降低标准，是补齐标准**。 |
+| 2026-10-17 | **v0.9.0** | **设置面板重排**（[#427](https://github.com/slow-stack/mneme/issues/427)）— 折叠线从「冷门」挪到「新手之外」：首屏只留 3 个总开关 + 作用域组，其余整组收进「全部设置」；22 个条目名从 `bm25SearchEnabled` 改说人话，并标注「默认 / 已改」。 |
+| 2026-10-17 | 加固 | **安全审计第一批**（[#462](https://github.com/slow-stack/mneme/pull/462)）— 外部访问 API 的 39 条路由全部改成**声明式鉴权**：漏写策略在装配期直接抛错，而不是运行时静默放行；`/export` 与 `GET /external-api` 补上鉴权门（此前未鉴权即可导出含归档/已遗忘的整库、并就地铸造 token）；请求体加 4 MiB 上限。 |
+| 2026-10-17 | 加固 | **路由策略重构**（[#464](https://github.com/slow-stack/mneme/pull/464)）— 鉴权从「每个 handler 自己记得写」变成「路由注册的必填字段」，23 处手写校验归零。供应链侧同步收紧：OSV 扫描改为有漏洞即失败、npm 发布带 `--provenance` 签名、secret scanning 与 Dependabot 打开。 |
+| 2026-10-17 | 结案 | **一条 secret scanning 告警**（[#465](https://github.com/slow-stack/mneme/pull/465)）— 报告说「存在明文 token 泄露」，核实是测试语料里刻意构造的形状样本（`sk-proj-` + 顺序字母数字）。修法不是删告警，是**给语料加一道锁**：`test/helpers/` 下任何完整形状的凭据字面量都会让测试变红，且与生产扫描器的规则双向对齐。 |
+
+> 只记大改动，逐条细节见 [CHANGELOG](dsh-mneme/CHANGELOG.md)。
 
 ## 它解决什么问题
 
@@ -49,15 +61,39 @@
 - 🌙 **夜深人静才动手**（可关）— 空闲时自动分层归档：常看的留在热区、久不用的压成摘要、陈旧的彻底归档。记忆库**越用越精炼，不膨胀**。
 - 🧠 **本地语义检索，默认离线** — 自带本地 Embedding 与精排，不强求 API Key，网络断了也能检索。
 - 📝 **Markdown 双向同步** — 记忆就是本地 `.md` 文件，随时打开编辑；**人工改动会被优先尊重**，不会被机器覆盖。
-- 💾 **删对话 ≠ 删记忆** — 清空聊天窗口，已保存的记忆仍在（可配置）。
+- 💾 **删对话 ≠ 删记忆** — 记忆是跨会话的全局知识，清空聊天窗口，已保存的记忆仍在（v0.7.11 起不再与会话绑定）。
+
+> **它和 Zep / Mem0 / Letta / Hindsight 比呢？** 有一张逐项对照表——存储底座、检索、写入时抽取、离线巩固、冲突处理、遗忘、作用域、可审计性、多宿主、离线、许可证共 11 行，**「—」不等于「差」**：[能力对比](docs/COMPARISON.md)。
 
 ## 5 分钟上手
 
 ```bash
-# 安装插件
+# 安装插件（最省事的一条：npm 包名）
 dsh plugin --profile web add @modusensus/dsh-mneme
 dsh web
 ```
+
+### 四种安装来源
+
+DSH 的 **设置 → 插件 → Add plugin** 与 `dsh plugin add` 认四种写法，填进去的是什么就装什么。本仓库是个**子目录包**（插件本体在 `dsh-mneme/`），所以走 Git 或 tarball 时必须指到子目录，否则装出来是个空壳。
+
+| 来源 | 填什么 | 备注 |
+|------|--------|------|
+| **npm 包名** | `@modusensus/dsh-mneme` | 推荐；可带版本 `@0.9.0` |
+| **Git 仓库** | `git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme` | `#path:` 不可省。省掉会装出 `mneme.git 0.0.0` 空壳（仓库根没有 `package.json`） |
+| **tarball** | `C:\\path\\to\\modusensus-dsh-mneme-0.9.0.tgz` | 在 `dsh-mneme/` 里 `npm pack` 产出；`pnpm pack` 会因 bin 脚本 CRLF 失败 |
+| **本地目录** | `C:\\path\\to\\mneme\\dsh-mneme` | **必须是绝对路径**；相对路径会被宿主直接拒掉（`a local path must be absolute`） |
+
+```bash
+# 从源码装（本地目录，改完代码重启即生效）
+git clone https://github.com/slow-stack/mneme.git
+dsh plugin --profile web add "$(pwd)/mneme/dsh-mneme"
+
+# 或者直接从 Git 装（不落源码，适合只要个能跑的版本）
+dsh plugin --profile web add 'git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme'
+```
+
+> 面板里那行「Install guide and examples」只演示了包名一种写法；上面四种都是实测通过的。Git 与 tarball 来源在安装时宿主会做一次仓库可达性检查（超时默认 5 秒）。
 
 装完即可用。想在 5 分钟内看到它的价值：
 
@@ -70,7 +106,7 @@ dsh web
 | 需求 | 配置项 | 默认值 | 改法 |
 |------|--------|--------|------|
 | 完全离线运行 | `embedProvider` | `openai` | 改为 `local` |
-| 删除对话时保留记忆 | `sessionLifecycleEnabled` | `false` | 改为 `true` |
+| 后台自动整理记忆 | `autoDream` | `true` | 改为 `false` 可关 |
 | 自动提取结构化实体 | `entityExtractionEnabled` | `false` | 改为 `true` |
 | 多 Agent / 多项目记忆隔离 | `scopeEnabled`（需要更强隔离再加 `strictScope`，硬隔离只对显式声明生效） | `false` | 改为 `true` |
 
@@ -94,6 +130,25 @@ dsh web
     ▼
   召回（混合检索 + 精排）──► 注入会话上下文
 ```
+
+## 🧭 M.O.：让「怎么做」也住进仓库（v0.9 beta）
+
+记忆库记得住**为什么**这么做，但记不住**这件事到底怎么跑**。工作流住在哪，决定了它能不能被改：住在记忆库里是一行没有 diff 的文字，住在会话里是一次性的提示词，住在人脑里改不动也不留痕。
+
+所以 v0.9 把它们搬进项目仓库——一条工作流一个文件：
+
+```
+<项目>/.mneme/pipelines/<id>.json     ← 项目层（能提交、能 diff、能 PR、能被 CI 读）
+<插件包>/pipelines/<id>.json          ← 全局层（兜底，今天包里没有这个目录，这是有意的）
+```
+
+分工是一句话：**记忆是「为什么」，仓库是「怎么跑」，图是「看起来怎么样」**。
+
+- **护栏，不是轨道** — 图上必须留一扇合法的逃生门：agent 判断这条路这次不对时，按风险档决定「记账先走」还是「停下问人」。跳过 = 这次不用这一步（≥3 次提议删这一步）；绕开 = 这条路整个不对（≥3 次提议重看这条路径）。**两个指标分开数**，混在一起两种提议都发不出来。
+- **候选不进仓库** — 草稿住在 `<memoryDir>/candidates/<项目键>/`，只在本地。一天长十条死九条的东西进仓库就是垃圾。升格要同时满足「走过两次（至少一次成功）」**且**「写得出反事实」；够格之后系统只**提议**，提交与推送始终是人握着的那道门。
+- **面板画的图和 agent 读的是同一份数据** — 只画不存，agent 就什么也读不到。节点状态（`refuted` / `trusted` / `stale` / `candidate`）全部从运行记录推，不由作者写死；今天还没有运行记录落点，所以全体恒为 `candidate`——这就是那个 beta 标签必须摆在脸上的原因。
+
+默认关（`actionPipelineEnabled`）。设计取舍与踩过的坑见 [docs/WORKFLOWS.md](dsh-mneme/docs/WORKFLOWS.md)。
 
 ## 界面预览
 
@@ -185,13 +240,14 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 | 工作流（M.O. · 手法）：本体住仓库、证据住记忆库 | [dsh-mneme/docs/WORKFLOWS.md](dsh-mneme/docs/WORKFLOWS.md) |
 | 语义架构 | [dsh-mneme/docs/SEMANTIC.md](dsh-mneme/docs/SEMANTIC.md) |
 | 本地模型部署指南 | [dsh-mneme/docs/LOCAL_MODEL.md](dsh-mneme/docs/LOCAL_MODEL.md) |
+| 与 Zep / Mem0 / Letta / Hindsight 的能力对比 | [docs/COMPARISON.md](docs/COMPARISON.md) |
 | 版本历史 | [dsh-mneme/CHANGELOG.md](dsh-mneme/CHANGELOG.md) |
 | 安全策略 | [SECURITY.md](SECURITY.md) |
 
 ## 🗺️ 路线图
 
 ```
-🧬 记忆基因 → 🛡️ 审计加固 → 💤 睡眠维护 → 🕸️ 召回融合与图谱 → ✨ 面板增强 → 🌡️ 自进化记忆 → 🕸️ 图谱增强
+🧬 记忆基因 → 🛡️ 审计加固 → 💤 睡眠维护 → 🕸️ 召回融合与图谱 → ✨ 面板增强 → 🌡️ 自进化记忆 → 🔐 作用域隔离 → 🌐 生态（MCP / daemon）→ 🧭 M.O. 手法（项目级工作流）
 ```
 
 | 版本 | 主题 | 状态 |
@@ -202,6 +258,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 | **v0.6** | 会话生命周期：删对话 ≠ 删记忆 | ✅ |
 | **v0.7** | 自进化记忆：热度衰减 + 睡眠双保护 + 桌面端工作台/功能开关 | ✅ |
 | **v0.8** | 作用域隔离（agent/workspace 双维隔离 + 检索加权 + opt-in 硬过滤）+ 冲突队列人工裁决 + 归属显式声明 + 生态化（stdio MCP server / 图召回轴 / 冷启动 / 注入截断与状态条 / 蒸馏可靠性 / 注入形态与 agent 主动整理接口 / 配置说明与 issue 模板） | ✅ 已发布（至 v0.8.16） |
+| **v0.9** | M.O.（Modus Operandi · 手法）beta：项目级工作流本体 + 候选分层与升格判据 + 面板清单/图同屏；设置面板按「新手之外」重划折叠线（#427）；安全审计与供应链加固（声明式路由鉴权、OSV 阻断、发布签名） | ✅ 已发布（v0.9.0） |
 
 > 完整逐小版本说明见 [CHANGELOG](dsh-mneme/CHANGELOG.md)。
 
@@ -209,12 +266,10 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 
 ```bash
 cd dsh-mneme && npm install
-npm test        # 2110 个测试
+npm test        # 2131 个测试
 npm run stress  # 三轴线压测
 npm run sync    # src → lib 同步
 ```
-
----
 
 ---
 
@@ -248,6 +303,18 @@ dsh-mneme 的机制设计与下列公开研究相互印证（以下引用均逐�
 
 > **Mneme** (Μνήμη) comes from **Mnemosyne**, the Greek goddess of memory and dreams — just as `autoDream` quietly consolidates your memory store in the background.
 
+## 📰 Recent updates
+
+| Date | Version | Headline |
+|------|---------|----------|
+| 2026-10-17 | **v0.9.0** | **M.O. (modus operandi) beta** — how you get things done no longer lives as a line of prose in the memory store; it lives in the project repo as `.mneme/pipelines/<id>.json`: commit it, diff it, review it, let CI read it. The panel draws from the same data the agent reads. Paired with **candidate tiering**: drafts sit in `<memoryDir>/candidates/` until they've been walked twice **and** can be stated as a counterfactual — **promotion raises the bar, it does not lower it**. |
+| 2026-10-17 | **v0.9.0** | **Settings panel rework** ([#427](https://github.com/slow-stack/mneme/issues/427)) — the fold line moved from "rarely used" to "beyond the newcomer": the first screen keeps 3 master switches plus the scope group, everything else collapses into "all settings"; 22 labels now say what they do instead of naming a config key, tagged default / changed. |
+| 2026-10-17 | Hardening | **Security audit, batch one** ([#462](https://github.com/slow-stack/mneme/pull/462)) — all 39 routes on the external API now carry **declarative auth**: a missing policy throws at wiring time instead of failing open at runtime; `/export` and `GET /external-api` got their missing gate (they previously let an unauthenticated caller dump the whole store including archived and forgotten rows, and mint a token on the spot); request bodies capped at 4 MiB. |
+| 2026-10-17 | Hardening | **Route policy refactor** ([#464](https://github.com/slow-stack/mneme/pull/464)) — auth moved from "every handler remembers to check" to "a required field on route registration", retiring 23 hand-written checks. Supply chain tightened alongside: OSV now fails the build on findings, npm publishes carry `--provenance`, secret scanning and Dependabot are on. |
+| 2026-10-17 | Closed | **One secret-scanning alert** ([#465](https://github.com/slow-stack/mneme/pull/465)) — reported as "a plaintext token leak", verified as a deliberately shaped test sample (`sk-proj-` plus sequential letters and digits). The fix was not to silence the alert but to **lock the corpus**: any complete credential shape under `test/helpers/` now turns the suite red, and the guard is cross-checked against the production scanner in both directions. |
+
+> Headlines only; see the [CHANGELOG](dsh-mneme/CHANGELOG.md) for the full list.
+
 ## What problem does it solve
 
 Every time you start a new chat, the AI acts like it's never met you?
@@ -270,15 +337,39 @@ Every time you start a new chat, the AI acts like it's never met you?
 - 🌙 **It works while you sleep** (opt-in) — idle time triggers tiered archiving: frequent memories stay hot, stale ones compress to summaries, old ones archive. The store **stays lean as it grows**.
 - 🧠 **Local semantic search, offline by default** — built-in local Embedding + reranking. No API key required; retrieval still works without a network.
 - 📝 **Two-way Markdown sync** — memories are local `.md` files you can open and edit; **human edits are respected**, never clobbered by the machine.
-- 💾 **Delete the session ≠ delete the memory** — clearing a chat window keeps what was saved (configurable).
+- 💾 **Delete the session ≠ delete the memory** — memories are cross-session global knowledge; clearing a chat window keeps what was saved (unbound from sessions since v0.7.11).
+
+> **How does it compare with Zep / Mem0 / Letta / Hindsight?** There is a row-by-row table — storage, retrieval, write-time extraction, offline consolidation, conflicts, forgetting, scoping, auditability, multi-host, offline, license: 11 rows, and **"—" does not mean "worse"**: [capability comparison](docs/COMPARISON.md) (Chinese).
 
 ## 5-minute quickstart
 
 ```bash
-# Install the plugin
+# Install the plugin (the easy path: npm package name)
 dsh plugin --profile web add @modusensus/dsh-mneme
 dsh web
 ```
+
+### Four install sources
+
+**Settings → Plugins → Add plugin** and `dsh plugin add` accept four kinds of spec — whatever you paste is what gets installed. This repository is a **subdirectory package** (the plugin lives in `dsh-mneme/`), so Git and tarball specs must point at that subdirectory; otherwise you get an empty shell.
+
+| Source | Paste this | Note |
+|--------|-----------|------|
+| **npm name** | `@modusensus/dsh-mneme` | Recommended; a version range works too (`@0.9.0`) |
+| **Git repo** | `git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme` | `#path:` is not optional. Without it you get an empty `mneme.git 0.0.0` (the repo root has no `package.json`) |
+| **tarball** | `C:\\path\\to\\modusensus-dsh-mneme-0.9.0.tgz` | Produced by `npm pack` inside `dsh-mneme/`; `pnpm pack` fails on the bin script's CRLF line endings |
+| **local directory** | `C:\\path\\to\\mneme\\dsh-mneme` | **Must be absolute** — a relative path is rejected outright (`a local path must be absolute`) |
+
+```bash
+# From source (local directory; edit code, restart, done)
+git clone https://github.com/slow-stack/mneme.git
+dsh plugin --profile web add "$(pwd)/mneme/dsh-mneme"
+
+# Or straight from Git (no checkout; good for just running a version)
+dsh plugin --profile web add 'git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme'
+```
+
+> The "Install guide and examples" panel only demonstrates the npm form; all four above are verified. Git and tarball sources get one repository-reachability check at install time (5-second timeout by default).
 
 It works out of the box. To feel its value in five minutes:
 
@@ -291,7 +382,7 @@ It works out of the box. To feel its value in five minutes:
 | Need | Config key | Default | Change |
 |------|-----------|---------|--------|
 | Fully offline | `embedProvider` | `openai` | Change to `local` |
-| Keep memories when deleting sessions | `sessionLifecycleEnabled` | `false` | Change to `true` |
+| Background consolidation | `autoDream` | `true` | Change to `false` to disable |
 | Structured entity extraction | `entityExtractionEnabled` | `false` | Change to `true` |
 | Memory isolation per agent / workspace | `scopeEnabled` (add `strictScope` for stronger isolation — hard blocking applies to explicit declarations only) | `false` | Change to `true` |
 
@@ -315,6 +406,25 @@ The library defaults to `~/.dsh/memory`, which is naturally outside any host pro
     ▼
   recall (hybrid search + rerank) ──► inject into the conversation
 ```
+
+## 🧭 M.O.: make "how it's done" live in the repo (v0.9 beta)
+
+The memory store remembers **why** a thing was done that way, but not **how the thing actually runs**. Where a workflow lives decides whether it can be changed at all: as a line in the memory store it has no diff; as a session prompt it exists once; in someone's head it can't be edited and leaves no trace.
+
+So v0.9 moves workflows into the project repository — one file per workflow:
+
+```
+<project>/.mneme/pipelines/<id>.json   ← project layer (commit, diff, PR, readable by CI)
+<plugin>/pipelines/<id>.json           ← global layer (fallback; the package ships none today, on purpose)
+```
+
+One sentence of division of labour: **memory is the "why", the repo is the "how", the graph is the "what it looks like"**.
+
+- **Guardrails, not tracks** — the graph must leave a legal escape hatch: when the agent judges this path wrong *this time*, the risk tier decides whether it goes ahead and records it, or stops and asks. *Skipped* means this step wasn't needed (≥3 times → propose deleting the step); *bypassed* means the whole path was wrong (≥3 times → propose revisiting the path). **Counted separately** — merged together, neither proposal can ever fire.
+- **Candidates never enter the repo** — drafts live in `<memoryDir>/candidates/<project-key>/`, local only. Ten a day, nine dead: in the repo that's just garbage. Promotion requires **both** "walked twice (at least once successfully)" and "can state the counterfactual"; even then the system only *proposes* — commit and push stay a human gate.
+- **The panel and the agent read the same data** — render-only means the agent reads nothing. Node states (`refuted` / `trusted` / `stale` / `candidate`) are derived from run records, never authored; there is no run-record sink yet, so every node is `candidate` — which is exactly why that beta label has to be on the surface.
+
+Off by default (`actionPipelineEnabled`). Design trade-offs and pitfalls: [docs/WORKFLOWS.md](dsh-mneme/docs/WORKFLOWS.md) (Chinese).
 
 ## Screenshots
 
@@ -406,13 +516,14 @@ Community projects that wire mneme into more platforms — not part of this repo
 | Workflows (M.O.): the workflow lives in the repo, the evidence in memory | [dsh-mneme/docs/WORKFLOWS.md](dsh-mneme/docs/WORKFLOWS.md)（中文） |
 | Semantic architecture | [dsh-mneme/docs/SEMANTIC.md](dsh-mneme/docs/SEMANTIC.md) |
 | Local model guide | [dsh-mneme/docs/LOCAL_MODEL.md](dsh-mneme/docs/LOCAL_MODEL.md) |
+| Capability comparison vs Zep / Mem0 / Letta / Hindsight | [docs/COMPARISON.md](docs/COMPARISON.md)（中文） |
 | Changelog | [dsh-mneme/CHANGELOG.md](dsh-mneme/CHANGELOG.md) |
 | Security | [SECURITY.md](SECURITY.md) |
 
 ## 🗺️ Roadmap
 
 ```
-🧬 Gene → 🛡️ Audit hardening → 💤 Sleep maintenance → 🕸️ Recall fusion & graph → ✨ Panel enhancement → 🌡️ Self-evolving memory → 🔐 Scope isolation
+🧬 Gene → 🛡️ Audit hardening → 💤 Sleep maintenance → 🕸️ Recall fusion & graph → ✨ Panel enhancement → 🌡️ Self-evolving memory → 🔐 Scope isolation → 🌐 Ecosystem (MCP / daemon) → 🧭 M.O. (project-level workflows)
 ```
 
 | Version | Theme | Status |
@@ -423,6 +534,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 | **v0.6** | Session lifecycle: delete session ≠ delete memory | ✅ |
 | **v0.7** | Self-evolving memory: heat decay + sleep dual-protection + desktop workbench/feature toggles | ✅ |
 | **v0.8** | Scope isolation (agent/workspace stamping + retrieval weighting + opt-in hard filter) + conflict review queue + explicit attribution + ecosystem (stdio MCP server / graph recall axis / cold-start bootstrap / injection truncation & status bar / distill reliability / injection shaping & agent-driven organize / configuration reference & issue templates) | ✅ Released (up to v0.8.16) |
+| **v0.9** | M.O. (Modus Operandi) beta: project-level workflows + candidate tiering & promotion criteria + panel list-and-graph view; settings panel re-folded at "beyond the newcomer" (#427); security & supply-chain hardening (declarative route auth, OSV gate, signed releases) | ✅ Released (v0.9.0) |
 
 > Full per-minor-version changelog in [CHANGELOG](dsh-mneme/CHANGELOG.md).
 
@@ -430,7 +542,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 
 ```bash
 cd dsh-mneme && npm install
-npm test        # 2110 tests
+npm test        # 2131 tests
 npm run stress  # three-axis stress test
 npm run sync    # src → lib sync
 ```
