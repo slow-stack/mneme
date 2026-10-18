@@ -1,0 +1,9 @@
+# 这份文件只声明「哪些目录是本仓的子包」，供 monorepo 感知的工具（含 dshfind.com 的
+# 插件探测器）下探到真正可安装的那个包：dsh-mneme/package.json 里的 dsh.bundle。
+#
+# 为什么用 pnpm-workspace.yaml 而不是 package.json 的 workspaces 字段（2026-10-14 实测）：
+# npm 一看到根的 workspaces 就把 prefix 提到仓根、在仓根找 lockfile，
+# 于是 dsh-mneme/ 里的 `npm ci` 会以 EUSAGE 失败（三条 CI 工作流都跑它）。
+# pnpm-workspace.yaml 只有 pnpm 与 dshfind 读，npm 不读，零副作用。
+packages:
+  - dsh-mneme

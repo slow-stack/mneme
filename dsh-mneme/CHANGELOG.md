@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## 📦 仓库结构
+
+- **仓库根补一份「只是壳」的清单，让单仓多包探测器认得出可安装的子包（dshfind 显示「不可安装」的修复）**：本仓库一直是单仓多包——真正可发布的包在 `dsh-mneme/`，仓库根只有文档。这在 npm 与 `dsh plugin add` 眼里没有问题（用 `#path:` 或绝对路径指到子目录即可），但**依赖「仓库根有清单」的工具会判错**：dshfind.com 的探测器在 `probe-install.mjs:182` 返回 `no-manifest`，页面直接写「Not an installable plugin package」，而这句判词与实际能不能装无关。同类项目（包名恰好等于仓库名）不会被误判，我们的包名 `@modusensus/dsh-mneme` 与仓库名 `mneme` 不同，探测器无从推断，只能看根清单。**补的是一份刻意的空壳**：`private: true` + `version: "0.0.0"` + **不带 `dsh` 字段**（带了探测器会把仓库根当插件本体，装出来是一个没有 `lib/index.js` 的空包）+ **不带 `type` 字段**（带了会改变仓库根 `test/` 与 `scripts/` 下 CommonJS 的模块语义，`scripts/release-prep.mjs` 与 `test/mcp-package.test.js` 的运行方式随之变化）。子包声明写进 `pnpm-workspace.yaml` 而不是 `package.json` 的 `workspaces`：**npm 一看到根 `workspaces` 就把 prefix 提到仓库根、在仓库根找 lockfile**，于是 `dsh-mneme/` 里的 `npm ci` 报 EUSAGE 退出 1——`ci.yml`、`release-prep.yml`、`release.yml` 三条工作流全在子目录跑 `npm ci`，会一起炸掉；`pnpm-workspace.yaml` 只有 pnpm 与探测器读，npm 不读，零副作用。**同时改掉一圈因这件事而变假的表述**：两份 README 的安装章节原本写「子目录包、仓库根没有 `package.json`」，现在改说「单仓多包、根清单是仓库壳」；`CONTRIBUTING.md` 的仓库布局与发布红线、`AGENTS.md` 的仓库布局、`ci.yml` 跨包平价腿的注释、`release.yml` 的「勿把 link 指到仓库根」说明同步更新——**文档说「根目录没有 package.json」而代码里有，比没有文档更坏**。
+
 ## 🔐 安全
 
 - **外部访问 API 的鉴权从「每个 handler 自己记得写」变成「路由注册的必填字段」（#462 / #464）**：审计前的实际形状是 39 条路由里 20 条有 `requireAuth`，其中 6 条只写了写方法、读方法裸奔；`GET /export`（导出整库，含 `archived` / `forgotten`）与 `GET /external-api`（明文回吐 Bearer，且会在**未鉴权**的请求里就地铸造 token）两条最贵重的路由都没有门。根因不是「忘了写」，而是**漏写不会响**：鉴权写在 handler 内部，少写一行的表现是「功能正常」。改法是把鉴权搬到结构上——新增 `export const ROUTE_POLICIES = Object.freeze(["open","token","token-write"])` 与 `export function createRouteRegistrar(webServer, apiToken, disposers)`，每条路由注册时必须声明 policy，**漏声明或写错值 → `createApi` 装配期直接抛**，而不是运行时静默放行；`token-write` 的语义是「只有非 GET/HEAD 才要 token」。39 条逐条归档为 open 19 / token-write 6 / token 14，23 处手写 `requireAuth` 与函数本体一并删除（grep 归零），`routes: 36` 这个会腐化的字面量改成 `count()`。**唯一行为差异**：少数「方法不对 + 未鉴权」的请求由 404 变 401（先判门再进 handler），方向是收紧。回归锁 6 条进新增的 `test/route-policy.test.js`（漏声明必抛 / 重复 `kind:path` 必抛 / 三种 policy 语义 / 装配后全部合法 / `count()` 与挂载数一致）。**这组锁替代了原计划的权限矩阵测试**：矩阵要抓的「新增路由忘了加鉴权」在结构上已经写不出来，测试只需锁住「结构本身还在」。

@@ -11,7 +11,9 @@ dsh-mneme 是 DSH 宿主的记忆插件（蒸馏 / 注入 / 检索 / 巩固 / sc
   - `lib/` — **同步产物，禁止手改**：`npm run sync` 从 src 生成，`scripts/check-sync.js` 锁平价
   - `test/` — `node --test`（`npm test`）
   - `scripts/` — 同步、徽章、基准与压测脚本
-- 仓库根 — README（双语）、CHANGELOG、CONTRIBUTING、docs/
+- 仓库根 — README（双语）、CHANGELOG、CONTRIBUTING、docs/、
+  `package.json`（**仓库壳**：`private`、`0.0.0`、刻意不带 `dsh` 字段与 `type` 字段，
+  供 dshfind 这类单仓多包探测器找到子包，**绝不发布**）、`pnpm-workspace.yaml`（子包声明）
 - `.mneme/`（仓库根）— **项目级**工作流（M.O.）：`pipelines/<id>.json`，属于项目不属于插件。
   住 `dsh-mneme/pipelines/` 会让它在**每个**项目里都读得到（见 [docs/WORKFLOWS.md](dsh-mneme/docs/WORKFLOWS.md)）。
 

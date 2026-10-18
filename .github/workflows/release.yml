@@ -8,8 +8,9 @@ name: Release
 # 沿用 publish.yml 的血泪教训并固化成步骤：
 #   1. 发布根是 dsh-mneme/ 子目录（真实版本在 dsh-mneme/package.json，prepack 自动
 #      npm run sync 同步 src→lib）——npm publish 在 dsh-mneme/ 下跑，包结构与
-#      v0.7.12/0.7.13 本机发布一致；root 的编排壳 package.json 已删除（曾停在
-#      0.7.x，任何指向仓库根的 link/junction 都会静默加载旧包，勿再引入）。
+#      v0.7.12/0.7.13 本机发布一致；root 的 package.json 只是仓库壳（private、
+#      0.0.0、不带 dsh 字段，为单仓多包的工具探测而存在），绝不发布、也不要把
+#      插件 link/junction 指到仓库根——那样加载到的会是壳而不是插件。
 #   2. 「skip if exists」幂等守卫：同一版本重复推 tag 不会重复发布。
 #
 # 新增的版本号管理规则：

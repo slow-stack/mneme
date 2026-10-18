@@ -75,12 +75,14 @@ dsh web
 
 ### 四种安装来源
 
-DSH 的 **设置 → 插件 → Add plugin** 与 `dsh plugin add` 认四种写法，填进去的是什么就装什么。本仓库是个**子目录包**（插件本体在 `dsh-mneme/`），所以走 Git 或 tarball 时必须指到子目录，否则装出来是个空壳。
+DSH 的 **设置 → 插件 → Add plugin** 与 `dsh plugin add` 认四种写法，填进去的是什么就装什么。本仓库是个**单仓多包**：仓库根那份 `package.json` 只是**仓库壳**（`private`、不带 `dsh` 字段），真正可安装的插件本体在 `dsh-mneme/`。所以走 Git 或 tarball 时必须指到子目录，否则装到的是壳本身。
+
+> 为什么仓库根要放一份装不了的壳？因为有些单仓多包探测器（比如 dshfind 的插件探测）只认仓库根的清单——没有它就会把本仓库判成「不可安装的插件包」，而这句判词与实际上能不能装无关。根清单 `private` + `0.0.0` + 不带 `dsh` 字段，就是为了让这类工具能找到子包、同时**绝不**被当成插件本体安装或发布。
 
 | 来源 | 填什么 | 备注 |
 |------|--------|------|
 | **npm 包名** | `@modusensus/dsh-mneme` | 推荐；可带版本 `@0.9.0` |
-| **Git 仓库** | `git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme` | `#path:` 不可省。省掉会装出 `mneme.git 0.0.0` 空壳（仓库根没有 `package.json`） |
+| **Git 仓库** | `git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme` | `#path:` 不可省。省掉装到的是仓库根那份壳（`0.0.0`、无 `dsh` 字段），宿主不会把它当插件 |
 | **tarball** | `C:\\path\\to\\modusensus-dsh-mneme-0.9.0.tgz` | 在 `dsh-mneme/` 里 `npm pack` 产出；`pnpm pack` 会因 bin 脚本 CRLF 失败 |
 | **本地目录** | `C:\\path\\to\\mneme\\dsh-mneme` | **必须是绝对路径**；相对路径会被宿主直接拒掉（`a local path must be absolute`） |
 
@@ -351,12 +353,14 @@ dsh web
 
 ### Four install sources
 
-**Settings → Plugins → Add plugin** and `dsh plugin add` accept four kinds of spec — whatever you paste is what gets installed. This repository is a **subdirectory package** (the plugin lives in `dsh-mneme/`), so Git and tarball specs must point at that subdirectory; otherwise you get an empty shell.
+**Settings → Plugins → Add plugin** and `dsh plugin add` accept four kinds of spec — whatever you paste is what gets installed. This repository is a **multi-package repo**: the `package.json` at the root is only a **repo shell** (`private`, no `dsh` field), while the installable plugin lives in `dsh-mneme/`. So Git and tarball specs must point at that subdirectory; otherwise you install the shell itself.
+
+> Why ship an uninstallable shell at the repo root? Because some multi-package detectors (dshfind's plugin probe, for one) only look at the root manifest — without it this repository is judged "not an installable plugin package," which says nothing about whether it actually installs. The root manifest is `private` + `0.0.0` + carries no `dsh` field precisely so such tools can find the real subpackage while it can **never** be installed or published as the plugin itself.
 
 | Source | Paste this | Note |
 |--------|-----------|------|
 | **npm name** | `@modusensus/dsh-mneme` | Recommended; a version range works too (`@0.9.0`) |
-| **Git repo** | `git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme` | `#path:` is not optional. Without it you get an empty `mneme.git 0.0.0` (the repo root has no `package.json`) |
+| **Git repo** | `git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme` | `#path:` is not optional. Without it you get the root shell (`0.0.0`, no `dsh` field) — the host does not treat it as a plugin |
 | **tarball** | `C:\\path\\to\\modusensus-dsh-mneme-0.9.0.tgz` | Produced by `npm pack` inside `dsh-mneme/`; `pnpm pack` fails on the bin script's CRLF line endings |
 | **local directory** | `C:\\path\\to\\mneme\\dsh-mneme` | **Must be absolute** — a relative path is rejected outright (`a local path must be absolute`) |
 

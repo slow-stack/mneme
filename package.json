@@ -1,0 +1,11 @@
+{
+  "name": "mneme",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Mneme — cross-session memory for DeepSeek Harness. 本清单只是仓库壳：可发布的包在 dsh-mneme/ 子目录（@modusensus/dsh-mneme），mcp/ 是它的 MCP 服务端子包。",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/slow-stack/mneme.git"
+  },
+  "license": "MIT"
+}

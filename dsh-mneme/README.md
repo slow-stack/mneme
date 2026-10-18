@@ -310,7 +310,7 @@ dsh web
 
 #### 方式三：直接从 Git 仓库安装
 
-本仓库是**子目录包**（插件本体在 `dsh-mneme/`，仓库根没有 `package.json`），所以 Git 地址必须带 `#path:` 指到子目录：
+本仓库是**单仓多包**：仓库根那份 `package.json` 是**仓库壳**（`private`、不带 `dsh` 字段），插件本体在 `dsh-mneme/`。所以 Git 地址必须带 `#path:` 指到子目录：
 
 ```bash
 dsh plugin --profile web add 'git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme'
@@ -321,7 +321,7 @@ dsh web
 |------|------|
 | `git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme` | ✅ 装出 `@modusensus/dsh-mneme`（实测 0.9.0，38 个包） |
 | `https://github.com/slow-stack/mneme#path:/dsh-mneme` | ✅ 同上；lockfile 会归一成 `github:slow-stack/mneme#path:/dsh-mneme` |
-| `git+https://github.com/slow-stack/mneme.git` | ❌ 装出 `mneme.git 0.0.0` 空壳（仓库根没有 `package.json`） |
+| `git+https://github.com/slow-stack/mneme.git` | ❌ 装到仓库根那份壳（`0.0.0`、无 `dsh` 字段），宿主不认它是插件 |
 
 `#path:` 是 pnpm 的 git 参数（`parseGitParams` 里按 `path:` 前缀解析），**不是**本仓库自定义的语法；pnpm 官方文档没写这一条，所以这里给出实测结果。
 
