@@ -538,6 +538,63 @@ test("GET /api/dsh-mneme/semantic reports configured/coverage/degraded", async (
   assert.equal(noIndex.degraded, false);
 });
 
+// --- distill-tx-embed-gap 后续：/semantic 区分「有向量」与「可检索」 -----------
+
+test("GET /api/dsh-mneme/semantic reports per-dimension/per-model vector breakdown", async () => {
+  const { routes, store, service } = setup(undefined);
+  // 三种状态混进一个库：3 维 2 条、旧 4 维 1 条、不可解析 1 条；
+  // 模型出身 m1#aaa 一行、m2#bbb 一行、无出身两行。
+  const a = service.saveWithDedupe({ type: "preference", title: "同维A", content: "x" }).memory;
+  const b = service.saveWithDedupe({ type: "preference", title: "同维B", content: "x" }).memory;
+  const c = service.saveWithDedupe({ type: "preference", title: "旧维C", content: "x" }).memory;
+  const d = service.saveWithDedupe({ type: "preference", title: "坏D", content: "x" }).memory;
+  store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run(JSON.stringify([1, 2, 3]), a.id);
+  store.db.prepare("UPDATE memories SET embedding = ?, embedding_model = ? WHERE id = ?").run(JSON.stringify([1, 2, 3]), "m1#aaa", b.id);
+  store.db.prepare("UPDATE memories SET embedding = ?, embedding_model = ? WHERE id = ?").run(JSON.stringify([1, 2, 3, 4]), "m2#bbb", c.id);
+  store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run("not-json", d.id);
+
+  const sem = routes.find((r) => r.path === "/api/dsh-mneme/semantic");
+  const res = new FakeRes();
+  await sem.handler(req("/api/dsh-mneme/semantic"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+
+  // 无 embedder → 无当前维度可比对：unsearchable 报 0、retrievable 报 null。
+  assert.equal(data.vectors.unsearchable, 0);
+  assert.equal(data.vectors.retrievable, null);
+  const dims = Object.fromEntries(data.vectors.byDimension.map((e) => [e.dimension, e.count]));
+  assert.equal(dims["3"], 2);
+  assert.equal(dims["4"], 1);
+  assert.equal(dims[null], 1, "unparseable vector counted under null");
+  const models = Object.fromEntries(data.vectors.byModel.map((e) => [e.model, e.count]));
+  assert.equal(models["m1#aaa"], 1);
+  assert.equal(models["m2#bbb"], 1);
+  assert.equal(models[null], 2, "rows without provenance counted under null");
+});
+
+test("GET /api/dsh-mneme/semantic counts stale-dimension rows as unsearchable with a matching embedder", async () => {
+  // 核心回归锁：库里掺一条错维向量，端点必须报出 unsearchable ≥ 1。
+  // 旧实现无论怎么混都只给 coverage，状态卡说不出「有向量但检索不到」。
+  const { routes, store, service } = setup({ name: "OpenAI", embed() {}, dimension: 3 });
+  const a = service.saveWithDedupe({ type: "preference", title: "同维", content: "x" }).memory;
+  const b = service.saveWithDedupe({ type: "preference", title: "错维", content: "x" }).memory;
+  store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run(JSON.stringify([1, 2, 3]), a.id);
+  store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run(JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8]), b.id);
+  const sem = routes.find((r) => r.path === "/api/dsh-mneme/semantic");
+  const res = new FakeRes();
+  await sem.handler(req("/api/dsh-mneme/semantic"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.equal(data.vectors.unsearchable, 1, "the 8-dim row is not searchable against a 3-dim embedder");
+  assert.equal(data.vectors.retrievable, 1, "the 3-dim row is searchable");
+  // coverage 走 semantic.vectorIndex.getStats（本测试未挂 → 0），所以「有向量的行」
+  // 用 byDimension 总和对照：两条都在「有向量」里，但只有一条可检索 —— 这正是
+  // unsearchable 必须存在的原因。
+  const embeddedRows = data.vectors.byDimension.reduce((s, e) => s + e.count, 0);
+  assert.equal(embeddedRows, 2, "both rows have vectors");
+  assert.equal(data.vectors.unsearchable, 1, "yet only one is retrievable");
+});
+
 // --- Bug8: llm-audit API (pagination + stats) --------------------------------
 
 test("GET /api/dsh-mneme/semantic/llm-audit returns paginated rows", async () => {
