@@ -51,11 +51,15 @@ jobs:
         working-directory: dsh-mneme
         run: npm ci
 
-      - name: Count passing tests
+      # 取套件总数（`tests N`）而不是通过数（`pass N`）：徽章报的是 CI（ubuntu）口径，
+      # 平台条件跳过的用例在 pass 里不计、在 tests 里计入。用 pass 的话，本地或
+      # 条件不同的机器上跑这个工作流会写进一个比 badge:sync 小 1 的数——两条路径
+      # 各有一套记账口径，正是 v0.8.11 徽章漂移的同类失效。
+      - name: Count tests
         id: tests
         working-directory: dsh-mneme
         run: |
-          COUNT=$(node --test test/*.test.js 2>&1 | tail -10 | grep -oE 'pass [0-9]+' | grep -oE '[0-9]+')
+          COUNT=$(node --test test/*.test.js 2>&1 | tail -10 | grep -oE 'tests [0-9]+' | grep -oE '[0-9]+')
           echo "count=$COUNT"
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 

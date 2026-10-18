@@ -91,6 +91,19 @@ test("release-prep.yml 的版本号走 env 注入，不内插进 run 脚本", ()
   }
 });
 
+test("release-prep.yml 与 badge:sync 用同一个记账口径（套件总数，不是通过数）", () => {
+  // v0.8.11 徽章漂移的同类失效：两条路径各有一套口径时，谁都不知道该信哪个数。
+  // 徽章报的是 CI（ubuntu）口径——平台条件跳过的用例在 pass 里不计、在 tests 里计入，
+  // 于是从一台有跳过条件的机器上跑发版准备，会写进一个比 badge:sync 小 1 的徽章，
+  // 而且它进 PR 时 CI 是绿的（徽章只出现在文档里，没有测试会去比对它）。
+  const yml = readFileSync(path.join(repoRoot, ".github", "workflows", "release-prep.yml"), "utf8");
+  const blocks = runBlocks(yml);
+  const countBlock = blocks.find((b) => /node --test/.test(b));
+  assert.ok(countBlock, "应当能切出跑测试的那个 run 块");
+  assert.ok(countBlock.includes("tests [0-9]+"), "计数必须取 tests N（与 sync-test-badge.mjs 同口径）");
+  assert.ok(!countBlock.includes("pass [0-9]+"), "不得退回 pass N：那是另一套记账口径");
+});
+
 test("发版准备的两份人写清单都点出跨 minor 要挪 SECURITY.md 支持版本表", () => {
   // 跨 minor 时 security-doc.test.js 会红，而那时人往往已经忘了这张表——工作流开的 PR
   // 就是最后一道能把话说清楚的时机。commit-msg 与 pr-body 是两份独立的文本，
