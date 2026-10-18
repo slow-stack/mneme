@@ -81,7 +81,39 @@ jobs:
             echo "::warning::无改动（版本号/占位行已存在）——跳过提交与 PR"
             exit 0
           fi
-          git checkout -b "release-prep/$VERSION"
+          BRANCH="release-prep/$VERSION"
+          REMOTE_HEAD=$(git ls-remote --heads origin "$BRANCH" | cut -f1)
+          FORCE=""
+          if [ -n "$REMOTE_HEAD" ]; then
+            OPEN_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq ".[0].number" || true)
+            if [ -n "$OPEN_PR" ]; then
+              echo "::warning::分支 $BRANCH 上已有进行中的 PR #$OPEN_PR——重跑会盖掉人在 PR 里补的条目，本次不动任何分支。"
+              echo "去补 #$OPEN_PR 里的三处人写内容，或关掉它之后重跑。"
+              exit 0
+            fi
+            git fetch --depth=1 origin "$BRANCH" >/dev/null 2>&1
+            HEAD_SUBJECT=$(git log -1 --format=%s FETCH_HEAD)
+            HEAD_AUTHOR=$(git log -1 --format="%an <%ae>" FETCH_HEAD)
+            # 只在「顶端是上次机器产出」时才当作重跑覆盖：人工推过东西的分支一律停下。
+            # case 的模式里 $VERSION 会展开，用 case 而不是 ${var#pat} 免得模式里的
+            # 空格与全角括号在转义上出岔子。
+            MACHINE_TAIL=no
+            case "$HEAD_SUBJECT" in
+              "chore: v$VERSION 发布准备"*)
+                if [ "$HEAD_AUTHOR" = "modusensus <modusensus@users.noreply.github.com>" ]; then
+                  MACHINE_TAIL=yes
+                fi
+                ;;
+            esac
+            if [ "$MACHINE_TAIL" != "yes" ]; then
+              echo "::error::分支 $BRANCH 已存在、没有进行中的 PR，但它的顶端提交不是本工作流生成的（$HEAD_AUTHOR / $HEAD_SUBJECT）。"
+              echo "先人工确认那条分支上的内容——合并或删掉它——再重跑，避免覆盖掉别人的提交。"
+              exit 1
+            fi
+            echo "分支 $BRANCH 已存在，顶端是上次机器产出、且没有 PR（多半卡在开 PR 那一步）：按重跑处理，覆盖它。"
+            FORCE="--force-with-lease=refs/heads/$BRANCH:$REMOTE_HEAD"
+          fi
+          git checkout -b "$BRANCH"
           git add dsh-mneme/package.json dsh-mneme/package-lock.json dsh-mneme/CHANGELOG.md README.md dsh-mneme/README.md
           { echo "chore: v$VERSION 发布准备（版本号 + 测试徽章 + CHANGELOG/版本表占位行）"
             echo
@@ -94,7 +126,7 @@ jobs:
             echo "- [ ] 跨 minor 时把 SECURITY.md 中英两张支持版本表挪一格（活跃开发 / 尽力维护 / 不支持三段一起挪，含停止维护那段通知）"
           } > commit-msg.txt
           git commit -F commit-msg.txt
-          git push origin "release-prep/$VERSION"
+          git push origin "HEAD:refs/heads/$BRANCH" $FORCE
           # PR 正文走 --body-file：多行中文塞进 --body 需要一堆 $'\n' 转义，
           # 读的人看不懂、改的人不敢动。写成文件既好读也不受 shell 引号规则摆布。
           {
@@ -110,6 +142,13 @@ jobs:
             echo
             echo "合并后推 v$VERSION tag 即自动发布（release.yml 会核对 tag / package.json / CHANGELOG 三方一致）。"
           } > pr-body.md
-          gh pr create --base main --head "release-prep/$VERSION" \
+          # GITHUB_TOKEN 能不能开 PR 取决于仓库级开关（Settings → Actions → General →
+          # "Allow GitHub Actions to create and approve pull requests"），job 里写
+          # `pull-requests: write` 覆盖不了它——2026-10-18 实测这两个开关是反的，
+          # 整条工作流的最后一步因此每次都失败，而前面七步全是好的。
+          if ! gh pr create --base main --head "$BRANCH" \
             --title "release: v$VERSION 发布准备" \
-            --body-file pr-body.md
+            --body-file pr-body.md; then
+            echo "::error::分支 $BRANCH 已推上去，但开 PR 失败。若报 'GitHub Actions is not permitted to create or approve pull requests'，去仓库 Settings → Actions → General 打开 'Allow GitHub Actions to create and approve pull requests'，然后重跑本工作流——此时还没有 PR，重跑守卫会覆盖上次的机器产出，不会丢任何人的改动。"
+            exit 1
+          fi

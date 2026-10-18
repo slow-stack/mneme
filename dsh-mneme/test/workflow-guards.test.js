@@ -112,3 +112,45 @@ test("发版准备的两份人写清单都点出跨 minor 要挪 SECURITY.md 支
   const hits = yml.match(/SECURITY\.md 中英两张支持版本表/g) || [];
   assert.equal(hits.length, 2, "commit message 与 PR 正文各要有一条，实际 " + hits.length);
 });
+
+test("release-prep.yml 的重跑守卫：已有 PR 不动分支，只覆盖机器产出", () => {
+  // 2026-10-18 实测：工作流 8 步里前 7 步全成功，最后一步 git push 被
+  // "! [rejected] release-prep/0.9.1 -> release-prep/0.9.1 (fetch first)" 打回——
+  // 上一次运行已经把同名分支推上去了。不可重入的代价不是「重跑失败」这么轻：
+  // 人会以为流程坏了，转去手工发版，整套自动化就此被绕开。
+  //
+  // 但「能重跑」不能退化成「无条件 force push」：分支上可能已经有人补过 CHANGELOG
+  // 条目，那正是这套流程留给人的那部分工作，覆盖掉比不能重跑更糟。所以守卫分三档：
+  // 有进行中的 PR → 什么都不动；顶端是机器产出且没有 PR → 按重跑覆盖；其他 → 停下要人看。
+  const yml = readFileSync(path.join(repoRoot, ".github", "workflows", "release-prep.yml"), "utf8");
+  const blocks = runBlocks(yml);
+  const pushBlock = blocks.find((b) => /git push/.test(b));
+  assert.ok(pushBlock, "应当能切出含 git push 的那个 run 块");
+
+  const prLookup = pushBlock.indexOf('--state open');
+  const pushAt = pushBlock.indexOf("git push");
+  assert.ok(prLookup > 0, "重跑前必须查有没有进行中的 PR（gh pr list --state open）");
+  assert.ok(prLookup < pushAt, "查 PR 必须发生在 push 之前");
+
+  // 三档判定：没有 PR 才继续；继续时顶端提交必须是本工作流生成的。
+  assert.ok(pushBlock.includes("--force-with-lease="), "重跑覆盖必须用 --force-with-lease（锁住 fetch 到的 SHA）");
+  assert.ok(!/git push[^\n]*--force(?!-with-lease)/.test(pushBlock), "不得退回无条件 --force");
+  // 断言的是那个 if 本身，不是变量名：变量名留在 case 里、判定被删掉，
+  // 只查 includes("MACHINE_TAIL") 照样绿（第一版就是这么漏的）。
+  assert.match(pushBlock, /if \[ "\$MACHINE_TAIL" != "yes" \]; then/, "必须有「顶端不是机器产出就停下」的那道判定");
+});
+
+test("release-prep.yml 开 PR 失败时给的是可行动的报错，不是裸 GraphQL 报错", () => {
+  // 第二个真因（2026-10-18 实测）：仓库级开关 can_approve_pull_request_reviews=false，
+  // job 里写 pull-requests: write 覆盖不了它，最后一步报
+  // "GitHub Actions is not permitted to create or approve pull requests"。
+  // 这个开关在**组织层**默认关着时仓库层根本改不动（gh api 返回 409 Conflict），
+  // 所以要让人一眼看出该去哪里开、开完能不能直接重跑。
+  const yml = readFileSync(path.join(repoRoot, ".github", "workflows", "release-prep.yml"), "utf8");
+  // 只在**可执行部分**里找：这几句话在注释里也出现过（注释是在解释为什么），
+  // 对全文 grep 会被自己写的说明文字骗过——报错文案被删干净了照样绿。
+  const code = codeOnly(yml);
+  assert.match(code, /not permitted to create or approve pull requests/, "报错文案要点名这个具体的 GitHub 报错，人才搜得到");
+  assert.match(code, /Settings → Actions → General/, "必须写清去哪个设置页开");
+  assert.match(code, /Allow GitHub Actions to create and approve pull requests/, "必须写清要打开的那个开关叫什么");
+});
