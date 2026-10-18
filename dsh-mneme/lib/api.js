@@ -207,6 +207,15 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   // feature flags 快照（GET/PUT 共用）：overrides 是持久化的用户显式覆盖；
   // effective 是启动配置在白名单键上被 overrides 覆盖后的最终值。config 缺席
   // （旧调用方直连、未传 cfg）时只报被覆盖的键，不把不存在的默认值编造给前端。
+  //
+  // pendingRestart 回答的是第三个问题：「我改的开关，现在真的生效了吗？」
+  // 功能开关的生效节奏与 panel_mode 相同——启动时由 index.js 合并进 cfg，运行中
+  // 那份 cfg 是冻结的（见 index.js 装配处的注释）。于是面板显示「已改」不等于
+  // 运行时已改：#481 实测人格总闸正是这样，面板开着、人格段却不注入，用户只能
+  // 靠反复试错发现。effective 表达的是「运行时取什么值」（overrides 优先），
+  // **反推不出待重启**，必须另比一次冻结值——这是本字段存在的唯一理由。
+  // 只报「显式覆盖 ≠ 冻结值」的键：未被覆盖的键运行时值就是 cfg 值，不存在落差；
+  // config 缺席（旧调用方直连、未传 cfg）时无从比较，返回空数组而不编造。
   const flagKeys = [
     ...FEATURE_FLAG_SPEC.booleans,
     ...Object.keys(FEATURE_FLAG_SPEC.ints),
@@ -245,6 +254,19 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     if (path) return config?.[path[0]]?.[path[1]];
     return config?.[key];
   }
+  // 「显式覆盖 ≠ 冻结值」的键。用 Object.is 比而不是 !==：NaN 与 ±0 的边角上
+  // 两者会给出相反的结论（Object.is(NaN, NaN) 为真、Object.is(0, -0) 为假），
+  // 开关值里虽然不该出现它们，但比较语义与「值是否相同」对齐更省心。
+  // 未被覆盖的键不看：它的运行时值本来就取自 cfg，不存在落差。
+  function pendingRestartKeys(overrides) {
+    if (!config) return [];
+    const pending = [];
+    for (const key of flagKeys) {
+      if (overrides[key] === undefined) continue;
+      if (!Object.is(overrides[key], configFlagValue(key))) pending.push(key);
+    }
+    return pending;
+  }
   function featureSnapshot() {
     const overrides = settings.getFeatureFlags();
     const effective = {};
@@ -255,7 +277,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         if (value !== undefined) effective[key] = value;
       }
     }
-    return { overrides, effective };
+    return { overrides, effective, pendingRestart: pendingRestartKeys(overrides) };
   }
 
   // Ensure the service has an embedder when the API layer was handed one

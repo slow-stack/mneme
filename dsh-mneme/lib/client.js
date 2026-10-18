@@ -495,6 +495,11 @@ window.__ModuleLoader__.load({
         "memory.features.tagDefault.hint": "这一项用的是出厂默认值，没有被你改过",
         "memory.features.tagChanged": "已改",
         "memory.features.tagChanged.hint": "你改过这一项，它不再用默认值",
+        // 「待重启」是第三态，不是「已改」的加强版：#481 之前面板只有「已改」，
+        // 用户改完总闸看到徽标亮起就以为生效了，实际运行时还在用启动时的旧值。
+        "memory.features.tagPending": "待重启",
+        "memory.features.tagPending.hint": "这一项已存进配置，但本次启动还没用上——重启 DSH（或在插件管理里关开一次本插件）后才生效",
+        "memory.features.pendingRestartNotice": "有改动还没生效：标着「待重启」的开关要等重启 DSH 后才起作用（在插件管理里把本插件关开一次也行）。",
         "memory.features.autoSummarize": "自动把对话记下来（自动注入之外）",
         "memory.features.autoSummarize.hint": "开：对话结束自动提炼成长期记忆条目（autoSummarize）；关：只有你手动存或 Agent 主动存才有记忆",
         "memory.features.hotMemoryEnabled": "顺带带上最近几轮原话",
@@ -1156,6 +1161,9 @@ window.__ModuleLoader__.load({
         "memory.features.tagDefault.hint": "This one is at its factory default — you have not changed it",
         "memory.features.tagChanged": "changed",
         "memory.features.tagChanged.hint": "You changed this one; it no longer uses the default",
+        "memory.features.tagPending": "restart pending",
+        "memory.features.tagPending.hint": "Saved, but not yet in effect for this session — restart DSH (or toggle this plugin off and on in the plugin manager) to apply it",
+        "memory.features.pendingRestartNotice": "Some changes are not in effect yet: switches marked \"restart pending\" apply only after you restart DSH (toggling this plugin off and on in the plugin manager works too).",
         "memory.features.autoSummarize": "Turn conversations into memory automatically",
         "memory.features.autoSummarize.hint": "On: memory entries are distilled when a conversation ends (autoSummarize). Off: memory only exists if you save it, or the agent decides to",
         "memory.features.hotMemoryEnabled": "Carry the last few turns verbatim",
@@ -1974,6 +1982,13 @@ window.__ModuleLoader__.load({
       ".mneme-conflict-primary:disabled{opacity:.55;cursor:default}",
       ".mneme-conflict-primary:hover:not(:disabled){background:color-mix(in srgb,var(--mneme-accent) 85%,var(--dsw-alias-label-primary))}",
       ".mneme-badge--frozen{color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 12%,transparent)}",
+      // 「待重启」徽标：沿用 frozen 的 warn 语义（都是「现状不是你刚设的样子」），
+      // 但加边框把它和只读冻结态区分开——它需要用户动手，不是终态。
+      ".mneme-badge--pending{color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 12%,transparent);border:1px solid color-mix(in srgb,var(--mneme-warn) 30%,transparent)}",
+      ".mneme-pending{display:flex;align-items:flex-start;gap:8px;margin:8px 0 0;padding:8px 10px;border-radius:8px;font-size:12.5px;line-height:18px;color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 10%,transparent);border:1px solid color-mix(in srgb,var(--mneme-warn) 28%,transparent)}",
+      // 圆点用当前色（currentColor）而不是再引一次 --mneme-warn：色值只有一个真源，
+      // 改主题时提示行与圆点不会走散。
+      ".mneme-pending-dot{flex:none;width:6px;height:6px;margin-top:6px;border-radius:50%;background:currentColor}",
       ".mneme-conflict-empty{border:1px dashed var(--dsw-alias-border-l2);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px}",
       ".mneme-conflict-empty-title{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-secondary)}",
       ".mneme-conflict-empty-body{font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
@@ -3070,11 +3085,25 @@ window.__ModuleLoader__.load({
       // = 值仍来自 config schema 的默认值。面板自己判断，不加后端字段、
       // 不动 config.js（#427 的验收红线之一）。
       const ovr = (state && state.overrides) || {};
-      const flagTag = (k) => ({
-        kind: Object.prototype.hasOwnProperty.call(ovr, k) ? "mneme-badge--changed" : "mneme-badge--default",
-        text: t(Object.prototype.hasOwnProperty.call(ovr, k) ? "memory.features.tagChanged" : "memory.features.tagDefault"),
-        title: t(Object.prototype.hasOwnProperty.call(ovr, k) ? "memory.features.tagChanged.hint" : "memory.features.tagDefault.hint")
-      });
+      // 「待重启」是第三态，必须由后端算：#481 的坑正是「面板显示已改 ≠ 运行时
+      // 已改」——开关在宿主启动时合并进 cfg 并冻结，此后改 kv 只是持久化。这个
+      // 落差前端看不见（overrides 里只有「改了」这一个事实），所以后端另比一次
+      // 冻结值并给出 pendingRestart 名单；本面板只负责把它显示出来。
+      const pending = new Set((state && state.pendingRestart) || []);
+      const flagTag = (k) => {
+        if (pending.has(k)) {
+          return {
+            kind: "mneme-badge--pending",
+            text: t("memory.features.tagPending"),
+            title: t("memory.features.tagPending.hint")
+          };
+        }
+        return {
+          kind: Object.prototype.hasOwnProperty.call(ovr, k) ? "mneme-badge--changed" : "mneme-badge--default",
+          text: t(Object.prototype.hasOwnProperty.call(ovr, k) ? "memory.features.tagChanged" : "memory.features.tagDefault"),
+          title: t(Object.prototype.hasOwnProperty.call(ovr, k) ? "memory.features.tagChanged.hint" : "memory.features.tagDefault.hint")
+        };
+      };
       const boolRow = (k, opts = {}) => h(FeatureRow, {
         key: k,
         name: t(`memory.features.${k}`),
@@ -3332,6 +3361,14 @@ window.__ModuleLoader__.load({
           savedTick && h("span", { className: "mneme-saved", style: { marginLeft: 8, fontWeight: 400 } }, t("memory.features.restartHint"))
         ),
         h("div", { className: "mneme-set-desc" }, t("memory.features.desc")),
+        // #481：改了但没生效的开关，在这张卡里明说。放在 desc 之后、错误行之前
+        // ——它是常态提示而非错误，但比错误更该先被看见（用户刚改完就会看这里）。
+        // 行级 badge（flagTag 的第三态）标出具体是哪几行，这条只负责说清「有事
+        // 没生效」和「怎么办」。
+        pending.size > 0 && h("div", { className: "mneme-pending" },
+          h("span", { className: "mneme-pending-dot" }),
+          h("span", null, t("memory.features.pendingRestartNotice"))
+        ),
         // 见 saveError 的声明处：这条分支不能跟着加载失败那条走。
         saveError && h("div", { className: "mneme-mainterr" }, saveError),
         h(RuntimeProvisionBlock, { t }),

@@ -1051,6 +1051,47 @@ test("settings card folds everything beyond the first screen behind All settings
     "the default/changed badge must be decided from overrides, not a new backend field");
 });
 
+// #481：面板开关「改了不生效」的体验坑。开关在宿主启动时合并进冻结 cfg，
+// 此后面板改 kv 只是持久化——用户看到「已改」就以为生效了，实测（人格总闸）
+// 因此白白排查了一轮。这条锁三件事：①第三态徽标由后端的 pendingRestart 名单
+// 决定（前端算不出来：overrides 只说明「改了」，不说明「用没用上」）；
+// ②卡片顶部有整卡提示行；③中英文案与语义色齐备，且「待重启」不能靠
+// opacity 之类的弱化手段与「已改」区分（弱化在浅色主题下会掉到看不清）。
+test("feature switches expose a third badge state for saved-but-not-live overrides (#481)", () => {
+  // ① 判定来源必须是后端字段，而不是前端自己比 overrides。
+  assert.ok(/const pending = new Set\(\(state && state\.pendingRestart\) \|\| \[\]\)/.test(clientSource),
+    "the pending set must come from the backend pendingRestart list");
+  assert.ok(/pending\.has\(k\)[\s\S]{0,240}?mneme-badge--pending/.test(clientSource),
+    "flagTag must return the pending badge before falling back to default/changed");
+  // 后端字段缺失（旧宿主）时 pending 为空集，面板退回两态——不能因此崩掉。
+  assert.ok(/\(state && state\.pendingRestart\) \|\| \[\]/.test(clientSource),
+    "a missing pendingRestart must degrade to an empty set, not throw");
+
+  // ② 整卡提示行：只在有待重启项时出现，位置在说明之后、错误行之前。
+  const noticeAt = clientSource.indexOf('t("memory.features.pendingRestartNotice")');
+  const descAt = clientSource.indexOf('h("div", { className: "mneme-set-desc" }, t("memory.features.desc"))');
+  assert.ok(noticeAt > descAt && descAt >= 0, "the notice row must sit after the card description");
+  assert.ok(/pending\.size > 0 && h\("div", \{ className: "mneme-pending" \}/.test(clientSource),
+    "the notice row must render only when something is actually pending");
+
+  // ③ 双语齐备（各出现两次：zh 表 + en 表）。
+  for (const key of ["memory.features.tagPending", "memory.features.tagPending.hint",
+    "memory.features.pendingRestartNotice"]) {
+    const occurrences = clientSource.split("\"" + key + "\"").length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+
+  // ④ 样式走语义色层（AGENTS.md 第 9 条），且不靠透明度弱化区分状态。
+  assert.ok(/\.mneme-badge--pending\{[^}]*var\(--mneme-warn\)[^}]*\}/.test(clientSource),
+    "the pending badge must use the --mneme-warn semantic colour");
+  assert.ok(!/\.mneme-badge--pending\{[^}]*opacity/.test(clientSource),
+    "the pending badge must not rely on opacity to distinguish itself from changed");
+  assert.ok(/\.mneme-pending\{[^}]*var\(--mneme-warn\)[^}]*\}/.test(clientSource),
+    "the notice row must use the --mneme-warn semantic colour");
+  assert.ok(/\.mneme-pending-dot\{[^}]*background:currentColor/.test(clientSource),
+    "the notice dot must inherit currentColor so the colour has one source");
+});
+
 // v0.8.0 冲突集中处理：状态页的待确认冲突队列（reason + 双方内容对比 +
 // 保留 A/B/仅标记动作），resolveConflictPending 的第一个前端出口。双语齐备。
 test("conflict queue ships a central review surface on the status tab", () => {
