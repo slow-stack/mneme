@@ -1,11 +1,13 @@
-// 发布前校验 src/ 与 lib/ 一致性。
+// 断言 src/ 与 lib/ 一致——发布前的平价闸门。
 //
-// npm 包实际加载 lib/（package main → lib/index.js），而 root 层 `npm publish`
-// 不触发 dsh-mneme/ 的 prepack → sync 同步。历史教训：PR #60 只改了 src 忘了同步
-// lib，v0.7.8 发出去的 npm 包跑的还是旧代码（issue #65）。此脚本让这类漂移在发布时
-// 直接 fail，而不是带着旧产物上线。
+// npm 包实际加载 lib/（package main → lib/index.js）。历史教训：PR #60 只改了 src
+// 忘了同步 lib，v0.7.8 发出去的 npm 包跑的还是旧代码，用户侧静默失效（issue #65）。
 //
-// 用法：node scripts/check-sync.js （root package.json 的 prepack 钩子自动调用）
+// 注意这里**只校验、不同步**：prepack 钩子跑的是 `npm run sync`（把 src 覆盖到
+// lib），同步后必然一致，所以它永远不会因漂移失败。真正的闸门是这道脚本，跑在
+// CI 每个 PR 与 release.yml 的 test job 里——让漂移在合并前就红，而不是等到发布。
+//
+// 用法：node scripts/check-sync.js （CI 与 release.yml 调用，非 prepack）
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";

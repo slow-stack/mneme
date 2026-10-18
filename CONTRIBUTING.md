@@ -33,7 +33,7 @@ dsh-mneme-repo/           # repo root (docs + private shell manifest, not publis
 
 - Write code only in `src/`, then run `npm run sync` to mirror changes into `lib/`.
 - **Never edit `lib/` by hand** — the next sync overwrites it.
-- Publish from inside `dsh-mneme/` — the **package directory** (per AGENTS.md red line: the repo root historically shipped broken packages and its package.json is now a private 0.0.0 shell that must never be published). `prepack` runs `scripts/check-sync.js`, which asserts `src/` ↔ `lib/` match file-for-file and fails the publish on any drift (issue #65). So run `npm run sync` (in `dsh-mneme/`) and commit the `lib/` changes **before** publishing.
+- Publish from inside `dsh-mneme/` — the **package directory** (per AGENTS.md red line: the repo root historically shipped broken packages and its package.json is now a private 0.0.0 shell that must never be published). `prepack` runs `npm run sync`, so a published tarball always ships a fresh `lib/`; the **drift gate is separate** — `node scripts/check-sync.js` runs in CI on every PR and in `release.yml` before publishing, and fails when `src/` ↔ `lib/` differ file-for-file (issue #65). Because `prepack` syncs rather than checks, a local `npm publish` will **silently overwrite** an out-of-sync `lib/` instead of stopping — so still run `npm run sync` (in `dsh-mneme/`) and commit the `lib/` changes **before** publishing.
 
 ---
 
@@ -153,7 +153,7 @@ Versioning follows semantic versioning (`MAJOR.MINOR.PATCH`). Full flow:
 3. **Full test pass**: `npm test` must be green.
 4. **Commit and push**: commit → `git push origin main` → `git tag vX.Y.Z` → `git push origin vX.Y.Z`.
 5. **Create a GitHub Release**: title `vX.Y.Z`, body referencing the matching CHANGELOG entry (review before publishing).
-6. **Publish to npm**: run `npm publish` from inside `dsh-mneme/` — the **package directory** (per AGENTS.md red line; the root `package.json` is only a private repo shell and must never be published). `prepack` runs `scripts/check-sync.js` and fails if `src/` ↔ `lib/` drifted — ensure `npm run sync` + commit ran first.
+6. **Publish to npm**: run `npm publish` from inside `dsh-mneme/` — the **package directory** (per AGENTS.md red line; the root `package.json` is only a private repo shell and must never be published). `prepack` runs `npm run sync` (so the tarball is never stale), while the `src/` ↔ `lib/` **gate** is `node scripts/check-sync.js` in CI and in `release.yml` — run `npm run sync` + commit before publishing, since `prepack` will otherwise rewrite `lib/` without telling you.
 
 ---
 
@@ -245,7 +245,7 @@ dsh-mneme-repo/           # 仓库根（文档 + 不发布的私有壳清单）
 
 - 所有代码改动只写 `src/`，改完必须运行 `npm run sync` 同步到 `lib/`。
 - **不要手工编辑 `lib/`**——下次 sync 会覆盖你的改动。
-- 发布在 **`dsh-mneme/` 包目录内**执行（AGENTS.md 红线：仓库根历史上发出过坏包，根目录的 package.json 现在是 private 的 0.0.0 壳、绝不发布）：`prepack` 会跑 `scripts/check-sync.js`，逐文件断言 `src/` ↔ `lib/` 一致，有漂移直接发布失败（issue #65 教训）。所以发布前务必先在 `dsh-mneme/` 里跑 `npm run sync` 并把 `lib/` 改动一起提交。
+- 发布在 **`dsh-mneme/` 包目录内**执行（AGENTS.md 红线：仓库根历史上发出过坏包，根目录的 package.json 现在是 private 的 0.0.0 壳、绝不发布）：`prepack` 跑的是 `npm run sync`，保证发出去的 tarball 里 `lib/` 永远是新的；**校验是另一道**——`node scripts/check-sync.js` 在 CI 每个 PR、以及 `release.yml` 发布前逐文件断言 `src/` ↔ `lib/` 一致，有漂移直接失败（issue #65 教训）。注意 `prepack` 只同步不校验，所以本地直接 `npm publish` 会**静默改写**不一致的 `lib/` 而不是报错——发布前仍务必先在 `dsh-mneme/` 里跑 `npm run sync` 并把 `lib/` 改动一起提交。
 
 ---
 
@@ -347,7 +347,7 @@ DSH 上游仍处于 developer preview 阶段，API 与服务接口变动频繁�
 3. **全量测试**：`npm test` 确认通过。
 4. **提交并推送**：commit → `git push origin main` → `git tag vX.Y.Z` → `git push origin vX.Y.Z`。
 5. **创建 GitHub Release**：标题为 `vX.Y.Z`，正文引用 CHANGELOG 对应条目（发布前需人工过目）。
-6. **发布 npm**：在 **`dsh-mneme/` 包目录内**执行 `npm publish`（AGENTS.md 红线：仓库根历史上发出过坏包，根目录的 package.json 现在是 private 的 0.0.0 壳、绝不发布）。`prepack` 会跑 `scripts/check-sync.js` 校验 src↔lib 一致性，漂移则发布失败——发布前须先 `npm run sync` 并提交 `lib/` 改动。
+6. **发布 npm**：在 **`dsh-mneme/` 包目录内**执行 `npm publish`（AGENTS.md 红线：仓库根历史上发出过坏包，根目录的 package.json 现在是 private 的 0.0.0 壳、绝不发布）。`prepack` 跑 `npm run sync`（只同步、不校验），src↔lib 的**闸门**是 `node scripts/check-sync.js`，在 CI 与 `release.yml` 里跑——发布前须先 `npm run sync` 并提交 `lib/` 改动，否则 `prepack` 会不声不响地改写它。
 
 ---
 
