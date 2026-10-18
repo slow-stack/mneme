@@ -53,6 +53,7 @@ test("[Unreleased] 攒着条目时整段搬进新版本节，不留空占位节"
   const r = insertReleaseSection(src, "0.9.1", "2026-10-18");
   assert.equal(r.ok, true);
   assert.equal(r.moved, 3, "三条条目都要搬过去");
+  assert.equal(r.movedContent, true, "搬了正文与条目，两个字段都该为真");
   assert.equal(r.text.includes("（待填）"), false, "搬了真条目就不该再留空占位");
   // Unreleased 立刻接新版本节，中间不夹任何内容
   assert.ok(r.text.startsWith("# Changelog\n\n## [Unreleased]\n\n## [0.9.1] - 2026-10-18\n\n## 🐛 修复\n\n- 条目甲"));
@@ -60,11 +61,33 @@ test("[Unreleased] 攒着条目时整段搬进新版本节，不留空占位节"
   assert.ok(r.text.indexOf("- 条目丙") < r.text.indexOf("## [0.9.0]"), "全都搬进新节里，不留一条挂在 Unreleased 名下");
 });
 
+test("[Unreleased] 正文非空但没有 `- ` 条目时，movedContent 仍为 true（moved 只是计数）", () => {
+  // 用 moved 当「有没有搬」的判据是错的：正文非空、但一条 `- ` 都没有时 moved 是 0，
+  // 入口会打印「占位节（[Unreleased] 本来是空的）」——而它显然不空。两个字段必须分开用。
+  const src = "# Changelog\n\n## [Unreleased]\n\n一段没有条目的说明正文。\n\n## [0.9.0] - 2026-10-17\n\n- 旧版本\n";
+  const r = insertReleaseSection(src, "0.9.1", "2026-10-18");
+  assert.equal(r.ok, true);
+  assert.equal(r.moved, 0, "没有 `- ` 开头的行为，条目数是 0");
+  assert.equal(r.movedContent, true, "但正文确实搬了，这个字段才是「有没有搬」的判据");
+  assert.ok(r.text.includes("一段没有条目的说明正文。"), "正文不许丢");
+  assert.equal(r.text.includes("（待填）"), false, "不该在搬了正文之后还留空占位");
+});
+
+test("[Unreleased] 首行是缩进代码块时保留前导空格（原样搬，不 trim）", () => {
+  // body.trim() 会把首行的四空格吃掉，Markdown 代码块降级成普通段落——
+  // 那就不是「整段搬、一个字不改」了。只许剥掉节边界上的空行。
+  const src = "# Changelog\n\n## [Unreleased]\n\n    npm run sync\n\n## [0.9.0] - 2026-10-17\n\n- 旧版本\n";
+  const r = insertReleaseSection(src, "0.9.1", "2026-10-18");
+  assert.equal(r.ok, true);
+  assert.ok(r.text.includes("\n    npm run sync\n"), "四空格缩进必须原样保留：\n" + JSON.stringify(r.text));
+});
+
 test("[Unreleased] 为空时插占位节，且不产生多余空行", () => {
   const src = "# Changelog\r\n\r\n## [Unreleased]\r\n## [0.9.0] - 2026-10-17\r\n\r\n- x\r\n";
   const r = insertReleaseSection(src, "0.9.1", "2026-10-18");
   assert.equal(r.ok, true, "CRLF 检出上也要能插");
   assert.equal(r.moved, 0, "Unreleased 是空的，没有可搬的");
+  assert.equal(r.movedContent, false, "Unreleased 空时才该走占位节分支");
   assert.ok(
     r.text.startsWith(
       "# Changelog\r\n\r\n## [Unreleased]\r\n\r\n## [0.9.1] - 2026-10-18\r\n\r\n## 🐛 修复\r\n\r\n- （待填）\r\n\r\n## [0.9.0] - 2026-10-17\r\n"

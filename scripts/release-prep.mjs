@@ -92,9 +92,13 @@ if (testCount && /^\d+$/.test(testCount)) {
   const r = insertReleaseSection(t, version, date);
   if (r.ok) {
     fs.writeFileSync(CHANGELOG, r.text);
+    // 判据是 movedContent 而不是 moved：正文非空但一条 `- ` 都没有时 moved 是 0，
+    // 用 moved 判断会把「搬了一整段正文」说成「[Unreleased] 本来是空的」——日志撒谎。
     console.log(
-      r.moved
-        ? "✓ " + CHANGELOG + " 新版本节：" + r.moved + " 条从 [Unreleased] 搬入，[Unreleased] 已清空"
+      r.movedContent
+        ? "✓ " + CHANGELOG + " 新版本节：" +
+          (r.moved ? r.moved + " 条从 [Unreleased] 搬入" : "正文整段从 [Unreleased] 搬入（其中没有 `- ` 条目）") +
+          "，[Unreleased] 已清空"
         : "✓ " + CHANGELOG + " 占位节（[Unreleased] 本来是空的）"
     );
   } else if (r.reason === "already-present") {
