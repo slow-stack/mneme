@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## 📚 文档
+
+- **README 不再把「离线」写成默认行为**：两份 README 合计 12 处「默认全离线 / offline by default / 默认零网络依赖」与代码默认值相反——`autoDream` 与 `autoSummarize` 默认开（`src/config.js`），两者都把记忆正文交给 `ctx.llm.stream(...)`（`src/dream.js` / `src/summarize.js`），`embedProvider` 默认仍是 `openai`，只有显式改成 `local`（ONNX）才真正离线。改法：定位句改成「记忆只落在本机」，语义检索改成「把 `embedProvider` 设为 `local` 后可以完全离线」，隐私节补一条出站事实（巩固与摘要走宿主模型）与一条「想连巩固也离线就换本地模型或关掉两个开关」；`dsh-mneme/README.md` 的「完全离线的语义记忆引擎」改成「可以完全离线运行的语义记忆引擎」。新增 `test/readme-claims.test.js` 两条守卫：绝对离线声明不许回来、隐私节必须写出「巩固走宿主模型」——删掉假话却什么都不说，误导是一样的。GitHub About 同步换成不声称离线、补上四路召回与 MCP/CLI 的版本。
+
 ## [0.9.1] - 2026-10-18
 
 ## 🆕 新增

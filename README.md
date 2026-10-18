@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3E63DD?style=flat-square" alt="license"></a>
   <a href="https://github.com/slow-stack/mneme/actions"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI" alt="CI"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22%2B-3E63DD?style=flat-square&logo=nodedotjs&logoColor=white" alt="node"></a>
-  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-2173%20passed-3E63DD?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-2175%20passed-3E63DD?style=flat-square" alt="tests"></a>
   <a href="https://codecov.io/gh/slow-stack/mneme"><img src="https://img.shields.io/codecov/c/github/slow-stack/mneme/main?style=flat-square" alt="coverage"></a>
   <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
@@ -23,7 +23,7 @@
 
 # 🧬 给 LLM 装上会自我进化的记忆
 
-**dsh-mneme** 是 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 的跨会话记忆插件。它不只「存得下」，更「管得好」：后台自动去重合并、矛盾先冻结等你裁决、全程可回放审计、默认全离线，还支持导出成人可读的 Markdown。
+**dsh-mneme** 是 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 的跨会话记忆插件。它不只「存得下」，更「管得好」：后台自动去重合并、矛盾先冻结等你裁决、全程可回放审计、记忆只落在本机，还支持导出成人可读的 Markdown。
 
 > **Mneme**（Μνήμη）源自希腊记忆女神 **Mnemosyne**。她掌管记忆与梦境——正如 `autoDream` 在后台默默巩固你的记忆库。
 
@@ -61,7 +61,7 @@
 - ⚖️ **矛盾先冻结，等你裁决**（可关）— 两条记忆打架时，不擅自替你做主。可疑冲突会**挂起待审**，状态页冲突队列里并排对比、一键裁决（保留 A / 保留 B / 仅标记），确认后才生效。复杂判断，人永远在线。
 - 🔐 **记忆按 agent 与工作区隔离**（可关）— `scopeEnabled` 开启后，每条记忆标注由哪个 agent、在哪个工作区写入；检索时本会话作用域优先（命中加权，他 scope 降权仍可见）；`strictScope` 再进一步——**显式声明**收窄到他者作用域的记忆在检索/注入里完全不可见（载体自动标注只降权，不硬挡）。多 Agent、多项目互不串台。
 - 🌙 **夜深人静才动手**（可关）— 空闲时自动分层归档：常看的留在热区、久不用的压成摘要、陈旧的彻底归档。记忆库**越用越精炼，不膨胀**。
-- 🧠 **本地语义检索，默认离线** — 自带本地 Embedding 与精排，不强求 API Key，网络断了也能检索。
+- 🧠 **语义检索可以完全离线** — 把 `embedProvider` 设为 `local` 后检索走本地 Embedding 与精排，不需要 API Key；没配嵌入时关键词 / BM25 检索照样能用。
 - 📝 **Markdown 双向同步** — 记忆就是本地 `.md` 文件，随时打开编辑；**人工改动会被优先尊重**，不会被机器覆盖。
 - 💾 **删对话 ≠ 删记忆** — 记忆是跨会话的全局知识，清空聊天窗口，已保存的记忆仍在（v0.7.11 起不再与会话绑定）。
 
@@ -185,9 +185,10 @@ dsh plugin --profile web add 'git+https://github.com/slow-stack/mneme.git#path:/
 
 ## 隐私承诺
 
-- 数据只存在你的电脑本地，不上传任何服务器
+- 记忆只落在本机：SQLite 存储 + 可手工编辑的 Markdown 镜像，不经过任何 mneme 服务器
 - 记忆是 Markdown 文件，人类可读、可手工编辑
-- 默认零网络依赖，不需要 API Key
+- 不需要 mneme 自己的 API Key；巩固与摘要走你已配置的宿主模型（`autoDream` / `autoSummarize` 默认开）
+- 想连巩固也完全离线：把宿主换成本地模型，或关掉 `autoDream` / `autoSummarize`
 - 无遥测、无分析、无远程日志
 
 ## 用在其他 AI 工具里（MCP）
@@ -270,7 +271,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 
 ```bash
 cd dsh-mneme && npm install
-npm test        # 2173 个测试
+npm test        # 2175 个测试
 npm run stress  # 三轴线压测
 npm run sync    # src → lib 同步
 ```
@@ -297,13 +298,13 @@ dsh-mneme 的机制设计与下列公开研究相互印证（以下引用均逐�
 - **何时该忘 / scope 门控**：[PersistBench](https://arxiv.org/abs/2602.01146)（arXiv:2602.01146）；呈现层缓解见 [Structured Memory](https://arxiv.org/abs/2608.08300)（arXiv:2608.08300）——scope 语义域门控的问题出处与零契约变更改法。
 - **领域全景**：[Write–Manage–Read 综述](https://arxiv.org/abs/2603.07670)（arXiv:2603.07670）——「写入 / 管理 / 读取」三段式与插件整体形状互证。
 - **数月尺度的可靠性工程**：[Memory as Infrastructure](https://arxiv.org/abs/2609.05510)（arXiv:2609.05510）——与 sha256 审计链、fail-safe 降级同属「记忆即基础设施」路线。
-- **相邻系统（对照）**：[Zep](https://arxiv.org/abs/2501.13956)（时序知识图谱）、[Mem0](https://arxiv.org/abs/2504.19413)（生产级抽取式记忆）、[Hindsight](https://arxiv.org/abs/2512.12818)（retain / recall / reflect 三操作）走「写入时 LLM 抽取 + 向量/图检索」路线；dsh-mneme 的差异点在于：巩固由 LLM 参与但产物全程留痕可回放，冲突冻结待人工复核，默认离线。
+- **相邻系统（对照）**：[Zep](https://arxiv.org/abs/2501.13956)（时序知识图谱）、[Mem0](https://arxiv.org/abs/2504.19413)（生产级抽取式记忆）、[Hindsight](https://arxiv.org/abs/2512.12818)（retain / recall / reflect 三操作）走「写入时 LLM 抽取 + 向量/图检索」路线；dsh-mneme 的差异点在于：巩固由 LLM 参与但产物全程留痕可回放，冲突冻结待人工复核，记忆只落本机。
 
 <a name="english"></a>
 
 # 🧬 Give Your LLM a Memory That Evolves
 
-**dsh-mneme** is a cross-session memory plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). It does not just *store* your memories — it *manages* them: background deduplication and merging, conflicts frozen for your review, a fully replayable audit trail, offline by default, and export to human-readable Markdown.
+**dsh-mneme** is a cross-session memory plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). It does not just *store* your memories — it *manages* them: background deduplication and merging, conflicts frozen for your review, a fully replayable audit trail, memory kept on your machine, and export to human-readable Markdown.
 
 > **Mneme** (Μνήμη) comes from **Mnemosyne**, the Greek goddess of memory and dreams — just as `autoDream` quietly consolidates your memory store in the background.
 
@@ -341,7 +342,7 @@ Every time you start a new chat, the AI acts like it's never met you?
 - ⚖️ **Conflicts freeze, you decide** (opt-in) — when two memories contradict, it does not take sides for you. The suspected conflict is **parked for review**, compared side-by-side in the status-page conflict queue, and resolved with one click (keep A / keep B / mark reviewed). On hard judgments, a human stays in the loop.
 - 🔐 **Memories isolated by agent & workspace** (opt-in) — with `scopeEnabled`, every memory is stamped with which agent wrote it and in which workspace; retrieval favors the current scope (weighted hits, out-of-scope demoted but visible); `strictScope` goes further — memories **explicitly** scoped to other agents/workspaces become invisible to search and injection (auto carrier labels are demoted only, never hard-blocked). Multiple agents and projects, zero cross-talk.
 - 🌙 **It works while you sleep** (opt-in) — idle time triggers tiered archiving: frequent memories stay hot, stale ones compress to summaries, old ones archive. The store **stays lean as it grows**.
-- 🧠 **Local semantic search, offline by default** — built-in local Embedding + reranking. No API key required; retrieval still works without a network.
+- 🧠 **Semantic search that can run fully offline** — set `embedProvider` to `local` and retrieval uses local embedding + reranking, no API key needed; without an embedder, keyword / BM25 retrieval still works.
 - 📝 **Two-way Markdown sync** — memories are local `.md` files you can open and edit; **human edits are respected**, never clobbered by the machine.
 - 💾 **Delete the session ≠ delete the memory** — memories are cross-session global knowledge; clearing a chat window keeps what was saved (unbound from sessions since v0.7.11).
 
@@ -465,9 +466,10 @@ Off by default (`actionPipelineEnabled`). Design trade-offs and pitfalls: [docs/
 
 ## Privacy
 
-- Data stays on your machine only, never uploaded
+- Memories stay on your machine: a local SQLite store plus editable Markdown mirrors, with no mneme server in the path
 - Memories are Markdown files, human-readable and editable
-- Zero network dependency by default, no API key required
+- No mneme API key required; consolidation and summarization use the host model you already configured (`autoDream` / `autoSummarize` are on by default)
+- Want consolidation fully offline too? Point the host at a local model, or turn off `autoDream` / `autoSummarize`
 - No telemetry, no analytics, no remote logging
 
 ## Use it in other AI tools (MCP)
@@ -550,7 +552,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 
 ```bash
 cd dsh-mneme && npm install
-npm test        # 2173 tests
+npm test        # 2175 tests
 npm run stress  # three-axis stress test
 npm run sync    # src → lib sync
 ```
@@ -577,7 +579,7 @@ dsh-mneme's design echoes the following public research (every citation below ha
 - **When to forget / scope gating**: [PersistBench](https://arxiv.org/abs/2602.01146) (arXiv:2602.01146); presentation-layer mitigation in [Structured Memory](https://arxiv.org/abs/2608.08300) (arXiv:2608.08300).
 - **Field survey**: [Write–Manage–Read survey](https://arxiv.org/abs/2603.07670) (arXiv:2603.07670) — the write/manage/read taxonomy matches the plugin's overall shape.
 - **Months-scale reliability**: [Memory as Infrastructure](https://arxiv.org/abs/2609.05510) (arXiv:2609.05510) — the same "memory as infrastructure" school as the sha256 audit chain and fail-safe degradation.
-- **Adjacent systems (contrast)**: [Zep](https://arxiv.org/abs/2501.13956) (temporal knowledge graph), [Mem0](https://arxiv.org/abs/2504.19413) (production-grade extraction) and [Hindsight](https://arxiv.org/abs/2512.12818) (retain / recall / reflect) extract with LLM at write time and retrieve via vectors/graphs; dsh-mneme instead keeps consolidation replayable with a full audit trail, freezes conflicts for human review, and stays offline by default.
+- **Adjacent systems (contrast)**: [Zep](https://arxiv.org/abs/2501.13956) (temporal knowledge graph), [Mem0](https://arxiv.org/abs/2504.19413) (production-grade extraction) and [Hindsight](https://arxiv.org/abs/2512.12818) (retain / recall / reflect) extract with LLM at write time and retrieve via vectors/graphs; dsh-mneme instead keeps consolidation replayable with a full audit trail, freezes conflicts for human review, and keeps memory local by default.
 
 ## 📜 License
 

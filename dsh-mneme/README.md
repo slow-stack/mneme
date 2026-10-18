@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/@modusensus/dsh-mneme?color=blue&label=npm)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Awesome](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
-[![tests](https://img.shields.io/badge/tests-2173%20passed-success)](https://github.com/slow-stack/mneme)
+[![tests](https://img.shields.io/badge/tests-2175%20passed-success)](https://github.com/slow-stack/mneme)
 [![CI](https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml)](https://github.com/slow-stack/mneme/actions)
 [![node](https://img.shields.io/badge/node-22%2B-blue)](https://nodejs.org)
 [![npm downloads](https://img.shields.io/npm/d18m/@modusensus/dsh-mneme.svg?color=blue&label=downloads)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
@@ -164,7 +164,7 @@ dsh web
 
 ### 语义增强（Semantic）🧠
 
-v0.2 起新增**完全离线的语义记忆引擎**（本地模型 + 精排 + 聚类）：
+v0.2 起新增**可以完全离线运行的语义记忆引擎**（本地模型 + 精排 + 聚类）：
 
 - **本地 Embedding**：三后端可选——ONNX（`Xenova/bge-small-zh-v1.5`，离线）/ Ollama / OpenAI 兼容，失败自动逐级降级，最差回退关键词搜索
 - **Rerank 精排**：`Xenova/bge-reranker-base` 对召回候选交叉编码精排，提升 Top-K 准确率
@@ -674,7 +674,7 @@ src/
 ├── api.js            # HTTP 路由（Web 面板数据通道，含 /conflicts 冲突队列）
 └── index.js          # 插件接线
 lib/                  # src 的同步分发产物（npm run sync，prepack 钩子在发布时自动跑；一致性由 scripts/check-sync.js 在 CI 与 release.yml 校验——它只查不同步；唯一手写例外 lib/client.js——Web 面板 bundle，sync 不覆盖）
-test/                 # 2173 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
+test/                 # 2175 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
 scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压测 · sync-lib.js 同步 · check-sync.js 发布闸门 · benchmark-recall.js / benchmark-embed.js / benchmark-rerank.js 基准 · sync-test-badge.mjs 测试徽章 · build-runtime-manifest.mjs 运行时清单
 ```
 
@@ -683,7 +683,7 @@ scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压
 ```bash
 cd dsh-mneme
 npm install        # 安装 peer 依赖（以 devDependencies 形式，用于本地测试）
-npm test           # 运行 2173 个测试
+npm test           # 运行 2175 个测试
 npm run stress     # 三轴线压测：长会话检索 / 冲突仲裁 / 多 Agent 并发（离线 mock LLM）
 npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动执行）
 ```
@@ -728,7 +728,7 @@ dsh-mneme 的机制设计与下列公开研究相互印证（以下引用均逐�
 - **何时该忘 / scope 门控**：[PersistBench](https://arxiv.org/abs/2602.01146)（arXiv:2602.01146）；呈现层缓解见 [Structured Memory](https://arxiv.org/abs/2608.08300)（arXiv:2608.08300）——scope 语义域门控的问题出处与零契约变更改法。
 - **领域全景**：[Write–Manage–Read 综述](https://arxiv.org/abs/2603.07670)（arXiv:2603.07670）——「写入 / 管理 / 读取」三段式与插件整体形状互证。
 - **数月尺度的可靠性工程**：[Memory as Infrastructure](https://arxiv.org/abs/2609.05510)（arXiv:2609.05510）——与 sha256 审计链、fail-safe 降级同属「记忆即基础设施」路线。
-- **相邻系统（对照）**：[Zep](https://arxiv.org/abs/2501.13956)（时序知识图谱）、[Mem0](https://arxiv.org/abs/2504.19413)（生产级抽取式记忆）、[Hindsight](https://arxiv.org/abs/2512.12818)（retain / recall / reflect 三操作）走「写入时 LLM 抽取 + 向量/图检索」路线；dsh-mneme 的差异点在于：巩固由 LLM 参与但产物全程留痕可回放，冲突冻结待人工复核，默认离线。
+- **相邻系统（对照）**：[Zep](https://arxiv.org/abs/2501.13956)（时序知识图谱）、[Mem0](https://arxiv.org/abs/2504.19413)（生产级抽取式记忆）、[Hindsight](https://arxiv.org/abs/2512.12818)（retain / recall / reflect 三操作）走「写入时 LLM 抽取 + 向量/图检索」路线；dsh-mneme 的差异点在于：巩固由 LLM 参与但产物全程留痕可回放，冲突冻结待人工复核，记忆只落本机。
 
 ## 📜 License
 
