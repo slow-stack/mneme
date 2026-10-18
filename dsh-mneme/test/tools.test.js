@@ -49,11 +49,11 @@ function walkSchema(node, path, problems) {
   }
 }
 
-test("registers ten tools with correct names", () => {
+test("registers eleven tools with correct names", () => {
   const { registered } = setup();
   const names = registered.map((t) => t.name).sort();
   // #230 新增 memory_register_document（agent 产长文档的指针行铸造口）。
-  assert.deepEqual(names, ["memory_archive", "memory_delete", "memory_forget", "memory_get", "memory_list", "memory_register_document", "memory_runtime", "memory_save", "memory_search", "memory_update"]);
+  assert.deepEqual(names, ["memory_archive", "memory_delete", "memory_forget", "memory_get", "memory_list", "memory_register_document", "memory_runtime", "memory_save", "memory_search", "memory_update", "set_scope_state"]);
 });
 
 // v0.8.5 tool-exposure gate: disabling a tool hides it from the model entirely
@@ -62,19 +62,19 @@ test("registers ten tools with correct names", () => {
 test("disableMemorySearch hides only memory_search", () => {
   const { registered } = setup({}, { disableMemorySearch: true });
   const names = registered.map((t) => t.name).sort();
-  assert.deepEqual(names, ["memory_archive", "memory_delete", "memory_forget", "memory_get", "memory_list", "memory_register_document", "memory_runtime", "memory_save", "memory_update"]);
+  assert.deepEqual(names, ["memory_archive", "memory_delete", "memory_forget", "memory_get", "memory_list", "memory_register_document", "memory_runtime", "memory_save", "memory_update", "set_scope_state"]);
 });
 
 test("disableMemoryArchive hides only memory_archive", () => {
   const { registered } = setup({}, { disableMemoryArchive: true });
   const names = registered.map((t) => t.name).sort();
-  assert.deepEqual(names, ["memory_delete", "memory_forget", "memory_get", "memory_list", "memory_register_document", "memory_runtime", "memory_save", "memory_search", "memory_update"]);
+  assert.deepEqual(names, ["memory_delete", "memory_forget", "memory_get", "memory_list", "memory_register_document", "memory_runtime", "memory_save", "memory_search", "memory_update", "set_scope_state"]);
 });
 
 test("both disable flags hide both tools", () => {
   const { registered } = setup({}, { disableMemorySearch: true, disableMemoryArchive: true });
   const names = registered.map((t) => t.name).sort();
-  assert.deepEqual(names, ["memory_delete", "memory_forget", "memory_get", "memory_list", "memory_register_document", "memory_runtime", "memory_save", "memory_update"]);
+  assert.deepEqual(names, ["memory_delete", "memory_forget", "memory_get", "memory_list", "memory_register_document", "memory_runtime", "memory_save", "memory_update", "set_scope_state"]);
 });
 
 // Description discipline: with all tools exposed, the descriptions must steer a
@@ -90,7 +90,7 @@ test("memory_search/archive descriptions carry tool-use discipline", () => {
 
 test("compiled schemas pass the enforced DSH subset (defineTool projection)", () => {
   const { registered } = setup();
-  assert.equal(registered.length, 10);
+  assert.equal(registered.length, 11);
   for (const tool of registered) {
     assertSupportedJsonSchema(tool.parameters);
     assertSupportedJsonSchema(tool.output.schema);

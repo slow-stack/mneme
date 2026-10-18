@@ -232,7 +232,11 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     // Issue #399：蒸馏原文留存 + 溯源。两个键都是嵌套子字段（enabled 开关 +
     // retentionDays 整数），漏登记的后果同上——effective 静默缺键。
     "distillRecords.enabled": ["distillRecords", "enabled"],
-    "distillRecords.retentionDays": ["distillRecords", "retentionDays"]
+    "distillRecords.retentionDays": ["distillRecords", "retentionDays"],
+    // Issue #471：政策轴——作用域级可逆闸门。两个键都是嵌套子字段，漏登记的后果
+    // 同上（effective 静默缺键、面板读不到也 PUT 不进）。
+    "scopeState.enabled": ["scopeState", "enabled"],
+    "scopeState.enforce": ["scopeState", "enforce"]
     // sensitiveScanEnabled（#164 A2）是顶层扁平键，不需要进这张表——走 configFlagValue
     // 的默认分支即可。
   };
