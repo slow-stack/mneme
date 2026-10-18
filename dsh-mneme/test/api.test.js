@@ -686,8 +686,11 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // persona 页新增 personaEnabled（人格注入顶层总闸；顶层扁平键，同上）。
   // 计数锁钉的是「白名单键 ↔ config schema 成对」：schema 加了键而漏了白名单
   // （或反过来）时，effective 会静默少键/多键，面板读不到也报不出来。
+  // issue #471 新增 scopeState.enabled/scopeState.enforce（政策轴作用域级可逆闸门；
+  // 两个都是嵌套对象子字段，都进 NESTED_FLAG_PATHS）。
   // 合并 #451（人格页）后的真实计数：98（本批前）+ actionRunEnabled + personaEnabled = 99
-  assert.equal(Object.keys(data.effective).length, 99);
+  // #471 再 + 2 = 101。
+  assert.equal(Object.keys(data.effective).length, 101);
   assert.equal(data.effective.dreamSkipInvalid, true);
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, true);
@@ -695,6 +698,9 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // issue #380：注入前判定两级开关，默认全关（默认路径零行为变化）
   assert.equal(data.effective["preInjectGate.enabled"], false);
   assert.equal(data.effective["preInjectGate.enforce"], false);
+  // issue #471：政策轴作用域级可逆闸门，两级开关默认全关（默认路径零行为变化）
+  assert.equal(data.effective["scopeState.enabled"], false);
+  assert.equal(data.effective["scopeState.enforce"], false);
   assert.equal(data.effective.dreamMinIntervalMinutes, 0);
   assert.equal(data.effective.autoDreamFailureBackoff, false);
   assert.equal(data.effective.dreamMaxTokens, 131072);
@@ -792,6 +798,9 @@ test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys"
     // NESTED_FLAG_PATHS——否则 configFlagValue 落到顶层同名键上，effective 静默缺键）。
     "distillRecords.enabled": true,
     "distillRecords.retentionDays": 30,
+    // #471：政策轴的两个点号键往返——白名单与 NESTED_FLAG_PATHS 成对缺一即静默缺键。
+    "scopeState.enabled": true,
+    "scopeState.enforce": true,
     // #164 A2：顶层扁平键（不是对象子字段），与上面两个点号键走同一条往返；
     // 它的默认值断言在计数锁那一条里，这里钉的是「PUT 存进去、effective 读得回」。
     sensitiveScanEnabled: true,
@@ -813,6 +822,8 @@ test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys"
     "preInjectGate.enforce": true,
     "distillRecords.enabled": true,
     "distillRecords.retentionDays": 30,
+    "scopeState.enabled": true,
+    "scopeState.enforce": true,
     sensitiveScanEnabled: true,
     embedProvider: "local",
     ollamaBaseUrl: "http://127.0.0.1:11434",
@@ -829,6 +840,9 @@ test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys"
   assert.equal(data.effective["preInjectGate.enforce"], true);
   assert.equal(data.effective["distillRecords.enabled"], true);
   assert.equal(data.effective["distillRecords.retentionDays"], 30, "整数点号键也要读得回来");
+  // #471：政策轴两个点号键同款往返
+  assert.equal(data.effective["scopeState.enabled"], true);
+  assert.equal(data.effective["scopeState.enforce"], true);
   assert.equal(data.effective.sensitiveScanEnabled, true);
   assert.equal(data.effective.embedProvider, "local");
   assert.equal(data.effective.ollamaBaseUrl, "http://127.0.0.1:11434");

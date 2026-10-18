@@ -863,6 +863,23 @@ export const Config = z.object({
   // 数据、观察 A2 加权质量后再切硬过滤。
   strictScope: z.boolean().default(false),
 
+  // scopeState（issue #471）：政策轴——作用域级可逆闸门。与上面两个键是**两条不同
+  // 的轴**：scopeEnabled/strictScope 管「这条记忆属于谁」（事实轴：持久、跟着记忆
+  // 行走、改的是归属数据），本键管「这个作用域现在通不通」（政策轴：暂时、由人单
+  // 方面按下、松开即恢复、不改任何记忆行）。
+  // 两级语义同 writeAdmission/preInjectGate——enabled 打开时被按下的作用域其候选
+  // 照常注入，但留一条审计行说清「本应被拦下几条」（观察档，先在真实流量看会少掉
+  // 多少再决定真按）；enforce 打开才真的不注入（拦截档）。两个都默认关，打开前
+  // 行为与今天逐字段一致。
+  // 不进 LIGHT_MODE_OFF：它只是查一张小表的判定，不引入重型后台路径、不加常驻
+  // 文本（同 actionPipelineEnabled 的定性）——轻量档预设该关的是重型能力，不该替
+  // 用户关掉一个纯判定入口，用户显式勾选仍然赢。
+  // 也走 feature_flags（FEATURE_FLAG_BOOLEANS 白名单），面板可启停=线上回滚开关。
+  scopeState: z.object({
+    enabled: z.boolean().default(false),
+    enforce: z.boolean().default(false)
+  }).default({}),
+
   // --- v0.9.0 M.O.（Modus Operandi · 手法，beta）--------------------------
   // 命名：M.O. = Modus Operandi，拉丁语「一个人一贯的做事方式」，缩写 M.O.；
   // 也正是 org 词根 modus（modusensus）。界面主显示 M.O.，设置项 hint 第一句

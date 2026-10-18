@@ -2,6 +2,15 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { contentHashOf } from "./content-hash.js";
+// 政策轴（issue #471）的归一化函数。刻意只取归一化，不取判定：判定（buildPausedIndex /
+// matchPausedScopes / createScopeStateGate）留在 scope-state.js，由 service 侧消费，
+// 存储层只管「一格状态怎么落」。依赖方向 store → scope-state → scope 是单向的
+// （scope.js 不 import 任何本包模块），所以不构成环。
+import {
+  normalizeScopeStateDimension,
+  normalizeScopeStateState,
+  normalizeScopeStateValue
+} from "./scope-state.js";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS memories (
@@ -184,6 +193,25 @@ CREATE TABLE IF NOT EXISTS scope_changes (
   decided_at            TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_scope_changes_memory ON scope_changes(memory_id);
+
+-- scope_state: v0.9.1 政策轴（issue #471）。与 scope_changes 那条事实轴相对：
+-- scope_changes 记「某条记忆的归属被人工改过」（跟着记忆走），本表记「某个作用域
+-- 现在通不通」（跟着作用域走）。按下/松开都是单方面动作，不触碰任何记忆行，
+-- 松开即恢复——所以它是可逆的，而逐条 forget/archive 不是。
+-- dimension 只认 'agent'|'workspace'（scopeKeyOf 那两个维度）；scope_value='*'
+-- 表示该维度全局。一行一格，重复按下同一状态不刷新 decided_at（见 setScopeState）。
+-- Bookkeeping like the other audit tables: it never triggers write hooks.
+CREATE TABLE IF NOT EXISTS scope_state (
+  id           TEXT PRIMARY KEY,
+  dimension    TEXT NOT NULL,
+  scope_value  TEXT NOT NULL,
+  state        TEXT NOT NULL,               -- active | paused
+  note         TEXT,
+  decided_at   TEXT NOT NULL
+);
+-- 唯一性靠独立索引（本仓惯例：UNIQUE 不进 CREATE TABLE，见 idx_memory_provenance_link）。
+-- 它同时是 setScopeState 那条 UPSERT 的冲突目标，所以不能省。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scope_state_key ON scope_state(dimension, scope_value);
 
 -- llm_audit_logs: every background LLM call (autoDream consolidation + summary,
 -- autoSummarize compression) is recorded here — tokens in/out, duration, status
@@ -600,6 +628,20 @@ function toScopeChange(row) {
     next_workspace_scope: row.next_workspace_scope ?? undefined,
     agent_scope_source: row.agent_scope_source ?? undefined,
     workspace_scope_source: row.workspace_scope_source ?? undefined,
+    decided_at: row.decided_at
+  };
+}
+
+// scope_state 行 → 读侧对象（issue #471）。NULL note 落 undefined，与
+// toScopeChange 同口径。
+function toScopeState(row) {
+  if (!row) return undefined;
+  return {
+    id: row.id,
+    dimension: row.dimension,
+    scope_value: row.scope_value,
+    state: row.state,
+    note: row.note ?? undefined,
     decided_at: row.decided_at
   };
 }
@@ -2614,6 +2656,66 @@ export function createStore(path) {
     return rows.map(toScopeChange);
   }
 
+  /**
+   * 政策轴（issue #471）：按下或松开一个作用域。一行一格，靠
+   * idx_scope_state_key(dimension, scope_value) 做 UPSERT——重复按下同一状态
+   * 不刷新 decided_at（CASE WHEN），因为「第一次按下的时刻」才是回执该报的东西；
+   * 状态翻转则刷新，那是一次真的决策。
+   *
+   * note 的取舍与 decided_at 相反：非空的新 note 总是覆盖旧的，空的则原样留着。
+   * 理由是这条记录里「当前通不通」由 state 那一列承担，note 是**理由**——理由被
+   * 一次不带理由的重按抹掉是净损失（用户回看时只会看到「按下过」却不知道为什么），
+   * 而「清空理由」不是一个真实需求（要改就再按一次带上新理由）。这与本仓防御段
+   * 「宁可留着也不要静默丢」的取向一致。
+   *
+   * 归一化失败（维度/值/状态任一非法）返回 undefined，由调用方拒绝——本表只存
+   * 可解释的三种枚举，与 memories 的 scope 列不同：那里脏输入落 NULL 是正当的
+   * （「未标注」本身有语义），这里落 NULL 没有任何意思，会静默变成一行永远不
+   * 生效的状态。
+   */
+  function setScopeState({ dimension, scope_value, state, note, decided_at }) {
+    const dim = normalizeScopeStateDimension(dimension);
+    const val = normalizeScopeStateValue(scope_value);
+    const st = normalizeScopeStateState(state);
+    if (!dim || !val || !st) return undefined;
+    const at = normalizeOccurredAt(decided_at) ?? nowIso();
+    const noteText = normalizeScopeText(note);
+    db.prepare(
+      `INSERT INTO scope_state (id, dimension, scope_value, state, note, decided_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(dimension, scope_value) DO UPDATE SET
+         state = excluded.state,
+         note = COALESCE(excluded.note, scope_state.note),
+         decided_at = CASE WHEN scope_state.state = excluded.state THEN scope_state.decided_at ELSE excluded.decided_at END`
+    ).run(randomUUID(), dim, val, st, noteText, at);
+    return toScopeState(
+      db.prepare("SELECT * FROM scope_state WHERE dimension = ? AND scope_value = ?").get(dim, val)
+    );
+  }
+
+  /** 政策轴状态行（单格）。 */
+  function getScopeState(dimension, scope_value) {
+    const dim = normalizeScopeStateDimension(dimension);
+    const val = normalizeScopeStateValue(scope_value);
+    if (!dim || !val) return undefined;
+    return toScopeState(
+      db.prepare("SELECT * FROM scope_state WHERE dimension = ? AND scope_value = ?").get(dim, val)
+    );
+  }
+
+  /**
+   * 政策轴状态行（全量）。不提供按维度/值过滤的参数——闸门判定要的就是全量
+   * （一次现读一次索引），过滤留到 scope-state.js 的 buildPausedIndex 里做。
+   * 排 decided_at DESC + rowid DESC 同 listScopeChanges（毫秒精度同毫秒写入
+   * 时 UUID 排序随机，回执要报「最近一次决策」就得有确定的次键）。
+   */
+  function listScopeStates({ state } = {}) {
+    const rows = state
+      ? db.prepare("SELECT * FROM scope_state WHERE state = ? ORDER BY decided_at DESC, rowid DESC").all(state)
+      : db.prepare("SELECT * FROM scope_state ORDER BY decided_at DESC, rowid DESC").all();
+    return rows.map(toScopeState);
+  }
+
   function getFailureStats({ since } = {}) {
     const clause = since ? "WHERE created_at >= ?" : "";
     const params = since ? [since] : [];
@@ -3286,6 +3388,11 @@ export function createStore(path) {
     countConflictPending,
     saveScopeChange,
     listScopeChanges,
+    // 政策轴（issue #471）：按下/松开一个作用域。纯 bookkeeping，不调
+    // incrementGeneration()——它不动任何记忆行，动它只会让所有缓存无谓失效。
+    setScopeState,
+    getScopeState,
+    listScopeStates,
     createEntity,
     findEntityByName,
     findEntityById,
