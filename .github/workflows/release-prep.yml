@@ -1,15 +1,25 @@
 name: Release Prep
 
 # 发布准备自动化：bump 版本号（package.json + package-lock）+ 同步双 README 测试徽章
-# + CHANGELOG 顶部空节 + 双 README 版本历史/路线图占位行，推 release-prep/<版本> 分支并自动开 PR。
-# CHANGELOG/路线图的描述文字仍需人工在 PR 里补（机器写不了内容）。
-# 使用：手动触发填目标版本号 → 合并 PR → 推 v<版本> tag 即自动发布（release.yml）。
+# + CHANGELOG 顶部空节 + 双 README 版本表占位行与路线图状态回填，推 release-prep/<版本> 分支并自动开 PR。
+#
+# 分工：机械的归机器，判断的归人。脚本只写「由版本号唯一确定」的东西（版本号、测试数、
+# 占位行、路线图状态格）；CHANGELOG 条目、版本表主题描述、根 README 的 News 头条都留给人在
+# PR 里补——机器写内容只会写出没人信的话。
+#
+# SECURITY.md 的支持版本表只核对、不改写：跨 minor 发版时整张表要向下挪一格（含停止维护
+# 通知那段），那是维护策略的判断，写错就是「0.9.x 已停止支持」这种真事故。表没跟上时脚本
+# 只警告、不中断，PR 照开——硬失败会让跨 minor 发版彻底走不通（表先改则 package.json 还旧、
+# 测试红；版本号先改则表落后、测试红），人就会绕过这套流程手工发版，那才是最坏结果。
+# 代价是那个 PR 的 CI 一开始就是红的，直到人把表挪完——这正是 test/security-doc.test.js 该红的时候。
+#
+# 使用：手动触发填目标版本号 → PR 里补三处人写内容 → 合并 → 推 v<版本> tag 即自动发布（release.yml）。
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: '目标版本号（如 0.7.30，不带 v）'
+        description: '目标版本号（如 0.9.1，不带 v）'
         required: true
 
 permissions:
@@ -24,7 +34,7 @@ jobs:
         run: |
           V="${{ inputs.version }}"
           if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::版本号格式应为 0.X.Y（如 0.7.30），当前: $V"
+            echo "::error::版本号格式应为 0.X.Y（如 0.9.1），当前: $V"
             exit 1
           fi
 
@@ -63,12 +73,31 @@ jobs:
           fi
           git checkout -b "release-prep/${{ inputs.version }}"
           git add dsh-mneme/package.json dsh-mneme/package-lock.json dsh-mneme/CHANGELOG.md README.md dsh-mneme/README.md
-          { echo "chore: v${{ inputs.version }} 发布准备（版本号 + 测试徽章 + CHANGELOG/路线图占位行）"
+          { echo "chore: v${{ inputs.version }} 发布准备（版本号 + 测试徽章 + CHANGELOG/版本表占位行）"
             echo
-            echo "请在 CHANGELOG 与两个 README 的占位行补描述后再合并。"
+            echo "机械部分已由 scripts/release-prep.mjs 完成。合并前还需要人来写："
+            echo
+            echo "- [ ] dsh-mneme/CHANGELOG.md 新节里的条目（现在只有一条「- （待填）」）"
+            echo "- [ ] 两个 README 里新占位行的主题描述"
+            echo "- [ ] 根 README 的「📰 最近更新」/「📰 Recent updates」表各加一行头条"
+            echo "- [ ] 跨 minor 时确认 README 路线图上新 minor 行的主题（占位行只写了「（待填）」）"
           } > commit-msg.txt
           git commit -F commit-msg.txt
           git push origin "release-prep/${{ inputs.version }}"
+          # PR 正文走 --body-file：多行中文塞进 --body 需要一堆 $'\n' 转义，
+          # 读的人看不懂、改的人不敢动。写成文件既好读也不受 shell 引号规则摆布。
+          {
+            echo "由 Release Prep 工作流生成。**机械部分已完成**：版本号（package.json + package-lock）、测试徽章（自动取当前测试数）、CHANGELOG 顶部占位节、双 README 版本表占位行、路线图上遗留的「🚧 准备中」回填为已发布。"
+            echo
+            echo "**合并前还需要人来写**："
+            echo
+            echo "- [ ] CHANGELOG 新节的条目（dsh-mneme/CHANGELOG.md，现在只有一条「- （待填）」）"
+            echo "- [ ] 两个 README 里新占位行的主题描述"
+            echo "- [ ] 根 README 的「📰 最近更新」与「📰 Recent updates」表各加一行头条"
+            echo "- [ ] 跨 minor 时确认路线图新 minor 行的主题（占位行只写了「（待填）」）"
+            echo
+            echo "合并后推 v${{ inputs.version }} tag 即自动发布（release.yml 会核对 tag / package.json / CHANGELOG 三方一致）。"
+          } > pr-body.md
           gh pr create --base main --head "release-prep/${{ inputs.version }}" \
             --title "release: v${{ inputs.version }} 发布准备" \
-            --body "由 Release Prep 工作流生成：版本号（package.json + package-lock）、测试徽章（自动取当前测试数）已同步，CHANGELOG/路线图已加占位行。请在 CHANGELOG 与两个 README 的占位行补描述后再合并。合并后推 v${{ inputs.version }} tag 即自动发布。"
+            --body-file pr-body.md

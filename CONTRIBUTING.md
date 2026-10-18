@@ -146,14 +146,18 @@ Bug-fix PRs for existing desktop compatibility issues are still welcome.
 
 ## Release Process (Maintainers)
 
-Versioning follows semantic versioning (`MAJOR.MINOR.PATCH`). Full flow:
+Versioning follows semantic versioning (`MAJOR.MINOR.PATCH`). The mechanical parts are automated; the editorial parts stay with a human — **the machine writes what the version number alone determines, a human writes what needs judgement**. Full flow:
 
-1. **Update CHANGELOG**: add a version entry (`## [X.Y.Z] - date`, split into 「修复 / 新增 / 测试」) at the top of `dsh-mneme/CHANGELOG.md`; update the root `CHANGELOG.md` if it tracks the same. End the section with a `### 贡献者 / Thanks` subsection summarising outside contributors (`git log vPrev..HEAD --format='%an <%ae>' | sort -u`; list non-maintainers as "GitHub handle + what they did", and keep the inline 「感谢 @handle」 in the entry too); omit it when there are none. **Keep entries neutral**: no references to non-public issue numbers and no internal experiment codenames — nobody reading this repository can resolve them.
-2. **Bump version**: change `version` in `dsh-mneme/package.json` and `package-lock.json`.
-3. **Full test pass**: `npm test` must be green.
-4. **Commit and push**: commit → `git push origin main` → `git tag vX.Y.Z` → `git push origin vX.Y.Z`.
-5. **Create a GitHub Release**: title `vX.Y.Z`, body referencing the matching CHANGELOG entry (review before publishing).
-6. **Publish to npm**: run `npm publish` from inside `dsh-mneme/` — the **package directory** (per AGENTS.md red line; the root `package.json` is only a private repo shell and must never be published). `prepack` runs `npm run sync` (so the tarball is never stale), while the `src/` ↔ `lib/` **gate** is `node scripts/check-sync.js` in CI and in `release.yml` — run `npm run sync` + commit before publishing, since `prepack` will otherwise rewrite `lib/` without telling you.
+1. **Run the Release Prep workflow** (`.github/workflows/release-prep.yml`, manual dispatch, one input: the target version). It bumps `version` in `dsh-mneme/package.json` + `package-lock.json`, refreshes the test count in both READMEs (badge + the four `# N …tests` comment shapes), inserts the CHANGELOG placeholder section, adds placeholder rows to the version tables in both READMEs, flips a leftover 「🚧 准备中」 roadmap cell to released, and opens a `release-prep/X.Y.Z` PR.
+2. **Fill in what only a human can write**, in that PR:
+   - the CHANGELOG entries themselves (`## [X.Y.Z] - date`, split into 「修复 / 新增 / 测试」; the workflow only leaves `- （待填）`). End the section with a `### 贡献者 / Thanks` subsection summarising outside contributors (`git log vPrev..HEAD --format='%an <%ae>' | sort -u`; list non-maintainers as "GitHub handle + what they did", and keep the inline 「感谢 @handle」 in the entry too); omit it when there are none. **Keep entries neutral**: no references to non-public issue numbers and no internal experiment codenames — nobody reading this repository can resolve them.
+   - the theme text of the new placeholder rows in both READMEs;
+   - one new row in each of the root README's 「📰 最近更新」 / 「📰 Recent updates」 tables (pure editorial content — the workflow never touches them).
+3. **Cross-minor releases only**: the workflow prints a warning instead of failing when `SECURITY.md`'s supported-versions table still names the previous minor. Shift both language tables down one row (new minor → active, previous minor → best-effort, and update the end-of-life notice below them) inside the same PR; until then `test/security-doc.test.js` is red, which is exactly when it should be.
+4. **Full test pass**: `npm test` must be green (`node scripts/check-sync.js` too, after any `lib/` change).
+5. **Merge the PR**, then tag: `git tag vX.Y.Z` → `git push origin vX.Y.Z`. Publishing from here on is automatic.
+6. **What the tag triggers** (`release.yml`): it verifies the tag, `package.json` and the `## [X.Y.Z]` CHANGELOG heading agree, runs the test matrix, publishes with `--provenance` and `dsh-mneme/scripts/publish-gate.mjs`, then creates the GitHub Release whose body is extracted from the CHANGELOG entry — which is why step 2 must be finished before merging.
+7. **Publishing by hand is the exception, not the flow**. If you ever must: run `npm publish` from inside `dsh-mneme/` — the **package directory** (per AGENTS.md red line; the root `package.json` is only a private repo shell and must never be published). `prepack` runs `npm run sync` (so the tarball is never stale), while the `src/` ↔ `lib/` **gate** is `node scripts/check-sync.js` in CI and in `release.yml` — run `npm run sync` + commit before publishing, since `prepack` will otherwise rewrite `lib/` without telling you.
 
 ---
 
@@ -340,14 +344,18 @@ DSH 上游仍处于 developer preview 阶段，API 与服务接口变动频繁�
 
 ## 发布流程（维护者）
 
-版本号遵循语义化版本（`MAJOR.MINOR.PATCH`）。完整流程：
+版本号遵循语义化版本（`MAJOR.MINOR.PATCH`）。机械的部分交给工作流，编辑判断的部分留给人——**版本号自己能确定的东西机器写，需要判断的东西人写**。完整流程：
 
-1. **更新 CHANGELOG**：在 `dsh-mneme/CHANGELOG.md` 顶部新增版本条目（`## [X.Y.Z] - 日期`，分「修复 / 新增 / 测试」小节），根目录 `CHANGELOG.md` 如涉及同步更新。小节末尾加 `### 贡献者 / Thanks` 汇总本版外部贡献者（`git log v上一版..HEAD --format='%an <%ae>' | sort -u`，非维护者逐条列「GitHub 用户名 + 一句话做了什么」，条目内也保留「感谢 @用户名」）；无外部贡献者时省掉该小节。**条目一律用中性措辞**：不引用非公开的 issue 编号、不出现内部实验代号——它们在公开仓库里解析不出来，读者只会困惑。
-2. **更新版本号**：改 `dsh-mneme/package.json` 的 `version` 与 `package-lock.json`（根目录那份是 0.0.0 的私有壳，不要改它）。
-3. **全量测试**：`npm test` 确认通过。
-4. **提交并推送**：commit → `git push origin main` → `git tag vX.Y.Z` → `git push origin vX.Y.Z`。
-5. **创建 GitHub Release**：标题为 `vX.Y.Z`，正文引用 CHANGELOG 对应条目（发布前需人工过目）。
-6. **发布 npm**：在 **`dsh-mneme/` 包目录内**执行 `npm publish`（AGENTS.md 红线：仓库根历史上发出过坏包，根目录的 package.json 现在是 private 的 0.0.0 壳、绝不发布）。`prepack` 跑 `npm run sync`（只同步、不校验），src↔lib 的**闸门**是 `node scripts/check-sync.js`，在 CI 与 `release.yml` 里跑——发布前须先 `npm run sync` 并提交 `lib/` 改动，否则 `prepack` 会不声不响地改写它。
+1. **跑 Release Prep 工作流**（`.github/workflows/release-prep.yml`，手动触发，只填目标版本号）。它做这些：改 `dsh-mneme/package.json` 与 `package-lock.json` 的 `version`；刷新两个 README 的测试数（徽章 + 四种 `# N …测试` 注释形状）；在 CHANGELOG 顶部插入版本占位节；给两个 README 的版本表各插一行占位；把路线图上遗留的「🚧 准备中」回填成已发布；最后推 `release-prep/X.Y.Z` 分支并开 PR。
+2. **在这个 PR 里补上只有人能写的内容**：
+   - CHANGELOG 的条目本身（`## [X.Y.Z] - 日期`，分「修复 / 新增 / 测试」；工作流只留一条 `- （待填）`）。小节末尾加 `### 贡献者 / Thanks` 汇总本版外部贡献者（`git log v上一版..HEAD --format='%an <%ae>' | sort -u`，非维护者逐条列「GitHub 用户名 + 一句话做了什么」，条目内也保留「感谢 @用户名」）；无外部贡献者时省掉该小节。**条目一律用中性措辞**：不引用非公开的 issue 编号、不出现内部实验代号——它们在公开仓库里解析不出来，读者只会困惑。
+   - 两个 README 里新占位行的主题描述；
+   - 根 README 的「📰 最近更新」与「📰 Recent updates」表各加一行头条（纯编辑内容，工作流从不改写这两张表）。
+3. **只有跨 minor 发版时**：`SECURITY.md` 的支持版本表还写着上一个 minor 时，工作流只警告不失败。在同一份 PR 里把中英两张表向下挪一格（新 minor 进活跃行、上一版进尽力维护行，并同步改下面的停止维护通知）；在那之前 `test/security-doc.test.js` 是红的——那正是它该红的时候。
+4. **全量测试**：`npm test` 确认通过（动过 `lib/` 的话 `node scripts/check-sync.js` 也要过）。
+5. **合并 PR**，然后打 tag：`git tag vX.Y.Z` → `git push origin vX.Y.Z`。到此为止，发布是自动的。
+6. **tag 会触发什么**（`release.yml`）：核对 tag、`package.json`、CHANGELOG 里的 `## [X.Y.Z]` 三方一致 → 跑测试矩阵 → 带 `--provenance` 与 `dsh-mneme/scripts/publish-gate.mjs` 发布 → 从 CHANGELOG 条目抽出正文创建 GitHub Release。这也是第 2 步必须在合并前写完的原因。
+7. **手工发布只是例外，不是流程**。万一必须手工：在 **`dsh-mneme/` 包目录内**执行 `npm publish`（AGENTS.md 红线：仓库根历史上发出过坏包，根目录的 package.json 现在是 private 的 0.0.0 壳、绝不发布）。`prepack` 跑 `npm run sync`（只同步、不校验），src↔lib 的**闸门**是 `node scripts/check-sync.js`，在 CI 与 `release.yml` 里跑——发布前须先 `npm run sync` 并提交 `lib/` 改动，否则 `prepack` 会不声不响地改写它。
 
 ---
 
