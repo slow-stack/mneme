@@ -277,6 +277,30 @@ test("set_scope_state 对非法参数抛可行动的错，不是静默返回空"
   await assert.rejects(() => tool.execute({ dimension: "agent", scope_value: "", state: "paused" }), /scope_value/);
 });
 
+test("检视面刻意不过闸：按下之后 memory_list / memory_get 仍看得见那一行", async () => {
+  const config = { ...PAUSED_CONFIG, strictScope: false };
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config });
+  const ctx = { tools: { register() {} }, logger: { warn() {}, info() {}, error() {} } };
+  const tools = new Map(createTools(ctx, service, config, null).map((t) => [t.name, t]));
+
+  const memory = store.save({ type: "project", title: "hidden", content: "body", importance: 3, workspace_scope: "proj-a", workspace_scope_source: "explicit" });
+  service.setScopeState({ dimension: "workspace", scope_value: "proj-a", state: "paused" });
+
+  // 供料面：被按下 → 不进注入池。
+  const injected = service.injectCandidates({ maxItems: 5, threshold: 0, scope: { agent_scope: null, workspace_scope: "proj-a" } });
+  assert.ok(!injected.some((m) => m.id === memory.id), "供料面必须已挡住");
+
+  // 检视面：仍看得见。这是刻意的——按下的是政策不是事实，人还要能查
+  // 「我按下了什么、里面有什么」，否则就没有入口确认该不该松开。
+  // 若将来有人「顺手」把闸门也接到 list/get 上，这条会红。
+  const listed = await tools.get("memory_list").execute({});
+  assert.ok(listed.items.some((m) => m.id === memory.id), "memory_list 不该被政策轴关掉（检视面）");
+  const got = await tools.get("memory_get").execute({ id: memory.id });
+  assert.equal(got.memory.id, memory.id, "memory_get 不该被政策轴关掉（检视面）");
+  store.close();
+});
+
 // --- 睡眠侧：政策轴不只管「看得见」，还要管「改得到」 -----------------------
 //
 // 上面所有用例都停在读侧（检索出局、注入不进）。但 sleep 的四个相位里有三个会

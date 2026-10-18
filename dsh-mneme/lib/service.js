@@ -423,9 +423,16 @@ export function createService({ store, mirror, config, onWrite, logger, document
    * 表读，无逐行字段比较），且语义上「这一路现在通不通」先于「你看不看得见」。
    *
    * 注意政策轴的短路条件与事实轴不同：它不看 `scope`。事实轴要有 scope 才知道
-   * 「以谁的眼睛看」，而政策轴问的是「这条路还开着吗」，与调用方是谁无关——某个
-   * agent 的作用域被按下后，面板与 CLI 来查也应当看不到那一行。故政策轴在 scope
-   * 为 null 时照样生效（会话身份解析失败不该让闸门整条失效）。
+   * 「以谁的眼睛看」，而政策轴问的是「这条路还开着吗」，与调用方是谁无关——会话
+   * 身份解析失败不该让闸门整条失效（故政策轴在 scope 为 null 时照样生效）。
+   *
+   * **覆盖面只到「喂给模型的那几条路」**：融合池 + `entity:`/`attr:` 前缀路 +
+   * 注入候选池，以及 dream/sleep 的整理读入口。`memory_list` / `memory_get` /
+   * 面板列表**刻意不过这道闸**（它们走 `strictVisibility` 与 store.list 的
+   * `visibility` 参数，与 `gateByScope` 平行的另一条链）。理由：按下之后人还要能
+   * 查「我到底按下了什么、里面有什么」，那是检视面不是供料面；把检视面也关掉，
+   * 人就没有任何入口找回被暂停的行、也没法确认该不该松开。这也是为什么按下的是
+   * 政策而不是事实：行还在，只是不再喂给模型。
    */
   function gateByScope(rows, scope) {
     const gated = scopeStateGate.filter(rows);
