@@ -2054,6 +2054,21 @@ test("persona card is multi-card with visible field labels and save-failure erro
   assert.ok(labelBlock, "persona field labels must be visible (featnumlabel class), not aria-only");
   // 保存失败提示：personaError 状态有渲染路径（非仅 setState）
   assert.ok(clientSource.includes("t(\"memory.settings.personaSaveFailed\")"), "save failure must render an error line");
+  // 卡删除 × 常显回归锁 v2（#457 内联覆写被 #459 回滚的教训）：× 不得复用
+  // mneme-set-del（opacity:0 仅在 .mneme-set-row:hover 解除，卡标签不在该容器
+  // → 永远不可见），必须用独立类 mneme-persona-del 且该类常显（opacity:1）。
+  assert.ok(
+    /className: "mneme-persona-del"/.test(clientSource),
+    "persona card delete × must use the dedicated always-visible class"
+  );
+  const delStyle = clientSource.match(/\.mneme-persona-del\{[^}]*\}/);
+  assert.ok(delStyle, "mneme-persona-del style rule must exist");
+  assert.ok(!/opacity:0/.test(delStyle[0]), "mneme-persona-del must not be transparent");
+  // 不许再把 mneme-set-del 挂回卡删除按钮（防 #457 式修法回归）；直接锁按钮
+  // 的 className 值（onClick 前最近的 className 属性，注释文字不参与）。
+  const delBtn = clientSource.match(/className: "([^"]+)"[\s\S]{0,300}?onClick: \(\) => removePersonaCard\(id\)/);
+  assert.ok(delBtn, "card delete button wiring must exist");
+  assert.strictEqual(delBtn[1], "mneme-persona-del", "card delete × must use mneme-persona-del, not mneme-set-del");
 });
 
 // 回归锁（复验实测踩中）：面板「检测更新」的状态名必须与后端 classify

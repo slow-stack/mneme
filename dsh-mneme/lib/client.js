@@ -1830,6 +1830,13 @@ window.__ModuleLoader__.load({
       ".mneme-set-del{flex:none;opacity:0;transition:opacity .12s;border:none;background:none;color:var(--mneme-fg-dim);cursor:pointer;font-size:14px;line-height:20px;padding:0 4px;border-radius:6px}",
       ".mneme-set-row:hover .mneme-set-del,.mneme-set-row:focus-within .mneme-set-del{opacity:1}",
       ".mneme-set-del:hover{color:var(--mneme-danger);background:var(--dsw-alias-interactive-bg-hover)}",
+      // 人格卡删除 × 独立类：不复用 mneme-set-del——其 opacity:0 仅在
+      // .mneme-set-row:hover 解除，卡标签不在该容器里 → × 永远透明（v1.2
+      // 实测踩中）。#457 曾用内联 opacity:1 覆写，但悬停变红仍走
+      // .mneme-set-del:hover，连带常点亮了规则区的真删除按钮，被 #459 回滚。
+      // 独立类常显，只沿用配色，规则区行为分毫不动。
+      ".mneme-persona-del{flex:none;opacity:1;border:none;background:none;color:var(--mneme-fg-dim);cursor:pointer;font-size:16px;line-height:18px;padding:0 3px;border-radius:6px}",
+      ".mneme-persona-del:hover{color:var(--mneme-danger);background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-set-cmd{flex:1;min-width:0}",
       ".mneme-set-cmdname{font-size:13px;font-weight:600;color:var(--mneme-accent)}",
       ".mneme-set-cmddesc{font-size:12px;line-height:17px;color:var(--mneme-fg-dim);margin-top:1px;word-break:break-word}",
@@ -3857,9 +3864,11 @@ window.__ModuleLoader__.load({
                   className: "mneme-btn" + (personaEditing === id ? " mneme-btn--active" : ""),
                   onClick: () => setPersonaEditing(id)
                 }, id),
+                // 卡删除 × 常显：用独立类 mneme-persona-del（见上方样式定义处的
+                // 注释——为何不复用 mneme-set-del，以及 #457→#459 一修一回滚的教训）。
                 h("button", {
                   type: "button",
-                  className: "mneme-set-del",
+                  className: "mneme-persona-del",
                   title: t("memory.settings.personaDeleteCard"),
                   "aria-label": t("memory.settings.personaDeleteCard") + " " + id,
                   onClick: () => removePersonaCard(id)
