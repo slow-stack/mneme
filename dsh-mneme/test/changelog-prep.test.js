@@ -18,18 +18,61 @@ const hasBareLf = (text) => /(^|[^\r])\n/.test(text);
 test("LF 输入：插入占位节，行尾保持 LF，旧内容原样保留", () => {
   const r = insertReleaseSection(LF_HEAD, "0.8.13", "2026-10-03");
   assert.equal(r.ok, true);
-  assert.ok(r.text.startsWith("# Changelog\n\n## [0.8.13] - 2026-10-03"), "插在标题之后");
+  assert.ok(r.text.startsWith("# Changelog\n\n## [0.8.13] - 2026-10-03"), "没有 [Unreleased] 时插在标题之后");
   assert.ok(r.text.includes("- （待填）"), "带 release.yml verify 要的占位节");
   assert.ok(r.text.includes("## [0.8.12] - 2026-10-01"), "旧内容不动");
   assert.equal(r.text.includes("\r\n"), false, "不该往 LF 文件里混 CRLF");
 });
 
-test("CRLF 输入：同样能插（原先这里静默 no-op —— 本模块存在的首要理由）", () => {
-  const r = insertReleaseSection(CRLF_HEAD, "0.8.13", "2026-10-03");
-  assert.equal(r.ok, true, "CRLF 检出上必须也能插入");
-  assert.notEqual(r.text, CRLF_HEAD, "绝不返回原文——那正是当初的假成功");
-  assert.ok(r.text.includes("## [0.8.13] - 2026-10-03"));
-  assert.equal(hasBareLf(r.text), false, "插入的内容也要用 CRLF，不混行尾");
+test("有 [Unreleased] 时插在它下面，不插在上面", () => {
+  // Keep a Changelog 的约定：未发布区在最上，新版本节排在它下面。
+  // 插反了会得到「[0.9.1] 在 [Unreleased] 之上」——v0.9.0 那次就是靠事后人工提交
+  // （77df0fb）掰回来的，机器算得对的事不该留给人补。
+  const src = "# Changelog\n\n## [Unreleased]\n\n## 🐛 修复\n\n- 攒着的条目\n\n## [0.9.0] - 2026-10-17\n\n- 旧版本\n";
+  const r = insertReleaseSection(src, "0.9.1", "2026-10-18");
+  assert.equal(r.ok, true);
+  assert.ok(
+    r.text.indexOf("## [Unreleased]") < r.text.indexOf("## [0.9.1] - 2026-10-18"),
+    "[Unreleased] 必须排在前面"
+  );
+  assert.ok(
+    r.text.indexOf("## [0.9.1] - 2026-10-18") < r.text.indexOf("## [0.9.0] - 2026-10-17"),
+    "新版本节又必须排在上一版之前"
+  );
+  assert.ok(r.text.includes("- 攒着的条目"), "[Unreleased] 里攒的条目不许丢");
+  assert.ok(r.text.includes("- 旧版本"), "旧版本节不许丢");
+  assert.equal(r.text.includes("\r\n"), false, "这组输入是 LF，不该混进 CRLF");
+});
+
+test("[Unreleased] 攒着条目时整段搬进新版本节，不留空占位节", () => {
+  // 原先只插一个「🐛 修复 / （待填）」占位，攒着的条目原地不动：发版后文件里同时存在
+  // 「新版本节是空的」和「旧条目还挂在 Unreleased 名下」，搬运这一步照样要人工补
+  // （v0.9.0 的 77df0fb 干的就是这件事）。搬位置不搬内容——原样移动、一个字不改。
+  const src =
+    "# Changelog\n\n## [Unreleased]\n\n## 🐛 修复\n\n- 条目甲\n- 条目乙\n\n## 🔐 安全\n\n- 条目丙\n\n## [0.9.0] - 2026-10-17\n\n- 旧版本\n";
+  const r = insertReleaseSection(src, "0.9.1", "2026-10-18");
+  assert.equal(r.ok, true);
+  assert.equal(r.moved, 3, "三条条目都要搬过去");
+  assert.equal(r.text.includes("（待填）"), false, "搬了真条目就不该再留空占位");
+  // Unreleased 立刻接新版本节，中间不夹任何内容
+  assert.ok(r.text.startsWith("# Changelog\n\n## [Unreleased]\n\n## [0.9.1] - 2026-10-18\n\n## 🐛 修复\n\n- 条目甲"));
+  assert.ok(r.text.includes("## 🔐 安全\n\n- 条目丙"), "多个小节整体搬，小节结构不动");
+  assert.ok(r.text.indexOf("- 条目丙") < r.text.indexOf("## [0.9.0]"), "全都搬进新节里，不留一条挂在 Unreleased 名下");
+});
+
+test("[Unreleased] 为空时插占位节，且不产生多余空行", () => {
+  const src = "# Changelog\r\n\r\n## [Unreleased]\r\n## [0.9.0] - 2026-10-17\r\n\r\n- x\r\n";
+  const r = insertReleaseSection(src, "0.9.1", "2026-10-18");
+  assert.equal(r.ok, true, "CRLF 检出上也要能插");
+  assert.equal(r.moved, 0, "Unreleased 是空的，没有可搬的");
+  assert.ok(
+    r.text.startsWith(
+      "# Changelog\r\n\r\n## [Unreleased]\r\n\r\n## [0.9.1] - 2026-10-18\r\n\r\n## 🐛 修复\r\n\r\n- （待填）\r\n\r\n## [0.9.0] - 2026-10-17\r\n"
+    ),
+    "空的 Unreleased 后面接占位节，再接上一版"
+  );
+  assert.equal(/\n\n\n/.test(r.text.replace(/\r\n/g, "\n")), false, "不许出三连空行");
+  assert.equal(hasBareLf(r.text), false);
 });
 
 test("带 BOM 的输入也能插（`^#` 匹配不到属同一类形状漂移）", () => {

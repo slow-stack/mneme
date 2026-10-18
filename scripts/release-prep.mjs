@@ -80,16 +80,23 @@ if (testCount && /^\d+$/.test(testCount)) {
   }
 }
 
-// ── 3. CHANGELOG 顶部空节（满足 release.yml verify 的 ^## [V] 检查）──
-// 规则收在 dsh-mneme/scripts/changelog-prep.mjs（可测、行尾两种都吃）。原先这段用
-// /^(# Changelog\n\n)/ 匹配文件头，CRLF 检出上命中不了 → replace 退化成 no-op 却照样打印 ✓，
-// git status 里看不出任何异常——发版时最怕这种假成功。现在匹配不上直接报错退出。
+// ── 3. CHANGELOG 版本节：把 [Unreleased] 攒的条目整段搬进来（满足 release.yml verify 的 ^## [V] 检查）──
+// 规则收在 dsh-mneme/scripts/changelog-prep.mjs（可测、行尾两种都吃）。两个容易写错的位置
+// 都在那次修正里定死了：新版本节排在 [Unreleased] **下面**；[Unreleased] 里的条目**整段搬走**、
+// 留空（原先只插「🐛 修复 /（待填）」空占位、条目原地不动，于是发版后文件里同时有「新节是空的」
+// 和「旧条目还挂在 Unreleased 名下」，搬运这一步还得人工补——v0.9.0 的 77df0fb 就是补这件事的）。
+// 匹配不上直接报错退出：原先用 /^(# Changelog\n\n)/ 匹配文件头，CRLF 检出上命中不了 →
+// replace 退化成 no-op 却照样打印 ✓，git status 里看不出任何异常，发版时最怕这种假成功。
 {
   const t = fs.readFileSync(CHANGELOG, "utf8");
   const r = insertReleaseSection(t, version, date);
   if (r.ok) {
     fs.writeFileSync(CHANGELOG, r.text);
-    console.log("✓ " + CHANGELOG + " 占位节");
+    console.log(
+      r.moved
+        ? "✓ " + CHANGELOG + " 新版本节：" + r.moved + " 条从 [Unreleased] 搬入，[Unreleased] 已清空"
+        : "✓ " + CHANGELOG + " 占位节（[Unreleased] 本来是空的）"
+    );
   } else if (r.reason === "already-present") {
     console.log("- " + CHANGELOG + " 已含 " + version + "，跳过");
   } else {
@@ -132,7 +139,7 @@ for (const f of READMES) {
 // 机器能做的到此为止，剩下三件都是判断/编辑，写进同一个清单比散在三处提示里可靠。
 console.log("");
 console.log(touched ? "完成（" + touched + " 份 README 有改动）。还需要人写的：" : "完成（README 无需改动）。还需要人写的：");
-console.log("  1. dsh-mneme/CHANGELOG.md 新节里的条目（现在只有一条「- （待填）」）");
+console.log("  1. dsh-mneme/CHANGELOG.md 新节条目的**措辞与取舍**（[Unreleased] 攒的已整段搬过去，不用手搬）");
 console.log("  2. 双 README 版本表占位行里的主题描述");
 console.log("  3. 根 README 的「📰 最近更新」与「📰 Recent updates」表各加一行头条（纯编辑内容，脚本不碰）");
 if (supportTableProblems.length) {
