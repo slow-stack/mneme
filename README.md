@@ -36,6 +36,8 @@
 | 2026-10-17 | 加固 | **安全审计第一批**（[#462](https://github.com/slow-stack/mneme/pull/462)）— 外部访问 API 的 39 条路由全部改成**声明式鉴权**：漏写策略在装配期直接抛错，而不是运行时静默放行；`/export` 与 `GET /external-api` 补上鉴权门（此前未鉴权即可导出含归档/已遗忘的整库、并就地铸造 token）；请求体加 4 MiB 上限。 |
 | 2026-10-17 | 加固 | **路由策略重构**（[#464](https://github.com/slow-stack/mneme/pull/464)）— 鉴权从「每个 handler 自己记得写」变成「路由注册的必填字段」，23 处手写校验归零。供应链侧同步收紧：OSV 扫描改为有漏洞即失败、npm 发布带 `--provenance` 签名、secret scanning 与 Dependabot 打开。 |
 | 2026-10-17 | 结案 | **一条 secret scanning 告警**（[#465](https://github.com/slow-stack/mneme/pull/465)）— 报告说「存在明文 token 泄露」，核实是测试语料里刻意构造的形状样本（`sk-proj-` + 顺序字母数字）。修法不是删告警，是**给语料加一道锁**：`test/helpers/` 下任何完整形状的凭据字面量都会让测试变红，且与生产扫描器的规则双向对齐。 |
+| 2026-10-18 | **v0.9.1** | **M.O. 从「看得见」跑到「跑得出账」** — 工作流不再只有一张图：`/mo-run start <id>` 与 `/mo-run stop` 由人划出执行窗口，一次 run 落到 `<项目>/.mneme/pipelines/<id>.runs.jsonl`；归属只出候选（单条命令唯一归属实测 14.2%，所以「认不出来」是合法答案）；P1 回执列业务动作、P2 人确认才写账、P3 把「人说做了」与「观察里一次都没出现」的矛盾摆出来让人判。**机器从不替你下结论。** |
+| 2026-10-18 | **v0.9.1** | **人格定义页 v1.2**（beta，默认关）— 从一张卡变成按 agent 寻址的多张卡：设置键是 `{default, byAgent}`，v1 的单对象读作 `default`、零迁移；注入按会话身份寻址对应 agent 的卡，身份缺失落 `default`。 |
 
 > 只记大改动，逐条细节见 [CHANGELOG](dsh-mneme/CHANGELOG.md)。
 
@@ -260,7 +262,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 | **v0.6** | 会话生命周期：删对话 ≠ 删记忆 | ✅ |
 | **v0.7** | 自进化记忆：热度衰减 + 睡眠双保护 + 桌面端工作台/功能开关 | ✅ |
 | **v0.8** | 作用域隔离（agent/workspace 双维隔离 + 检索加权 + opt-in 硬过滤）+ 冲突队列人工裁决 + 归属显式声明 + 生态化（stdio MCP server / 图召回轴 / 冷启动 / 注入截断与状态条 / 蒸馏可靠性 / 注入形态与 agent 主动整理接口 / 配置说明与 issue 模板） | ✅ 已发布（至 v0.8.16） |
-| **v0.9** | M.O.（Modus Operandi · 手法）beta：项目级工作流本体 + 候选分层与升格判据 + 面板清单/图同屏；设置面板按「新手之外」重划折叠线（#427）；安全审计与供应链加固（声明式路由鉴权、OSV 阻断、发布签名） | ✅ 已发布（v0.9.0） |
+| **v0.9** | M.O.（Modus Operandi · 手法）beta：项目级工作流本体 + 候选分层与升格判据 + 面板清单/图同屏；设置面板按「新手之外」重划折叠线（#427）；安全审计与供应链加固（声明式路由鉴权、OSV 阻断、发布签名）；**v0.9.1 补上写侧**：执行窗口、运行账、归属候选、观察旁挂与脱节检出、步骤 `assert`/`optional`、沉淀链草稿挖掘、人格定义页（按 agent 多卡） | ✅ 已发布（至 v0.9.1） |
 
 > 完整逐小版本说明见 [CHANGELOG](dsh-mneme/CHANGELOG.md)。
 
@@ -314,6 +316,8 @@ dsh-mneme 的机制设计与下列公开研究相互印证（以下引用均逐�
 | 2026-10-17 | Hardening | **Security audit, batch one** ([#462](https://github.com/slow-stack/mneme/pull/462)) — all 39 routes on the external API now carry **declarative auth**: a missing policy throws at wiring time instead of failing open at runtime; `/export` and `GET /external-api` got their missing gate (they previously let an unauthenticated caller dump the whole store including archived and forgotten rows, and mint a token on the spot); request bodies capped at 4 MiB. |
 | 2026-10-17 | Hardening | **Route policy refactor** ([#464](https://github.com/slow-stack/mneme/pull/464)) — auth moved from "every handler remembers to check" to "a required field on route registration", retiring 23 hand-written checks. Supply chain tightened alongside: OSV now fails the build on findings, npm publishes carry `--provenance`, secret scanning and Dependabot are on. |
 | 2026-10-17 | Closed | **One secret-scanning alert** ([#465](https://github.com/slow-stack/mneme/pull/465)) — reported as "a plaintext token leak", verified as a deliberately shaped test sample (`sk-proj-` plus sequential letters and digits). The fix was not to silence the alert but to **lock the corpus**: any complete credential shape under `test/helpers/` now turns the suite red, and the guard is cross-checked against the production scanner in both directions. |
+| 2026-10-18 | **v0.9.1** | **M.O. goes from “visible” to “accounted for”** — workflows are more than a diagram now: `/mo-run start <id>` and `/mo-run stop` let a person draw the execution window, and a run is journaled to `<project>/.mneme/pipelines/<id>.runs.jsonl`. Attribution only produces candidates (exact single-command attribution measured at 14.2%, so “no idea” is a legitimate answer); P1 reports the business actions seen, P2 writes the ledger only after a human confirms, and P3 puts “the human said it ran” against “the observation never saw it” for the human to settle. **The machine never concludes for you.** |
+| 2026-10-18 | **v0.9.1** | **Persona page v1.2** (beta, off by default) — one card becomes per-agent cards: the setting is `{default, byAgent}`, a v1 single object reads as `default` with zero migration, and injection resolves the card by session identity, falling back to `default`. |
 
 > Headlines only; see the [CHANGELOG](dsh-mneme/CHANGELOG.md) for the full list.
 
@@ -538,7 +542,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 | **v0.6** | Session lifecycle: delete session ≠ delete memory | ✅ |
 | **v0.7** | Self-evolving memory: heat decay + sleep dual-protection + desktop workbench/feature toggles | ✅ |
 | **v0.8** | Scope isolation (agent/workspace stamping + retrieval weighting + opt-in hard filter) + conflict review queue + explicit attribution + ecosystem (stdio MCP server / graph recall axis / cold-start bootstrap / injection truncation & status bar / distill reliability / injection shaping & agent-driven organize / configuration reference & issue templates) | ✅ Released (up to v0.8.16) |
-| **v0.9** | M.O. (Modus Operandi) beta: project-level workflows + candidate tiering & promotion criteria + panel list-and-graph view; settings panel re-folded at "beyond the newcomer" (#427); security & supply-chain hardening (declarative route auth, OSV gate, signed releases) | ✅ Released (v0.9.0) |
+| **v0.9** | M.O. (Modus Operandi) beta: project-level workflows + candidate tiering & promotion criteria + panel list-and-graph view; settings panel re-folded at "beyond the newcomer" (#427); security & supply-chain hardening (declarative route auth, OSV gate, signed releases); **v0.9.1 adds the write side**: execution windows, run ledger, attribution candidates, observation sidecar with drift detection, step `assert`/`optional`, draft mining from session logs, persona page (per-agent cards) | ✅ Released (through v0.9.1) |
 
 > Full per-minor-version changelog in [CHANGELOG](dsh-mneme/CHANGELOG.md).
 
