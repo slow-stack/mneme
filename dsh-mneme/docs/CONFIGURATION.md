@@ -43,7 +43,7 @@
 
 覆盖范围：`gateByScope` 的三条检索路（融合池、`entity:`、`attr:` 前缀路）与注入候选池（`injectCandidates` 内、图召回合并之后、pin 池之前）。
 
-**巩固（dream）侧另接三处**：`activeStoreSize`、叙述条 `inputs`、`runDream` 的读入口——否则被按下的行会照常参与阈值判定与合并。
+**巩固（dream）侧另接四处**：`activeStoreSize`、叙述条 `inputs`、`runDream` 的读入口、总览 `summaryAll`——否则被按下的行会照常参与阈值判定与合并。**总览那一处只能从源头挡**：总览落库时是**无作用域**的 summary 行，而 `gateInjection` 只拦匹配暂停作用域的行，没有标注的行永远不会被它拦下；被按下的内容一旦进了总览就变成「洗干净的全局行」，此后一直注入。
 
 **睡眠（sleep）侧另接四个相位**：冲突消解、归档降级、模式发现、关系补全的候选池。这一侧比日间更要紧，因为**它不只读**——`phaseDemotion` 会 `setArchived` 与 `demoteToSummary`（真改归档面），`phasePatterns` 会铸出 `type=pattern` 的新行；不接的话闸门开着而每 6 小时一次的睡眠照样在被按下的作用域上动手，「按下」就只等于让它在白天看不见。两处位置纪律写在注释里：降级的过滤放在循环之外（不是循环体里 `continue`，免得将来有人加副作用时漏掉），模式发现的过滤排在 `.slice(0, limit)` 之前（否则被按下的行照样占名额，它们既不会被扫、也不该挤掉别人）。
 
