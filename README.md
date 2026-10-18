@@ -188,7 +188,7 @@ dsh plugin --profile web add 'git+https://github.com/slow-stack/mneme.git#path:/
 - 记忆只落在本机：SQLite 存储 + 可手工编辑的 Markdown 镜像，不经过任何 mneme 服务器
 - 记忆是 Markdown 文件，人类可读、可手工编辑
 - 不需要 mneme 自己的 API Key；巩固与摘要走你已配置的宿主模型（`autoDream` / `autoSummarize` 默认开）
-- 想连巩固也完全离线：把宿主换成本地模型，或关掉 `autoDream` / `autoSummarize`
+- 想连巩固也完全离线：把宿主换成本地模型（并清空 `dreamProvider` / `dreamModel` 与 `summarizeProvider` / `summarizeModel` —— 配了这两组就绕过宿主直连，换宿主不会生效），或直接关掉 `autoDream` / `autoSummarize`
 - 无遥测、无分析、无远程日志
 
 ## 用在其他 AI 工具里（MCP）
@@ -469,7 +469,7 @@ Off by default (`actionPipelineEnabled`). Design trade-offs and pitfalls: [docs/
 - Memories stay on your machine: a local SQLite store plus editable Markdown mirrors, with no mneme server in the path
 - Memories are Markdown files, human-readable and editable
 - No mneme API key required; consolidation and summarization use the host model you already configured (`autoDream` / `autoSummarize` are on by default)
-- Want consolidation fully offline too? Point the host at a local model, or turn off `autoDream` / `autoSummarize`
+- Want consolidation fully offline too? Point the host at a local model **and** clear `dreamProvider` / `dreamModel` plus `summarizeProvider` / `summarizeModel` (setting those routes talks straight to that provider, so switching the host alone will not help) — or just turn off `autoDream` / `autoSummarize`
 - No telemetry, no analytics, no remote logging
 
 ## Use it in other AI tools (MCP)
