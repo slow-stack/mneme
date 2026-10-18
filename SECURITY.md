@@ -10,11 +10,11 @@ We actively maintain the latest minor version. Security fixes are backported to 
 
 | Version | Supported | Status |
 |---|---|---|
-| 0.8.x | ✅ Yes | Active development |
-| 0.7.x | ⚠️ Best-effort | Critical fixes only |
-| < 0.7.0 | ❌ No | Please upgrade to 0.8.x |
+| 0.9.x | ✅ Yes | Active development |
+| 0.8.x | ⚠️ Best-effort | Critical fixes only |
+| < 0.8.0 | ❌ No | Please upgrade to 0.9.x |
 
-**End-of-life notice**: 0.7.x is in best-effort maintenance (critical fixes only). Its end-of-life date will be announced in advance; after that date no security fixes will be provided for 0.7.x. Security support for 0.6.x and below ended with the 0.8.1 release — please upgrade to 0.8.x.
+**End-of-life notice**: 0.8.x is in best-effort maintenance (critical fixes only). Its end-of-life date will be announced in advance; after that date no security fixes will be provided for 0.8.x. Security support for 0.7.x and below is no longer provided — please upgrade to 0.9.x.
 
 ---
 
@@ -42,16 +42,16 @@ The following security features are implemented and maintained in the project:
 | `/health` Auth-Gated Endpoint | Health endpoint requires `apiToken`; error codes are sanitized (no-space / permission / sync-failed) and read failures fail closed as `unknown` | ✅ Implemented |
 | Fail-Closed Input Validation | Generation counters and hot-memory parameters are validated (`Number.isInteger`, finite, non-negative) with SQL `CHECK` constraints; invalid input falls back to safe defaults or is rejected | ✅ Implemented |
 | Hybrid Score Clamping | Hybrid fusion scores are clamped to [0, 1] to prevent vector + BM25 stacking from breaking normalization bounds | ✅ Implemented |
-| Standalone External API (v0.7.12, opt-in) | Optional per-plugin HTTP server for ecosystem integrations, bound to `127.0.0.1` by default with an auto-generated persistent Bearer token (`timingSafeEqual` verified); `/health` is the only unauthenticated route; binding a non-loopback host is an explicit operator decision | Implemented |
+| Standalone External API (opt-in) | Optional per-plugin HTTP server for ecosystem integrations, bound to `127.0.0.1` by default with an auto-generated persistent Bearer token (`timingSafeEqual` verified); `/health` is the only unauthenticated route; binding a non-loopback host is an explicit operator decision | Implemented |
 | Tag Sanitization | Tag normalization reuses the sanitizer; `autoTag` skips forgotten memories; `setMemoryTags` runs inside a SAVEPOINT for atomic rollback | ✅ Implemented |
 
-### Standalone External API (v0.7.12)
+### Standalone External API
 
-Since v0.7.12 the plugin can optionally start its own HTTP server (`externalApiEnabled`, default **off**) so other plugins, CLIs, and desktop tools can read and write memories without going through the DSH host port.
+The plugin can optionally start its own HTTP server (`externalApiEnabled`, default **off**) so other plugins, CLIs, and desktop tools can read and write memories without going through the DSH host port.
 
 - **Loopback by default**: the server binds `127.0.0.1:8790` (`externalApiHost` / `externalApiPort`, or persisted panel settings). Rebinding to a non-loopback address exposes the store to your network and is an explicit operator decision.
 - **Token authentication**: every route except `GET /health` requires `Authorization: Bearer <token>`; the token is auto-generated on first use, persisted in the plugin settings store and verified with `timingSafeEqual`. To rotate it, clear the persisted value (settings kv key `external_api`) and let the next boot mint a new one — there is no rotate endpoint yet.
-- **Surface**: memories read/write (`GET/POST /memories`, `GET/PUT/DELETE /memories/:id`, `GET /search`, `GET /context`, `GET /status`), plus profile/rules **reads** (`GET /profile`, `GET /rules`), `POST /bootstrap` and the reclaim routes (`GET/POST /maintenance/reclaim`). Writes go through the same dedupe + quality-filter path as in-conversation saves. The full route list lives in [docs/DAEMON.md](docs/DAEMON.md).
+- **Surface**: memories read/write (`GET/POST /memories`, `GET/PUT/DELETE /memories/:id`, `GET /search`, `GET /context`, `GET /status`), plus profile/rules **reads** (`GET /profile`, `GET /rules`), `POST /bootstrap` and `POST /maintenance/reclaim` (the host-side twin `/api/dsh-mneme/maintenance/reclaim` also answers `GET` for dry-run previews). Writes go through the same dedupe + quality-filter path as in-conversation saves. The full route list lives in [docs/DAEMON.md](dsh-mneme/docs/DAEMON.md).
 - **CLI**: `bin/cli.mjs` is a thin client over this API and stores its credentials in `~/.dsh-mneme/cli.json` - treat that file like any credential file.
 
 ---
@@ -86,7 +86,7 @@ Since v0.7.12 the plugin can optionally start its own HTTP server (`externalApiE
 **Out of scope** — we will not act on:
 - Social engineering or phishing against maintainers or users
 - DoS claims that require unrealistic local resource exhaustion with no product defect
-- Vulnerabilities present only in unsupported versions (`< 0.7.0`)
+- Vulnerabilities present only in unsupported versions (`< 0.8.0`)
 - Best-practice hardening suggestions with no demonstrable security impact
 
 Not sure whether your finding is in scope? Report it anyway via the private channel — we will triage and respond.
@@ -169,7 +169,7 @@ We follow a 5-step process for handling third-party dependency vulnerabilities:
 
 | Step | Action | Timeframe | Tooling |
 |---|---|---|---|
-| 1. Scan | Continuous automated scanning of all runtime and development dependencies | Automated (daily) | OrbisAI Security, npm audit |
+| 1. Scan | Continuous automated scanning of all runtime and development dependencies | Automated (every PR, and every push to `main`) | gitleaks (full history), dependency-review (PR diff), OSV-Scanner (lockfile), Dependabot alerts |
 | 2. Assess | For each detected vulnerability, assess severity, exploitability, and impact on dsh-mneme | Within 48 hours of detection | CVSS v3.1, manual code analysis |
 | 3. Report | Document findings in the security tracker; report to maintainers | Immediately after assessment | Security tracker, maintainer channel |
 | 4. Fix | Upgrade dependency to a patched version or apply mitigation | Critical: ≤ 14 days; High: ≤ 30 days; Medium/Low: next release | npm/pnpm update, manual patching |
@@ -246,7 +246,7 @@ We follow a 5-step process for handling third-party dependency vulnerabilities:
 
 ### Ongoing
 
-- Automated dependency scanning via **OrbisAI Security**
+- Automated scanning in CI ([`.github/workflows/security.yml`](.github/workflows/security.yml)): gitleaks for secrets, dependency-review for PR dependency diffs, OSV-Scanner for the lockfile; GitHub Dependabot alerts and secret scanning are enabled repository-side
 - Community security reviews welcome via private advisory
 
 ---
@@ -287,7 +287,7 @@ We do **not** pursue legal action against security researchers who:
 
 ## Security Logs & Data Retention
 
-All audit data is stored **locally** in the plugin database and never leaves the device:
+All plugin-side audit data is stored **locally** in the plugin database and never leaves the device (dependency scan reports are the one exception — they live on GitHub, see the table):
 
 | Data Type | Storage Location | Notes |
 |---|---|---|
@@ -295,7 +295,7 @@ All audit data is stored **locally** in the plugin database and never leaves the
 | `recall_run` search logs | Local database | Every search is recorded with timestamp and query metadata |
 | AutoDream receipts | Local database + Markdown mirror | Cryptographically verifiable; persist until user deletes them |
 | `distill_records` raw window text (#399) | Local database | **Opt-in, off by default.** Only when `distillRecords.enabled: true`: the raw prompt/answer text of distilled windows is kept verbatim (no truncation), capped by `retentionDays` (default 90). Never includes private reasoning, plugin-injected content, tool arguments or tool output. Retention trims the text only — provenance links stay (they point at an empty range, shown as "source expired") |
-| Dependency scan reports | OrbisAI Security dashboard | Not stored on device |
+| Dependency scan reports | GitHub Security tab (code scanning / Dependabot) | Not stored on device |
 
 Retention is user-controlled: audit records live only as long as the local database does. There is no remote logging and no telemetry.
 
@@ -315,7 +315,8 @@ dsh-mneme:
   # Use local-only embedding (no network)
   embedProvider: local
 
-  # Require Authorization: Bearer <apiToken> on remote endpoints (timing-safe)
+  # Require Authorization: Bearer <apiToken> on writes and the sensitive reads
+  # (timing-safe). Plain reads stay open — see "Security Model" above.
   apiToken: "set-a-strong-unique-token"
 
   # Bump to downgrade all prior dream_runs to historical evidence
@@ -356,7 +357,7 @@ dsh-mneme:
 All contributors must comply with the following security requirements:
 
 1. **Dependency Audit**: Run `npm audit` before submitting a PR; newly introduced dependencies must pass security review
-2. **Secret Scanning**: Never commit API keys, tokens, or credentials to the repository
+2. **Secret Scanning**: Never commit API keys, tokens, or credentials to the repository. Test fixtures need credential *shapes*, not literals — assemble them from parts (`"sk-" + "proj-" + …`) instead of writing one whole string. CI runs gitleaks over the full history and GitHub push protection rejects the push outright (GH013), and a literal in `test/helpers/` is exactly how alert #1 was created. `test/sensitive-scan.test.js` enforces this for fixture files.
 3. **Input Validation**: All user inputs must be validated and sanitized (including LLM-derived content)
 4. **Secure Code Review**: PRs with security-relevant changes require approval from a maintainer with security expertise
 5. **Documentation**: New features must include a security impact analysis in the PR description
@@ -390,11 +391,11 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 
 | 版本 | 支持状态 | 说明 |
 |---|---|---|
-| 0.8.x | ✅ 支持 | 活跃开发中 |
-| 0.7.x | ⚠️ 尽力维护 | 仅关键修复 |
-| < 0.7.0 | ❌ 不支持 | 请升级至 0.8.x |
+| 0.9.x | ✅ 支持 | 活跃开发中 |
+| 0.8.x | ⚠️ 尽力维护 | 仅关键修复 |
+| < 0.8.0 | ❌ 不支持 | 请升级至 0.9.x |
 
-**停止维护通知**：0.7.x 处于尽力维护阶段（仅关键修复）。停止维护的具体日期将提前公布；该日期之后将不再提供 0.7.x 的安全修复。0.6.x 及更早版本的安全支持已随 0.8.1 发版终止——请升级至 0.8.x。
+**停止维护通知**：0.8.x 处于尽力维护阶段（仅关键修复）。停止维护的具体日期将提前公布；该日期之后将不再提供 0.8.x 的安全修复。0.7.x 及更早版本的安全支持已终止——请升级至 0.9.x。
 
 ---
 
@@ -404,16 +405,16 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 
 | 特性 | 描述 | 状态 |
 |---|---|---|
-| `apiToken` 鉴权 | 配置 token 后，所有远程端点需 `Authorization: Bearer <apiToken>`，比较使用 `crypto.timingSafeEqual` | ✅ 已实现 |
+| `apiToken` 鉴权 | 配置 token 后，**写**路由与敏感读（`/export`、`/external-api`、`/vector-config`、`/maintenance/*`）需 `Authorization: Bearer <apiToken>`，比较使用 `crypto.timingSafeEqual`。普通读按设计保持开放——见[安全模型](#5-安全模型什么在真正保护什么) | ✅ 已实现 |
 | `policyEpoch` 记忆治理 | 提升 `policyEpoch` 后，所有先前的 `dream_runs` 降级为历史证据，其 receipt 不再驱动实时记忆决策 | ✅ 已实现 |
 | `conflictFreezeEnabled` 冲突冻结 | 冲突记忆不自动合并，标记为待人工复核，保护数据完整性 | ✅ 已实现 |
 | CAS（比较并交换）守卫 | 防止并发写入冲突，确保原子写操作 | ✅ 已实现 |
 | Digest 基线审计 | 记忆更新与 digest 基线比对，检测未授权修改 | ✅ 已实现 |
 | `failure_memories` 审计轨迹 | 每次写入失败均记录，供取证分析 | ✅ 已实现 |
 | `recall_run` 搜索审计 | 每次搜索操作均记录时间戳和查询元数据 | ✅ 已实现 |
-| 本地优先数据处理 | embedding、rerank、记忆整理均在本地完成，数据不离开设备 | ✅ 已实现 |
-| 无遥测 | 无分析、无远程日志，设计上无网络请求 | ✅ 已实现 |
-| 查询净化 | LIKE 查询转义、分页边界限制、Markdown 镜像转义，防止注入和畸形输入 | ✅ 已实现 |
+| 本地优先数据处理 | 本地优先，但**不是**零网络：`embedProvider` 默认 `openai`，记忆正文会 POST 到所配置端点；巩固/蒸馏走宿主 LLM。其余出站调用只有运行时模型下载与 npm registry 版本检查 | ⚠️ 视配置而定 |
+| 无遥测 | 无分析、无远程日志；但插件确实会发起上面列出的出站调用 | ✅ 已实现（无遥测） |
+| 查询净化 | LIKE 查询转义、**分页边界**（`limit` ≤ 1000、`topK` ≤ 200、请求体 ≤ 4 MiB）、Markdown 镜像转义，防止注入、记忆放大与畸形输入 | ✅ 已实现 |
 | `entityExtractionEnabled` 实体抽取 Opt-In | 实体抽取为配置项、默认关闭（数据最小化原则） | ✅ 已实现 |
 | 优雅降级 | 组件故障时自动回退至关键词搜索，不崩溃 | ✅ 已实现 |
 | 人工可编辑镜像 | 所有记忆镜像至 Markdown 文件，用户可验证和重建数据 | ✅ 已实现 |
@@ -422,7 +423,17 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 | `/health` 鉴权门控 | 健康端点要求 `apiToken`；错误码净化（no-space / permission / sync-failed），读取失败 fail-closed 为 `unknown` | ✅ 已实现 |
 | Fail-Closed 输入校验 | generation 计数与热记忆参数均做 `Number.isInteger`、有限性、非负校验并配 SQL `CHECK` 约束；非法输入回退安全默认值或被拒绝 | ✅ 已实现 |
 | 混合分数钳制 | 混合检索融合分数钳制在 [0, 1]，防止向量 + BM25 叠加突破归一化边界 | ✅ 已实现 |
+| 独立外部 API（opt-in） | 可选的插件自带 HTTP 服务，用于生态集成；默认绑 `127.0.0.1`，Bearer token 自动生成并持久化（`timingSafeEqual` 比较）；`/health` 是唯一免鉴权路由；绑非回环地址是运营者的显式决定 | ✅ 已实现 |
 | Tag 净化 | Tag 规范化复用 sanitizer；`autoTag` 跳过已遗忘记忆；`setMemoryTags` 在 SAVEPOINT 内执行，失败原子回滚 | ✅ 已实现 |
+
+### 独立外部 API
+
+插件可以选择启动自己的 HTTP 服务（`externalApiEnabled`，默认**关闭**），好让其他插件、CLI 与桌面工具不必经过 DSH 宿主端口就能读写记忆。
+
+- **默认只绑回环**：服务绑 `127.0.0.1:8790`（`externalApiHost` / `externalApiPort`，或面板里持久化的设置）。改绑非回环地址等于把记忆库暴露给你的网络，这是运营者的显式决定。
+- **Token 鉴权**：除 `GET /health` 外每条路由都要 `Authorization: Bearer <token>`；token 首次使用时自动生成、持久化在插件设置库、用 `timingSafeEqual` 校验。要轮换就清掉持久化的值（设置 kv 键 `external_api`），下次启动会重新铸造——目前没有 rotate 端点。
+- **路由面**：记忆读写（`GET/POST /memories`、`GET/PUT/DELETE /memories/:id`、`GET /search`、`GET /context`、`GET /status`），profile/rules 的**读**（`GET /profile`、`GET /rules`），以及 `POST /bootstrap` 与 `POST /maintenance/reclaim`（宿主侧孪生路由 `/api/dsh-mneme/maintenance/reclaim` 另外还答 `GET`，用于 dry-run 预览）。写入走与对话内保存相同的去重 + 质量过滤路径。完整路由表见 [docs/DAEMON.md](dsh-mneme/docs/DAEMON.md)。
+- **CLI**：`bin/cli.mjs` 是这个 API 上的薄客户端，凭据存在 `~/.dsh-mneme/cli.json`——请把该文件当凭据文件对待。
 
 ---
 
@@ -456,7 +467,7 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 **不受理范围**——以下问题我们不予处理：
 - 针对维护者或用户的社工 / 钓鱼类问题
 - 仅通过不现实的本地资源耗尽触发、且无产品缺陷支撑的 DoS 声明
-- 仅存在于不支持版本（`< 0.7.0`）的问题
+- 仅存在于不支持版本（`< 0.8.0`）的问题
 - 无可证明安全影响的"最佳实践建议"类问题
 
 不确定你的发现是否在受理范围内？仍请通过私有渠道提交——我们会评估并回复。
@@ -492,11 +503,12 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 
 ## 安全设计原则
 
-### 1. 本地优先，零网络
+### 1. 本地优先，非零网络
 
-- 所有 embedding、rerank、记忆整理均在本地运行
-- 记忆文本**永不**离开设备
-- 无遥测、无分析、无远程日志
+- 存储、关键词/BM25 检索、镜像与注入管线完全在本地运行
+- 嵌入与巩固**只在配置为本地时才本地运行**：`embedProvider` 默认 `openai`，会把记忆正文 POST 到你配置的端点；`autoDream` / `autoSummarize` 会把文本交给宿主 LLM。若要求文本绝不出机器，请设 `embedProvider: local` 并装好本地运行时
+- 其余出站调用：npm registry 版本检查，以及本地运行时装载时的模型下载
+- 无遥测、无分析、无记忆内容的远程日志
 
 ### 2. 默认 Fail-Safe
 
@@ -516,11 +528,17 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 - 机器写入 vs 人工编辑通过 digest 基线区分
 - 用户可仅凭 Markdown 镜像完整重建数据库
 
-### 5. 最小远程暴露面
+### 5. 安全模型：什么在真正保护什么
 
-- 远程 API 端点为可选：需配置 `apiToken` 才生效
-- 配置 token 后，每个远程请求均经过 timing-safe 比较
-- 未配置 token 时，远程端点实际处于禁用状态，所有处理均在本地
+Token 是**写**面上的锁，不是把整个 API 围起来的墙。
+
+- **真正的边界是回环 + 宿主监听器。** 宿主侧路由（`/api/dsh-mneme/*`）挂在 DSH 端口上，该端口绑 `127.0.0.1`，并由宿主挡掉 DNS rebinding 与跨站浏览器请求。这道围栏**不建立身份**：任何本地进程、以及任何跑在宿主同源页面里的脚本，都在这道围栏之内。
+- **鉴权是 opt-in 且 fail-open。** `apiToken` 默认为空；为空期间 `isAuthorized()` 对每个请求都返回 true——读和写都放行。配了 token 之后，它守的是写路由与敏感读，不守普通读。
+- **开放读（即使配了 token 也不需要）**：`GET /`、`/info`、`/version-check`、`/list`、`/recall-stats`、`/search`、`/semantic`、`/semantic/llm-audit`、`/semantic/llm-audit/stats`、`/semantic/graph/*`、`/entities`、`/memories/entities`、`/dream-status`、`/inject-status`、`/inject-preview`、`/pipeline`、`/candidates`、`/llm-providers`，以及 `/profile`、`/rules`、`/features`、`/mode`、`/commands` 的 `GET` 分支。把它们当作「本地任何东西都能读」。
+- **受门控的路由（配了 token 之后）**：全部写操作（`/create`、`/update`、`/delete`、`/import`、`/mode`、`/features`、`/commands`、`/conflicts/resolve`、`PUT /profile`、`PUT /rules`、`/vector-config`、`/vector-reindex`、`/runtime/provision`、`/maintenance/reclaim`、`/test-model`、`/health`）以及敏感读 `/export`、`/external-api`。
+- **独立数据面**（`127.0.0.1:8790`）是反过来的形状：除 `GET /health` 外每条路由都要自己的 Bearer token。因此把 `externalApiHost` 指向非回环地址，就等于把它变成一个「明文、只靠 token」的 HTTP 面——这是运营者的显式决定。
+- **推论**：如果你把插件暴露到回环之外（反代、绑非回环地址），请设 `apiToken`，**并**核对上面那串开放读是否也能被看到——它们不受 token 保护。
+- **这张表怎么保持为真**：每条路由在注册时自己声明 `policy`（`open` / `token` / `token-write`），`createRouteRegistrar` 在路由没声明或复用同一路径时直接抛错。新路由忘了归类会**启动失败**，而不是静默开门——上面这张矩阵来自代码，不来自谁的记忆。
 
 ---
 
@@ -532,7 +550,7 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 
 | 步骤 | 行动 | 时间要求 | 工具 |
 |---|---|---|---|
-| 1. 扫描 | 对所有运行时和开发依赖进行持续自动扫描 | 自动（每日） | OrbisAI Security、npm audit |
+| 1. 扫描 | 对所有运行时和开发依赖进行持续自动扫描 | 自动（每个 PR，以及每次推送到 `main`） | gitleaks（全历史）、dependency-review（PR 依赖 diff）、OSV-Scanner（lockfile）、Dependabot 告警 |
 | 2. 评估 | 对每个检测到的漏洞评估严重程度、可利用性和对 dsh-mneme 的影响 | 检测后 48 小时内 | CVSS v3.1、人工代码分析 |
 | 3. 上报 | 将发现记录到安全追踪器，并上报给维护者 | 评估后立即 | 安全追踪器、维护者通道 |
 | 4. 修复 | 升级依赖至已修复版本或应用缓解措施 | 严重：≤ 14 天；高：≤ 30 天；中/低：下个版本 | npm/pnpm 更新、手动补丁 |
@@ -609,7 +627,7 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 
 ### 持续进行
 
-- 通过 **OrbisAI Security** 进行自动化依赖扫描
+- CI 内自动化扫描（[`.github/workflows/security.yml`](.github/workflows/security.yml)）：gitleaks 扫密钥、dependency-review 扫 PR 依赖 diff、OSV-Scanner 扫 lockfile；仓库侧已开启 GitHub Dependabot 告警与 secret scanning
 - 欢迎社区通过私有公告提交安全审查
 
 ---
@@ -650,7 +668,7 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 
 ## 安全日志与数据保留
 
-所有审计数据**本地**存储于插件数据库，不离开设备：
+所有插件侧审计数据**本地**存储于插件数据库，不离开设备（唯一例外是依赖扫描报告，它存在 GitHub，见下表）：
 
 | 数据类型 | 存储位置 | 说明 |
 |---|---|---|
@@ -658,7 +676,7 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 | `recall_run` 搜索日志 | 本地数据库 | 每次搜索均记录时间戳和查询元数据 |
 | AutoDream receipts | 本地数据库 + Markdown 镜像 | 密码学可验证；保留至用户删除 |
 | `distill_records` 蒸馏窗口原文（#399） | 本地数据库 | **opt-in，默认关。** 仅当 `distillRecords.enabled: true` 时：被蒸馏窗口的用户提示与助手公开正文**逐字留存**（不截断），受 `retentionDays`（默认 90）约束。**绝不**包含私有推理链、插件注入的机器内容、工具入参与工具输出。到期裁剪只删原文，溯源链接保留（指向空区间，显示「来源已过期」） |
-| 依赖扫描报告 | OrbisAI Security 控制台 | 不存储于设备 |
+| 依赖扫描报告 | GitHub Security 标签页（code scanning / Dependabot） | 不存储于设备 |
 
 保留期由用户控制：审计记录仅随本地数据库存续。无远程日志、无遥测。
 
@@ -678,7 +696,8 @@ dsh-mneme:
   # 仅使用本地 embedding（无网络）
   embedProvider: local
 
-  # 远程端点需 Authorization: Bearer <apiToken>（timing-safe）
+  # 写路由与敏感读需 Authorization: Bearer <apiToken>（timing-safe）；
+  # 普通读按设计保持开放——见上文「安全模型」
   apiToken: "set-a-strong-unique-token"
 
   # 提升以将先前的 dream_runs 降级为历史证据
@@ -719,7 +738,7 @@ dsh-mneme:
 所有贡献者必须遵守以下安全要求：
 
 1. **依赖审计**：提交 PR 前运行 `npm audit`；新增依赖必须通过安全审查
-2. **密钥扫描**：禁止向仓库提交 API 密钥、令牌或凭据
+2. **密钥扫描**：禁止向仓库提交 API 密钥、令牌或凭据。测试语料需要的是凭据**形状**而非字面量——请用拼接（`"sk-" + "proj-" + …`）而不是整串写死。CI 用 gitleaks 扫全历史，GitHub push protection 会直接以 GH013 拒推；`test/helpers/` 里的整串字面量正是 secret scanning 告警 #1 的来由。`test/sensitive-scan.test.js` 会对语料文件强制这一条。
 3. **输入验证**：所有用户输入必须验证和净化（包括 LLM 相关内容）
 4. **安全代码审查**：涉及安全相关变更的 PR 需获得具有安全专业知识维护者的批准
 5. **文档记录**：新功能必须在 PR 描述中包含安全影响分析
@@ -741,5 +760,5 @@ dsh-mneme:
 
 ---
 
-*Last updated: 2026-09-06*  
-*Policy version: 2.3*
+*Last updated: 2026-10-18*  
+*Policy version: 3.0*
