@@ -39,9 +39,15 @@
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |
 |---|---|---|---|
 | `scopeState.enabled` | `false` | 跑政策轴判定：被按下的作用域其候选**照常注入**，但每次落一条 `llm_audit_logs`（`trigger_source=scopeState`，`metadata.paused` 记被按下的是哪些作用域、`metadata.gated` 记本应拦下几条、`metadata.enforced=false`） | 关 = 判定不跑、行为与今天逐字段一致。先看「如果按下会少掉多少」的真实分布，再决定真按——`gated` 恒为 0 就说明这一路本来就没在供料 |
-| `scopeState.enforce` | `false` | 真的不注入：被按下的作用域其候选出池（检索侧同款，`gateByScope` 一处生效） | 关 = 仅观察（`metadata.enforced=false`）。**enforce 无 enabled 时无效果**（同 `preInjectGate`）。按下的是政策不是事实：记忆行、向量、归档位、作用域标注全部不动，松开即恢复 |
+| `scopeState.enforce` | `false` | 真的不注入：被按下的作用域其候选出池（检索侧同款，`gateByScope` 一处生效；巩固与睡眠两侧的读入口与写入路径同款） | 关 = 仅观察（`metadata.enforced=false`）。**enforce 无 enabled 时无效果**（同 `preInjectGate`）。按下的是政策不是事实：记忆行、向量、归档位、作用域标注全部不动，松开即恢复 |
 
-覆盖范围：`gateByScope` 的三条检索路（融合池、`entity:`、`attr:` 前缀路）与注入候选池（`injectCandidates` 内、图召回合并之后、pin 池之前）。**巩固（dream）侧另接一处**：`activeStoreSize` 与 `runDream` 的读入口共用同一个过滤函数，否则被按下的行会照常参与阈值判定与合并。`llmAudit.enabled=false` 时观察档一行都不写（同 `writeAdmission` 的口径）。不进 lightMode 强制关闭清单——它只是查一张小表的判定，不引入重型后台路径、不加常驻文本（同 `actionPipelineEnabled` 的定性）。
+覆盖范围：`gateByScope` 的三条检索路（融合池、`entity:`、`attr:` 前缀路）与注入候选池（`injectCandidates` 内、图召回合并之后、pin 池之前）。
+
+**巩固（dream）侧另接三处**：`activeStoreSize`、叙述条 `inputs`、`runDream` 的读入口——否则被按下的行会照常参与阈值判定与合并。
+
+**睡眠（sleep）侧另接四个相位**：冲突消解、归档降级、模式发现、关系补全的候选池。这一侧比日间更要紧，因为**它不只读**——`phaseDemotion` 会 `setArchived` 与 `demoteToSummary`（真改归档面），`phasePatterns` 会铸出 `type=pattern` 的新行；不接的话闸门开着而每 6 小时一次的睡眠照样在被按下的作用域上动手，「按下」就只等于让它在白天看不见。两处位置纪律写在注释里：降级的过滤放在循环之外（不是循环体里 `continue`，免得将来有人加副作用时漏掉），模式发现的过滤排在 `.slice(0, limit)` 之前（否则被按下的行照样占名额，它们既不会被扫、也不该挤掉别人）。
+
+`llmAudit.enabled=false` 时观察档一行都不写（同 `writeAdmission` 的口径）。不进 lightMode 强制关闭清单——它只是查一张小表的判定，不引入重型后台路径、不加常驻文本（同 `actionPipelineEnabled` 的定性）。
 
 ## 审计
 
