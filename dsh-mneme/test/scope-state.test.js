@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createTools } from "../src/tools.js";
+import { runSleep } from "../src/dream/sleep.js";
 
 // issue #471：作用域级可逆闸门（政策轴）。
 //
@@ -273,4 +274,140 @@ test("set_scope_state 对非法参数抛可行动的错，不是静默返回空"
   await assert.rejects(() => tool.execute({ dimension: "nope", scope_value: "x", state: "paused" }), /dimension/);
   await assert.rejects(() => tool.execute({ dimension: "agent", scope_value: "x", state: "maybe" }), /state/);
   await assert.rejects(() => tool.execute({ dimension: "agent", scope_value: "", state: "paused" }), /scope_value/);
+});
+
+// --- 睡眠侧：政策轴不只管「看得见」，还要管「改得到」 -----------------------
+//
+// 上面所有用例都停在读侧（检索出局、注入不进）。但 sleep 的四个相位里有三个会
+// **写**：demotion 会 setArchived / demoteToSummary（真改归档面），patterns 会
+// mint 出 type=pattern 的新行。只挡读侧的话，闸门开着而每 6 小时一次的睡眠照样
+// 在被按下的作用域上动手——「按下」就只等于让它在白天看不见，夜里照旧。
+//
+// 每条都配一个同轮的反向断言（未被按下的同类记忆**确实**被处理了）：只断言
+// 「暂停的没动」的话，一个「整个相位都没跑」的实现也能全绿。
+
+/** demotion 要用时间窗 + 热联合判定，故把 project 的 λ 调快到冷态可降级。 */
+function sleepConfig(overrides = {}) {
+  return {
+    ...PAUSED_CONFIG,
+    sleepModeEnabled: true,
+    heatTypeDecay: { project: 0.02 },
+    sleepArchiveDays: 30,
+    sleepCompressDays: 90,
+    sleepPatternMinMemories: 100,
+    sleepMaxPatternPerRun: 3,
+    ...overrides
+  };
+}
+
+function sleepCtx() {
+  return {
+    logger: { warn() {}, info() {} },
+    agentDefaultModel: { currentSelection: () => ({ provider: "mock", model: "sleep-model" }) },
+    llm: {
+      async *stream() {
+        yield { type: "text-delta", index: 0, text: "[]" };
+        yield { type: "finish", reason: { kind: "stop" } };
+      }
+    }
+  };
+}
+
+// 标注走 store.save 的入参——那是存储层唯一的落标注路径，saveWithDedupe 不收
+// 这两个字段（标注是 scope.js 在工具层盖的）。这一点本身也是被测的性质：
+// 政策轴按**行上已有的标注**匹配，与标注从哪条路写进来无关。
+
+test("睡眠侧：被按下作用域的冷记忆不被 demotion 降级，同轮的未按下记忆照常降级", async () => {
+  const { store, service } = setup(sleepConfig());
+  const paused = store.save({
+    type: "project", title: "paused-cold", content: "paused-cold 的正文".repeat(20), importance: 3,
+    workspace_scope: "proj-a", workspace_scope_source: "explicit"
+  });
+  const open = store.save({
+    type: "project", title: "open-cold", content: "open-cold 的正文".repeat(20), importance: 3
+  });
+  for (const m of [paused, open]) {
+    service.touchLastAccess(m.id, new Date(Date.now() - 40 * 86400000).toISOString());
+  }
+  service.setScopeState({ dimension: "workspace", scope_value: "proj-a", state: "paused" });
+
+  const ctx = sleepCtx();
+  await runSleep(ctx, service, sleepConfig(), ctx.logger, null, null);
+
+  const afterPaused = service.getById(paused.id);
+  const afterOpen = service.getById(open.id);
+  assert.equal(afterPaused._full_content ?? null, null, "被按下的那条一个字都不该被改写");
+  assert.ok(afterOpen._full_content, "同轮里未按下的冷记忆必须真被降级——否则本用例只是证明了相位没跑");
+  store.close();
+});
+
+test("睡眠侧：被按下作用域的冷记忆不被 demotion 归档，同轮的未按下记忆照常归档", async () => {
+  const { store, service } = setup(sleepConfig());
+  const paused = store.save({
+    type: "project", title: "paused-ancient", content: "paused-ancient 的正文", importance: 3,
+    agent_scope: "agent-x", agent_scope_source: "explicit"
+  });
+  const open = store.save({
+    type: "project", title: "open-ancient", content: "open-ancient 的正文", importance: 3
+  });
+  // 推到 compressCut 之外（>= 90 天）→ 直接归档而不是压缩成摘要。
+  const ancient = new Date(Date.now() - 100 * 86400000).toISOString();
+  for (const m of [paused, open]) service.touchLastAccess(m.id, ancient);
+  service.setScopeState({ dimension: "agent", scope_value: "agent-x", state: "paused" });
+
+  const ctx = sleepCtx();
+  await runSleep(ctx, service, sleepConfig(), ctx.logger, null, null);
+
+  assert.equal(service.getById(paused.id).archived, false, "被按下的作用域不该被睡眠归档");
+  assert.equal(service.getById(open.id).archived, true, "未按下的同类必须真被归档");
+  store.close();
+});
+
+test("睡眠侧：被按下作用域的行不进 pattern 扫描池，也就不该占掉名额", async () => {
+  const { store, service } = setup(sleepConfig());
+  // 顺序是这条用例的关键：池子按 updated_at 降序取前 sleepPatternMinMemories 条，
+  // 所以**被按下的必须最后创建**（= 最新），才能在「政策轴排在截断之后」的实现里
+  // 抢到名额。第一版把被按下的写在前头，未修复代码取到的恰好是两条 open，
+  // 用例照样全绿——那是「没测到东西」，不是「测过了」。
+  store.save({ type: "project", title: "open-1", content: "open-1 正文", importance: 3 });
+  store.save({ type: "project", title: "open-2", content: "open-2 正文", importance: 3 });
+  for (const t of ["p1", "p2"]) {
+    store.save({ type: "project", title: t, content: `${t} 正文`, importance: 3, workspace_scope: "proj-a", workspace_scope_source: "explicit" });
+  }
+  service.setScopeState({ dimension: "workspace", scope_value: "proj-a", state: "paused" });
+
+  const seen = [];
+  const ctx = {
+    ...sleepCtx(),
+    llm: {
+      async *stream(options) {
+        const text = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
+        seen.push(text);
+        yield { type: "text-delta", index: 0, text: "[]" };
+        yield { type: "finish", reason: { kind: "stop" } };
+      }
+    }
+  };
+  await runSleep(ctx, service, sleepConfig({ sleepPatternMinMemories: 2 }), ctx.logger, null, null);
+
+  const scanned = seen.join("\n");
+  assert.ok(scanned.includes("open-1"), "未按下的记忆必须进扫描池——被按下的不该把它们挤出名额");
+  assert.ok(!scanned.includes("p1"), "被按下的记忆不该出现在模式扫描的提示里");
+  store.close();
+});
+
+test("睡眠侧：被按下作用域的行不进关系补全的候选池", async () => {
+  const { store, service } = setup(sleepConfig());
+  const alpha = service.createEntity({ name: "Alpha", type: "project" });
+  service.createEntity({ name: "Beta", type: "project" });
+  store.save({
+    type: "project", title: "t", content: "Alpha 与 Beta 一起出现", importance: 3,
+    workspace_scope: "proj-a", workspace_scope_source: "explicit"
+  });
+  service.setScopeState({ dimension: "workspace", scope_value: "proj-a", state: "paused" });
+
+  const ctx = sleepCtx();
+  await runSleep(ctx, service, sleepConfig(), ctx.logger, null, null);
+  assert.equal((service.getRelations(alpha.id) ?? []).length, 0, "被按下的记忆不该被拿去连关系");
+  store.close();
 });

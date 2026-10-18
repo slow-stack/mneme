@@ -172,6 +172,22 @@ function makeSummary(m) {
   return text.length <= SUMMARY_MAX ? text : `${text.slice(0, SUMMARY_MAX)}…`;
 }
 
+// issue #471 政策轴：被按下的作用域也不参与睡眠整理。与 dream.js 的 withoutPaused
+// 同源（那里记着「判定只许有一份实现」的理由），但这里是**单独一处**而不是复用：
+// 两个模块各被独立装配（runSleep / runDream 各自接 service），任何一个被换进只
+// 实现了一半 service 的夹具时都该各自降级，而不是因为对方模块没装而双双失效。
+//
+// 睡眠侧比日间加固侧更要紧：这几个相位不只读——phaseDemotion 会 setArchived 与
+// demoteToSummary（真改归档面），phasePatterns 会 mint 出 type=pattern 的新行
+// （凭空给被按下的作用域生出衍生记忆）。只挡日间那几处读入口的话，闸门开着而每
+// 6 小时一次的睡眠照样动手，那等于「按下」只是让它在白天看不见。
+//
+// service 上取不到 filterPaused 时（老装配、测试夹具）原样返回，与改动前一致。
+function withoutPaused(service, rows) {
+  if (typeof service?.filterPaused !== "function") return rows;
+  return service.filterPaused(rows);
+}
+
 // ---------------------------------------------------------------- phases
 
 /**
@@ -189,7 +205,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   }
   const strictness = config.sleepConflictStrictness ?? "normal";
   const threshold = CONFLICT_THRESHOLDS[strictness] ?? CONFLICT_THRESHOLDS.normal;
-  const memories = service.all().filter((m) => !m.archived && !m.forgotten && m.type !== "summary" && m.type !== "document");
+  const memories = withoutPaused(service, service.all().filter((m) => !m.archived && !m.forgotten && m.type !== "summary" && m.type !== "document"));
   if (memories.length < 2) return { status: "skipped", reason: "too few memories" };
   if (signal?.aborted) return { status: "aborted", reason: "user activity" };
 
@@ -423,7 +439,10 @@ function phaseDemotion(service, config, logger, runId, signal = null) {
   const compressCut = Date.now() - compressDays * 86400000;
   const demoted = [];
   const archived = [];
-  for (const m of service.all()) {
+  // 政策轴在这里尤其要紧：下面两行会真改归档面（setArchived / demoteToSummary）。
+  // 把过滤放在循环之外、而不是在循环体里 continue：一旦将来有人在循环体里加
+  // 副作用（现已有），漏掉那条 continue 就是静默改到被按下的行。
+  for (const m of withoutPaused(service, service.all())) {
     if (signal?.aborted) break;
     if (m.archived || m.forgotten) continue;
     const ref = m.last_accessed_at ?? m.created_at;
@@ -472,9 +491,11 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
   const limit = config.sleepPatternMinMemories ?? 100;
   // #230：document 在查询层排除（excludeTypes）而不是截断后过滤——LIMIT 200
   // 先生效的话，指针行一多就会把普通记忆挤出扫描窗，池子饿到门槛以下。
-  const memories = service
+  // 政策轴同理必须排在 `.slice(0, limit)` **之前**，否则被按下的行照样占掉
+  // sleepPatternMinMemories 的名额，而它们既不会被扫、也不该挤掉别人（#471）。
+  const memories = withoutPaused(service, service
     .list({ limit: 200, includeForgotten: false, excludeTypes: ["document"] })
-    .filter((m) => !m.archived && m.type !== "summary" && m.type !== "pattern")
+    .filter((m) => !m.archived && m.type !== "summary" && m.type !== "pattern"))
     .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
     .slice(0, limit);
   if (memories.length === 0) return { status: "skipped", reason: "no memories to scan" };
@@ -563,7 +584,7 @@ function phaseRelations(service, config, logger, runId, signal = null) {
   if (entities.length < 2) return { status: "skipped", reason: "too few entities" };
   const orphans = entities.filter((e) => (service.getRelations(e.id) ?? []).length === 0);
   if (orphans.length === 0) return { status: "skipped", reason: "no orphan entities" };
-  const memories = service.all().filter((m) => !m.archived && !m.forgotten);
+  const memories = withoutPaused(service, service.all().filter((m) => !m.archived && !m.forgotten));
   const seen = new Set();
   const related = [];
   const MAX_RELATIONS_PER_ORPHAN = 3;
