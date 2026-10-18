@@ -75,3 +75,19 @@ test("publish 内必须跑阻塞闸门：release 等的是一个真做过校验�
     "不要退回命令替换里的 npm view —— 失败不会让 set -e 退出，那是 v0.8.16 的假绿"
   );
 });
+
+test("release 的正文抽取必须调模块，不许退回工作流内联脚本", () => {
+  // 原先这段是内联 node -e：改排版要动工作流本体、还没法写测试，而 Release 正文恰恰是最需要
+  // 反复试排版的东西。退回内联就等于退回「改了没人能验证」的状态，这条锁住它不再发生。
+  const code = jobBlock("release").filter((line) => !/^\s*#/.test(line)).join("\n");
+  assert.match(
+    code,
+    /node dsh-mneme\/scripts\/release-notes\.mjs/,
+    "release job 必须调用 release-notes.mjs（渲染有单测、本地可预览）"
+  );
+  assert.doesNotMatch(
+    code,
+    /node -e/,
+    "不要退回 node -e 内联脚本 —— 那段逻辑没有测试覆盖"
+  );
+});

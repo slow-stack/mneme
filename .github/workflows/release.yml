@@ -173,32 +173,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 从 dsh-mneme/CHANGELOG.md 抽取本版本小节作为 Release 说明（verify 已保证存在）
+      # Release 正文的渲染搬进了 dsh-mneme/scripts/release-notes.mjs（原先这段是内联 node -e）。
+      # 搬出去的理由不是「代码要短」：Release 正文的排版会被反复调整，内联脚本改一次就要动工作流
+      # 本体、还没法写测试。现在渲染有单测（test/release-notes.test.js），本地也能先预览再发。
+      # 渲染是分层而不是截断：标题 + 一句导语默认可见，剩余正文折进 details —— CHANGELOG 本体
+      # 一个字不动（那是含决策理由的完整记录），压缩只发生在对外渲染这一步。
       - name: Extract release notes from CHANGELOG
-        run: |
-          V="${{ needs.verify.outputs.version }}"
-          node -e '
-            const fs = require("fs");
-            const v = process.argv[1];
-            const md = fs.readFileSync("dsh-mneme/CHANGELOG.md", "utf8");
-            const re = new RegExp("^## \\[" + v.replace(/\./g, "\\.") + "\\][^\\n]*\\n", "m");
-            const start = md.search(re);
-            if (start === -1) { console.error("changelog section not found: " + v); process.exit(1); }
-            const rest = md.slice(start + md.slice(start).indexOf("\n") + 1);
-            const next = rest.search(/^## \[/m);
-            const body = (next === -1 ? rest : rest.slice(0, next)).trim();
-            fs.mkdirSync("notes", { recursive: true });
-            fs.writeFileSync("notes/body.md", body + "\n");
-            console.log("--- extracted notes ---\n" + body.slice(0, 400));
-          ' "$V"
+        run: node dsh-mneme/scripts/release-notes.mjs "${{ needs.verify.outputs.version }}"
 
       - name: Create / update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
-          # 标题统一纯版本号（v0.7.9 基准，9/8 决定）；Release 正文由
-          # 上方抽取的 CHANGELOG 分类小节提供（## 🆕 新功能 / 🐛 修复 / 🏗️ 工程 / 📦 升级提示）
+          # 标题统一纯版本号（v0.7.9 基准，9/8 决定）；Release 正文由上方抽取的 CHANGELOG 小节
+          # 渲染而来，分类小节名以 CHANGELOG 实际写法为准（现为 ## 📦 仓库结构 / 🔐 安全 / 🧰 发版与文档 这类）。
+          # 这里不再重复列出分类：写死的清单会随 CHANGELOG 演进而变成假话。
           if gh release view "v${VERSION}" >/dev/null 2>&1; then
             gh release edit "v${VERSION}" --title "v${VERSION}" --notes-file notes/body.md
           else

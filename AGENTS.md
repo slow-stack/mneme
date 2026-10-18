@@ -14,7 +14,8 @@ dsh-mneme 是 DSH 宿主的记忆插件（蒸馏 / 注入 / 检索 / 巩固 / sc
 - 仓库根 — README（双语）、CHANGELOG、CONTRIBUTING、docs/、
   `package.json`（**仓库壳**：`private`、`0.0.0`、刻意不带 `dsh` 字段与 `type` 字段，
   供 dshfind 这类单仓多包探测器找到子包，**绝不发布**）、`pnpm-workspace.yaml`（子包声明）、
-  `scripts/release-prep.mjs` + `.github/workflows/release-prep.yml`（发版准备：机械的归机器、判断的归人——见 [CONTRIBUTING](CONTRIBUTING.md) 发布流程）
+  `scripts/release-prep.mjs` + `.github/workflows/release-prep.yml`（发版准备：机械的归机器、判断的归人——见 [CONTRIBUTING](CONTRIBUTING.md) 发布流程）、
+  `dsh-mneme/scripts/release-notes.mjs`（Release 正文渲染：CHANGELOG 该节 → 标题 + 一句导语 + 折叠细节；CHANGELOG 本体不动）
 - `.mneme/`（仓库根）— **项目级**工作流（M.O.）：`pipelines/<id>.json`，属于项目不属于插件。
   住 `dsh-mneme/pipelines/` 会让它在**每个**项目里都读得到（见 [docs/WORKFLOWS.md](dsh-mneme/docs/WORKFLOWS.md)）。
 
