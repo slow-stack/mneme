@@ -294,7 +294,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
 
   function scheduleEmbed(memory) {
     try {
-      if (txDepth > 0) return; // deferred to the transaction's commit
+      // distill-tx-embed-gap: 入队而不是丢弃，transaction() 提交后补跑（#372 同款）。
+      if (txDepth > 0) {
+        pendingEmbed.push(memory);
+        return;
+      }
       if (!embedder || !memory?.id) return;
 
       // Readiness gate: embedder exposes `ready` (async init) and is not ready
@@ -345,6 +349,14 @@ export function createService({ store, mirror, config, onWrite, logger, document
   // 「抽取被静默丢弃」这个本修复要消灭的 bug 换个量级带回来；上限实际由事务内
   // 写入批量决定。回滚时由 transaction() 截断到事务前的基线（见 ROLLBACK 路径）。
   const pendingEntity = [];
+
+  // distill-tx-embed-gap：scheduleEmbed 在事务内曾被首行 `if (txDepth > 0) return;`
+  // 直接丢弃（注释写 deferred，transaction() 从不补跑）——与 #372 的实体抽取是
+  // 同一个 bug 模板，只是受害者换成了嵌入：自动蒸馏的 session:* 行因此 100%
+  // 拿不到向量。照 #372 先例入队，事务提交后补跑；回滚时截断回本层基线，
+  // 绝不给已回滚的行嵌向量。队列同样不设上限：元素只是对已落库行的引用，
+  // cap 丢最旧等于把「向量被静默丢弃」换个量级带回来。
+  const pendingEmbed = [];
 
   function scheduleEntityExtraction(memory) {
     if (txDepth > 0) {
@@ -1152,6 +1164,8 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // #372: 记住本层事务开始时的队列深度——回滚时截断回这里。本层（及更深的
     // 嵌套层）入队的抽取随回滚一并丢弃，外层已提交未 drain 的条目不受牵连。
     const baseline = pendingEntity.length;
+    // distill-tx-embed-gap: 嵌入队列用同一套基线机制，与实体抽取保持一致。
+    const embedBaseline = pendingEmbed.length;
     let committed = false;
     try {
       const result = fn();
@@ -1164,6 +1178,8 @@ export function createService({ store, mirror, config, onWrite, logger, document
       // 复审抓出：仅靠 committed 门挡 drain 时，回滚条目会滞留队列、被下一个
       // 成功事务误抽）。外层未提交的条目在 baseline 之前，原样保留。
       pendingEntity.length = baseline;
+      // distill-tx-embed-gap: 同理，绝不给已回滚的行嵌向量。
+      pendingEmbed.length = embedBaseline;
       throw error;
     } finally {
       txDepth--;
@@ -1180,12 +1196,24 @@ export function createService({ store, mirror, config, onWrite, logger, document
       // （txDepth 仍 >0 时 schedule 会重新入队，与 drain 形成自旋）——条目等最外层
       // COMMIT 后统一补跑。
       if (committed && txDepth === 0) drainPendingEntityExtraction();
+      // distill-tx-embed-gap: 补跑事务内排队的嵌入——同一套嵌套规则：内层提交
+      // 不 drain（txDepth 仍 >0 时 scheduleEmbed 会重新入队），等最外层 COMMIT
+      // 后统一补跑。放在 drainPendingEntityExtraction 之后无依赖，仅保持顺序。
+      if (committed && txDepth === 0) drainPendingEmbeds();
     }
   }
 
   function drainPendingEntityExtraction() {
     while (pendingEntity.length) {
       scheduleEntityExtraction(pendingEntity.shift());
+    }
+  }
+
+  // distill-tx-embed-gap: drain 与 pendingEntity 同构。补跑走 scheduleEmbed 本体，
+  // 因此 embedder 未 ready / 无 schedule 接口等既有分流逻辑全部复用，不另写一路。
+  function drainPendingEmbeds() {
+    while (pendingEmbed.length) {
+      scheduleEmbed(pendingEmbed.shift());
     }
   }
 

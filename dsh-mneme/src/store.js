@@ -1789,6 +1789,11 @@ export function createStore(path) {
     for (const row of rows) {
       const v = getParsedEmbedding(row.id);
       if (!v) continue;
+      // distill-tx-embed-gap 顺带修：维度不匹配的行按维度分流，直接跳过。旧路径
+      // 喂进 cosine 不等长就 return 0，换了模型/维度的旧向量以 0 分混进结果尾部
+      // （threshold 默认 0 时照样入选），检索方拿到的分数是跨向量空间的假值。
+      // 不等长的向量对本次查询没有可比分数，跳过是唯一诚实的处置。
+      if (v.length !== vector.length) continue;
       const score = cosine(vector, v);
       if (score >= threshold) scored.push({ row: { id: row.id }, score });
     }
