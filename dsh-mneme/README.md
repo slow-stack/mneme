@@ -301,7 +301,7 @@ dsh web
 
 ```bash
 git clone https://github.com/slow-stack/mneme.git
-cd dsh-mneme
+cd mneme/dsh-mneme
 dsh plugin --profile web add "$(pwd)"
 dsh web
 ```
@@ -693,7 +693,7 @@ npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动
 
 ## 📄 设计文档
 
-> 设计文档位于仓库根 `docs/`，链接以 `../docs/` 相对路径指向（GitHub 上从本目录打开可正常跳转）。
+> 设计文档在 `dsh-mneme/docs/`（本目录内，直接相对链接）；只有能力对比表在仓库根 `docs/`，用 `../docs/` 指过去。GitHub 上从本目录打开均可正常跳转。
 
 - [配置说明（全键参考）](docs/CONFIGURATION.md)
 - [蒸馏原文留存与记忆级溯源](docs/DISTILL.md)（#399）
