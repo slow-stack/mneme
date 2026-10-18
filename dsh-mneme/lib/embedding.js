@@ -31,10 +31,32 @@ function embeddingsUrl(baseUrl) {
  * Call the embeddings API for one text. Resolves to a Float64 array, or null
  * when the provider is not configured, the call fails, or the response is
  * unusable. Never throws: failures degrade to keyword search.
+ *
+ * The plain null return cannot tell the caller WHY — "model not loaded",
+ * "endpoint 404", "timeout" and "input rejected" all look identical, so the
+ * receipt ledger used to flatten them into one
+ * `embedding-request-returned-no-vector`. Use `embedTextDetailed` when the
+ * reason matters; this wrapper keeps the old contract for existing callers.
  */
-export async function embedText({ baseUrl, apiKey, model }, text) {
+export async function embedText(cfg, text) {
+  const out = await embedTextDetailed(cfg, text);
+  return out.vector;
+}
+
+/**
+ * Same call, but the failure mode is distinguishable: returns
+ * { vector: number[]|null, reason: null|string } where reason is one of
+ *   config-incomplete | request-failed:<err> | http-<status> |
+ *   response-not-json | response-no-vector | empty-text
+ * Never throws. `reason: null` means success.
+ */
+export async function embedTextDetailed({ baseUrl, apiKey, model }, text) {
   const url = embeddingsUrl(baseUrl);
-  if (!url || !apiKey || !model || !text) return null;
+  if (!url || !apiKey || !model || !text) {
+    // 空输入不是端点故障：区分开，否则「text 为空」会被误报成网络问题。
+    const missing = !url ? "baseUrl" : !apiKey ? "apiKey" : !model ? "model" : "text";
+    return { vector: null, reason: `config-incomplete:${missing}` };
+  }
   let res;
   try {
     res = await fetch(url, {
@@ -46,18 +68,33 @@ export async function embedText({ baseUrl, apiKey, model }, text) {
       body: JSON.stringify({ model, input: String(text).slice(0, 8000) }),
       signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
     });
-  } catch {
-    return null;
+  } catch (error) {
+    // 超时是 AbortSignal 抛的 TimeoutError；网络层错误（DNS/拒连）是 TypeError。
+    // 两者都走 request-failed，但带上类型，日志里能分清「慢」和「不通」。
+    const kind = error?.name === "TimeoutError" || error?.name === "AbortError" ? "timeout" : "network";
+    return { vector: null, reason: `request-failed:${kind}:${String(error?.message ?? error).slice(0, 200)}` };
   }
-  if (!res.ok) return null;
+  if (!res.ok) {
+    // 状态码本身就是最有用的诊断：401/403 是钥匙、404 是路径、429 是限流、
+    // 5xx 是服务端。文本截断且不含请求体，日志安全。
+    let detail = "";
+    try {
+      const t = await res.text();
+      detail = String(t).slice(0, 200);
+    } catch { /* body unreadable, status alone is already informative */ }
+    return { vector: null, reason: `http-${res.status}${detail ? `:${detail}` : ""}` };
+  }
   let body;
   try {
     body = await res.json();
   } catch {
-    return null;
+    return { vector: null, reason: "response-not-json" };
   }
   const vec = body?.data?.[0]?.embedding;
-  return Array.isArray(vec) && vec.length ? Array.from(vec) : null;
+  if (!Array.isArray(vec) || !vec.length) {
+    return { vector: null, reason: "response-no-vector" };
+  }
+  return { vector: Array.from(vec), reason: null };
 }
 
 /**
@@ -145,24 +182,17 @@ export function createEmbedder({ store, settings, logger, vectorIndex }) {
       return entry;
     }
     const text = [title, content].filter(Boolean).join("\n");
-    let vector = null;
-    try {
-      vector = await embedText(cfg, text);
-    } catch (error) {
-      const entry = { status: "failed", id, at, reason: String(error) };
+    const detailed = await embedTextDetailed(cfg, text);
+    if (detailed.reason) {
+      // 回执带上可区分的失败模式（http-404 / request-failed:timeout /
+      // config-incomplete:model / response-no-vector ...），不再把「模型没配」
+      // 「请求挂了」「响应没有向量」压成同一个词。状态页与日志按 reason 分诊。
+      const entry = { status: "failed", id, at, reason: detailed.reason };
       ledger.record(entry);
-      logger?.warn?.(`[dsh-mneme] embed memory ${id} failed: ${String(error)}`);
+      logger?.warn?.(`[dsh-mneme] embed memory ${id} failed: ${detailed.reason}`);
       return entry;
     }
-    if (!vector) {
-      // embedText swallows the HTTP detail (404 / timeout / malformed body all
-      // resolve to null). The receipt still has to say "no vector", which is
-      // exactly the fact the write path never used to report.
-      const entry = { status: "failed", id, at, reason: "embedding-request-returned-no-vector" };
-      ledger.record(entry);
-      logger?.warn?.(`[dsh-mneme] embed memory ${id} produced no vector`);
-      return entry;
-    }
+    const vector = detailed.vector;
     const model = modelHashOf(cfg.model);
     store.setEmbedding(id, vector, model);
     _dimension = vector.length;
