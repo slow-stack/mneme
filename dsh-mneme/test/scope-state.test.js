@@ -4,6 +4,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createTools } from "../src/tools.js";
 import { runSleep } from "../src/dream/sleep.js";
+import { createDreamScheduler } from "../src/dream.js";
 
 // issue #471：作用域级可逆闸门（政策轴）。
 //
@@ -409,5 +410,48 @@ test("睡眠侧：被按下作用域的行不进关系补全的候选池", async
   const ctx = sleepCtx();
   await runSleep(ctx, service, sleepConfig(), ctx.logger, null, null);
   assert.equal((service.getRelations(alpha.id) ?? []).length, 0, "被按下的记忆不该被拿去连关系");
+  store.close();
+});
+
+// ---------------------------------------------------------------- dream 侧
+
+test("巩固侧：被按下作用域的行不进总览输入——否则会被洗成无作用域行", async () => {
+  const { store, service } = setup(PAUSED_CONFIG);
+  service.saveWithDedupe({ type: "project", title: "open-title", content: "open 正文", importance: 3 });
+  // 标注走 store.save 的入参——saveWithDedupe 不收这两个字段（标注是 scope.js 在工具层盖的）。
+  store.save({ type: "project", title: "paused-title", content: "paused 正文", importance: 3, workspace_scope: "proj-a", workspace_scope_source: "explicit" });
+  service.setScopeState({ dimension: "workspace", scope_value: "proj-a", state: "paused" });
+
+  const summaryPrompts = [];
+  const ctx = {
+    logger: { warn() {} },
+    agentDefaultModel: { currentSelection: () => ({ provider: "mock", model: "mock-model" }) },
+    llm: {
+      async *stream(options) {
+        const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
+        if (userText.startsWith("id=")) {
+          yield { type: "text-delta", index: 0, text: "[]" };
+          yield { type: "finish", reason: { kind: "stop" } };
+          return;
+        }
+        summaryPrompts.push(userText);
+        yield { type: "text-delta", index: 0, text: "总览正文" };
+        yield { type: "finish", reason: { kind: "stop" } };
+      }
+    }
+  };
+  const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true }), thresholdCount: 1 });
+  await dream.runDream(ctx, service, {});
+
+  const fed = summaryPrompts.join("\n");
+  assert.ok(fed.includes("open-title"), "未按下的记忆必须进总览输入——否则本用例只是证明了总览没跑");
+  assert.ok(!fed.includes("paused-title"), "被按下的记忆不该进总览输入");
+
+  // 这是这条用例真正的要点：总览落库时是**无作用域**的 summary 行，
+  // 所以一旦被按下的内容混进去，注入侧按作用域过滤就再也拦不住它——
+  // 内容已经被洗成全局行了。别的入口漏了只是「漏一条」，这里漏了是「一直漏」。
+  const overview = service.all().find((m) => m.type === "summary" && m.source === "dream");
+  assert.ok(overview, "总览仍应正常落库（闸门不该把总览整个关掉）");
+  assert.equal(overview.workspace_scope ?? null, null, "总览本身没有作用域标注——正因如此，输入必须在源头过滤");
   store.close();
 });

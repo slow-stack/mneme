@@ -1418,7 +1418,11 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     // 渐进恶化。倒序排序与 consolidate 窗口同款（updated_at desc, id tiebreak），
     // 保留最新的；0 = 关闭上限（回归全库行为，调用方自担 ctx）。
     // #230：document 指针行不进总览（与 dream/sleep 五个候选池的同款排除）。
-    const summaryAll = service.all().filter((m) => !m.archived && m.type !== "summary" && m.type !== "document");
+    // issue #471：这一处尤其不能漏——总览落库时是**无作用域**的 summary 行
+    // （saveWithDedupe 不带 agent_scope/workspace_scope），所以被按下作用域的内容
+    // 一旦进了总览，注入侧按作用域过滤就再也拦不住它：内容已经洗成了全局行。
+    // 别的入口漏了只是「那一条漏过去」，这里漏了是「洗一遍之后一直漏」。
+    const summaryAll = withoutPaused(service, service.all().filter((m) => !m.archived && m.type !== "summary" && m.type !== "document"));
     const summaryMaxInputs = Number.isInteger(config.dreamSummaryMaxInputs) ? config.dreamSummaryMaxInputs : 0;
     const summaryInputs = summaryMaxInputs > 0 && summaryAll.length > summaryMaxInputs
       ? [...summaryAll]
