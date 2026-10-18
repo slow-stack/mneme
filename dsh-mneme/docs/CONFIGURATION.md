@@ -28,6 +28,21 @@
 | `scopeEnabled` | `false` | 存储层总开关：**两条写入路径**（工具调用 `memory_save`/`memory_update`，以及机器提炼·会话蒸馏）都自动标注 agent_scope / workspace_scope（标注只贴**新建行**：并入既有行时不重贴，既有行的归属属于它原来被提炼出来的语境），去重键扩展；检索与注入排序按当前会话作用域加权（命中 ×1.25、他 scope ×0.5 保留可见，issue #339 补齐注入通道） | opt-in；关 = 写入不标注、行为与 A1 前逐字节一致 |
 | `strictScope` | `false` | 硬过滤模式（A3）：他 scope 完全不可见、未标注恒可见（fail-closed）；硬过滤先于软加权执行 | 依赖 `scopeEnabled` 打开才有意义；关 = A2 软隔离（他 scope 降权保留可见，检索与注入同权重） |
 
+## 作用域级可逆闸门（issue #471）
+
+上面两个键是**事实轴**——答「这条记忆属于谁」，改的是归属数据、跟着记忆行走。下面两个键是**政策轴**——答「这个作用域现在通不通」，由人按作用域整体按下、跨会话存续、松开即原样回来，**一条记忆行都不动、一个配置键都不改、不用重启**。两条轴落在同一个判定出口（`gateByScope`，全仓唯一的过滤实现），可叠加。
+
+按下与松开走工具 `set_scope_state`（`dimension`: `agent`/`workspace`，`scope_value`: 标签本身或 `*` 表示该维度全局，`state`: `paused`/`active`）。状态存 `scope_state` 表，键 = 维度 + 作用域值，`UNIQUE(dimension, scope_value)` 保证幂等：**重复按下同一状态不刷新 `decided_at`**（同 `memory_archive` 的取舍——否则「最后一次真正变更」的时刻会被噪声盖掉）。
+
+两级语义与 `writeAdmission` / `preInjectGate` 同构：先观察、再拦。
+
+| 键 | 默认 | 作用 | 开启后果 / 冲突 |
+|---|---|---|---|
+| `scopeState.enabled` | `false` | 跑政策轴判定：被按下的作用域其候选**照常注入**，但每次落一条 `llm_audit_logs`（`trigger_source=scopeState`，`metadata.paused` 记被按下的是哪些作用域、`metadata.gated` 记本应拦下几条、`metadata.enforced=false`） | 关 = 判定不跑、行为与今天逐字段一致。先看「如果按下会少掉多少」的真实分布，再决定真按——`gated` 恒为 0 就说明这一路本来就没在供料 |
+| `scopeState.enforce` | `false` | 真的不注入：被按下的作用域其候选出池（检索侧同款，`gateByScope` 一处生效） | 关 = 仅观察（`metadata.enforced=false`）。**enforce 无 enabled 时无效果**（同 `preInjectGate`）。按下的是政策不是事实：记忆行、向量、归档位、作用域标注全部不动，松开即恢复 |
+
+覆盖范围：`gateByScope` 的三条检索路（融合池、`entity:`、`attr:` 前缀路）与注入候选池（`injectCandidates` 内、图召回合并之后、pin 池之前）。**巩固（dream）侧另接一处**：`activeStoreSize` 与 `runDream` 的读入口共用同一个过滤函数，否则被按下的行会照常参与阈值判定与合并。`llmAudit.enabled=false` 时观察档一行都不写（同 `writeAdmission` 的口径）。不进 lightMode 强制关闭清单——它只是查一张小表的判定，不引入重型后台路径、不加常驻文本（同 `actionPipelineEnabled` 的定性）。
+
 ## 审计
 
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |

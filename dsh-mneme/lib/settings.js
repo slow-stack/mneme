@@ -174,6 +174,13 @@ const FEATURE_FLAG_BOOLEANS = [
   // Issue #17（v0.8.0 A3）：strictScope 硬过滤——他 scope 完全不可见（关闭时
   // 为 A2 软隔离：降权保留可见）。
   "strictScope",
+  // Issue #471：政策轴——作用域级可逆闸门（scopeState）。与上面两个键是两条不同的
+  // 轴：那两个管「这条记忆属于谁」（事实轴），这两个管「这个作用域现在通不通」
+  // （政策轴，按作用域整体按下、跨会话存续、松开即恢复）。两级语义同
+  // writeAdmission/preInjectGate——enabled 跑判定（观察档，留审计行但照常注入）、
+  // enforce 真拦（不注入）；都默认关。点号键平铺存、合并时展开回 scopeState 对象。
+  "scopeState.enabled",
+  "scopeState.enforce",
   // 工具暴露开关（v0.8.5）：记忆已每轮自动注入，memory_search/memory_archive
   // 在慢/轻量模型上是多余往返，面板可关（默认关=行为不变）。
   "disableMemorySearch",

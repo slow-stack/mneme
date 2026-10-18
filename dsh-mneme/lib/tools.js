@@ -7,6 +7,7 @@ import { matchesPlatform } from "./runtime/closure.js";
 import { verifyPayload } from "./runtime/verify.js";
 import { TOOL_GUIDE, CONTINUITY_TOOL_RULE } from "./guide.js";
 import { injectChildEnabled } from "./config.js";
+import { normalizeScopeStateDimension, normalizeScopeStateValue, normalizeScopeStateState } from "./scope-state.js";
 import { lastUserQuery } from "./inject.js";
 
 const TEXT_OUTPUT = (text) => [{ type: "text", text }];
@@ -497,6 +498,76 @@ export function createTools(ctx, service, config, embedder) {
         }
         const memory = service.setArchived(args.id, args.archived ?? true);
         return { memory: { id: memory.id, archived: memory.archived } };
+      }
+    }),
+
+    // #471：政策轴——作用域级可逆闸门。与 memory_forget/memory_archive 的分工：
+    // 那两个是事实轴的单条操作（改的是「这条记忆属于谁 / 还算不算数」，一条条来）；
+    // 本工具是政策轴的按作用域操作（改的是「这一路现在通不通」，跨会话存续、
+    // 松开即原样回来，一条记忆行都不动）。判断指引：整条工作线要临时静音用本工具；
+    // 单条记忆不该再被想起才用 memory_forget/memory_archive。
+    defineTool({
+      name: "set_scope_state",
+      description:
+        "Press or release the reversible scope gate for one scope (issue #471): while paused, that scope's memories stay stored and unchanged but are held back from injection and dream consolidation. " +
+        "This is not deletion and not forgetting — release with state=active and everything comes back exactly as it was, which is why it is the right tool for temporarily silencing a whole work stream rather than editing memories one by one. " +
+        "dimension is agent or workspace; scope_value is the label itself, or * for that dimension's global gate. " +
+        "Both switches (scopeState.enabled/enforce) are off by default, so setting a state has no effect on injection until the user turns them on in the panel.",
+      parameters: {
+        dimension: { type: "string", required: true, description: "Scope dimension to press: \"agent\" or \"workspace\"" },
+        scope_value: { type: "string", required: true, description: "The scope label, or \"*\" for that dimension's global gate" },
+        state: { type: "string", required: true, description: "\"paused\" presses the gate, \"active\" releases it" },
+        note: { type: "string", description: "Optional short reason, stored with the decision so the next reader knows why it was pressed" }
+      },
+      output: {
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            scope: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                dimension: { type: "string", required: true },
+                scope_value: { type: "string", required: true },
+                state: { type: "string", required: true },
+                // 理由要能读回来：不带它，下次读的人只知道「按下过」却不知道为什么。
+                // 这与库层 setScopeState 的 note 取舍是同一条理由——不带理由的重按
+                // 不抹掉旧理由，正是为了让这里读得回来。可选：从没写过就没有。
+                note: { type: "string" },
+                decided_at: { type: "string", required: true }
+              }
+            }
+          }
+        },
+        // 回执如实回显当前值（不是回显入参）：同一个状态重复按下时 decided_at 保持
+        // 首次值，回显它才看得出「这次没有真的改变什么」。
+        render: (_args, value) =>
+          TEXT_OUTPUT(
+            `Scope ${value.scope.dimension}:${value.scope.scope_value} is now ${value.scope.state} (decided at ${value.scope.decided_at}).`
+          )
+      },
+      async execute(args) {
+        const dimension = normalizeScopeStateDimension(args.dimension);
+        const scopeValue = normalizeScopeStateValue(args.scope_value);
+        const state = normalizeScopeStateState(args.state);
+        if (dimension === null) throw new Error("dimension must be \"agent\" or \"workspace\"");
+        if (scopeValue === null) throw new Error("scope_value must be a non-empty label or \"*\"");
+        if (state === null) throw new Error("state must be \"active\" or \"paused\"");
+        const row = service.setScopeState({ dimension, scope_value: scopeValue, state, note: args.note });
+        if (row === undefined) throw new Error("scope state could not be recorded");
+        return {
+          scope: {
+            dimension: row.dimension,
+            scope_value: row.scope_value,
+            state: row.state,
+            // 没写过理由时键整个不出现（而不是 note: undefined）：output schema 是
+            // 闭合的，DTO 矩阵会拿真实返回值过 validateJsonSchemaValue，留一个
+            // 值为 undefined 的键等于留个空壳。
+            ...(row.note === undefined ? {} : { note: row.note }),
+            decided_at: row.decided_at
+          }
+        };
       }
     }),
 

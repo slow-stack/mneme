@@ -57,8 +57,22 @@ function totalChars(memories) {
 // 两处若各写一份过滤条件，重启播种读到的基线就会和运行期判定口径漂移（一个把
 // document 算进去、一个不算），阈值随之失真，且这种漂移只会在重启后才显形。
 function activeStoreSize(service) {
-  const memories = service.all().filter((m) => !m.archived && m.type !== "summary" && m.type !== "document");
+  const memories = withoutPaused(service, service.all().filter((m) => !m.archived && m.type !== "summary" && m.type !== "document"));
   return { count: memories.length, chars: totalChars(memories) };
+}
+
+// issue #471 政策轴：被按下的作用域不参与巩固，也就不该再撑着阈值把它自己触发起来。
+// 三个读入口（本函数、generateNarratives 的 inputs、runDream 的 memories）各自的附加
+// 条件不同——有的排 forgotten、有的不排——但「政策轴这一层」对三处是一样的，故收成
+// 一个助手而不是各写一遍过滤，理由与 activeStoreSize 开头记着的口径漂移同源：两处
+// 各写一份过滤条件，漂移只会在重启后才显形。
+//
+// 走 service.filterPaused 而不是自己读状态表：判定只许有一份实现（见
+// src/scope-state.js 的模块注释）。service 上取不到这个函数时（老装配、测试夹具）
+// 原样返回，行为与改动前一致。
+function withoutPaused(service, rows) {
+  if (typeof service?.filterPaused !== "function") return rows;
+  return service.filterPaused(rows);
 }
 
 // 基线的唯一合法形状：两个非负整数；其余（缺字段、负数、非整数、整个对象缺失）
@@ -418,7 +432,7 @@ async function reEmbedMemory(semantic, memory, logger) {
  * 任何失败降级为 0 条，绝不反噬 dream 主流程。
  */
 async function generateNarratives({ ctx, service, config, route, language, effort, semantic, logger }) {
-  const inputs = service.all().filter((m) => !m.archived && !m.forgotten && m.type !== "summary" && m.type !== "document");
+  const inputs = withoutPaused(service, service.all().filter((m) => !m.archived && !m.forgotten && m.type !== "summary" && m.type !== "document"));
   const clusters = clusterByTag(inputs, { minCluster: config.dreamNarrativeMinCluster ?? 3 });
   if (!clusters.length) return 0;
 
@@ -946,7 +960,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
   async function runDream(ctx, service, config) {
     const language = langOf(config);
     const logger = ctx.logger;
-    let memories = service.all().filter((m) => !m.archived && m.type !== "summary" && m.type !== "document");
+    let memories = withoutPaused(service, service.all().filter((m) => !m.archived && m.type !== "summary" && m.type !== "document"));
     if (memories.length === 0) return { ok: true, applied: 0, skipped: true, summary: false };
     // Issue #89：开跑时刻既喂给审计行（created_at），也是调度器闸门的时间基准。
     const dreamStartedAt = Date.now();

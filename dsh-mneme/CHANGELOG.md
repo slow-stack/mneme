@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## 🆕 新增
+
+- **作用域级可逆闸门：让一路记忆能被单独按下与松开，而不必改配置重启（#471，默认关）**：此前的开关全是**进程级**——想停掉某一路（比如「别再把工作区 A 的记忆注进来」）只有两条路，改全局配置（一起停，误伤别的路）或逐条 `memory_forget`（太细，几百条要手工捞，还会漏掉中途新写的行）。缺的不是开关数量，而是**另一根轴**：本仓早就有完整的事实轴（`memories.agent_scope` / `workspace_scope` 与 `scope_changes` 审计），却没有任何**可逆政策轴**——一个「人给的、可撤回的、存续到下次开工的」暂停状态，它与标注正交：按下不改任何一条记忆的标注，松开也不需要把标注改回来。实现是 `scope_state` 表（`dimension` × `scope_value` 唯一索引 + `state` 二值 `active`/`paused` + `note`），配 `src/scope-state.js` 承载判定，闸门挂在 `gateByScope` 旁并**前置**于既有 `strictScope` 硬过滤——于是两条轴串联而不是互相替代：先按人给的政策把整路按下，再按标注做可见性过滤。**重复按下同一状态不刷新 `decided_at`**（用 `ON CONFLICT ... DO UPDATE SET decided_at = CASE WHEN scope_state.state = excluded.state THEN scope_state.decided_at ELSE excluded.decided_at END` 一条语句表达）：「什么时候真的变了」比「最后一次谁点了按钮」更接近审阅时想知道的事实，反复点同一个按钮不该把它变成刚发生的事。覆盖范围刻意与既有的四处 `gateByScope`/硬过滤落点对齐（三条检索路 + 注入候选池），**并单独接了 dream 侧三个读入口**（活跃库尺寸、叙述条 inputs、巩固 runDream）——只改检索与注入会让整理与叙述仍读到被按下的行，那等于闸门只关了一半。两级语义沿用 #254：`enabled` 开判定、`enforce` 开拦截，`enforce` 关时只留审计行而注入照常（线上回滚不必改配置重启）。`set_scope_state` 是唯一新工具，回执**如实回显库里当前的 `decided_at`** 而不是回显入参——重复按下时这两个值不同，回显入参会让界面显示一个从未落盘的时间。默认全关时输出与改动前**逐字节一致**，且有回归用例锁住这条。
+
 ## 📚 文档
 
 - **README 不再把「离线」写成默认行为**：两份 README 合计 12 处「默认全离线 / offline by default / 默认零网络依赖」与代码默认值相反——`autoDream` 与 `autoSummarize` 默认开（`src/config.js`），两者都把记忆正文交给 `ctx.llm.stream(...)`（`src/dream.js` / `src/summarize.js`），`embedProvider` 默认仍是 `openai`，只有显式改成 `local`（ONNX）才真正离线。改法：定位句改成「记忆只落在本机」，语义检索改成「把 `embedProvider` 设为 `local` 后可以完全离线」，隐私节补一条出站事实（巩固与摘要走宿主模型）与一条「想连巩固也离线就换本地模型或关掉两个开关」；`dsh-mneme/README.md` 的「完全离线的语义记忆引擎」改成「可以完全离线运行的语义记忆引擎」。新增 `test/readme-claims.test.js` 两条守卫：绝对离线声明不许回来、隐私节必须写出「巩固走宿主模型」——删掉假话却什么都不说，误导是一样的。GitHub About 同步换成不声称离线、补上四路召回与 MCP/CLI 的版本。

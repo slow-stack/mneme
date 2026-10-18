@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { TYPE_FILE, MIRROR_READONLY_TYPES } from "./mirror.js";
 import { updatedAtBounds } from "./store.js";
 import { normalizeExplicitScope, scopeKeyOf } from "./scope.js";
+import { createScopeStateGate } from "./scope-state.js";
 import { STR, langOf } from "./lang.js";
 import { computeHeat } from "./heat.js";
 import { recallStats } from "./recall-stats.js";
@@ -185,6 +186,17 @@ export function computeRetrievalMetrics(actualIds, expectedIds) {
 
 export function createService({ store, mirror, config, onWrite, logger, documentIndex, writeAdmission }) {
   const language = langOf(config);
+
+  // issue #471 政策轴：作用域级可逆闸门。判定实现住 src/scope-state.js（与存储解耦，
+  // test 可以直接构造暂停集合、不必开库）；这里只把 store 的读写函数接上去。
+  // 每次调用现读一次状态表，不做缓存：表恒小（行数 = 被人按过的作用域个数），
+  // 而缓存要配一套失效协议才能让面板/另一进程的改动立刻可见（见 scope-state.js）。
+  const scopeStateGate = createScopeStateGate({
+    listStates: () => store.listScopeStates(),
+    saveAudit: (entry) => store.saveLlmAudit(entry),
+    config,
+    logger
+  });
   // Optional dream scheduler hook, installed via setDreamHook after creation
   // (the scheduler holds a reference back to the service, so it cannot be
   // passed in the constructor). Fired on the same write events as onWrite.
@@ -405,10 +417,20 @@ export function createService({ store, mirror, config, onWrite, logger, document
    * activeStoreSize 的理由：两处各写一份过滤条件，漂移只在某条路径上显形）。
    *
    * strictScope 关（默认）或 scope 解析不到时原样返回：行为与改动前逐字节一致。
+   *
+   * issue #471 政策轴接在这里：判定收在 scope-state.js（同一个「过滤点不许漂移」
+   * 的理由），本函数只按顺序挂上去。政策轴排在事实轴**前面**——它更便宜（一次小
+   * 表读，无逐行字段比较），且语义上「这一路现在通不通」先于「你看不看得见」。
+   *
+   * 注意政策轴的短路条件与事实轴不同：它不看 `scope`。事实轴要有 scope 才知道
+   * 「以谁的眼睛看」，而政策轴问的是「这条路还开着吗」，与调用方是谁无关——某个
+   * agent 的作用域被按下后，面板与 CLI 来查也应当看不到那一行。故政策轴在 scope
+   * 为 null 时照样生效（会话身份解析失败不该让闸门整条失效）。
    */
   function gateByScope(rows, scope) {
-    if (config?.strictScope !== true || !scope) return rows;
-    return rows.filter((m) => isVisibleInScope(m, scope));
+    const gated = scopeStateGate.filter(rows);
+    if (config?.strictScope !== true || !scope) return gated;
+    return gated.filter((m) => isVisibleInScope(m, scope));
   }
 
   /**
@@ -1781,6 +1803,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
     if (config?.strictScope === true && scope) {
       candidates = candidates.filter((m) => isVisibleInScope(m, scope));
     }
+    // issue #471 政策轴：挂在事实轴之后、pin 池之前。位置与上面同一条纪律——必须在
+    // 图召回合并之后，否则出局行会被 entityRecall 打上 graphHint 带回候选池。
+    // 观察档（enabled 开、enforce 关）在这里留一条审计行说清「本应被拦下几条」，
+    // 但不改 candidates；拦截档才真的摘掉。审计写失败只 warn，注入照常完成。
+    candidates = scopeStateGate.gateInjection(candidates).rows;
     // #249 第一批：B1 pin 池。取在相关性排序之后、轮换之前——取谁按此刻的候选
     // 次序（即相关性次序），取到后从候选中摘除，于是下面的轮换重排碰不到它们
     // （验收：pin 不参与跨轮轮换）。独立预算的两层意义：pin 既不占 maxItems
@@ -2544,6 +2571,16 @@ export function createService({ store, mirror, config, onWrite, logger, document
     mergeHumanEdits,
     toApiList,
     isVisibleInScope,
+    // issue #471 政策轴：按下/松开与读取照 store 那三条件透传（纯 bookkeeping，
+    // 不挂 write hook——它们不动任何记忆行，同 saveConflictPending 那批）。
+    setScopeState: (r) => store.setScopeState(r),
+    getScopeState: (d, v) => store.getScopeState(d, v),
+    listScopeStates: (o) => store.listScopeStates(o),
+    // 巩固（dream.js）侧的过滤出口。暴露出来而不是让 dream 自己读状态表，是因为
+    // 判定只能有一份实现（gateByScope 注释里那条「过滤点漂移」的教训）；dream 侧
+    // 的三个读入口各自的附加条件不同（有的排 forgotten、有的不排），但「被按下的
+    // 作用域不参与巩固」这一层对三处是一样的。enforce 关时本函数原样返回入参。
+    filterPaused: (rows) => scopeStateGate.filter(rows),
     transaction,
     getDistillCursor: (sessionId) => store.getDistillCursor(sessionId),
     setDistillCursor: (sessionId, lastSeq) => store.setDistillCursor(sessionId, lastSeq),

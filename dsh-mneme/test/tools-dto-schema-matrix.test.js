@@ -38,7 +38,8 @@ const TOOL_NAMES = [
   "memory_forget",
   "memory_archive",
   "memory_register_document",
-  "memory_runtime"
+  "memory_runtime",
+  "set_scope_state"
 ];
 
 function setup(config = {}) {
@@ -121,7 +122,7 @@ test("工具矩阵与 TOOL_NAMES 清单一致（新增工具必须补进矩阵�
   assert.deepEqual(Object.keys(byName).sort(), [...TOOL_NAMES].sort());
 });
 
-test("A 实跑：10 个工具每个可安全触达的分支，真实返回 ⊆ 声明的 output schema", async () => {
+test("A 实跑：11 个工具每个可安全触达的分支，真实返回 ⊆ 声明的 output schema", async () => {
   const { store, service, byName } = setup({ documentMemoryEnabled: true });
   const shapes = seedShapes(store);
   const annotated = shapes[shapes.length - 1];
@@ -196,6 +197,14 @@ test("A 实跑：10 个工具每个可安全触达的分支，真实返回 ⊆ �
   assert.equal((await drive(byName, "memory_archive", { id: archiveTarget.id })).memory.archived, true);
   assert.equal((await drive(byName, "memory_archive", { id: archiveTarget.id, archived: false })).memory.archived, false);
   note("memory_archive");
+
+  // --- set_scope_state（#471）：两个方向的分支——按下与松开各驱动一次 ---
+  const pressed = await drive(byName, "set_scope_state", { dimension: "workspace", scope_value: "proj-alpha", state: "paused" });
+  assert.equal(pressed.scope.state, "paused");
+  assert.equal(pressed.scope.scope_value, "proj-alpha");
+  const released = await drive(byName, "set_scope_state", { dimension: "workspace", scope_value: "proj-alpha", state: "active" });
+  assert.equal(released.scope.state, "active");
+  note("set_scope_state");
 
   // --- memory_runtime：只驱动只读与「无载荷早退」两条分支 ---
   // provision 会联网下载数十至上百 MB（且可能 adopt 本机载荷、硬链接数以百 MB 计），
@@ -285,7 +294,7 @@ test("B' search / list / get 三个消费方共用同一份 item schema（#184 �
   }
 });
 
-test("C 结构：全部 10 个工具的 output schema 闭合、required ⊆ properties、每项带 type", () => {
+test("C 结构：全部 11 个工具的 output schema 闭合、required ⊆ properties、每项带 type", () => {
   const { byName } = setup();
   for (const name of TOOL_NAMES) {
     const schema = byName[name].output.schema;
