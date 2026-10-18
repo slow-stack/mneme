@@ -31,10 +31,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Validate version format
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
-          V="${{ inputs.version }}"
-          if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::版本号格式应为 0.X.Y（如 0.9.1），当前: $V"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::版本号格式应为 0.X.Y（如 0.9.1），当前: $VERSION"
             exit 1
           fi
 
@@ -64,6 +65,11 @@ jobs:
       - name: Create release-prep branch + PR
         env:
           GH_TOKEN: ${{ github.token }}
+          # 版本号走环境变量而不是直接内插进 run：`${{ inputs.version }}` 出现在 run 里会被
+          # zizmor 判成 template-injection（模板展开可能带进攻击者可控的代码）。虽然上面那道
+          # Validate 已经用 ^[0-9]+\.[0-9]+\.[0-9]+$ 卡过格式，但让静态扫描器看清这一点
+          # 比让它去推理「上游校验是否够严」便宜得多。env 注入的值在 shell 里是普通变量，不重解析。
+          VERSION: ${{ inputs.version }}
         run: |
           git config user.name "modusensus"
           git config user.email "modusensus@users.noreply.github.com"
@@ -71,9 +77,9 @@ jobs:
             echo "::warning::无改动（版本号/占位行已存在）——跳过提交与 PR"
             exit 0
           fi
-          git checkout -b "release-prep/${{ inputs.version }}"
+          git checkout -b "release-prep/$VERSION"
           git add dsh-mneme/package.json dsh-mneme/package-lock.json dsh-mneme/CHANGELOG.md README.md dsh-mneme/README.md
-          { echo "chore: v${{ inputs.version }} 发布准备（版本号 + 测试徽章 + CHANGELOG/版本表占位行）"
+          { echo "chore: v$VERSION 发布准备（版本号 + 测试徽章 + CHANGELOG/版本表占位行）"
             echo
             echo "机械部分已由 scripts/release-prep.mjs 完成。合并前还需要人来写："
             echo
@@ -81,9 +87,10 @@ jobs:
             echo "- [ ] 两个 README 里新占位行的主题描述"
             echo "- [ ] 根 README 的「📰 最近更新」/「📰 Recent updates」表各加一行头条"
             echo "- [ ] 跨 minor 时确认 README 路线图上新 minor 行的主题（占位行只写了「（待填）」）"
+            echo "- [ ] 跨 minor 时把 SECURITY.md 中英两张支持版本表挪一格（活跃开发 / 尽力维护 / 不支持三段一起挪，含停止维护那段通知）"
           } > commit-msg.txt
           git commit -F commit-msg.txt
-          git push origin "release-prep/${{ inputs.version }}"
+          git push origin "release-prep/$VERSION"
           # PR 正文走 --body-file：多行中文塞进 --body 需要一堆 $'\n' 转义，
           # 读的人看不懂、改的人不敢动。写成文件既好读也不受 shell 引号规则摆布。
           {
@@ -95,9 +102,10 @@ jobs:
             echo "- [ ] 两个 README 里新占位行的主题描述"
             echo "- [ ] 根 README 的「📰 最近更新」与「📰 Recent updates」表各加一行头条"
             echo "- [ ] 跨 minor 时确认路线图新 minor 行的主题（占位行只写了「（待填）」）"
+            echo "- [ ] 跨 minor 时把 SECURITY.md 中英两张支持版本表挪一格（活跃开发 / 尽力维护 / 不支持三段一起挪，含停止维护那段通知）——不挪的话，本 PR 的 CI 会在 security-doc.test.js 上红"
             echo
-            echo "合并后推 v${{ inputs.version }} tag 即自动发布（release.yml 会核对 tag / package.json / CHANGELOG 三方一致）。"
+            echo "合并后推 v$VERSION tag 即自动发布（release.yml 会核对 tag / package.json / CHANGELOG 三方一致）。"
           } > pr-body.md
-          gh pr create --base main --head "release-prep/${{ inputs.version }}" \
-            --title "release: v${{ inputs.version }} 发布准备" \
+          gh pr create --base main --head "release-prep/$VERSION" \
+            --title "release: v$VERSION 发布准备" \
             --body-file pr-body.md

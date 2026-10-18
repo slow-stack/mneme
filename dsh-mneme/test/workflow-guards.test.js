@@ -1,5 +1,5 @@
-// 工作流配置的回归锁：安全扫描与发布权限的姿态不能悄悄退回。
-// 这两条锁的都是「配置漂移」——CI 配置没有类型检查，改错了照样绿。
+// 工作流配置的回归锁：安全扫描、发布权限、发版准备的注入面不能悄悄退回。
+// 锁的都是「配置漂移」——CI 配置没有类型检查，改错了照样绿。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -54,4 +54,48 @@ test("release.yml 的 provenance 权限只发给 publish，不发给工作流顶
 
   const release = jobBlock(yml, "release");
   assert.match(release, /contents:\s*write/, "release job 建 Release 需要 contents: write");
+});
+
+// 把每个 `run: |` 块的正文切出来。要断言的是「脚本正文里没有模板展开」，
+// 而 run 块之外（env、with、name）出现 ${{ }} 是正常且必需的。
+function runBlocks(yml) {
+  const lines = codeOnly(yml).split(/\r?\n/);
+  const blocks = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^(\s*)run:\s*\|\s*$/.exec(lines[i]);
+    if (!m) continue;
+    const indent = m[1].length;
+    let j = i + 1;
+    for (; j < lines.length; j++) {
+      const line = lines[j];
+      if (!line.trim()) continue;
+      if (line.match(/^\s*/)[0].length <= indent) break;
+    }
+    blocks.push(lines.slice(i + 1, j).join("\n"));
+    i = j - 1;
+  }
+  return blocks;
+}
+
+test("release-prep.yml 的版本号走 env 注入，不内插进 run 脚本", () => {
+  // 2026-10 审计：zizmor 对 `--head "release-prep/${{ inputs.version }}"` 报 template-injection
+  // （模板展开可能带进攻击者可控的代码）。虽然上游 Validate 已用 ^[0-9]+\.[0-9]+\.[0-9]+$ 卡过格式，
+  // 但这里让扫描器看清「值不经过 shell 重解析」比让它推理上游校验够不够严便宜得多。
+  // 退回内插不会有任何测试变红，所以在这里锁住。
+  const yml = readFileSync(path.join(repoRoot, ".github", "workflows", "release-prep.yml"), "utf8");
+  assert.match(yml, /VERSION:\s*\$\{\{\s*inputs\.version\s*\}\}/, "版本号必须先进 env 再进脚本");
+  const blocks = runBlocks(yml);
+  assert.ok(blocks.length >= 3, "至少应切出 Validate / Count tests / Create PR 三个 run 块，实际 " + blocks.length);
+  for (const block of blocks) {
+    assert.doesNotMatch(block, /\$\{\{/, "run 脚本正文里不得出现模板展开：" + block.slice(0, 120));
+  }
+});
+
+test("发版准备的两份人写清单都点出跨 minor 要挪 SECURITY.md 支持版本表", () => {
+  // 跨 minor 时 security-doc.test.js 会红，而那时人往往已经忘了这张表——工作流开的 PR
+  // 就是最后一道能把话说清楚的时机。commit-msg 与 pr-body 是两份独立的文本，
+  // 少一份就等于一半的路径上没有提示（reviewer 只看 PR 正文，git log 只看提交信息）。
+  const yml = readFileSync(path.join(repoRoot, ".github", "workflows", "release-prep.yml"), "utf8");
+  const hits = yml.match(/SECURITY\.md 中英两张支持版本表/g) || [];
+  assert.equal(hits.length, 2, "commit message 与 PR 正文各要有一条，实际 " + hits.length);
 });

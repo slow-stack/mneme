@@ -42,10 +42,18 @@ test("根 README 的两段式路线图能插进新 minor 占位行（旧实现�
   );
   const { text, actions } = syncReadmeTables(sample, "0.10.0", "2026-11-01");
   assert.equal(actions.filter((a) => a.kind === "insert").length, 1, "应插入且只插入一行");
-  assert.match(text, /\| \*\*v0\.10\*\* \| （待填） \| 🚧 准备中 \|/,
-    "占位行按 minor 写 v0.10，状态为准备中");
+  assert.match(text, /\| \*\*v0\.10\*\* \| （待填） \| ✅ 已发布（v0\.10\.0） \|/,
+    "占位行按 minor 写 v0.10，状态写这次要发出去的完整版本");
   // 插在 v0.9 之后，而不是表尾——表尾将来会有更高的计划行
   assert.ok(text.indexOf("**v0.10**") > text.indexOf("**v0.9**"), "占位行应排在 v0.9 之后");
+});
+
+test("真实根 README 的中英两张路线图各插一行（同一版本号，不能只插一张）", () => {
+  // 两张表版本行完全一样，旧实现把全文件版本行合成一个数组判断「已存在」，
+  // 于是先插的中文表会让英文表被跳过——英文读者永远等不到那一行。
+  const { actions } = syncReadmeTables(rootReadme, "0.10.0", "2026-11-01");
+  const inserts = actions.filter((a) => a.kind === "insert");
+  assert.equal(inserts.length, 2, "中英路线图各一行，实际：" + JSON.stringify(actions));
 });
 
 test("子 README 的版本历史插占位行时写完整 patch 号并带日期", () => {

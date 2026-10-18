@@ -33,23 +33,40 @@ function cmpVersion(a, b) {
 }
 
 /**
- * 扫描文本里所有版本行，按写法分三段式 / 两段式。
- * 导出是为了让测试能拿真实 README 断言「这两张表仍被认得出」——正则一旦被改窄，
+ * 扫描文本里所有版本行，按写法分三段式 / 两段式，并按**表格块**分组。
+ *
+ * 为什么要分组：根 README 的中英路线图是两张独立的表，版本行一模一样。旧实现把所有版本行
+ * 合并成一个数组，「表里是否已有目标版本」于是变成全文件判断——给中文表插了行之后，英文表
+ * 就被判成「已存在」，永远补不上。分组之后每张表各自判断、各自插入。
+ *
+ * 分组规则：连续的版本行算一块，中间隔着表头/分隔行这类表格行也仍算同一块；遇到空行或正文
+ * 才收块。导出是为了让测试能拿真实 README 断言「这些表仍被认得出」——正则一旦被改窄，
  * 用户看到的会是「无版本表格行，跳过」，而不是测试变红。
  */
 export function scanReleaseRows(text) {
   const three = [];
   const two = [];
+  const blocks = [];
+  let current = null;
   text.split(/\r?\n/).forEach((line, index) => {
     const m3 = THREE.exec(line);
-    if (m3) {
-      three.push({ index, ver: m3[1] });
+    const m2 = m3 ? null : TWO.exec(line);
+    if (m3 || m2) {
+      const kind = m3 ? "three" : "two";
+      const row = { index, ver: (m3 || m2)[1], kind };
+      (kind === "three" ? three : two).push(row);
+      if (current && current.next === index) current.rows.push(row);
+      else {
+        current = { rows: [row], next: index + 1 };
+        blocks.push(current);
+      }
+      current.next = index + 1;
       return;
     }
-    const m2 = TWO.exec(line);
-    if (m2) two.push({ index, ver: m2[1] });
+    if (current && /^\s*\|/.test(line)) current.next = index + 1;
+    else current = null;
   });
-  return { three, two };
+  return { three, two, blocks };
 }
 
 /** 按锚点行的列数与语言生成占位行。列数是「这张表有几列」的唯一判据：2 列=版本历史，3 列=路线图。 */
@@ -67,6 +84,9 @@ function rowFor(anchorLine, version, date) {
 /**
  * 给一份 README 插版本占位行，并把当前 minor 那行路线图的状态回填成已发布。
  *
+ * 按**表块**而不是整份文件处理：根 README 的中英路线图是两张独立的表，版本行一模一样。合并成
+ * 一个数组判断「表里是否已有目标版本」，会让先插的中文表把英文表判成「已存在」。
+ *
  * 返回 { text, actions }，而不是布尔：「没插」有三种原因（已存在 / 没有版本表 / 表里已有更高
  * 版本），入口需要能如实说明是哪一种——旧实现在这里统一打印「跳过」，把「没做」说成了「不需要做」。
  *
@@ -79,34 +99,40 @@ export function syncReadmeTables(text, version, date) {
   const minorKey = `${major}.${minor}`;
   const eol = detectEol(text);
   const lines = text.split(/\r?\n/);
-  const { three, two } = scanReleaseRows(text);
+  const { blocks, two } = scanReleaseRows(text);
 
   const insertAfter = new Map();
   const replaceAt = new Map();
   const actions = [];
 
-  // 1) 版本历史表（三段式，按 patch 排）：目标版本不在表里，就插在「低于它的最新版本行」之后。
-  //    不插到表尾：这类表常在末尾写一条 v0.8.x 这样的概括行，插到它后面会排错序。
-  if (three.length && !three.some((r) => r.ver === version)) {
-    const lower = three.filter((r) => cmpVersion(r.ver, version) < 0);
-    if (lower.length) {
-      const anchor = lower.reduce((a, b) => (cmpVersion(b.ver, a.ver) > 0 ? b : a));
-      insertAfter.set(anchor.index, rowFor(lines[anchor.index], version, date));
-      actions.push({ kind: "insert", table: "版本历史", after: `v${anchor.ver}` });
+  // 1) 逐张表块插占位行。**必须按块**：根 README 的中英路线图是两张独立的表、版本行一模一样，
+  //    旧实现把全文件所有版本行当一个数组，「表里已有目标版本」于是退化成全文件判断——先插的
+  //    中文表会让英文表被判成「已存在」，那张就永远补不上。
+  //    锚点取块内「低于目标的最新版本行」，不插表尾：这类表常在末尾写一条 v0.8.x 这样的概括行。
+  for (const block of blocks) {
+    const isHistory = block.rows[0].kind === "three";
+    const target = isHistory ? version : minorKey;
+    if (block.rows.some((r) => r.ver === target)) continue;
+    const lower = block.rows.filter((r) => cmpVersion(r.ver, target) < 0);
+    if (!lower.length) continue;
+    const anchor = lower.reduce((a, b) => (cmpVersion(b.ver, a.ver) > 0 ? b : a));
+    const anchorLine = lines[anchor.index];
+    let row = rowFor(anchorLine, target, date);
+    // 路线图的状态格直接写已发布，而不是「🚧 准备中」：这一行随 PR 一起进 main，合并之后紧接着
+    // 就是打 tag，所以它就是这次要发出去的那一版。若写成「🚧」，它不会自己变——下次跑发版准备
+    // 时回填的是那一版的补丁号（0.10.0 已发布，路线图却写 v0.10.1），把首个发布版本记错。
+    // 与下面第 2 步「不改写已发布行」不冲突：那条规则防的是抹掉「这个 minor 首个发布的是谁」。
+    if (!isHistory && cellCount(anchorLine) === 3) {
+      const released = hasCJK(anchorLine) ? `✅ 已发布（v${version}）` : `✅ Released (v${version})`;
+      const cells = row.split("|");
+      cells[cells.length - 2] = ` ${released} `;
+      row = cells.join("|");
     }
+    insertAfter.set(anchor.index, row);
+    actions.push({ kind: "insert", table: isHistory ? "版本历史" : "路线图", after: `v${anchor.ver}` });
   }
 
-  // 2) 路线图表（两段式，按 minor 排）：占位行的版本是 major.minor，不是目标 patch。
-  if (two.length && !two.some((r) => r.ver === minorKey)) {
-    const lower = two.filter((r) => cmpVersion(r.ver, minorKey) < 0);
-    if (lower.length) {
-      const anchor = lower.reduce((a, b) => (cmpVersion(b.ver, a.ver) > 0 ? b : a));
-      insertAfter.set(anchor.index, rowFor(lines[anchor.index], minorKey, date));
-      actions.push({ kind: "insert", table: "路线图", after: `v${anchor.ver}` });
-    }
-  }
-
-  // 3) 回填当前 minor 那行仍是「🚧 准备中」的状态格——上一次发版留下的占位，发版准备这一刻
+  // 2) 回填当前 minor 那行仍是「🚧 准备中」的状态格——上一次发版留下的占位，发版准备这一刻
   //    它就该变成已发布（版本号已定，是事实）。主题文字（第二格）始终不碰，那是人写的。
   //
   //    刻意不把「✅ 已发布（v0.9.0）」改写成「（v0.9.1）」：本脚本跑在打 tag 之前，改了就等于
