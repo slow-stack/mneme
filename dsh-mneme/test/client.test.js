@@ -1706,8 +1706,8 @@ test("distill retention switches are reachable from the panel (#399)", () => {
     "distillRecords.enabled must be an item of the core group, not merely referenced elsewhere"
   );
   assert.ok(
-    /const FEATURE_NUMBERS = \["distillRecords\.retentionDays"\]/.test(clientSource),
-    "retentionDays must be in the numeric key list"
+    /const FEATURE_NUMBERS = \["distillRecords\.retentionDays", "dreamMaxTokens", "sleepMaxTokens"\]/.test(clientSource),
+    "retentionDays must be in the numeric key list (dreamMaxTokens/sleepMaxTokens joined by #478)"
   );
   assert.ok(
     /for \(const key of FEATURE_NUMBERS\) numDraft\[key\] = String\(e\[key\] \?\? ""\);/.test(clientSource)
@@ -1735,7 +1735,12 @@ test("distill retention switches are reachable from the panel (#399)", () => {
     "memory.features.distillRecords.enabled",
     "memory.features.distillRecords.enabled.hint",
     "memory.features.distillRecords.retentionDays",
-    "memory.features.distillRecords.retentionDays.hint"
+    "memory.features.distillRecords.retentionDays.hint",
+    // #478：面板新暴露的两个 max_tokens 预算键，label 与 hint 缺一即哑行
+    "memory.features.dreamMaxTokens",
+    "memory.features.dreamMaxTokens.hint",
+    "memory.features.sleepMaxTokens",
+    "memory.features.sleepMaxTokens.hint"
   ]) {
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);

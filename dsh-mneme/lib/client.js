@@ -681,6 +681,12 @@ window.__ModuleLoader__.load({
         "memory.features.sleepProvider": "睡眠 Provider",
         "memory.features.sleepModel": "睡眠模型",
         "memory.features.sleepModelHint": "留空 = 用巩固模型或当前模型；建议选非思考模型",
+        // Issue #478：max_tokens 预算键。hint 写清两件事：这是「单轮输出预算」，
+        // 以及服务商硬上限更小时后端会按报错自动降级重试（对齐 #478 的后端行为）。
+        "memory.features.dreamMaxTokens": "巩固单轮输出上限 (max_tokens)",
+        "memory.features.dreamMaxTokens.hint": "单轮巩固最多生成多少 token，256–131072。默认 131072 超过部分服务商硬上限时，后端会按报错里的上限自动降级重试",
+        "memory.features.sleepMaxTokens": "睡眠单轮输出上限 (max_tokens)",
+        "memory.features.sleepMaxTokens.hint": "睡眠阶段冲突/模式判断的单轮输出预算，256–131072；超上限同样自动降级",
         "memory.features.routeFollowDefault": "跟随默认路由",
         "memory.features.modelTest": "测试连通性",
         "memory.features.modelTesting": "测试中…",
@@ -1337,6 +1343,12 @@ window.__ModuleLoader__.load({
         "memory.features.sleepProvider": "Sleep provider",
         "memory.features.sleepModel": "Sleep model",
         "memory.features.sleepModelHint": "Leave empty to reuse the consolidation model; a non-reasoning model is recommended",
+        // Issue #478: max_tokens budget keys. Hint states both the scope (single-run
+        // output budget) and the backend auto-downgrade on provider cap rejection.
+        "memory.features.dreamMaxTokens": "Consolidation output cap (max_tokens)",
+        "memory.features.dreamMaxTokens.hint": "Max tokens generated per consolidation run, 256–131072. When the default 131072 exceeds a provider's hard limit, the backend retries with the cap from the error",
+        "memory.features.sleepMaxTokens": "Sleep output cap (max_tokens)",
+        "memory.features.sleepMaxTokens.hint": "Single-run output budget for sleep conflict/mode calls, 256–131072; over-cap values are downgraded automatically",
         "memory.features.routeFollowDefault": "Follow default route",
         "memory.features.modelTest": "Test connectivity",
         "memory.features.modelTesting": "Testing…",
@@ -2932,7 +2944,7 @@ window.__ModuleLoader__.load({
     // 后端白名单、面板够不着——而 CONFIGURATION.md 明写「面板可启停」。
     // 其余整数键（429 调速器参数、distillMaxChars、codingBoostFactor）是有意
     // 不上 UI 的调优噪音，见上方注释，别顺手搬进来。
-    const FEATURE_NUMBERS = ["distillRecords.retentionDays"];
+    const FEATURE_NUMBERS = ["distillRecords.retentionDays", "dreamMaxTokens", "sleepMaxTokens"];
     const EMBED_PROVIDERS = ["openai", "local", "ollama"];
     // 实体抽取思考强度（issue #109）：与后端 FEATURE_FLAG_ENUMS 枚举对齐。
     const ENTITY_REASONING = ["none", "low", "medium", "high"];
@@ -3292,14 +3304,19 @@ window.__ModuleLoader__.load({
         // Issue #239 第 4 项镜像到巩固：高峰时段串（空 = 关闭）。放在 autoDream
         // 子块内——它是巩固的排程，开关关掉时不该还在界面上留着可编辑的输入框。
         strRow("dreamPeakHours"),
-        h("div", { className: "mneme-featsubhint" }, t("memory.features.dreamPeakHours.hint"))
+        h("div", { className: "mneme-featsubhint" }, t("memory.features.dreamPeakHours.hint")),
+        // Issue #478：单轮巩固的 max_tokens 预算。后端白名单（256–131072）早就有，
+        // 修复前 UI 够不着；默认 131072 超过很多 OpenAI 兼容网关的硬上限又看不见调不了。
+        numRow("dreamMaxTokens")
       );
 
       // 睡眠模型：sleepModeEnabled 开着才展开（sleepProvider/sleepModel 随本版
       // 进白名单；下拉与测试复用同一 /llm-providers 数据源）。
       const sleepSub = eff.sleepModeEnabled && Array.isArray(routes) && h("div", { className: "mneme-featsub" },
         routeSelects("sleepProvider", "sleepModel", sleepTest, setSleepTest, "sleepReasoningEffort"),
-        h("div", { className: "mneme-featsubhint" }, t("memory.features.sleepModelHint"))
+        h("div", { className: "mneme-featsubhint" }, t("memory.features.sleepModelHint")),
+        // Issue #478：睡眠侧同款预算键（#257 引入后端白名单，UI 一直缺席）。
+        numRow("sleepMaxTokens")
       );
 
       // 实体抽取路由与思考强度（issue #109）：entityExtractionEnabled 开着才

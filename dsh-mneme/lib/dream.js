@@ -10,7 +10,7 @@ import { scopeKeyOf } from "./scope.js";
 import { isInPeakWindow, nextOffPeakAt } from "./peak-hours.js";
 import { createHash, randomUUID } from "node:crypto";
 import { STR, langOf } from "./lang.js";
-export { validateDecisions, applyDecisions, withEffortFallback, describeStreamFailure, resolveDreamEffort, resolveRoute };
+export { validateDecisions, applyDecisions, withEffortFallback, withMaxTokensFallback, parseMaxTokensCap, describeStreamFailure, resolveDreamEffort, resolveRoute };
 
 // Extract the first JSON array from LLM output, tolerating markdown fences,
 // leading/trailing prose, and common wrapper noise. Returns an array or null.
@@ -413,6 +413,60 @@ async function withEffortFallback(ctx, effort, attempt, fallback, getStreamError
   }
 }
 
+// Issue #478：max_tokens 超服务商硬上限的拒收判别式与上限提取的单一来源。
+// 实测失败样例（dream_runs 180 连败）："max_tokens 不能超过 65536"——131072 的
+// 默认值原样发出，网关 400 直接拒，推理还没开始。与 EFFORT_REJECT_RE 同款思路：
+// 各处手写会漂移，导出供测试与其它调用点复用。
+export const MAX_TOKENS_REJECT_RE = /max[\s_-]*tokens?/i;
+
+/**
+ * 从拒收报错里提取服务商声明的 max_tokens 上限。只认「显式给数」的说法
+ * （不能超过 / at most / maximum value is / <= 65536 …），认不出就返回 null
+ * ——宁可不降级重试，也不能把报错里那个被拒的请求值（131072）误当上限。
+ * @returns {number|null}
+ */
+function parseMaxTokensCap(message) {
+  const m = String(message ?? "").match(
+    /(?:不能超过|不得超过|超出上限|至多|最多(?:只能|仅)?|at\s+most|no\s+more\s+than|maximum(?:\s+value)?(?:\s+is)?|max(?:\.)?(?:\s+value)?(?:\s+is)?|less\s+than\s+or\s+equal\s+to|<=?)\s*[:：]?\s*(\d{2,10})/i
+  );
+  const cap = m ? Number(m[1]) : null;
+  return cap && Number.isFinite(cap) && cap > 0 ? cap : null;
+}
+
+/**
+ * Issue #478：max_tokens 被服务商 400 拒收时，按报错里的上限自动降级重试一次。
+ * 与 withEffortFallback 同构：stream 路径的结果折叠成 undefined、真实原因在
+ * getStreamError() 里；throw 路径直接看 message。命中拒收且提取到比当前值小的
+ * 上限才重试（attempt 接收 tokens 值），否则原样返回/抛出。单次重试，与
+ * effort 的先例一致——重试后若仍被拒（同上限再报），cap >= tokens 的守卫让
+ * 它自然终止，不会循环。
+ */
+async function withMaxTokensFallback(ctx, maxTokens, attempt, getStreamError) {
+  const retry = (tokens, reason) => {
+    ctx.logger?.warn?.(`dsh-mneme dream: max_tokens ${maxTokens} rejected by provider (${reason}); retrying with ${tokens}`);
+    return attempt(tokens);
+  };
+  try {
+    const result = await attempt(maxTokens);
+    if (result === undefined) {
+      const reason = String(getStreamError?.() ?? "");
+      if (MAX_TOKENS_REJECT_RE.test(reason)) {
+        const cap = parseMaxTokensCap(reason);
+        if (cap && cap < maxTokens) return retry(cap, reason);
+      }
+    }
+    return result;
+  } catch (error) {
+    // AbortError 直接放行（取消意图绝不能被降级重试吞掉，与 effort 同款守卫）。
+    if (error?.name === "AbortError") throw error;
+    const message = String(error?.message ?? error);
+    if (!MAX_TOKENS_REJECT_RE.test(message)) throw error;
+    const cap = parseMaxTokensCap(message);
+    if (!cap || cap >= maxTokens) throw error;
+    return retry(cap, message);
+  }
+}
+
 /** 向量索引同步（总览与叙述条共用）：fail-safe，失败只 warn 不反噬主流程。 */
 async function reEmbedMemory(semantic, memory, logger) {
   if (!semantic?.embedder || !semantic?.vectorIndex || !memory) return;
@@ -441,7 +495,7 @@ async function generateNarratives({ ctx, service, config, route, language, effor
       [`# ${tag}`, ...members.map((m) => `- id=${m.id} | title=${m.title} | ${m.content}`)].join("\n"))
     .join("\n\n");
   let streamFailure = "";
-  const runNarratives = (withEffort) => {
+  const runNarratives = (withEffort, tokens) => {
     streamFailure = "";
     return runAuditedLlm(ctx, service, config, {
       triggerSource: "autoDream",
@@ -453,7 +507,7 @@ async function generateNarratives({ ctx, service, config, route, language, effor
       provider: route.provider,
       model: route.model,
       purpose: "compaction",
-      maxTokens: config.dreamMaxTokens ?? 2048,
+      maxTokens: tokens,
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
         { role: "system", content: [{ type: "text", text: STR.prompts.narrative[language] }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
@@ -461,7 +515,7 @@ async function generateNarratives({ ctx, service, config, route, language, effor
       ]
     }, reportUsage, (reason) => { streamFailure = describeStreamFailure(reason); }));
   };
-  const text = await withEffortFallback(ctx, effort, () => runNarratives(true), () => runNarratives(false), () => streamFailure);
+  const text = await withMaxTokensFallback(ctx, config.dreamMaxTokens ?? 2048, (tokens) => withEffortFallback(ctx, effort, () => runNarratives(true, tokens), () => runNarratives(false, tokens), () => streamFailure), () => streamFailure);
 
   const entries = extractJsonArray(text);
   if (!Array.isArray(entries)) return 0;
@@ -1141,7 +1195,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     const effort = await resolveDreamEffort(ctx, route, config.dreamReasoningEffort, logger);
     let decisions = null;
     let streamFailure = "";
-    const runConsolidation = (withEffort) => {
+    const runConsolidation = (withEffort, tokens) => {
       streamFailure = "";
       return runAuditedLlm(ctx, service, config, {
       triggerSource: "autoDream",
@@ -1157,7 +1211,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       provider: route.provider,
       model: route.model,
       purpose: "compaction",
-      maxTokens: config.dreamMaxTokens ?? 4096,
+      maxTokens: tokens,
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
         { role: "system", content: [{ type: "text", text: consolidationPrompt }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
@@ -1169,7 +1223,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       // Bug8: the consolidation call is audited (tokens/time/status). A throw
       // re-propagates to the catch below; an aborted stream returns undefined
       // and is treated as a failed run after the check below.
-      decisionText = await withEffortFallback(ctx, effort, () => runConsolidation(true), () => runConsolidation(false), () => streamFailure);
+      decisionText = await withMaxTokensFallback(ctx, config.dreamMaxTokens ?? 4096, (tokens) => withEffortFallback(ctx, effort, () => runConsolidation(true, tokens), () => runConsolidation(false, tokens), () => streamFailure), () => streamFailure);
     } catch (error) {
       logger?.warn?.(`dsh-mneme dream: consolidation llm call failed: ${String(error)}`);
       return finish({ ok: false, error: "llm failed", summary: false });
@@ -1382,7 +1436,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     // a failed run; summary:false marks a run that produced no summary.
     let summaryText;
     let summaryStreamFailure = "";
-    const runSummary = (withEffort) => {
+    const runSummary = (withEffort, tokens) => {
       summaryStreamFailure = "";
       // Issue #258：总览阶段可用 dreamSummaryProvider/dreamSummaryModel 走独立路由
       //（默认空 = 沿用 dream 路由）；输入侧有 dreamSummaryMaxInputs 硬上限，
@@ -1400,7 +1454,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       provider: summaryRoute.provider,
       model: summaryRoute.model,
       purpose: "compaction",
-      maxTokens: config.dreamMaxTokens ?? 2048,
+      maxTokens: tokens,
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
         { role: "system", content: [{ type: "text", text: STR.prompts.dreamSummary[language] }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
@@ -1443,7 +1497,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     );
     try {
       // Bug8: the summary call is audited too (operation dream_summarize).
-      summaryText = await withEffortFallback(ctx, effort, () => runSummary(true), () => runSummary(false), () => summaryStreamFailure);
+      summaryText = await withMaxTokensFallback(ctx, config.dreamMaxTokens ?? 2048, (tokens) => withEffortFallback(ctx, effort, () => runSummary(true, tokens), () => runSummary(false, tokens), () => summaryStreamFailure), () => summaryStreamFailure);
     } catch (error) {
       logger?.warn?.(`dsh-mneme dream: summary llm call failed: ${String(error)}`);
       return finish({ ok: false, error: "llm failed", applied, decisions: auditDecisions, outcome, frozen: frozenCount, summary: false });
