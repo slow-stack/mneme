@@ -1080,6 +1080,25 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const configured = embedder ? (typeof embedder.configured === "boolean" ? embedder.configured : true) : null;
         const embedded = Number(stats?.embeddedCount ?? 0);
         const total = Number(stats?.totalCount ?? 0);
+        // Per-model / per-dimension provenance of stored vectors. "embedded"
+        // counts rows with any vector; rows whose dimension differs from the
+        // current embedder output are skipped by searchVector, so the honest
+        // retrievable number is the current-dimension slice. modelBreakdown
+        // groups by row-level embedding_model ('' = unknown origin).
+        const dimensionBreakdown = typeof service.embeddingDimensionBreakdown === "function"
+          ? service.embeddingDimensionBreakdown()
+          : null;
+        const currentDim = embedder?.dimension != null ? String(embedder.dimension) : null;
+        const byDimension = dimensionBreakdown
+          ? [...dimensionBreakdown.entries()].map(([dim, c]) => ({ dimension: dim === "" ? null : Number(dim), count: c }))
+          : [];
+        const unsearchable = (currentDim && dimensionBreakdown)
+          ? [...dimensionBreakdown.entries()]
+              .filter(([dim]) => dim !== currentDim)
+              .reduce((s, [, c]) => s + c, 0)
+          : 0;        const modelBreakdown = typeof service.embeddingModelBreakdown === "function"
+          ? service.embeddingModelBreakdown().map((r) => ({ model: r.model === "" ? null : r.model, count: r.c }))
+          : [];
         sendJson(res, 200, {
           ready,
           configured,
@@ -1090,6 +1109,16 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
                 : null,
           // 空库时 ratio 必须是 null 而非 0 —— 0 会被读成「一条都没嵌上」。
           coverage: { embedded, total, ratio: total > 0 ? embedded / total : null },
+          // distill-tx-embed-gap 后续：向量「存在」≠「可检索」。unsearchable =
+          // 维度与当前 embedder 输出不同的行数（searchVector 会跳过它们），
+          // retrievable = 与当前维度同维、真正参与召回的行数。两者差值非零时
+          // 面板必须能说出「有 N 条向量不可检索」，而不是只给一个虚高的 coverage。
+          vectors: {
+            byDimension,
+            byModel: modelBreakdown,
+            unsearchable,
+            retrievable: currentDim ? (dimensionBreakdown.get(currentDim) ?? 0) : null,
+          },
           // 配了、库里有东西可嵌、却一条都没嵌上 = 真的降级（本机此前长期
           // 处于 ready:true + embeddedCount:0，面板却显示正常）。
           degraded: configured === true && total > 0 && embedded === 0,

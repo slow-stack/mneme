@@ -1775,6 +1775,32 @@ export function createStore(path) {
     ).all();
   }
 
+  /**
+   * Per-dimension counts over active embedded rows ('' = vector that failed to
+   * parse as an array — legacy garbage rows, not a real dimension).
+   *
+   * Why per-dimension: embeddedCount() alone says "has a vector", but vectors
+   * written by a different model/dimension are not comparable with the current
+   * query embedding — searchVector skips them, so they are "present" without
+   * being "retrievable". The status card needs this split to stop reporting a
+   * coverage number that silently counts unsearchable rows.
+   */
+  function embeddingDimensionBreakdown() {
+    return db.prepare(
+      `SELECT id, embedding FROM memories
+        WHERE embedding IS NOT NULL AND embedding != ''
+          AND forgotten = 0 AND archived = 0`
+    ).all().reduce((acc, row) => {
+      let dim = "";
+      try {
+        const parsed = JSON.parse(row.embedding);
+        dim = Array.isArray(parsed) ? String(parsed.length) : "";
+      } catch { /* unparseable vector counts under "" */ }
+      acc.set(dim, (acc.get(dim) ?? 0) + 1);
+      return acc;
+    }, new Map());
+  }
+
   function search(query, { limit = 20, includeArchived = false } = {}) {
     const q = String(query).trim();
     if (!q) return [];
@@ -3340,6 +3366,7 @@ export function createStore(path) {
     needsEmbeddingFor,
     hasStaleEmbedding,
     embeddingModelBreakdown,
+    embeddingDimensionBreakdown,
     searchVector,
     saveDreamRun,
     lastDreamRunAt,

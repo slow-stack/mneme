@@ -2664,6 +2664,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
     search: (q, o) => store.search(q, o),
     searchVector: (v, o) => store.searchVector(v, o),
     embeddedCount: () => store.embeddedCount(),
+    // 向量出身的两个分组读数：状态端点 /semantic 用它们区分「有向量」和
+    // 「可检索」（byModel 按行级 embedding_model，byDimension 按向量维数）。
+    // passthrough 形状与 embeddedCount 同款，api 层不直接摸 store。
+    embeddingModelBreakdown: () => store.embeddingModelBreakdown(),
+    embeddingDimensionBreakdown: () => store.embeddingDimensionBreakdown(),
     list: (o) => store.list(o),
     all: () => store.all(),
     count: (type, opts) => store.count(type, opts),
