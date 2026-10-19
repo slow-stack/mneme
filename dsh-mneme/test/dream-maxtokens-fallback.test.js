@@ -109,3 +109,24 @@ test("withMaxTokensFallback: 无关报错不触发重试（stream 与 throw 双�
     /quota exhausted/
   );
 });
+
+// 接线锁：单测绿不代表真接上了。#478 的第一次实现只挂了 dream 侧三个点，
+// sleep.js 两处仍原样发 config.sleepMaxTokens，而面板 hint 已对外承诺
+// 「超上限同样自动降级」——这种「函数有、没人用」的缺口只靠行为测试抓不到。
+test("接线锁：dreamMaxTokens/sleepMaxTokens 的五个使用点全部包在 withMaxTokensFallback 里", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const srcDir = new URL("../src/", import.meta.url);
+  const files = { "dream.js": await readFile(new URL("dream.js", srcDir), "utf8"), "dream/sleep.js": await readFile(new URL("dream/sleep.js", srcDir), "utf8") };
+  for (const [name, source] of Object.entries(files)) {
+    // 任何一处还把 config.dreamMaxTokens/sleepMaxTokens 直接当 maxTokens 发，就是漏接线。
+    assert.ok(
+      !/maxTokens:\s*config\.(dream|sleep)MaxTokens/.test(source),
+      `${name}: still passes config.*MaxTokens straight into maxTokens — wrap it in withMaxTokensFallback`
+    );
+  }
+  // 五个调用点：dream 三条（叙述/巩固/摘要）+ sleep 两条（冲突/模式）。
+  const dreamHits = files["dream.js"].match(/withMaxTokensFallback\(ctx, config\.dreamMaxTokens/g) ?? [];
+  const sleepHits = files["dream/sleep.js"].match(/withMaxTokensFallback\(ctx, config\.sleepMaxTokens/g) ?? [];
+  assert.equal(dreamHits.length, 3, `dream.js must wrap all 3 dreamMaxTokens sites (got ${dreamHits.length})`);
+  assert.equal(sleepHits.length, 2, `dream/sleep.js must wrap both sleepMaxTokens sites (got ${sleepHits.length})`);
+});

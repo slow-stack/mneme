@@ -21,7 +21,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { validateDecisions, applyDecisions, ACTIONS } from "./decisions.js";
 import { findPotentialConflicts, cosineSimilarity } from "./clustering.js";
 import { scopeKeyOf } from "../scope.js";
-import { buildReceipt, describeStreamFailure, resolveDreamEffort, withEffortFallback, maintainIndexAfterDream } from "../dream.js";
+import { buildReceipt, describeStreamFailure, resolveDreamEffort, withEffortFallback, withMaxTokensFallback, maintainIndexAfterDream } from "../dream.js";
 import { computeHeat } from "../heat.js";
 
 // Issue #126 review（Copilot）：默认档（sleepActionSet="conflict"）允许的动作 = 全局
@@ -329,7 +329,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // actionSet 已在候选构造前解析（跨类型候选需要它），这里只按档位选 prompt：
   // 默认档保持只有 conflict/keep 的窄 prompt，"full" 才开放六分支。
   const conflictPrompt = actionSet === "full" ? STR.prompts.conflictFull[language] : STR.prompts.conflict[language];
-  const runConflict = (withEffort) => {
+  const runConflict = (withEffort, tokens) => {
     conflictStreamFailure = "";
     return auditedSleepLlm(ctx, service, config, logger, {
       triggerSource: "sleep",
@@ -347,7 +347,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     provider: route.provider,
     model: route.model,
     purpose: "sleep-conflict",
-    maxTokens: config.sleepMaxTokens ?? 2048,
+    maxTokens: tokens,
     ...(withEffort && sleepEffort ? { reasoningEffort: sleepEffort } : {}),
     messages: [
       { role: "system", content: [{ type: "text", text: conflictPrompt }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
@@ -355,7 +355,9 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     ]
   }, reportUsage, (reason) => { conflictStreamFailure = describeStreamFailure(reason); }));
   };
-  const text = await withEffortFallback(ctx, sleepEffort, () => runConflict(true), () => runConflict(false), () => conflictStreamFailure);
+  // Issue #478：睡眠侧同样接 max_tokens 降级——面板 hint 已承诺「超上限同样自动降级」，
+  // 只挂 dream 三个点会让 sleepMaxTokens 的 131072 上限继续原样发。
+  const text = await withMaxTokensFallback(ctx, config.sleepMaxTokens ?? 2048, (tokens) => withEffortFallback(ctx, sleepEffort, () => runConflict(true, tokens), () => runConflict(false, tokens), () => conflictStreamFailure), () => conflictStreamFailure);
   if (text === undefined) {
     if (conflictStreamFailure) ctx.logger?.warn?.(`dsh-mneme sleep: conflict stream aborted or errored (${conflictStreamFailure})`);
     return { status: "failed", error: "llm failed" };
@@ -506,7 +508,7 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
   const maxPatterns = config.sleepMaxPatternPerRun ?? 3;
   const sleepEffort = await resolveDreamEffort(ctx, route, config.sleepReasoningEffort, logger);
   let patternStreamFailure = "";
-  const runPattern = (withEffort) => {
+  const runPattern = (withEffort, tokens) => {
     patternStreamFailure = "";
     return auditedSleepLlm(ctx, service, config, logger, {
       triggerSource: "sleep",
@@ -521,7 +523,7 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
     provider: route.provider,
     model: route.model,
     purpose: "sleep-pattern",
-    maxTokens: config.sleepMaxTokens ?? 2048,
+    maxTokens: tokens,
     ...(withEffort && sleepEffort ? { reasoningEffort: sleepEffort } : {}),
     messages: [
       { role: "system", content: [{ type: "text", text: STR.prompts.pattern[language].replace("N", String(maxPatterns)) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
@@ -529,7 +531,7 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
     ]
   }, reportUsage, (reason) => { patternStreamFailure = describeStreamFailure(reason); }));
   };
-  const text = await withEffortFallback(ctx, sleepEffort, () => runPattern(true), () => runPattern(false), () => patternStreamFailure);
+  const text = await withMaxTokensFallback(ctx, config.sleepMaxTokens ?? 2048, (tokens) => withEffortFallback(ctx, sleepEffort, () => runPattern(true, tokens), () => runPattern(false, tokens), () => patternStreamFailure), () => patternStreamFailure);
   if (text === undefined) {
     if (patternStreamFailure) ctx.logger?.warn?.(`dsh-mneme sleep: pattern stream aborted or errored (${patternStreamFailure})`);
     return { status: "failed", error: "llm failed" };
