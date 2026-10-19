@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-19
+
 ## 🆕 新增
 
 - **功能开关的第三态「待重启」：把「面板显示已改 ≠ 运行时已改」这个落差摆到界面上（#481）**：功能开关的生效节奏一直是**启动期**的——`lib/index.js` 在装配时把 kv 里的覆盖合并进一份 cfg，注入器与后台任务闭包持有那份快照，此后运行中的实例不再重读（`index.js` 装配处的注释早就写明「合并结果只作用于本次启动」）。这是有意为之的设计，不是 bug；**缺的是提示**：面板上「已改」徽标亮起只说明值进了库，不说明运行中用上了它。实测代价很具体——人格总闸在面板上显示已开启、人格段却整整一轮没注入，排查到最后才发现唯一变量是那份冻结 cfg 里 `personaEnabled` 仍是 `false`，把插件关开一次就好了；而在此之前，用户能拿到的唯一反馈是「怎么没用」。修法分两层，**后端只做比较、前端只做显示**：`featureSnapshot()` 新增 `pendingRestart`，列出「kv 里有显式覆盖、且该覆盖与冻结值不同」的键（嵌套点号键走既有 `NESTED_FLAG_PATHS`，比较用 `Object.is` 而不是 `!==`——NaN 与 ±0 上两者结论相反，开关值里不该出现它们，但「值是否相同」的语义要对齐）；面板把 `flagTag` 从两态扩成三态（待重启 / 已改 / 默认）并在卡片顶部加一条提示行，写明「重启 DSH，或在插件管理里把本插件关开一次」。**为什么必须由后端算**：前端手上只有 `overrides`，它能回答「改没改」，回答不了「用没用上」——那需要另一份冻结值，前端拿不到。`effective` 也反推不出待重启，它按「overrides 优先」取值，恰好在有覆盖时把落差盖住了，所以只能是新字段而不是新语义。`config` 缺席时（旧调用方直连、未传 cfg）返回空数组而不编造，`pendingRestart` 恒为数组、恒不为 `undefined`（面板按长度渲染，字段缺失会渲染出 `undefined.length`）。既有 `overrides` / `effective` 语义一字未动，回归锁四条：值不同→列出、值相同→不列、无覆盖→不列、无 cfg→空数组。
@@ -9,6 +11,7 @@
 ## 🐛 修复
 
 - **`--flag` 的值以 `--` 开头时被当成新旗标吞掉：一次 CI 红背后的真实 CLI 缺陷**：崩在 `test (windows-latest, 22)` 的那条用例是 `reclaim 默认 dry-run 报数字`，报错却是「未配置访问 token」——命令自身没问题，问题在 token 的形状。token 由 `randomBytes(24).toString("base64url")` 生成，而 base64url 的字母表**含 `-`**，于是约 1/4096 的 token 前两位都是 `-`，拼进命令行就成了 `--UYoOHxr6…`；旧 `parseArgv` 只要看到下一个词以 `--` 开头就当上一个旗标没有值（`token = true`），`flagValue` 再按「`true` 等于没给」回退 `DSH_MNEME_TOKEN` 与 `~/.dsh-mneme/cli.json`，两者都空 → 报未配置 token。**这是随机性，不是测试写法**：同一个缺陷平时一律绿，只在 token 恰好掷中这 1/4096 时才现形，因此它潜伏了整整一个发布周期而没有任何检查会红。影响面也不止 token：`--type` / `--title` / `--content` 只要值以 `--` 开头就同样坏，而这三个值完全由用户输入。修法是把「像不像旗标」从字符串前缀改成**登记表**：新增 `KNOWN_FLAGS` 收录全部取值旗标与布尔旗标，`flagKeyOf()` 认 `--foo` / `--foo=bar` 两种写法取键名，只有**已登记**的词才算旗标，其余一律当上一个旗标的值——`--limit --json` 这类旧语义（`limit` 无值、`json` 为布尔）分毫不动。选登记表而不是加引号规则：引号要经过 shell 才生效、PowerShell 与 cmd 的转义还不一样，而登记表在进程内就能判定。回归锁六条，最关键的两条覆盖 CI 现场（断言 `flags` 的键恰好是 `["token","url"]`，token 尾巴不得成为旗标）与「未知 `--` 词按值处理」；另有一条文本锁扫 `cli.mjs` 里所有 `flagValue`/`flagBool` 调用的字面量键名，要求全部已登记——漏登记的后果正是这里修的静默吞值，所以让它变成一条会红的测试而不是等下一个 1/4096。顺带补 `invokedDirectly` 守卫（`realpathSync` 双侧比较，因全局安装走 `.bin` 符号链接，字符串相等会误判），使 `cli.mjs` 可被测试 import 而不触发 `main()`；在旧实现上撤掉修复，这两条会变红，恢复后 6/6 绿。
+- **`dreamMaxTokens` 默认 131072 撞服务商硬上限，巩固 180 次失败 0 次成功（#478）**：`dreamMaxTokens` 的默认值被**原样当作 `max_tokens` 发出去**，而很多 OpenAI 兼容网关的上限小得多（实测报错是 `max_tokens 不能超过 65536`）。请求在服务商侧就被 400 拒掉，连推理都没开始——`dream_runs` 在 2026-10-10 ~ 10-18 八天里 `dream_consolidate` / `dream_summarize` / `dream_narrative` 三个相位合计 **180 次失败、0 次成功**，而用 `sleepMaxTokens` 8192 的睡眠相位和硬编码 4096 的实体抽取一直是好的，分界线就是「预算有没有超过 65536」。两处都修：**面板能改了**（`dreamMaxTokens` / `sleepMaxTokens` 两个键其实早在 `src/settings.js` 的白名单里，是前端 `FEATURE_NUMBERS` 只列了一项，导致 UI 根本没渲染——这类「后端支持、前端没接」的缺口不会报错，只会让用户以为改不了），**并且能自己降下来**：`withMaxTokensFallback` 照 `withEffortFallback` 的同构写法，只在 400 且错误信息里认得出显式上限时降级重试一次（`不能超过|不得超过|至多|at most|maximum value is|<=` 后跟数字才认，认不出就返回 `null` 不猜），`AbortError` 直通、`cap >= 当前值` 时终止不循环。**降级不是猜数字**：把服务商自己声明的上限当依据，比我们闭着眼睛写一个「安全值」诚实。接线锁是本次的重点——`dream.js` 三个使用点和 `sleep.js` 两个相位必须全部走 `withMaxTokensFallback`，任何一处退回 `maxTokens: config.xxxMaxTokens` 直发都会让面板承诺的「超上限自动降级」变成假话，所以测试直接读源码断言「没有这个模式」并数接入点个数（3 + 2）；变异验证：把睡眠侧改回直发即红，还原 8/8 绿。
 - **人格卡删除 × 永远不可见（v2 修法）**：卡标签的 × 复用了规则删除按钮的 `mneme-set-del` 样式，其 `opacity:0` 只在 `.mneme-set-row:hover` 下解除，而卡标签不在该悬停容器里，导致 × 永远透明——功能在、入口不可见（v1.2 实测踩中）。#457 曾以内联 `opacity:1` 覆写修复，但悬停变红仍走 `.mneme-set-del:hover`，连带常点亮了规则区的删除按钮，被 #459 回滚。本修复改用独立类 `mneme-persona-del`（常显、悬停变红），不触碰 `mneme-set-del`，规则区行为分毫不动；回归锁直接钉死卡删除按钮的 `className` 值，防 #457 式修法回归。
 
 ## 📚 文档
@@ -17,6 +20,7 @@
 - **评审揪出的两处「说了但没说全」（PR #476）**：第一，隐私节的离线条件只写了「把宿主换成本地模型」——但 `dreamProvider` / `dreamModel` 与 `summarizeProvider` / `summarizeModel` 是**配置优先于宿主默认模型**的显式覆盖（`src/config.js` 与 `src/dream.js` 的 `resolveRoute`，Issue #25 的 config-first 排序），配了这两组就直连那家 provider，换宿主根本不生效；现已把两组键名一并点名，中英各一处。第二，守卫测试本身在 packed 包里会崩：`files` 清单把整个 `test/` 发出去，而包里没有仓库根 `README.md`，`readFileSync` 在**加载阶段**就 ENOENT，把「这不是仓库」报成「断言失败」。同一毛病既有的 `security-doc` / `release-docs` / `workflow-guards` 三条测试都有，本 PR 只是让它多一个入口。修法不改 `files`（那会动发布内容、且只修一条留着三条），改为根 README 不存在时整组 `skip` 并写明原因——实测重新 `npm pack` 解包后 2 条 skipped / 0 fail。
 
 - **自动蒸馏写入的行 100% 拿不到向量（PR #477）**：`scheduleEmbed` 首行 `if (txDepth > 0) return;` 把事务内写入的嵌入直接丢弃，旁边注释写的是「deferred to the transaction's commit」，可 `transaction()` 的 COMMIT 分支从来没有补跑——**注释承诺的行为从未存在**。而自动蒸馏的每一笔写入都走 `service.transaction()`，所以 `session:*` 这些行一条都没拿到向量，「语义检索」对它们是一直静默失效的。这是 #372 的同模板 bug：实体抽取当年查出来入队补跑了，嵌入漏了。修法照 #372 先例——事务内改为入队（`pendingEmbed`），`transaction()` 提交且 `txDepth` 归零后 `drainPendingEmbeds()` 补跑，回滚时按 `embedBaseline` 截断回本层基线（绝不给已回滚的行嵌向量）；队列不设上限，因为 `cap` 丢最旧等于把「静默丢弃」换个量级带回来。顺带修 `searchVector`：维度不匹配的旧向量（换过嵌入模型）以前会喂进 `cosine` 拿假 0 分混进结果尾部，现在按维度跳过。回归锁 5 条（`test/distill-tx-embed-gap.test.js`），在未修复代码上 4/5 变红。
+
 ## [0.9.1] - 2026-10-18
 
 ## 🆕 新增

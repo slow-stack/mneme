@@ -273,6 +273,7 @@ v0.3.0 起新增**记忆基因**层：从记忆里抽取**命名实体**、**带
 |------|------|
 | **v0.9.0**（2026-10-17） | M.O.（Modus Operandi · 手法）beta：工作流本体住 `<项目>/.mneme/pipelines/`、候选分层与升格判据、面板清单与图同屏（`actionPipelineEnabled` 默认关）；设置面板折叠线挪到「新手之外」并按人话重写 22 个条目名（#427）；安全与供应链加固（39 条路由声明式鉴权、OSV 有漏洞即失败、发布带 provenance） |
 | **v0.9.1**（2026-10-18） | M.O. 从「看得见」跑到「跑得出账」：执行窗口由 `/mo-run start` / `/mo-run stop` 显式划开、运行账落 `<项目>/.mneme/pipelines/<id>.runs.jsonl`（账本坏了与从没跑过严格分开）、归属只出候选、观察旁挂与脱节检出、步骤 `assert` / `optional`、R1/R2 提议；沉淀链从真实会话日志挖 draft 工作流（判据恒 `null`，答案只能由人补）；人格定义页 v1 → v1.2（按 agent 寻址多卡，默认关）；面板、向量与检查更新的一圈修复（#448 / #450 / #460）；Release 正文改分层渲染 |
+| **v0.9.2**（2026-10-19） | 让「看不见的失败」显形：功能开关的第三态「待重启」把「面板显示已改 ≠ 运行时已改」摆到界面上（#481）；作用域级可逆闸门让一路记忆能被单独按下与松开、不必改配置重启（#471，默认关）；巩固用的 `dreamMaxTokens` 默认值撞服务商上限、八天 180 次全失败，面板现在能改、超上限还会自动降级重试（#478）；CLI 把 `--` 开头的值当新旗标的真实缺陷（一次 1/4096 概率的 CI 红揪出来的）、人格卡删除 × 永远不可见、自动蒸馏写入的行 100% 拿不到向量（#477） |
 | **v0.8.x** | 作用域隔离（agent / workspace 双维 + opt-in 硬过滤）、冲突队列人工裁决、生态化（stdio MCP server / 图召回轴 / 冷启动 / 注入截断） |
 
 ## 📦 安装
@@ -597,7 +598,7 @@ dsh-mneme-serve --embed off                                  # 纯关键词 + BM
 
 ### MCP Server（任意 MCP 客户端接入）
 
-> Claude Code / Codex / Hermes / OpenCode / OpenClaw 等各客户端的最小挂载配置速查表见[根 README](../README.md#用在其他-ai-工具里mcp)；本节是完整配置与安全说明。规划中的独立分发包 `mneme-memory` 落地后，挂载命令将保持兼容（详见仓库 Discussions #300）。
+> Claude Code / Codex / Hermes / OpenCode / OpenClaw 等各客户端的最小挂载配置速查表见[根 README](../README.md#用在其他-ai-工具里mcp)；本节是完整配置与安全说明。独立分发包 [`mneme-memory`](https://www.npmjs.com/package/mneme-memory)（bin `mneme-mcp`）已发布，与插件内置的 `dsh-mneme-mcp` 并存、挂载命令互相兼容。
 
 插件自带 stdio MCP server（`bin/dsh-mneme-mcp.mjs`，零依赖，随 npm 包发布，bin 名 `dsh-mneme-mcp`）。任何支持 Model Context Protocol 的客户端（Claude Code、Cursor 等）挂载后即可获得与 DSH 内一致的记忆工具六件套：`memory_save` / `memory_search` / `memory_list` / `memory_get` / `memory_update` / `memory_delete`——工具名、参数与去重合并、重要性等语义与 DSH 内工具对齐（测试锁漂移）。
 
