@@ -102,6 +102,40 @@ const USAGE = `${CLI_NAME} —— DSH 记忆插件（@modusensus/dsh-mneme）外
 
 /* ---------------------------------- 参数解析 ---------------------------------- */
 
+// `--flag value` 形态下，「下一个词以 -- 开头就别当值」这条规则有一个致命反例：
+// 值本身就可能是 `--` 开头的字符串。外部 API 的 token 由
+// `crypto.randomBytes(24).toString("base64url")` 生成（src/api-standalone.js），
+// base64url 的字母表含 `-`，所以约 1/4096 的 token 头两位恰好都是 `-`：
+//
+//   dsh-mneme reclaim --url http://127.0.0.1:55423 --token --UYoOHxr6PtE2-bfqW...
+//
+// 旧规则把 `--UYoOHxr6PtE2-bfqW...` 当成一个新旗标（键名 `uyoohxr6pte2-bfqw...`），
+// 于是 token 解析成 `true`，flagValue 视作「没给」→ 退回环境变量/配置文件 → 全空
+// → 报「未配置访问 token」。而 CLI 生成 token 的另一半同样会撞：`--token=--abc`
+// 走等号分支没事，`--token --abc` 就废。这不是测试的随机性，是真实用户的随机性。
+//
+// 修法：区分「已知旗标」与「未知词」。下一个词以 `--` 开头时，只有它确实是一个
+// 已注册的旗标才当作旗标，否则当作当前 flag 的值。于是 `--limit --json` 仍按
+// 旧语义把 --json 当旗标，而 `--token --UYo...` 正确取到 token。
+// 已知旗标表必须与下面 flagValue/flagBool 的实际用法保持同步；漏登记的代价是
+// 该旗标被当成值吞掉，所以 test/cli-flag-value.test.js 用文本锁对齐两者。
+const KNOWN_FLAGS = new Set([
+  // 取值的旗标
+  'url', 'token', 'type', 'title', 'content', 'importance', 'tags', 'source',
+  'limit', 'offset', 'mode', 'topk', 'top-k', 'min-importance', 'minimportance',
+  'older-than', 'olderthandays',
+  // 布尔旗标
+  'apply', 'vacuum', 'json', 'help', 'version'
+]);
+
+/** `--foo=bar` / `--foo` 取出小写键名；非旗标词返回 null。 */
+function flagKeyOf(word) {
+  if (typeof word !== 'string' || !word.startsWith('--') || word === '--') return null;
+  const key = word.slice(2);
+  const eq = key.indexOf('=');
+  return (eq >= 0 ? key.slice(0, eq) : key).toLowerCase();
+}
+
 function parseArgv(argv) {
   const positionals = [];
   const flags = {};
@@ -118,10 +152,14 @@ function parseArgv(argv) {
       if (eq >= 0) {
         value = key.slice(eq + 1);
         key = key.slice(0, eq);
-      } else if (i + 1 < argv.length && !argv[i + 1].startsWith('--') && argv[i + 1] !== '--') {
-        value = argv[++i];
       } else {
-        value = true;
+        const next = argv[i + 1];
+        const nextIsFlag = next !== undefined && flagKeyOf(next) !== null && KNOWN_FLAGS.has(flagKeyOf(next));
+        if (next !== undefined && next !== '--' && !nextIsFlag) {
+          value = argv[++i];
+        } else {
+          value = true;
+        }
       }
       flags[key.toLowerCase()] = value;
     } else {
@@ -691,7 +729,23 @@ async function main(argv) {
   }
 }
 
-main(process.argv.slice(2)).catch((err) => {
-  console.error(err?.stack ?? String(err));
-  process.exit(1);
-});
+// 直接运行才进 main（import 只取 parseArgv 做单测时必须安静）：npm 全局安装走
+// node_modules/.bin 的符号链接，argv[1] 是链接路径而非真身，所以要 realpath 两侧
+// 再比，不能用字符串相等。
+const invokedDirectly = (() => {
+  if (process.argv[1] == null) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedDirectly) {
+  main(process.argv.slice(2)).catch((err) => {
+    console.error(err?.stack ?? String(err));
+    process.exit(1);
+  });
+}
+
+export { parseArgv, KNOWN_FLAGS, flagValue, flagBool, flagKeyOf };

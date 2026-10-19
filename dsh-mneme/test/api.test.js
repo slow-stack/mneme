@@ -761,6 +761,47 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   assert.equal(data.effective.dreamCandidateMode, "window");
   assert.equal(data.effective.dreamCandidateMax, 0);
   assert.equal(data.effective.dreamCandidateMinSim, 0.85);
+  // #481：没有 overrides 时不存在「改了还没生效」的键，必须是空数组而不是缺字段
+  // ——面板按数组长度渲染提示条，字段缺失会让它渲染出 undefined.length 这类东西。
+  assert.ok(Array.isArray(data.pendingRestart), "pendingRestart must always be an array");
+  assert.deepEqual(data.pendingRestart, []);
+});
+
+test("GET /api/dsh-mneme/features reports only the overrides the frozen config has not picked up", async () => {
+  const { routes, settings } = setup(undefined, "", FLAGS_CFG);
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/features");
+  // #481 实测现场：面板显示人格总闸「已开启」，人格段却不注入——因为开关在宿主
+  // 启动时合并进 cfg 并冻结，运行中改 kv 只是持久化。pendingRestart 就是把
+  // 「显式覆盖 ≠ 冻结值」这个落差报出来，否则用户只能靠反复试错发现。
+  settings.setFeatureFlags({
+    personaEnabled: true,                 // 冻结值 false → 待重启
+    autoDream: false,                     // 冻结值 true  → 待重启
+    "memoryQualityFilter.enabled": false, // 冻结值 true  → 待重启
+    distillMaxChars: 24000                // 与冻结值相同 → 不该报
+  });
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/features"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  // 比的是集合而非顺序（顺序跟白名单分组走，不是契约的一部分）。
+  assert.deepEqual([...data.pendingRestart].sort(), ["autoDream", "memoryQualityFilter.enabled", "personaEnabled"]);
+  assert.ok(!data.pendingRestart.includes("distillMaxChars"),
+    "a key whose override equals the frozen value is not pending");
+  // effective 仍然是「运行时取什么值」= overrides 优先，不受本字段影响。
+  assert.equal(data.effective.personaEnabled, true);
+});
+
+test("GET /api/dsh-mneme/features cannot report pendingRestart without a frozen config", async () => {
+  // config 缺席（旧调用方直连、未传 cfg）时无从比较冻结值——返回空数组，不编造。
+  const { routes, settings } = setup(undefined);
+  settings.setFeatureFlags({ personaEnabled: true });
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/features");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/features"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.deepEqual(data.pendingRestart, []);
+  assert.equal(data.effective.personaEnabled, true, "effective still reports the override");
 });
 
 test("PUT /api/dsh-mneme/features round-trips, overrides effective and persists", async () => {
