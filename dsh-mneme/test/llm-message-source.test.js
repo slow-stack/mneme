@@ -62,7 +62,7 @@ test("dream: consolidation and summary messages carry source", async () => {
         calls.push(options);
         assertMessageSources(options);
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        yield* reply(userText.startsWith("id=") ? "[]" : "记忆库总览：已巩固。");
+        yield* reply(userText.includes("| type=") ? "[]" : "记忆库总览：已巩固。");
       }
     }
   };
