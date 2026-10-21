@@ -309,6 +309,45 @@ function describeStreamFailure(reason) {
  * operation_type, model_id, related_memory_ids); `body(reportUsage)` performs
  * the actual stream consumption and is handed a usage reporter for the chunks.
  */
+/**
+ * 把喂给模型的清单包进围栏（#493 的另一半：dream / sleep 那 5 处 user 消息以前是裸放）。
+ * 三个细节各自有原因，别当装饰删：
+ * - 角色声明落在**开头**：判断「这段文本是什么」的是它所在的那条 user 消息，只写在 system
+ *   里实测救不回来（#493 的 A/C 臂：只加 system 约束仍 0/2 出 JSON）；
+ * - 正文里的 `<<<` / `>>>` 用零宽空格断链——**只中和标记，不删内容**。不这么做时，一条写着
+ *   「<<<记忆清单结束>>>」的记忆就能提前闭合围栏，把后面的文字升格成指令；而记忆正文本来就
+ *   是模型的可影响输入，这是最省事的注入入口；
+ * - 纯函数、不带 nonce：同一批记忆在下一次巩固阈值到来时会被原样再喂一次，重试收到的 prompt
+ *   必须与首次逐字节相同，否则「同输入同错」这条诊断依据就没了（#493 的重试 20 次现场就靠它）。
+ * @param {"json"|"text"} [shape] 该次调用的**输出契约**：巩固/叙述/冲突/模式要 JSON 数组，
+ *   总览摘要要散文。角色声明里那句「只输出 JSON 数组」必须跟着契约走——对散文契约说它，
+ *   模型会回 `[]`，而 `summaryText.trim()` 判非空通过，`[]` 就被当成摘要存进库（评审实测）。
+ */
+export function fenceListBody(language, text, shape = "json") {
+  const open = STR.memoryFenceOpen[language] ?? STR.memoryFenceOpen.en;
+  const close = STR.memoryFenceClose[language] ?? STR.memoryFenceClose.en;
+  const table = shape === "text" ? STR.dreamTextRoleReminder : STR.dreamRoleReminder;
+  const reminder = table[language] ?? table.en;
+  const body = String(text ?? "").replace(/<<<|>>>/g, (run) => `${run[0]}\u200B${run.slice(1)}`);
+  return `${reminder}\n\n${open}\n${body}\n${close}`;
+}
+
+/**
+ * 解析失败行的审计读数（#493 同款，报告者提的第 2 条）。dream 的 warn 日志本来就带
+ * raw length + 前 300 字，缺的是**可查询**的那一面：日志要翻、按不了、也进不了面板的
+ * 「LLM 消耗」。`raw_has_bracket` 是区分「模型压根没按格式写」与「格式对但内容救不回来」
+ * 的唯一低成本判据。
+ */
+export function parseFailureMeta(text) {
+  const raw = typeof text === "string" ? text : "";
+  return {
+    parse_failure: true,
+    raw_len: raw.length,
+    raw_head: raw.slice(0, 300).replace(/\s+/g, " ").trim(),
+    raw_has_bracket: raw.includes("[")
+  };
+}
+
 async function runAuditedLlm(ctx, service, config, spec, body) {
   const audit = config?.llmAudit;
   if (audit?.enabled === false || typeof service?.saveLlmAudit !== "function") return body(() => {});
@@ -351,6 +390,17 @@ async function runAuditedLlm(ctx, service, config, spec, body) {
     errorMessage = String(error?.message ?? error);
     throw error;
   } finally {
+    // spec.metadataFrom(result)：调用方按**这一轮的原始输出**决定要不要带读数（解析成功就
+    // 返回 null → 整键不写）。判据函数必须是纯的：它读的是 result，不读控制流里的缓存，
+    // 否则「审计说了什么」会随调用方走到哪一行而变（sleep.js 同一条硬约定）。
+    let metadata;
+    if (result !== undefined && typeof spec.metadataFrom === "function") {
+      try {
+        metadata = spec.metadataFrom(result) ?? undefined;
+      } catch {
+        metadata = undefined; // 读数失败不许把审计行整个弄没
+      }
+    }
     try {
       service.saveLlmAudit({
         timestamp,
@@ -364,7 +414,8 @@ async function runAuditedLlm(ctx, service, config, spec, body) {
         duration_ms: Date.now() - startedAt,
         status,
         error_message: errorMessage,
-        related_memory_ids: spec.relatedMemoryIds ?? []
+        related_memory_ids: spec.relatedMemoryIds ?? [],
+        ...(metadata ? { metadata } : {})
       });
     } catch (auditError) {
       ctx.logger?.warn?.(`dsh-mneme: llm audit write failed: ${String(auditError)}`);
@@ -511,7 +562,7 @@ async function generateNarratives({ ctx, service, config, route, language, effor
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
         { role: "system", content: [{ type: "text", text: STR.prompts.narrative[language] }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
-        { role: "user", content: [{ type: "text", text: listing }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
+        { role: "user", content: [{ type: "text", text: fenceListBody(language, listing) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
       ]
     }, reportUsage, (reason) => { streamFailure = describeStreamFailure(reason); }));
   };
@@ -1206,7 +1257,8 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       auditError: (text) => {
         decisions = extractJsonArray(text);
         return Array.isArray(decisions) ? null : "no json array in llm output";
-      }
+      },
+      metadataFrom: (text) => (Array.isArray(decisions) ? null : parseFailureMeta(text))
     }, (reportUsage) => streamText(ctx, {
       provider: route.provider,
       model: route.model,
@@ -1215,7 +1267,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
         { role: "system", content: [{ type: "text", text: consolidationPrompt }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
-        { role: "user", content: [{ type: "text", text: listText }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
+        { role: "user", content: [{ type: "text", text: fenceListBody(language, listText) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
       ]
     }, reportUsage, (reason) => { streamFailure = describeStreamFailure(reason); }));
     };
@@ -1458,7 +1510,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
         { role: "system", content: [{ type: "text", text: STR.prompts.dreamSummary[language] }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
-        { role: "user", content: [{ type: "text", text: summaryInputs.map((m) => `- ${m.title}: ${m.content}`).join("\n") }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
+        { role: "user", content: [{ type: "text", text: fenceListBody(language, summaryInputs.map((m) => `- ${m.title}: ${m.content}`).join("\n"), "text") }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
       ]
     }, reportUsage, (reason) => { summaryStreamFailure = describeStreamFailure(reason); }));
     };

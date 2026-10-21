@@ -453,7 +453,7 @@ test("巩固侧：被按下作用域的行不进总览输入——否则会被�
     llm: {
       async *stream(options) {
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        if (userText.startsWith("id=")) {
+        if (userText.includes("| type=")) {
           yield { type: "text-delta", index: 0, text: "[]" };
           yield { type: "finish", reason: { kind: "stop" } };
           return;
