@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## 🐛 修复
+
+- **一条只错在分类词上的窗口，被当成「模型没按格式写」反复重放（#502，社区报告 #493 追加的第二形态）**：#493 让蒸馏解冻之后，报告者贴出对照——`summarize_compress` 18:32 成功、18:35 又失败，而失败行的 `metadata` 里 `raw_has_bracket = true`、`raw_len` 2574/3299：**JSON 是合法的，条目是被 `type` 枚举全部滤掉的**。模型自造了中文分类（`"type": "环境/版本"`、`"用户需求"`）并多带 `id` / `source` 键，于是 `entries.length === 0` 而 `arr.length > 0` → `ok:false` → 记 `invalid summary JSON` → 游标不推进 → 同一个窗口一遍遍重放。根因是两套不一致（对照 `main` 已核）：`summarize.js` 的 `VALID` 吃 **7** 个类型，`lang.js` 里普通 `summary` 的中英两版只列 **4** 个（`codingSummary` 才列全），且两个 prompt 都没有一句「只能用这些值 / 不要输出额外键」（grep `只能用这些值|枚举外的值|额外键` = 0 命中）——喂给模型的菜单和卡内容的闸门对不上，模型按最像中文标签的方式发挥是合理结果。修法按报告者排的 1 → 3 做，**都零行为变更**：① 失败形态分开（`describeParseFailure`：`no-array` / `syntax` / `filtered-empty`），`filtered-empty` 的错误消息写成 `no valid summary entries (arr=N, valid=0)`，审计 `metadata` 补 `failure_kind` / `arr_count` / `invalid_entries` / `sample_types`（模型实际用的分类词原样带出，不看这一眼就得去猜）；② `summary` 的中英两版枚举列全为 7 个，并各自写明「`type` 只能取上面枚举里的值，不要自造分类；每项只输出上面列出的键，不要附加 id、source 等额外字段」——两种语言必须一起改，只改一种的话另一种语言的窗口照样被滤空，而孪生守卫看不见「两边一起过期」。另外补了 `raw_tail`（正文 > 500 字时给末 200 字）：有些模型先写几条合法条目、再在后面跑偏，前 300 字看不出来。**`type` 归一化（中文近义词 → 枚举）刻意不做**：它能把内容救回入库，但会改变入库分类分布，等 ① 的统计出来再判断值不值——这条判断也是报告者的排序（1 → 3 → 2）。「早退」路径（连方括号都没有，#493 的 B 臂）以前返回 `{ok:false, entries:[]}` 什么上下都不带，现在也带 `failure`，否则下游只能靠「输出里有没有 `[`」再猜一次，而猜出来的东西不该写进错误消息。测试 5 条 + 1 条既有断言升级（全无效摘要那三条用例从「等于 invalid summary JSON」改成「等于 `arr=N, valid=0`」并加锁 `failure_kind`，行为断言一条不放松：状态仍是 error、窗口仍可重试、重试收到逐字节相同的转录）。
+
 ## [0.9.4] - 2026-10-21
 
 ## 🆕 新增
