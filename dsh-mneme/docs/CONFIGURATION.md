@@ -141,6 +141,7 @@
 | `escapePromptVariables` | `true` | 注入内容连续花括号转义（#162） | 关 = 原样透传（DSH interpolate 可能 throw） |
 | `injectTimePrefix` | `false` | 对话开始注入一次当前时间（#34，v0.7.11 误删后随 #333 恢复） | opt-in；格式与键名与 v0.7.2 一致，存量 feature_flags 恢复即生效 |
 | `personaEnabled` | `false` | 人格段：用户自写的一小段常驻注入文本 | opt-in；只是轻量常驻文本、不引入重型后台路径，故不进 `LIGHT_MODE_OFF` |
+| `personaStrictAddressing` | `false` | 人格寻址口径。关（历史行为）：会话身份没建卡、或该卡被显式关掉时，落 `default` 卡 | 开：这两种情况都不注入人格，`default` 只兜「解析不到会话身份」的无名会话。用途是宿主里跑着自带身份的外部 bot 时，别让某个人格无条件进它每一帧。默认关 = 升级零变化 |
 
 ## 巩固（autoDream）
 

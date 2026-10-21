@@ -946,7 +946,17 @@ export const Config = z.object({
   // 人格段是用户自写的一小段轻量常驻文本，不引入任何重型后台路径，轻量档用户
   // 显式勾选仍然赢（同 actionPipelineEnabled 的定性）。
   // 也走 feature_flags（FEATURE_FLAG_BOOLEANS 白名单），面板可启停=线上回滚开关。
-  personaEnabled: z.boolean().default(false)
+  personaEnabled: z.boolean().default(false),
+
+  // 人格寻址的兜底口径（只在上一个键打开时才有意义）。关（默认，= 历史行为）：
+  // 会话身份没有卡、或有卡但卡被关掉时，一律落 default 卡——于是 default 成了
+  // 「所有没建卡的 agent 都能拿到某个人格」，宿主里跑的外部 bot（自带身份与设定）
+  // 会在同一帧里收到两句「你是谁」。开：这两种情况都不注入人格，default 退回它的
+  // 本意——只兜「这一帧解析不到会话身份」的无名会话（无身份时行为不变）。
+  // 默认关是因为这是一次口径变更：老用户升级后注入文本不许静默变化。
+  // 不进 LIGHT_MODE_OFF：它只是取卡时的一个分支，不引入常驻文本、也不引入后台路径，
+  // 且它本身只在 personaEnabled 打开时才起作用（同 scopeState 的定性）。
+  personaStrictAddressing: z.boolean().default(false)
 });
 
 // Fields forced to false by the light-mode preset. Everything not listed here

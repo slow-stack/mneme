@@ -233,7 +233,10 @@ const FEATURE_FLAG_BOOLEANS = [
   // LIGHT_MODE_OFF——人格段是用户自写的一小段轻量常驻文本，不引入任何重型后台
   // 路径，轻量档用户显式勾选仍然赢（同 actionPipelineEnabled 的定性）。顶层扁平
   // 键，不需要 NESTED_FLAG_PATHS 条目。
-  "personaEnabled"
+  "personaEnabled",
+  // 人格寻址口径（上一条打开时才有意义）：开 = 身份没建卡/卡被关时不注入人格，
+  // default 只兜解析不到身份的会话。默认关（历史行为，升级零变化）。
+  "personaStrictAddressing"
 ];
 // 整数开关的闭区间，与 config.js 里 z.natural().min().max() 对齐。
 const FEATURE_FLAG_INT_RANGES = {
@@ -496,8 +499,9 @@ export function createSettings(db) {
     /**
      * Agent persona (name / personality / replyStyle + enabled gate), stored as
      * one JSON key. v1.2 多卡：存储形 { default, byAgent }，旧 v1 单对象读作
-     * default 兼容。getPersona 返回全量多卡形（面板用）；getPersonaFor 按 agent
-     * 身份取卡（注入用），身份缺失/无卡/卡 enabled=false 均落 default。
+     * default 兼容。getPersona 返回全量多卡形（面板与注入寻址都用它）。
+     * 寻址与兜底口径不在这里——住 src/user-settings.js 的 resolvePersonaCard，
+     * 注入与面板预览共用那一份；这里若再留一个 getPersonaFor，就是两张皮。
      */
     getPersona() {
       return parsePersonaStore(getSetting("persona") ?? "{}");
@@ -513,16 +517,6 @@ export function createSettings(db) {
       const current = parsePersonaStore(getSetting("persona") ?? "{}");
       current.default = parsePersona(JSON.stringify(input));
       setSetting("persona", serializePersonaStore(current));
-    },
-    /** Per-agent lookup for the injector: id card → default fallback. */
-    getPersonaFor(agentId) {
-      const store = parsePersonaStore(getSetting("persona") ?? "{}");
-      const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "";
-      if (id) {
-        const card = store.byAgent[id];
-        if (card && card.enabled === true) return card;
-      }
-      return store.default;
     },
     /** Replace one byAgent card wholesale (panel save); default 不可经此改。 */
     setPersonaFor(agentId, card) {

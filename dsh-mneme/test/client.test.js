@@ -2077,11 +2077,13 @@ test("panel copy and icons must not silently vanish (missing dict lines, unregis
 // 人格定义页（beta）面板面回归：形状沿用 A4 的「分组 + i18n 双语 occurrences ≥ 2
 // + 关键接线」断言风格（只做源码断言，不挂 React 渲染环境）。
 test("persona page ships settings card, master switch and i18n (beta v1)", () => {
-  // 开关进 FEATURE_GROUPS 的 enhance 组（行为开关非座位闸门）
-  assert.ok(
-    /group\.enhance", items: \[(?:[^\]]|\n)*"personaEnabled"\]/.test(clientSource),
-    "FEATURE_GROUPS group.enhance must carry personaEnabled"
-  );
+  // 开关进 FEATURE_GROUPS 的 enhance 组（行为开关非座位闸门）。按组解析成员再逐个点名，
+  // 而不是把某一行写成字面量正则——那样往组里加第二个键就会把这条护栏弄红（实测踩过）。
+  const enhance = clientSource.match(/group\.enhance", items: \[((?:[^\]]|\n)*)\]/);
+  assert.ok(enhance, "FEATURE_GROUPS group.enhance must be parseable");
+  for (const flag of ["personaEnabled", "personaStrictAddressing"]) {
+    assert.ok(enhance[1].includes(`"${flag}"`), `FEATURE_GROUPS group.enhance must carry ${flag}`);
+  }
   // i18n 键中英双语齐备（occurrences ≥ 2 模式；label + .hint 两路由字典锁统一覆盖）
   for (const key of [
     "memory.features.personaEnabled",
@@ -2096,7 +2098,16 @@ test("persona page ships settings card, master switch and i18n (beta v1)", () =>
     "memory.settings.personaEnabledToggle",
     "memory.settings.personaView",
     "memory.settings.personaViewHint",
-    "memory.settings.personaViewEmpty"
+    "memory.settings.personaViewEmpty",
+    // 预览改由后端渲染之后新增的读数文案（缺一种语言就是半边界面裸奔键名）
+    "memory.features.personaStrictAddressing",
+    "memory.features.personaStrictAddressing.hint",
+    "memory.settings.personaViewUnknown",
+    "memory.settings.personaViewSourceDefault",
+    "memory.settings.personaViewSourceCard",
+    "memory.settings.personaViewSourceNone",
+    "memory.settings.personaViewGateOff",
+    "memory.settings.personaViewRefresh"
   ]) {
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
@@ -2110,6 +2121,11 @@ test("persona page ships settings card, master switch and i18n (beta v1)", () =>
     clientSource.includes("memory.features.personaEnabled.hint"),
     "the master-switch hint must document the two-gate semantics"
   );
+  // 「注入生效文本」必须由后端给：前端再拼一份就是第二张皮（原来正是这段前端拼接
+  // 没有人格行、没有表头与前缀，却自称生效文本）。
+  assert.ok(clientSource.includes("injectedPreview.text"), "the view must render the backend-rendered block");
+  assert.ok(!clientSource.includes('"- " + profile.trim()'), "frontend hand-splicing of the injected block must be gone");
+  assert.ok(clientSource.includes("setInjectedPreview(null)"), "a failed preview must fail closed to 未知, not to a stale or guessed block");
 });
 
 // v1.2 多卡回归：卡列表 CRUD 可见、字段标签渲染为可见元素（v1.1 反馈：

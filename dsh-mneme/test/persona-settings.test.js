@@ -7,6 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createSettings } from "../src/settings.js";
+import { resolvePersonaCard } from "../src/user-settings.js";
 
 function setup() {
   const store = createStore(":memory:");
@@ -81,10 +82,14 @@ test("v1 legacy single-object persona reads as default (zero migration)", () => 
   store.close();
 });
 
-test("byAgent card round-trips via setPersonaFor/getPersonaFor", () => {
+// 寻址口径住在 src/user-settings.js（注入与面板预览共用一份），不在 settings 里——
+// settings 只存卡。原来那两个 getPersonaFor 用例因此改指向 resolvePersonaCard：
+// 断言的是同一件事，但落在唯一那份实现上。
+test("byAgent card round-trips via setPersonaFor/resolvePersonaCard", () => {
   const { store, settings } = setup();
   settings.setPersonaFor("zephyr", { name: "泽菲尔", personality: "冷危占有", enabled: true });
-  assert.deepEqual(settings.getPersonaFor("zephyr"), { name: "泽菲尔", personality: "冷危占有", enabled: true });
+  assert.deepEqual(resolvePersonaCard(settings, "zephyr").card, { name: "泽菲尔", personality: "冷危占有", enabled: true });
+  assert.equal(resolvePersonaCard(settings, "zephyr").source, "byAgent");
   // default 仍在且未被影响
   assert.deepEqual(settings.getPersona().default, {});
   // 卡列表含 zephyr
@@ -92,17 +97,34 @@ test("byAgent card round-trips via setPersonaFor/getPersonaFor", () => {
   store.close();
 });
 
-test("getPersonaFor falls back to default when id card missing or disabled", () => {
+test("缺省寻址：身份没建卡、或卡被关掉，都落 default", () => {
   const { store, settings } = setup();
   settings.setPersona({ name: "Amarre", enabled: true }); // 单对象形写 default
   settings.setPersonaFor("zephyr", { name: "泽菲尔", enabled: false }); // 卡存在但关
-  // 未注册身份 → default
-  assert.equal(settings.getPersonaFor("unknown-bot").name, "Amarre");
+  assert.equal(resolvePersonaCard(settings, "unknown-bot").card.name, "Amarre");
   // 身份卡存在但 enabled=false → 落 default（兜底优先，不注入半张卡）
-  assert.equal(settings.getPersonaFor("zephyr").name, "Amarre");
+  assert.equal(resolvePersonaCard(settings, "zephyr").card.name, "Amarre");
   // 身份缺失（null/空串）→ default
-  assert.equal(settings.getPersonaFor(null).name, "Amarre");
-  assert.equal(settings.getPersonaFor("").name, "Amarre");
+  assert.equal(resolvePersonaCard(settings, null).card.name, "Amarre");
+  assert.equal(resolvePersonaCard(settings, "").card.name, "Amarre");
+  store.close();
+});
+
+test("strict 寻址：身份没建卡与卡被关掉都不注入，无名会话仍用 default", () => {
+  const { store, settings } = setup();
+  settings.setPersona({ name: "Amarre", enabled: true });
+  settings.setPersonaFor("zephyr", { name: "泽菲尔", enabled: false });
+  const strict = { strict: true };
+  for (const id of ["unknown-bot", "zephyr"]) {
+    const { card, source } = resolvePersonaCard(settings, id, strict);
+    assert.equal(source, "none", `${id} 在严格寻址下不该拿到任何卡`);
+    assert.deepEqual(card, {});
+  }
+  // 开着的身份卡照样命中（strict 不改变命中语义）
+  settings.setPersonaFor("mentor", { name: "导师", enabled: true });
+  assert.equal(resolvePersonaCard(settings, "mentor", strict).source, "byAgent");
+  // 解析不到身份 = default 卡的受众，strict 不动这一格
+  assert.equal(resolvePersonaCard(settings, null, strict).card.name, "Amarre");
   store.close();
 });
 

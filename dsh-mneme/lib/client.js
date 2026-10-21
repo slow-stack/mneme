@@ -294,7 +294,7 @@ window.__ModuleLoader__.load({
         "memory.settings.personaSaveFailed": "保存失败",
         "memory.settings.personaEnabledToggle": "启用这张卡",
         "memory.settings.personaEnabledOn": "已启用——身份命中的会话会注入这张卡",
-        "memory.settings.personaEnabledOff": "未启用——这个身份的会话将使用默认卡",
+        "memory.settings.personaEnabledOff": "未启用——默认口径下这个身份的会话会改用默认卡；开着「严格人格寻址」时则完全不注入人格",
         "memory.settings.personaDefaultCard": "默认卡（兜底）",
         "memory.settings.personaAdd": "添加卡",
         "memory.settings.personaAddPlaceholder": "输入 agent 身份名（如 nyx），按它寻址注入",
@@ -302,10 +302,18 @@ window.__ModuleLoader__.load({
         "memory.settings.personaEditingFor": "正在编辑身份卡：",
         "memory.settings.personaDeleteCard": "删除这张卡",
         "memory.settings.personaView": "Agent 眼中的你（注入生效文本）",
-        "memory.settings.personaViewHint": "以下是每一轮实际注入的用户画像与规则，只读。",
-        "memory.settings.personaViewEmpty": "画像与规则均为空——Agent 每轮只会看到记忆库。",
+        "memory.settings.personaViewHint": "下面是这一轮真正会送进模型的整段文本：人格 → 画像 → 规则（后写的覆盖前写的，规则最硬）。文本由插件渲染，前端只显示。",
+        "memory.settings.personaViewEmpty": "三项都是空的——Agent 每轮只会看到记忆库。",
+        "memory.settings.personaViewUnknown": "读不到注入文本（预览请求失败或后端版本过旧）。这里不显示猜测的内容。",
+        "memory.settings.personaViewSourceDefault": "当前按「解析不到会话身份」的会话预览，取默认卡。",
+        "memory.settings.personaViewSourceCard": "当前按你正在编辑的这张身份卡预览。",
+        "memory.settings.personaViewSourceNone": "按当前寻址口径，这个身份不会注入任何人格——默认卡只兜「解析不到会话身份」的会话。",
+        "memory.settings.personaViewGateOff": "总闸「人格定义（beta）」现在是关的：下面这段里不会出现人格，只有画像与规则。",
+        "memory.settings.personaViewRefresh": "刷新预览",
         "memory.features.personaEnabled": "人格定义（beta）",
         "memory.features.personaEnabled.hint": "把「设置 → 个性化」里的人格卡注入到每轮对话。默认关（beta）；总闸与人格卡内的开关同时打开才生效。",
+        "memory.features.personaStrictAddressing": "严格人格寻址",
+        "memory.features.personaStrictAddressing.hint": "开：会话身份没有对应人格卡、或那张卡被关掉时，就不注入人格——默认卡只兜「解析不到会话身份」的会话。宿主里跑着自带身份的 bot（DS Bot 那类）时关掉这种兜底，免得两句「你是谁」撞在同一轮。默认关 = 未命中就落默认卡（历史行为）。",
         "memory.settings.rules": "规则",
         "memory.settings.rulesHint": "给 Agent 立下必须遵守的规矩，随时增删，下一轮即生效。",
         "memory.settings.ruleAdd": "添加规则",
@@ -988,7 +996,7 @@ window.__ModuleLoader__.load({
         "memory.settings.personaSaveFailed": "Save failed",
         "memory.settings.personaEnabledToggle": "Enable this card",
         "memory.settings.personaEnabledOn": "On — sessions matching this identity get this card",
-        "memory.settings.personaEnabledOff": "Off — sessions with this identity fall back to the default card",
+        "memory.settings.personaEnabledOff": "Off — by default such sessions fall back to the default card; with strict persona addressing they get no persona at all",
         "memory.settings.personaDefaultCard": "Default (fallback)",
         "memory.settings.personaAdd": "Add card",
         "memory.settings.personaAddPlaceholder": "Agent identity (e.g. nyx) used to address injection",
@@ -996,10 +1004,18 @@ window.__ModuleLoader__.load({
         "memory.settings.personaEditingFor": "Editing identity card:",
         "memory.settings.personaDeleteCard": "Delete this card",
         "memory.settings.personaView": "You, as the agent sees you (injected text)",
-        "memory.settings.personaViewHint": "The profile and rules actually injected every turn. Read-only.",
-        "memory.settings.personaViewEmpty": "Profile and rules are both empty — the agent only sees the memory store.",
+        "memory.settings.personaViewHint": "This is the exact block handed to the model this turn: persona → profile → rules (later lines override earlier ones; rules are hardest). The plugin renders it; the panel only displays it.",
+        "memory.settings.personaViewEmpty": "All three are empty — the agent only sees the memory store.",
+        "memory.settings.personaViewUnknown": "Could not read the injected text (preview request failed or backend too old). Nothing is guessed here.",
+        "memory.settings.personaViewSourceDefault": "Preview for sessions whose identity cannot be resolved — the default card applies.",
+        "memory.settings.personaViewSourceCard": "Preview for the identity card you are editing.",
+        "memory.settings.personaViewSourceNone": "Under the current addressing mode this identity injects no persona at all — the default card only covers sessions with no resolvable identity.",
+        "memory.settings.personaViewGateOff": "The master switch “Persona (beta)” is off: the block below contains profile and rules only.",
+        "memory.settings.personaViewRefresh": "Refresh preview",
         "memory.features.personaEnabled": "Persona (beta)",
         "memory.features.personaEnabled.hint": "Inject the persona card (Settings → Personalization) into every turn. Off by default (beta); both this switch and the card's own toggle must be on.",
+        "memory.features.personaStrictAddressing": "Strict persona addressing",
+        "memory.features.personaStrictAddressing.hint": "On: when a session's identity has no persona card — or that card is switched off — no persona is injected, so the default card only covers sessions with no resolvable identity. Turn this on when the host runs a bot that brings its own identity (DS Bot and friends), otherwise two \"you are ...\" claims land in the same turn. Off (default): unresolved identities fall back to the default card, as before.",
         "memory.settings.rules": "Rules",
         "memory.settings.rulesHint": "Rules the agent must follow — add or remove anytime, effective next turn.",
         "memory.settings.ruleAdd": "Add Rule",
@@ -2963,7 +2979,8 @@ window.__ModuleLoader__.load({
       { key: "group.enhance", items: ["entityExtractionEnabled", "codingRetrospect", "rerankEnabled", "resilientModelDownload", "searchSemanticDedup", "bm25SearchEnabled", "heatEnabled", "documentMemoryEnabled",
         // 人格定义页（beta）：注入总闸。分组随 enhance（行为开关，非座位闸门）；
         // 人格内容在设置页「个性化」区的人格卡。
-        "personaEnabled"] },
+        // 严格寻址是同一条链上的第二个口径开关（只在总闸打开时起作用）。
+        "personaEnabled", "personaStrictAddressing"] },
       { key: "group.dream", items: ["sleepModeEnabled"] },
       // v0.8.0 A4（issue #17）：作用域隔离组——标注总开关 + 严格硬过滤。
       { key: "group.scope", items: ["scopeEnabled", "strictScope"] }
@@ -3513,6 +3530,11 @@ window.__ModuleLoader__.load({
       const [personaNewName, setPersonaNewName] = react.useState("");
       const [personaSaved, setPersonaSaved] = react.useState(false);
       const [personaError, setPersonaError] = react.useState("");
+      // 注入预览：文本由后端渲染（GET /persona 的 preview 字段），前端只显示、不自己拼。
+      // 原先这里是一段前端手拼的 profile + rules 列表，注释却写着「注入生效文本」——
+      // 它既没有表头、没有「- 用户画像：」前缀，也完全没有人格三行，两份渲染代码必然漂。
+      // null = 还没读到或读失败（fail-closed：显示「未知」而不是「空」，也不显示旧值）。
+      const [injectedPreview, setInjectedPreview] = react.useState(null);
       const [vector, setVector] = react.useState({ enabled: false, baseUrl: "", apiKey: "", model: "" });
       const [vectorSaved, setVectorSaved] = react.useState(false);
       const [reindexing, setReindexing] = react.useState(false);
@@ -3603,10 +3625,28 @@ window.__ModuleLoader__.load({
           setPersonaDefault(norm(dRaw));
           setPersonaByAgent(Object.fromEntries(Object.entries(bRaw).map(([k, c]) => [k, norm(c)])));
           setPersonaEditing("default");
+          // 预览随 /persona 一起回（后端同一份渲染，省一次往返）。preview 缺失 = 旧后端
+          // 或读失败，保持 null：显示「未知」，绝不退回前端自己拼的版本。
+          setInjectedPreview(ps && ps.preview && typeof ps.preview.text === "string" ? ps.preview : null);
         } catch { /* ignore */ }
       }, []);
 
       react.useEffect(() => { load(); }, [load]);
+
+      // 预览请求：切卡与点「刷新预览」时各一次。刻意不挂在卡的数据上——卡内改动是
+      // 逐字自动保存的，那样等于每敲一个字发一次 GET。
+      const loadPreview = react.useCallback(async (agentId) => {
+        const q = agentId && agentId !== "default" ? `?agent=${encodeURIComponent(agentId)}` : "";
+        try {
+          const res = await apiFetch(`/api/dsh-mneme/persona${q}`);
+          const body = await res.json();
+          setInjectedPreview(body && body.preview && typeof body.preview.text === "string" ? body.preview : null);
+        } catch {
+          setInjectedPreview(null);
+        }
+      }, []);
+
+      react.useEffect(() => { loadPreview(personaEditing); }, [personaEditing, loadPreview]);
 
       // 帮助与反馈卡片的版本号：独立小请求，失败不影响其它卡片。
       react.useEffect(() => {
@@ -4024,15 +4064,35 @@ window.__ModuleLoader__.load({
               t("memory.settings.personaSaveFailed") + " (" + personaError + ")")
           )
         ),
-        // Agent 眼中的画像（只读）— 注入生效文本：profile + rules 原样展示。
-        // 纯前端拼接（GET 已在 load 里拿到 profile/rules），零后端新请求。
+        // Agent 眼中的你（只读）— 注入生效文本由后端渲染（GET /persona 的 preview 字段），
+        // 前端只显示。以前这一段是前端自己拼的 profile + rules，注释却写着「注入生效文本」：
+        // 没有人格三行、没有表头、没有「- 用户画像：」前缀，两份实现必然漂。
         h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.personaView")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.personaViewHint")),
-          (profile.trim() || rules.length)
-            ? h("pre", { className: "mneme-set-input mneme-set-input--area", style: { whiteSpace: "pre-wrap", minHeight: 0 } },
-                [profile.trim() ? "- " + profile.trim() : "", ...rules.map((r) => "- " + r)].filter(Boolean).join("\n"))
-            : h("div", { className: "mneme-xempty" }, t("memory.settings.personaViewEmpty"))
+          injectedPreview === null
+            ? h("div", { className: "mneme-xempty" }, t("memory.settings.personaViewUnknown"))
+            : h("div", null,
+                h("div", { className: "mneme-set-desc" },
+                  injectedPreview.source === "byAgent"
+                    ? t("memory.settings.personaViewSourceCard")
+                    : injectedPreview.source === "none"
+                      ? t("memory.settings.personaViewSourceNone")
+                      : t("memory.settings.personaViewSourceDefault")),
+                injectedPreview.configGate === true
+                  ? null
+                  : h("div", { className: "mneme-set-desc" }, t("memory.settings.personaViewGateOff")),
+                injectedPreview.text
+                  ? h("pre", { className: "mneme-set-input mneme-set-input--area", style: { whiteSpace: "pre-wrap", minHeight: 0 } }, injectedPreview.text)
+                  : h("div", { className: "mneme-xempty" }, t("memory.settings.personaViewEmpty"))
+              ),
+          h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 6 } },
+            h("button", {
+              type: "button",
+              className: "mneme-btn",
+              onClick: () => loadPreview(personaEditing)
+            }, t("memory.settings.personaViewRefresh"))
+          )
         ),
         // 规则 — numbered rows, hover reveals the delete affordance
         h("section", { className: "mneme-set-card" },

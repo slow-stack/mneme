@@ -1,6 +1,7 @@
 import { createScopeResolver } from "./scope.js";
 import { createHotMemory, roundsFromEvents } from "./hot-memory.js";
 import { STR, langOf } from "./lang.js";
+import { escapePromptVars as escapePromptVarsWithConfig, renderUserSettingsBlock } from "./user-settings.js";
 import { MEMORY_GUIDE_SECTION } from "./guide.js";
 import { adaptiveInjectBudget } from "./search/adaptive.js";
 import { injectChildEnabled } from "./config.js";
@@ -176,8 +177,9 @@ export function createInjector(ctx, service, settings, config, gate = null) {
   // adjacent), and single braces pass through untouched — interpolate only
   // scans `{{`. Off via config.escapePromptVariables=false (default true).
   function escapePromptVars(text) {
-    if (config.escapePromptVariables === false) return String(text);
-    return String(text).replace(/[{}]{2,}/g, (run) => run.split("").join("\\"));
+    // 实现搬到 src/user-settings.js：预览路由要用同一份转义，否则「注入生效文本」的
+    // 预览又是第二份实现、又会漂。这里保留同名闭包，其余调用点一字不动。
+    return escapePromptVarsWithConfig(config, text);
   }
 
   // Time-prefix injection (issue #34，恢复于 #333): opt-in, off by default.
@@ -323,30 +325,13 @@ export function createInjector(ctx, service, settings, config, gate = null) {
 
   // User profile + rules: injected ahead of the memory block because they are
   // always-relevant instructions the agent should follow every turn.
-  // 人格段（beta）：双闸门（config.personaEnabled && 卡.enabled）开时渲染在最前
-  // ——设计稿⑥：特化指令（人格）先出，画像与规则后出、后写覆盖占上风，rules 恒
-  // 最硬。v1.2 多卡：按会话身份取 byAgent 卡，身份缺失/无卡/卡关落 default。
-  // 任一闸关着时本函数输出与历史版本逐字节一致（老用户零变化）。人格段非空即
-  // 触发整块渲染（与 profile 同权）。
+  // 渲染整体搬到 src/user-settings.js（与面板预览共用一份，见那里的模块头注释）。
+  // 口径不变：双闸门（config.personaEnabled && 卡.enabled）都开时人格行在最前，
+  // 画像与规则后出、后写覆盖占上风，rules 恒最硬；任一闸关着时输出与历史版本逐字节
+  // 一致（老用户零变化）。personaStrictAddressing 打开时，「有身份但没建卡」与
+  // 「卡被显式关掉」都不注入人格——default 只兜「这一帧解析不到身份」的会话。
   function renderUserSettings(ctx) {
-    const profile = settings.getProfile().trim();
-    const rules = settings.getRules();
-    const persona = config?.personaEnabled === true
-      ? settings.getPersonaFor(sessionAgentId(ctx))
-      : {};
-    const personaLines = persona?.enabled === true
-      ? [
-          ...(typeof persona.name === "string" && persona.name.trim() ? [STR.personaNameLine[language](persona.name.trim())] : []),
-          ...(typeof persona.personality === "string" && persona.personality.trim() ? [STR.personaPersonalityLine[language](persona.personality.trim())] : []),
-          ...(typeof persona.replyStyle === "string" && persona.replyStyle.trim() ? [STR.personaReplyStyleLine[language](persona.replyStyle.trim())] : [])
-        ]
-      : [];
-    if (!profile && !rules.length && !personaLines.length) return "";
-    const lines = [STR.userSettingsHeader[language]];
-    lines.push(...personaLines);
-    if (profile) lines.push(STR.profileLine[language](profile));
-    for (const rule of rules) lines.push(STR.ruleLine[language](rule));
-    return escapePromptVars(lines.join("\n"));
+    return renderUserSettingsBlock({ settings, config, agentId: sessionAgentId(ctx) }).text;
   }
 
   // #249 能力说明的系统提示段。order 150 = 插件指引段的既有惯例

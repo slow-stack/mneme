@@ -9,6 +9,7 @@ import { langOf } from "./lang.js";
 import { computeHeat } from "./heat.js";
 import { EFFORT_REJECT_RE, describeStreamFailure, resolveRoute, withEffortFallback } from "./dream.js";
 import { getInjectionSnapshot } from "./inject.js";
+import { renderUserSettingsBlock } from "./user-settings.js";
 import { describeLocalRuntime, publicRuntimeStatus } from "./runtime/loader.js";
 import { hostModulesDir, provisionRuntime } from "./runtime/provision.js";
 import { classify, fetchLatestVersion, PACKAGE_VERSION } from "./version-check.js";
@@ -519,7 +520,20 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             sendJson(res, 200, { persona: settings.getPersona() });
           });
         }
-        sendJson(res, 200, { persona: settings.getPersona() });
+        const url = new URL(req.url, "http://localhost");
+        // 预览（面板「Agent 眼中的画像」用）：由注入器同一个渲染函数产出，前端只显示
+        // 返回的文本——以前端自己拼列表冒充「生效文本」是这个面板最容易漂的地方。
+        // ?agent=<身份> 让面板能逐张卡预览：传了就按那个身份寻址，没传按「解析不到身份」
+        // 走（也就是 default 卡的受众）。
+        // 这里不加鉴权是有意的：画像、规则、人格三处在同一条开放读面上本来就能各读一次
+        // （GET /profile 与 GET /persona 都无 token 可读），本字段只是把同样的内容拼成
+        // 模型实际看到的形状，没有新增可达面；真要锁，配 apiToken（写面与它同源）。
+        const preview = renderUserSettingsBlock({
+          settings,
+          config,
+          agentId: url.searchParams.get("agent")
+        });
+        sendJson(res, 200, { persona: settings.getPersona(), preview });
       } catch {
         sendJson(res, 500, { error: "internal" });
       }
