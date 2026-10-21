@@ -319,11 +319,15 @@ function describeStreamFailure(reason) {
  *   是模型的可影响输入，这是最省事的注入入口；
  * - 纯函数、不带 nonce：同一批记忆在下一次巩固阈值到来时会被原样再喂一次，重试收到的 prompt
  *   必须与首次逐字节相同，否则「同输入同错」这条诊断依据就没了（#493 的重试 20 次现场就靠它）。
+ * @param {"json"|"text"} [shape] 该次调用的**输出契约**：巩固/叙述/冲突/模式要 JSON 数组，
+ *   总览摘要要散文。角色声明里那句「只输出 JSON 数组」必须跟着契约走——对散文契约说它，
+ *   模型会回 `[]`，而 `summaryText.trim()` 判非空通过，`[]` 就被当成摘要存进库（评审实测）。
  */
-export function fenceListBody(language, text) {
+export function fenceListBody(language, text, shape = "json") {
   const open = STR.memoryFenceOpen[language] ?? STR.memoryFenceOpen.en;
   const close = STR.memoryFenceClose[language] ?? STR.memoryFenceClose.en;
-  const reminder = STR.dreamRoleReminder[language] ?? STR.dreamRoleReminder.en;
+  const table = shape === "text" ? STR.dreamTextRoleReminder : STR.dreamRoleReminder;
+  const reminder = table[language] ?? table.en;
   const body = String(text ?? "").replace(/<<<|>>>/g, (run) => `${run[0]}\u200B${run.slice(1)}`);
   return `${reminder}\n\n${open}\n${body}\n${close}`;
 }
@@ -390,7 +394,7 @@ async function runAuditedLlm(ctx, service, config, spec, body) {
     // 返回 null → 整键不写）。判据函数必须是纯的：它读的是 result，不读控制流里的缓存，
     // 否则「审计说了什么」会随调用方走到哪一行而变（sleep.js 同一条硬约定）。
     let metadata;
-    if (typeof spec.metadataFrom === "function") {
+    if (result !== undefined && typeof spec.metadataFrom === "function") {
       try {
         metadata = spec.metadataFrom(result) ?? undefined;
       } catch {
@@ -1506,7 +1510,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
         { role: "system", content: [{ type: "text", text: STR.prompts.dreamSummary[language] }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
-        { role: "user", content: [{ type: "text", text: fenceListBody(language, summaryInputs.map((m) => `- ${m.title}: ${m.content}`).join("\n")) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
+        { role: "user", content: [{ type: "text", text: fenceListBody(language, summaryInputs.map((m) => `- ${m.title}: ${m.content}`).join("\n"), "text") }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
       ]
     }, reportUsage, (reason) => { summaryStreamFailure = describeStreamFailure(reason); }));
     };

@@ -136,7 +136,7 @@ async function auditedSleepLlm(ctx, service, config, logger, spec, body) {
     // 实现，不是同一个函数——两份审计写法的字段必须一致，否则面板按 operation_type
     // 筛出来的读数会时有时没有）。判据函数只读 result，不读闭包，理由同 dream.js。
     let metadata;
-    if (typeof spec.metadataFrom === "function") {
+    if (result !== undefined && typeof spec.metadataFrom === "function") {
       try {
         metadata = spec.metadataFrom(result) ?? undefined;
       } catch {

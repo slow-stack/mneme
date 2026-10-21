@@ -17,6 +17,7 @@ import { readFileSync } from "node:fs";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createDreamScheduler, fenceListBody } from "../src/dream.js";
+import { parseEntries } from "./helpers/dream-mock.js";
 import { STR } from "../src/lang.js";
 
 const LISTING = "id=a1 | type=project | importance=3 | updated=2026-10-20T00:00:00Z | title=旧1";
@@ -87,7 +88,63 @@ test("consolidate 走 runDream：user 段带围栏，失败行的审计 metadata
   store.close();
 });
 
-// 结构锁：dream.js 与 dream/sleep.js 的每一条 user 消息都必须过围栏。
+// 评审两条（PR #503）：① 总览摘要是**散文**契约，角色声明不许要求 JSON 数组，
+// 否则模型回 "[]" 会被 trim() 判成有正文、把 "[]" 当摘要存进库；② 流以错误结束
+// （result === undefined）时不能写 parse_failure/raw_len:0——那是提供方错误，不是解析失败。
+test("总览摘要那一次调用的角色声明不许要求 JSON 数组", async () => {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  service.saveWithDedupe({ type: "project", title: "旧1", content: "第一段内容" });
+  const calls = [];
+  const ctx = {
+    logger: { warn: () => {}, info: () => {} },
+    llm: {
+      async *stream(options) {
+        calls.push(options);
+        const userText = String(options.messages?.[1]?.content?.[0]?.text ?? "");
+        // 巩固那一次必须给出**真实 id** 的合法决策，否则严格校验当场拒绝、流程走不到总览
+        // （我上一版给的是 "x"，测试因此找不到总览调用——这是假阴性，不是产品问题）。
+        const keeps = parseEntries(userText).map((e) => ({ action: "keep", ids: [e.id] }));
+        yield { type: "text-delta", text: keeps.length ? JSON.stringify(keeps) : "记忆库总览：一切正常。" };
+        yield { type: "finish", reason: { kind: "stop" } };
+      }
+    }
+  };
+  const dream = createDreamScheduler({ thresholdCount: 1, thresholdChars: 0, delayMs: 0 });
+  await dream.runDream(ctx, service, { dreamProvider: "deepseek", dreamModel: "deepseek-chat" });
+  const summaryCall = calls.find((o) => !String(o.messages?.[1]?.content?.[0]?.text ?? "").includes("| type="));
+  assert.ok(summaryCall, "必须驱动到总览那一次调用");
+  const userText = summaryCall.messages[1].content[0].text;
+  assert.ok(userText.includes(STR.memoryFenceOpen.zh), "总览同样要围栏：裸放的清单才是这次要修的病");
+  assert.doesNotMatch(userText, /JSON 数组|JSON array/,
+    "总览的 system 契约是散文，user 段的角色声明不能反过来要求 JSON");
+  store.close();
+});
+
+test("流以错误结束时不写 parse_failure（那是提供方错误，不是解析失败）", async () => {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  service.saveWithDedupe({ type: "project", title: "旧1", content: "第一段内容" });
+  const ctx = {
+    logger: { warn: () => {}, info: () => {} },
+    llm: {
+      async *stream() {
+        yield { type: "finish", reason: { kind: "error", failure: { code: "RATE_LIMIT", message: "429" } } };
+      }
+    }
+  };
+  const dream = createDreamScheduler({ thresholdCount: 1, thresholdChars: 0, delayMs: 0 });
+  const result = await dream.runDream(ctx, service, { dreamProvider: "deepseek", dreamModel: "deepseek-chat" });
+  assert.equal(result.ok, false);
+  const failed = service.listLlmAudits({ limit: 20 }).filter((a) => a.operation_type === "dream_consolidate").find((a) => a.status === "error");
+  assert.ok(failed, "失败的巩固调用必须留 error 审计行");
+  assert.match(String(failed.error_message), /429|RATE_LIMIT|aborted|errored/, "错误原因要落在 error_message 上");
+  const meta = typeof failed.metadata === "string" ? JSON.parse(failed.metadata) : failed.metadata;
+  assert.ok(!meta || meta.parse_failure !== true,
+    "没有正文可言的提供方错误不许被标成 parse_failure（那会把限流读成「模型没按格式写」）");
+  store.close();
+});
+
 // 它兜的是「以后有人加第 6 处时裸放」——**不证明** narrative/summary/冲突/模式那 4 处的
 // 运行时行为（那部分只有上一条给了 consolidate 的实测）。要真覆盖 5 处需各自完整的调度
 // 夹具，成本远超这条锁的价值，所以写清边界而不是假装覆盖。
