@@ -306,6 +306,7 @@ window.__ModuleLoader__.load({
         "memory.settings.personaViewEmpty": "三项都是空的——Agent 每轮只会看到记忆库。",
         "memory.settings.personaViewUnknown": "读不到注入文本（预览请求失败或后端版本过旧）。这里不显示猜测的内容。",
         "memory.settings.personaViewSourceDefault": "当前按「解析不到会话身份」的会话预览，取默认卡。",
+        "memory.settings.personaViewSourceFallback": "这个身份解析到了，但它没有可用的卡（没建或已关掉），所以落回默认卡——默认口径下这正是「关掉这张卡」不生效的原因；打开「严格人格寻址」后这种情况改为不注入人格。",
         "memory.settings.personaViewSourceCard": "当前按你正在编辑的这张身份卡预览。",
         "memory.settings.personaViewSourceNone": "按当前寻址口径，这个身份不会注入任何人格——默认卡只兜「解析不到会话身份」的会话。",
         "memory.settings.personaViewGateOff": "总闸「人格定义（beta）」现在是关的：下面这段里不会出现人格，只有画像与规则。",
@@ -1008,6 +1009,7 @@ window.__ModuleLoader__.load({
         "memory.settings.personaViewEmpty": "All three are empty — the agent only sees the memory store.",
         "memory.settings.personaViewUnknown": "Could not read the injected text (preview request failed or backend too old). Nothing is guessed here.",
         "memory.settings.personaViewSourceDefault": "Preview for sessions whose identity cannot be resolved — the default card applies.",
+        "memory.settings.personaViewSourceFallback": "This identity resolved, but it has no usable card (never created, or switched off), so the default card applies — which is exactly why turning this card off changes nothing under the default mode. With strict persona addressing on, such a session gets no persona at all.",
         "memory.settings.personaViewSourceCard": "Preview for the identity card you are editing.",
         "memory.settings.personaViewSourceNone": "Under the current addressing mode this identity injects no persona at all — the default card only covers sessions with no resolvable identity.",
         "memory.settings.personaViewGateOff": "The master switch “Persona (beta)” is off: the block below contains profile and rules only.",
@@ -3625,9 +3627,8 @@ window.__ModuleLoader__.load({
           setPersonaDefault(norm(dRaw));
           setPersonaByAgent(Object.fromEntries(Object.entries(bRaw).map(([k, c]) => [k, norm(c)])));
           setPersonaEditing("default");
-          // 预览随 /persona 一起回（后端同一份渲染，省一次往返）。preview 缺失 = 旧后端
-          // 或读失败，保持 null：显示「未知」，绝不退回前端自己拼的版本。
-          setInjectedPreview(ps && ps.preview && typeof ps.preview.text === "string" ? ps.preview : null);
+          // 预览不在这里写：它只有一个所有者（loadPreview）。两处写同一个 state 就会
+          // 互相覆盖，而这张卡的标题是「注入生效文本」——显示别张卡的文本比不显示更糟。
         } catch { /* ignore */ }
       }, []);
 
@@ -3635,13 +3636,19 @@ window.__ModuleLoader__.load({
 
       // 预览请求：切卡与点「刷新预览」时各一次。刻意不挂在卡的数据上——卡内改动是
       // 逐字自动保存的，那样等于每敲一个字发一次 GET。
+      // 序号守卫：先切 A 再切 B 时，A 的 GET 可能后回来；没有这道判断，界面上就是
+      // 「编辑位显示 B、预览显示 A」。
+      const previewSeq = react.useRef(0);
       const loadPreview = react.useCallback(async (agentId) => {
+        const seq = ++previewSeq.current;
         const q = agentId && agentId !== "default" ? `?agent=${encodeURIComponent(agentId)}` : "";
         try {
           const res = await apiFetch(`/api/dsh-mneme/persona${q}`);
           const body = await res.json();
+          if (seq !== previewSeq.current) return;
           setInjectedPreview(body && body.preview && typeof body.preview.text === "string" ? body.preview : null);
         } catch {
+          if (seq !== previewSeq.current) return;
           setInjectedPreview(null);
         }
       }, []);
@@ -4078,7 +4085,12 @@ window.__ModuleLoader__.load({
                     ? t("memory.settings.personaViewSourceCard")
                     : injectedPreview.source === "none"
                       ? t("memory.settings.personaViewSourceNone")
-                      : t("memory.settings.personaViewSourceDefault")),
+                      // source=default 有两种来路，必须分开说：请求带了 ?agent=<身份>
+                      // 却仍落默认卡（身份解析到了，只是没建卡或卡被关掉——关卡的人最想
+                      // 确认的就是这一格），与真的解析不到会话身份。
+                      : injectedPreview.agent
+                        ? t("memory.settings.personaViewSourceFallback")
+                        : t("memory.settings.personaViewSourceDefault")),
                 injectedPreview.configGate === true
                   ? null
                   : h("div", { className: "mneme-set-desc" }, t("memory.settings.personaViewGateOff")),

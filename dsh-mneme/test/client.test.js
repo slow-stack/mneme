@@ -2106,6 +2106,7 @@ test("persona page ships settings card, master switch and i18n (beta v1)", () =>
     "memory.settings.personaViewSourceDefault",
     "memory.settings.personaViewSourceCard",
     "memory.settings.personaViewSourceNone",
+    "memory.settings.personaViewSourceFallback",
     "memory.settings.personaViewGateOff",
     "memory.settings.personaViewRefresh"
   ]) {
@@ -2126,6 +2127,12 @@ test("persona page ships settings card, master switch and i18n (beta v1)", () =>
   assert.ok(clientSource.includes("injectedPreview.text"), "the view must render the backend-rendered block");
   assert.ok(!clientSource.includes('"- " + profile.trim()'), "frontend hand-splicing of the injected block must be gone");
   assert.ok(clientSource.includes("setInjectedPreview(null)"), "a failed preview must fail closed to 未知, not to a stale or guessed block");
+  // 预览只能有一个所有者，且要丢掉过期响应：先切卡 A 再切卡 B 时，A 的 GET 可能后回来。
+  // 这张卡的标题是「注入生效文本」，显示另一张卡的文本比不显示更糟。
+  assert.ok(clientSource.includes("if (seq !== previewSeq.current) return;"), "preview must drop stale responses");
+  assert.equal(clientSource.split("setInjectedPreview(").length - 1, 2, "loadPreview must be the only preview writer (success + failure)");
+  // source=default 有两种来路：带了 ?agent=<身份> 却回落 ≠ 真的解析不到身份。
+  assert.ok(clientSource.includes("injectedPreview.agent"), "the fallback label must separate a resolved-but-fallen-back identity from an unresolvable one");
 });
 
 // v1.2 多卡回归：卡列表 CRUD 可见、字段标签渲染为可见元素（v1.1 反馈：

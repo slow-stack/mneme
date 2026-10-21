@@ -80,6 +80,19 @@ test("预览含表头与画像前缀，且人格行在最前（原样复刻注�
   assert.ok(p.text.includes("- 用户画像：用户是规划背景"), "画像前缀同理");
   assert.ok(p.text.indexOf("你的人格名字") < p.text.indexOf("用户画像："), "顺序即优先级：人格先出、画像与规则后出");
   assert.equal(p.source, "default", "无 agent 参数 = 按「解析不到身份」寻址");
+  // agent 是面板区分两种 default 的唯一依据：解析不到身份（null）与「身份解析到了、
+  // 但没建卡/卡被关」（回显那个身份）。少了这条断言，面板那条回落文案就没有依据。
+  assert.equal(p.agent, null);
+  store.close();
+});
+
+test("身份解析到了却没有可用的卡：source=default 且回显该身份", async () => {
+  const { store, settings, preview } = setup({ personaEnabled: true });
+  seed(settings);
+  settings.setPersonaFor("ghost", { name: "无人格", enabled: false });
+  const { preview: p } = await preview("ghost");
+  assert.equal(p.source, "default", "默认口径下这张关掉的卡落回默认卡");
+  assert.equal(p.agent, "ghost", "但身份是解析到的——面板要靠它说「回落」而不是「解析不到」");
   store.close();
 });
 
