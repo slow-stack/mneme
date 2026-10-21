@@ -281,6 +281,17 @@ window.__ModuleLoader__.load({
         "memory.settings.profileHint": "写一段自我介绍（角色、背景、偏好），Agent 每轮对话都会自动带上。",
         "memory.settings.profileSave": "保存画像",
         "memory.settings.profileSaved": "画像已保存",
+        "memory.settings.profileExtract": "从记忆提取草稿",
+        "memory.settings.profileExtracting": "正在提取…",
+        "memory.settings.profileExtractHint": "会花一次模型调用，只在你点这个按钮时发生；提取出来的是草稿，不采用就不进库，你手写的画像也不会被覆盖。",
+        "memory.settings.profileExtractDisabled": "没有提取：功能开关里的「画像提取草稿」还没打开。",
+        "memory.settings.profileExtractEmpty": "库里没有可用的记忆条目，这次没有能提炼的内容（空输入下硬写一段画像只会是编的）。",
+        "memory.settings.profileExtractFailed": "提取没成：模型没按格式返回，或这次调用失败了。你现有的画像一个字都没被改动。",
+        "memory.settings.profileDraftTitle": "草稿（还没保存）",
+        "memory.settings.profileDraftRows": "依据记忆条数",
+        "memory.settings.profileDraftTruncated": "条目较多，这次只读了前面一部分",
+        "memory.settings.profileDraftApply": "采用为画像",
+        "memory.settings.profileDraftDiscard": "丢弃草稿",
         "memory.settings.persona": "人格定义（beta）",
         "memory.settings.personaHint": "给这位 Agent 一张角色卡：名字、性格、回复要求。开关打开且下方「人格定义」总闸开启时，每轮对话都会注入。",
         "memory.settings.personaName": "名字",
@@ -315,6 +326,8 @@ window.__ModuleLoader__.load({
         "memory.features.personaEnabled.hint": "把「设置 → 个性化」里的人格卡注入到每轮对话。默认关（beta）；总闸与人格卡内的开关同时打开才生效。",
         "memory.features.personaStrictAddressing": "严格人格寻址",
         "memory.features.personaStrictAddressing.hint": "开：会话身份没有对应人格卡、或那张卡被关掉时，就不注入人格——默认卡只兜「解析不到会话身份」的会话。宿主里跑着自带身份的 bot（DS Bot 那类）时关掉这种兜底，免得两句「你是谁」撞在同一轮。默认关 = 未命中就落默认卡（历史行为）。",
+        "memory.features.profileExtractEnabled": "画像提取草稿",
+        "memory.features.profileExtractEnabled.hint": "打开「设置 → 个性化 → 用户画像」里的「从记忆提取草稿」按钮：读一批活跃记忆、花一次模型调用，产一段「助手眼中的用户」草稿。草稿要你点「采用」才会写进画像，绝不自动覆盖你手写的原文。轻量档预设关（用户显式勾选仍然赢）。",
         "memory.settings.rules": "规则",
         "memory.settings.rulesHint": "给 Agent 立下必须遵守的规矩，随时增删，下一轮即生效。",
         "memory.settings.ruleAdd": "添加规则",
@@ -984,6 +997,17 @@ window.__ModuleLoader__.load({
         "memory.settings.profileHint": "Describe yourself once — the agent reads it every turn.",
         "memory.settings.profileSave": "Save Profile",
         "memory.settings.profileSaved": "Profile saved",
+        "memory.settings.profileExtract": "Draft from memory",
+        "memory.settings.profileExtracting": "Extracting…",
+        "memory.settings.profileExtractHint": "Costs one model call, and only when you press this button. The result is a draft: nothing is stored until you apply it, and your hand-written profile is never overwritten.",
+        "memory.settings.profileExtractDisabled": "Nothing extracted: the “Profile draft from memory” feature switch is still off.",
+        "memory.settings.profileExtractEmpty": "No usable memory entries in the store, so there was nothing to draft from (writing a profile out of an empty input would only be invention).",
+        "memory.settings.profileExtractFailed": "Extraction failed: the model did not return the required shape, or the call errored. Your existing profile is untouched.",
+        "memory.settings.profileDraftTitle": "Draft (not saved)",
+        "memory.settings.profileDraftRows": "Based on entries",
+        "memory.settings.profileDraftTruncated": "many entries — only the first batch was read",
+        "memory.settings.profileDraftApply": "Apply as profile",
+        "memory.settings.profileDraftDiscard": "Discard draft",
         "memory.settings.persona": "Persona (beta)",
         "memory.settings.personaHint": "Give this agent a character card: name, personality, reply style. Injected every turn when the toggle below and the \"Persona\" master switch are both on.",
         "memory.settings.personaName": "Name",
@@ -1018,6 +1042,8 @@ window.__ModuleLoader__.load({
         "memory.features.personaEnabled.hint": "Inject the persona card (Settings → Personalization) into every turn. Off by default (beta); both this switch and the card's own toggle must be on.",
         "memory.features.personaStrictAddressing": "Strict persona addressing",
         "memory.features.personaStrictAddressing.hint": "On: when a session's identity has no persona card — or that card is switched off — no persona is injected, so the default card only covers sessions with no resolvable identity. Turn this on when the host runs a bot that brings its own identity (DS Bot and friends), otherwise two \"you are ...\" claims land in the same turn. Off (default): unresolved identities fall back to the default card, as before.",
+        "memory.features.profileExtractEnabled": "Profile draft from memory",
+        "memory.features.profileExtractEnabled.hint": "Adds the \"Draft from memory\" button to Settings → Personalization → profile: reads a batch of active memories, spends one model call, and returns an \"as the assistant sees them\" draft. Nothing is written until you press Apply, so your hand-written profile is never overwritten automatically. Off in the lightweight preset (an explicit choice still wins).",
         "memory.settings.rules": "Rules",
         "memory.settings.rulesHint": "Rules the agent must follow — add or remove anytime, effective next turn.",
         "memory.settings.ruleAdd": "Add Rule",
@@ -2982,7 +3008,7 @@ window.__ModuleLoader__.load({
         // 人格定义页（beta）：注入总闸。分组随 enhance（行为开关，非座位闸门）；
         // 人格内容在设置页「个性化」区的人格卡。
         // 严格寻址是同一条链上的第二个口径开关（只在总闸打开时起作用）。
-        "personaEnabled", "personaStrictAddressing"] },
+        "personaEnabled", "personaStrictAddressing", "profileExtractEnabled"] },
       { key: "group.dream", items: ["sleepModeEnabled"] },
       // v0.8.0 A4（issue #17）：作用域隔离组——标注总开关 + 严格硬过滤。
       { key: "group.scope", items: ["scopeEnabled", "strictScope"] }
@@ -3523,6 +3549,10 @@ window.__ModuleLoader__.load({
       const [newRule, setNewRule] = react.useState("");
       const [newCmd, setNewCmd] = react.useState({ name: "", description: "", instruction: "" });
       const [saved, setSaved] = react.useState(false);
+      // 画像提取草稿（#497）：null = 没有结果；否则带 kind 的一次性结果，四种结局各一句
+      // 话——把「没启用」「库里没东西」「模型没配合」压成同一句「没有草稿」，用户就只能瞎猜。
+      const [profileDraft, setProfileDraft] = react.useState(null);
+      const [profileExtracting, setProfileExtracting] = react.useState(false);
       const [cmdError, setCmdError] = react.useState("");
       // 人格卡（beta，v1.2 多卡）：default 卡草稿 + byAgent 卡列表 + 当前编辑位；
       // provenance 是 v1.5 协作式人格的预留位，v1 只透传不编辑。
@@ -3712,17 +3742,58 @@ window.__ModuleLoader__.load({
         return () => { cancelled = true; };
       }, []);
 
-      async function saveProfile() {
+      async function saveProfile(next = profile) {
         try {
           await apiFetch("/api/dsh-mneme/profile", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ profile })
+            body: JSON.stringify({ profile: next })
           });
           setSaved(true);
           announce(t("memory.settings.profileSaved"));
           setTimeout(() => setSaved(false), 1500);
         } catch { /* ignore */ }
+      }
+
+      // 画像提取：一次宿主 LLM 调用，只在用户点按钮时发生。开关没开时后端直接回
+      // 409，这里显示「未启用」而不是转圈后什么也没有——那会被读成按钮坏了。
+      async function extractProfileDraft() {
+        setProfileExtracting(true);
+        setProfileDraft(null);
+        try {
+          const res = await apiFetch("/api/dsh-mneme/profile/extract", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}"
+          });
+          const body = await res.json().catch(() => null);
+          if (res.ok && typeof body?.draft === "string" && body.draft.trim()) {
+            setProfileDraft({
+              kind: "draft",
+              text: body.draft,
+              rowsUsed: Number.isInteger(body.rowsUsed) ? body.rowsUsed : 0,
+              truncated: body.truncated === true
+            });
+            return;
+          }
+          const error = body && typeof body.error === "string" ? body.error : "";
+          setProfileDraft({ kind: error === "disabled" ? "disabled" : error === "no-input" ? "empty" : "failed" });
+        } catch {
+          setProfileDraft({ kind: "failed" });
+        } finally {
+          setProfileExtracting(false);
+        }
+      }
+
+      // 采用草稿 = 显式写画像。必须把草稿文本直接交给保存，不能 setProfile(draft) 之后
+      // 再调保存：后者读的是这次渲染里的旧 profile 闭包值，会存回旧文本，表现成
+      // 「点了采用却没生效」——正是最难查的那类。
+      async function applyProfileDraft() {
+        if (profileDraft?.kind !== "draft") return;
+        const text = profileDraft.text;
+        setProfile(text);
+        setProfileDraft(null);
+        await saveProfile(text);
       }
 
       // 人格卡保存（v1.2 多卡）：全量多卡形 PUT（{default, byAgent}，后端全量
@@ -3978,9 +4049,36 @@ window.__ModuleLoader__.load({
             onChange: (e) => setProfile(e.target.value)
           }),
           h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
-            h("button", { className: "mneme-btn", onClick: saveProfile }, t("memory.settings.profileSave")),
+            h("button", { className: "mneme-btn", onClick: () => saveProfile() }, t("memory.settings.profileSave")),
             saved && h("span", { className: "mneme-saved" }, t("memory.settings.profileSaved"))
-          )
+          ),
+          // 从记忆提取草稿（#497）。两种结局都要显眼：草稿（要用户点「采用」才落库）
+          // 与失败原因（开关没开 / 没内容可提 / 模型没配合）。手写的原文在这之上一直
+          // 可见——采用前它不会被任何东西覆盖。
+          h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 8 } },
+            h("button", {
+              type: "button",
+              className: "mneme-btn",
+              disabled: profileExtracting,
+              onClick: extractProfileDraft
+            }, t("memory.settings.profileExtract")),
+            profileExtracting ? h("span", { className: "mneme-saved" }, t("memory.settings.profileExtracting")) : null
+          ),
+          h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractHint")),
+          profileDraft?.kind === "disabled" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractDisabled")) : null,
+          profileDraft?.kind === "empty" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractEmpty")) : null,
+          profileDraft?.kind === "failed" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractFailed")) : null,
+          profileDraft?.kind === "draft" ? h("div", null,
+            h("div", { className: "mneme-featnumlabel" }, t("memory.settings.profileDraftTitle")),
+            h("div", { className: "mneme-set-desc" },
+              t("memory.settings.profileDraftRows") + ": " + profileDraft.rowsUsed
+              + (profileDraft.truncated ? " · " + t("memory.settings.profileDraftTruncated") : "")),
+            h("pre", { className: "mneme-set-input mneme-set-input--area", style: { whiteSpace: "pre-wrap", minHeight: 0 } }, profileDraft.text),
+            h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 6 } },
+              h("button", { type: "button", className: "mneme-btn", onClick: applyProfileDraft }, t("memory.settings.profileDraftApply")),
+              h("button", { type: "button", className: "mneme-btn", onClick: () => setProfileDraft(null) }, t("memory.settings.profileDraftDiscard"))
+            )
+          ) : null
         ),
         // 人格卡（beta，v1.2 多卡）— who the agent is：多张角色卡按会话身份注入。
         // 卡内开关只是该卡 enabled 半边；总闸 personaEnabled 在功能开关组，双闸同真。

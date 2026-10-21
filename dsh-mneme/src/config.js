@@ -956,7 +956,17 @@ export const Config = z.object({
   // 默认关是因为这是一次口径变更：老用户升级后注入文本不许静默变化。
   // 不进 LIGHT_MODE_OFF：它只是取卡时的一个分支，不引入常驻文本、也不引入后台路径，
   // 且它本身只在 personaEnabled 打开时才起作用（同 scopeState 的定性）。
-  personaStrictAddressing: z.boolean().default(false)
+  personaStrictAddressing: z.boolean().default(false),
+
+  // Issue #497：从活跃记忆反向提取「助手眼中的用户」画像**草稿**（POST
+  // /api/dsh-mneme/profile/extract）。默认关有三层理由：① 它每次点一次就是一次 LLM
+  // 调用并读上百行记忆，成本与 dream/summarize 同级，不该在没人要求时挂在面上；
+  // ② 产物会被用户当成「关于我的第一版画像」读，编造的代价不对称——所以空库直接报错、
+  // 解析失败也报错，绝不回空草稿；③ 它**不写** user_settings，采用草稿是面板里另一次
+  // 显式保存，画像正文必须是用户手写的原文，不给模型改写权。
+  // 进 LIGHT_MODE_OFF：一次调用要读上百行记忆 + 一轮模型生成，与低资源档互斥（同
+  // preInjectGate.enabled 的定性）；是预设不是强制，用户显式勾选仍然赢。
+  profileExtractEnabled: z.boolean().default(false)
 });
 
 // Fields forced to false by the light-mode preset. Everything not listed here
@@ -1012,6 +1022,10 @@ const LIGHT_MODE_OFF = [
   // 是「小模型 / 小上下文 / 少常驻路径」，这与一个每事件都过一遍的监听器相冲突。
   // 默认关，这里只是轻量预设再确认一次；用户显式勾选仍然赢（合并顺序同上面两条）。
   "actionRunEnabled",
+  // #497：轻量档不开画像提取——一次调用要读上百行记忆再生成一段画像，与低资源档
+  // 互斥（同 preInjectGate.enabled 的定性）。默认关，这里只是预设再确认一次；
+  // 用户显式勾选仍然赢（合并顺序同 continuityRescueEnabled）。
+  "profileExtractEnabled",
   // M.O. 自动沉淀：同样挂在 session/event 热路径上，而且解压会话日志是同步 I/O。
   // 轻量档的取向（小模型 / 小上下文 / 少常驻路径）与它直接冲突，预设里关掉；
   // 用户显式勾选仍然赢（合并顺序同上面几条）。

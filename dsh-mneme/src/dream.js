@@ -10,7 +10,7 @@ import { scopeKeyOf } from "./scope.js";
 import { isInPeakWindow, nextOffPeakAt } from "./peak-hours.js";
 import { createHash, randomUUID } from "node:crypto";
 import { STR, langOf } from "./lang.js";
-export { validateDecisions, applyDecisions, withEffortFallback, withMaxTokensFallback, parseMaxTokensCap, describeStreamFailure, resolveDreamEffort, resolveRoute };
+export { validateDecisions, applyDecisions, withEffortFallback, withMaxTokensFallback, parseMaxTokensCap, describeStreamFailure, resolveDreamEffort, resolveRoute, streamText, runAuditedLlm };
 
 // Extract the first JSON array from LLM output, tolerating markdown fences,
 // leading/trailing prose, and common wrapper noise. Returns an array or null.

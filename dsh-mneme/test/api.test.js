@@ -753,7 +753,8 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // issue #231 第二批新增 organizeEnabled（memory_organize 的暴露闸；顶层扁平键，
   // 不需要 NESTED_FLAG_PATHS 条目）= 104。
   // 人格寻址口径新增 personaStrictAddressing（顶层扁平键，同上）= 105。
-  assert.equal(Object.keys(data.effective).length, 105);
+  // issue #497 新增 profileExtractEnabled（画像提取草稿；顶层扁平键，同上）= 106。
+  assert.equal(Object.keys(data.effective).length, 106);
   assert.equal(data.effective.dreamSkipInvalid, true);
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, true);
@@ -800,6 +801,8 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   assert.equal(data.effective.personaEnabled, false);
   // 人格寻址口径：默认关 = 历史兜底行为不变（升级后不许有人格静默消失或新增）。
   assert.equal(data.effective.personaStrictAddressing, false);
+  // 画像提取默认关：面板按钮在用户没开启前不该偷偷花一次 LLM 调用。
+  assert.equal(data.effective.profileExtractEnabled, false);
   // v0.9.3：M.O. 自动沉淀的第三个键。与 actionPipelineEnabled（看图）、
   // actionRunEnabled（记账）都不是一件事——它挂 session/event 并解压会话日志，
   // 是三者里最重的一条，所以独立开关、默认关、且进 LIGHT_MODE_OFF。

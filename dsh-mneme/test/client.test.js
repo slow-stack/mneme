@@ -2210,3 +2210,41 @@ test("update-check status names match the backend classify contract verbatim", (
   assert.ok(apiSource.includes('path: "/api/dsh-mneme/version-check"'),
     "the backend must register the version-check route");
 });
+
+// 画像提取草稿（#497）面板面：路由对齐、四种结局各有自己的话、以及「采用」必须把草稿
+// 文本直接交给保存。最后一条防的是一个具体陷阱——保存函数带默认参数时，把函数本身当
+// onClick 处理器会把 click 事件当成要存的文本存进去。
+test("profile extraction ships its button, distinct outcomes and correct save wiring", () => {
+  const apiSource = readFileSync(join(root, "src/api.js"), "utf8");
+  assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/profile/extract"'),
+    "the panel must call the extract route");
+  assert.ok(apiSource.includes('path: "/api/dsh-mneme/profile/extract"'),
+    "the backend must register the extract route");
+
+  // 四种结局（成功草稿 / 未启用 / 没有可用记忆 / 模型没配合）必须各有一句人话：
+  // 压成一句「没有草稿」就等于让用户自己猜是坏了还是本来就没东西。
+  for (const key of [
+    "memory.settings.profileExtract",
+    "memory.settings.profileExtracting",
+    "memory.settings.profileExtractHint",
+    "memory.settings.profileExtractDisabled",
+    "memory.settings.profileExtractEmpty",
+    "memory.settings.profileExtractFailed",
+    "memory.settings.profileDraftTitle",
+    "memory.settings.profileDraftRows",
+    "memory.settings.profileDraftTruncated",
+    "memory.settings.profileDraftApply",
+    "memory.settings.profileDraftDiscard",
+    "memory.features.profileExtractEnabled",
+    "memory.features.profileExtractEnabled.hint"
+  ]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  assert.ok(/group\.enhance[\s\S]{0,700}"profileExtractEnabled"/.test(clientSource),
+    "FEATURE_GROUPS group.enhance must carry profileExtractEnabled");
+
+  // 采用草稿：显式传文本；保存按钮也不能把 click 事件当参数传进去。
+  assert.ok(clientSource.includes("await saveProfile(text)"), "applying a draft must pass the draft text to the saver");
+  assert.ok(!clientSource.includes("onClick: saveProfile }"), "the save button must not receive the click event as its value argument");
+});

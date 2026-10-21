@@ -236,7 +236,10 @@ const FEATURE_FLAG_BOOLEANS = [
   "personaEnabled",
   // 人格寻址口径（上一条打开时才有意义）：开 = 身份没建卡/卡被关时不注入人格，
   // default 只兜解析不到身份的会话。默认关（历史行为，升级零变化）。
-  "personaStrictAddressing"
+  "personaStrictAddressing",
+  // Issue #497：画像提取草稿（POST /profile/extract）。默认关——每次调用一次 LLM 且
+  // 读上百行记忆；产物只回草稿，绝不写 user_settings。进 LIGHT_MODE_OFF（预设关）。
+  "profileExtractEnabled"
 ];
 // 整数开关的闭区间，与 config.js 里 z.natural().min().max() 对齐。
 const FEATURE_FLAG_INT_RANGES = {

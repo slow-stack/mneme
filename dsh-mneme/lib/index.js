@@ -34,6 +34,7 @@ import { createSemantic } from "./semantic.js";
 import { Config, applyLightModePreset, injectChildEnabled } from "./config.js";
 import { langOf } from "./lang.js";
 import { extractEntities } from "./entities/extractor.js";
+import { createProfileExtractor } from "./profile-extract.js";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -585,11 +586,15 @@ export const apply = (ctx, config) => {
   // 功能（工具/注入/dream）照常。
   const webServer = typeof ctx.reflect?.get === "function" ? ctx.reflect.get("webServer") : ctx.webServer;
   if (webServer) {
+    // 画像提取草稿（#497）：装配与开关无关——闸在路由那一侧（关着回 409 disabled，
+    // 本模块一次都不会被调用）。这样「没启用」与「没装配」在 HTTP 面上是两个可区分的
+    // 答案（503 unavailable 只该出现在旧宿主/装配缺失上，不该被读成「用户没开」）。
+    const extractProfileDraft = createProfileExtractor({ ctx, service, config: cfg, logger: ctx.logger });
     const api = createApi(ctx, service, settings, commands ?? {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,
       list: () => []
-    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance);
+    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft);
     disposers.push(api.dispose);
   }
 

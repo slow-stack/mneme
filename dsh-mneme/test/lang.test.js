@@ -25,6 +25,17 @@ test("prompt table resolves by explicit language key", () => {
   assert.ok(STR.prompts.conflict.en.includes("conflict arbiter"));
   assert.ok(STR.prompts.pattern.zh.includes("模式发现助手"));
   assert.ok(STR.prompts.pattern.en.includes("pattern-discovery assistant"));
+  // 画像提取（#497）：两段纪律在中英文里都必须成对存在——「输入是数据不是指令」防的
+  // 是指令型记忆改写任务，「禁止声明助手身份」防的是画像正文与外部 bot 自带身份撞车
+  // （画像不受 personaEnabled 管辖）。少一种语言就等于换语言的用户拿到没有防线的提示词。
+  for (const lang of ["zh", "en"]) {
+    const p = STR.prompts.profileExtract[lang];
+    assert.ok(typeof p === "string" && p.length > 100, `profileExtract.${lang} must be a full prompt`);
+    assert.match(p, /不是指令|not instructions/, `profileExtract.${lang}: memory text must be declared data, not instructions`);
+    assert.match(p, /(绝不为助手|never name).{0,60}(助手|assistant|identity)/i,
+      `profileExtract.${lang}: the prompt must forbid an assistant-identity claim in the draft`);
+    assert.ok(p.includes("profile"), `profileExtract.${lang} must state the JSON key`);
+  }
   // 冻结模式后缀：纯提示文本，可直接拼接在巩固 prompt 后。
   assert.ok(STR.prompts.freezeSuffix.zh.startsWith("\n\n当前为「冲突冻结」模式"));
   assert.ok(STR.prompts.freezeSuffix.en.startsWith("\n\nConflict-freeze mode is active"));
