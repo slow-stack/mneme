@@ -521,6 +521,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             // 空草稿，面板就会把故障显示成「这次没提炼出东西」（#493 同一条教训）。
             const code = typeof error?.code === "string" ? error.code : "";
             if (code === "no-input") return sendJson(res, 409, { error: code });
+            // 没配模型是「环境缺东西」，与「模型不配合」两码：前者重跑也一样，后者可重试。
+            if (code === "no-route") return sendJson(res, 503, { error: code });
             if (code === "unparseable" || code === "stream-failed") return sendJson(res, 502, { error: code });
             ctx.logger?.warn?.(`dsh-mneme: profile extract failed: ${String(error?.message ?? error)}`);
             return sendJson(res, 500, { error: "internal" });

@@ -2229,7 +2229,9 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
     "memory.settings.profileExtractHint",
     "memory.settings.profileExtractDisabled",
     "memory.settings.profileExtractEmpty",
+    "memory.settings.profileExtractNoRoute",
     "memory.settings.profileExtractFailed",
+    "memory.settings.profileSaveFailed",
     "memory.settings.profileDraftTitle",
     "memory.settings.profileDraftRows",
     "memory.settings.profileDraftTruncated",
@@ -2245,6 +2247,13 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
     "FEATURE_GROUPS group.enhance must carry profileExtractEnabled");
 
   // 采用草稿：显式传文本；保存按钮也不能把 click 事件当参数传进去。
-  assert.ok(clientSource.includes("await saveProfile(text)"), "applying a draft must pass the draft text to the saver");
+  assert.ok(clientSource.includes("if (await saveProfile(text))"), "applying a draft must commit state only after a verified save");
   assert.ok(!clientSource.includes("onClick: saveProfile }"), "the save button must not receive the click event as its value argument");
+  // apiFetch 是 fetch 的薄壳：非 2xx 不抛。画像这条以前没判 res.ok（同页的 persona
+  // 一直判），于是服务端 403/413 时界面照样闪「画像已保存」。
+  const profileSaver = clientSource.slice(clientSource.indexOf("async function saveProfile("));
+  assert.ok(profileSaver.slice(0, 900).includes('if (!res.ok) throw new Error("HTTP "'),
+    "the profile saver must verify the response status before reporting success");
+  // 没配模型是一句可行动的话（先去选模型），不能和「模型没按格式回」共用一条文案。
+  assert.ok(clientSource.includes('"no-route" ? "noroute"'), "no-route must map to its own panel outcome, not the generic failure");
 });

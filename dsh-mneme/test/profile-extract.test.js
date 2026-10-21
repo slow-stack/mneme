@@ -39,7 +39,8 @@ const okJson = (profile) => [
   { type: "finish", reason: { kind: "stop" } }
 ];
 
-function setup(chunks, config = {}) {
+function setup(chunks, opts = {}) {
+  const { config = {}, dropRoute = false } = opts;
   const store = createStore(":memory:");
   const service = createService({ store, mirror: null, config });
   const settings = createSettings(store.db);
@@ -49,7 +50,7 @@ function setup(chunks, config = {}) {
     ctx: { ...fake, agentDefaultModel: { currentSelection: () => null } },
     service,
     settings,
-    config: { dreamProvider: "fake", dreamModel: "m1", ...config },
+    config: dropRoute ? { ...config } : { dreamProvider: "fake", dreamModel: "m1", ...config },
     logger
   });
   return { store, service, settings, extractor, fake, logger };
@@ -60,6 +61,17 @@ function seedRows(store, n, over = {}) {
     store.save({ type: "project", title: `行 ${i}`, content: `第 ${i} 行的正文`, source: "test", ...over });
   }
 }
+
+test("没有可用的模型路由：抛 no-route，且一次调用都不发（不是 TypeError→500）", async () => {
+  // resolveRoute 在「无 dreamProvider/dreamModel 且宿主解析不到默认模型」时回
+  // undefined。不判它就会去读 route.provider —— TypeError 落到路由上是一个语义为
+  // 「内部错误」的 500，而该说的是「先去选模型」。
+  const { store, extractor, fake } = setup(okJson("不该发生"), { dropRoute: true });
+  seedRows(store, 2);
+  await assert.rejects(() => extractor(), (err) => err instanceof ProfileExtractError && err.code === "no-route");
+  assert.equal(fake.calls.length, 0, "没有路由就不该把请求发出去");
+  store.close();
+});
 
 test("成功路径：出草稿、留一条审计行，而库里的画像逐字节没被动过", async () => {
   const { store, service, settings, extractor } = setup(okJson("我知道她跨考公共管理。"));
@@ -243,7 +255,7 @@ test("开关开着：200 回草稿，且库里的画像一个字节都没变", a
 });
 
 test("提取器报的 code 映射成可区分的状态码（「没东西可提」≠「模型没配合」）", async () => {
-  for (const [code, status] of [["no-input", 409], ["unparseable", 502], ["stream-failed", 502]]) {
+  for (const [code, status] of [["no-input", 409], ["no-route", 503], ["unparseable", 502], ["stream-failed", 502]]) {
     const { store, route } = setupApi({
       config: { profileExtractEnabled: true },
       extractor: async () => { throw new ProfileExtractError(code, code); }

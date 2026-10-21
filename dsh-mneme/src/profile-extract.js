@@ -105,6 +105,13 @@ export function createProfileExtractor({ ctx, service, config, logger }) {
       throw new ProfileExtractError("no-input", "no active memories to extract a profile from");
     }
     const route = resolveRoute(ctx, config, log);
+    // resolveRoute 在「没有 dreamProvider/dreamModel、宿主也没有可解析的默认模型」时
+    // 返回 undefined。不判它就会被读成 `Cannot read properties of undefined` 抛出
+    // TypeError，落到路由上是一个语义为「内部错误」的 500——而真正该说的是「没配模型」，
+    // 面板要能给出「先去选模型」这句可行动的话（同 no-input 的取舍：不同结局不同话）。
+    if (!route) {
+      throw new ProfileExtractError("no-route", "no model route: set dreamProvider/dreamModel or pick an agent default model");
+    }
     const listing = rows.map((r, i) => `${i + 1}. [${r.type}] ${r.title} :: ${r.content}`).join("\n");
     const userText = [
       STR.profileFenceOpen[language],

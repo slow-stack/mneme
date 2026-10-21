@@ -286,6 +286,8 @@ window.__ModuleLoader__.load({
         "memory.settings.profileExtractHint": "会花一次模型调用，只在你点这个按钮时发生；提取出来的是草稿，不采用就不进库，你手写的画像也不会被覆盖。",
         "memory.settings.profileExtractDisabled": "没有提取：功能开关里的「画像提取草稿」还没打开。",
         "memory.settings.profileExtractEmpty": "库里没有可用的记忆条目，这次没有能提炼的内容（空输入下硬写一段画像只会是编的）。",
+        "memory.settings.profileExtractNoRoute": "没有可用的模型：先在宿主里选一个默认模型（或在配置里填 dreamProvider / dreamModel），再点一次。",
+        "memory.settings.profileSaveFailed": "画像没存进去",
         "memory.settings.profileExtractFailed": "提取没成：模型没按格式返回，或这次调用失败了。你现有的画像一个字都没被改动。",
         "memory.settings.profileDraftTitle": "草稿（还没保存）",
         "memory.settings.profileDraftRows": "依据记忆条数",
@@ -1002,6 +1004,8 @@ window.__ModuleLoader__.load({
         "memory.settings.profileExtractHint": "Costs one model call, and only when you press this button. The result is a draft: nothing is stored until you apply it, and your hand-written profile is never overwritten.",
         "memory.settings.profileExtractDisabled": "Nothing extracted: the “Profile draft from memory” feature switch is still off.",
         "memory.settings.profileExtractEmpty": "No usable memory entries in the store, so there was nothing to draft from (writing a profile out of an empty input would only be invention).",
+        "memory.settings.profileExtractNoRoute": "No model available: pick a default model in the host (or set dreamProvider / dreamModel), then try again.",
+        "memory.settings.profileSaveFailed": "Profile was not saved",
         "memory.settings.profileExtractFailed": "Extraction failed: the model did not return the required shape, or the call errored. Your existing profile is untouched.",
         "memory.settings.profileDraftTitle": "Draft (not saved)",
         "memory.settings.profileDraftRows": "Based on entries",
@@ -3553,6 +3557,8 @@ window.__ModuleLoader__.load({
       // 话——把「没启用」「库里没东西」「模型没配合」压成同一句「没有草稿」，用户就只能瞎猜。
       const [profileDraft, setProfileDraft] = react.useState(null);
       const [profileExtracting, setProfileExtracting] = react.useState(false);
+      // 保存失败要可见（persona 那条一直有，画像这条以前是静默 catch）。
+      const [profileError, setProfileError] = react.useState("");
       const [cmdError, setCmdError] = react.useState("");
       // 人格卡（beta，v1.2 多卡）：default 卡草稿 + byAgent 卡列表 + 当前编辑位；
       // provenance 是 v1.5 协作式人格的预留位，v1 只透传不编辑。
@@ -3742,17 +3748,27 @@ window.__ModuleLoader__.load({
         return () => { cancelled = true; };
       }, []);
 
+      // 返回「是否真的存下了」。apiFetch 只是 fetch 的薄壳，非 2xx 不会抛——同页的
+      // savePersonaCards 一直判 `res.ok`，画像这条一直没判，于是服务端 403/413 时界面
+      // 照样闪「画像已保存」（评审实测的同类洞，这次一起收）。
       async function saveProfile(next = profile) {
         try {
-          await apiFetch("/api/dsh-mneme/profile", {
+          const res = await apiFetch("/api/dsh-mneme/profile", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ profile: next })
           });
+          if (!res.ok) throw new Error("HTTP " + res.status);
           setSaved(true);
+          setProfileError("");
           announce(t("memory.settings.profileSaved"));
           setTimeout(() => setSaved(false), 1500);
-        } catch { /* ignore */ }
+          return true;
+        } catch (err) {
+          setProfileError((err && err.message) || "failed");
+          setTimeout(() => setProfileError(""), 4000);
+          return false;
+        }
       }
 
       // 画像提取：一次宿主 LLM 调用，只在用户点按钮时发生。开关没开时后端直接回
@@ -3777,7 +3793,13 @@ window.__ModuleLoader__.load({
             return;
           }
           const error = body && typeof body.error === "string" ? body.error : "";
-          setProfileDraft({ kind: error === "disabled" ? "disabled" : error === "no-input" ? "empty" : "failed" });
+          // 五种结局各一句话：没启用 / 库里没内容 / 没配模型 / 模型不配合或调用失败 /
+          // 成功草稿。压在一起就是把「环境缺东西」报成「这次没提炼出东西」。
+          const kind = error === "disabled" ? "disabled"
+            : error === "no-input" ? "empty"
+            : error === "no-route" ? "noroute"
+            : "failed";
+          setProfileDraft({ kind });
         } catch {
           setProfileDraft({ kind: "failed" });
         } finally {
@@ -3785,15 +3807,17 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // 采用草稿 = 显式写画像。必须把草稿文本直接交给保存，不能 setProfile(draft) 之后
-      // 再调保存：后者读的是这次渲染里的旧 profile 闭包值，会存回旧文本，表现成
-      // 「点了采用却没生效」——正是最难查的那类。
+      // 采用草稿 = 显式写画像。两件事都要对：把草稿文本直接交给保存（不能 setProfile
+      // 之后再调无参保存——那读的是这次渲染里的旧闭包值，会存回旧文本），以及**只有
+      // 真的存下了才提交界面状态**（否则一次 403 就留下「框里是草稿、库里是旧文、
+      // 草稿已被清掉」的三不像，关掉面板后彻底找不回来）。
       async function applyProfileDraft() {
         if (profileDraft?.kind !== "draft") return;
         const text = profileDraft.text;
-        setProfile(text);
-        setProfileDraft(null);
-        await saveProfile(text);
+        if (await saveProfile(text)) {
+          setProfile(text);
+          setProfileDraft(null);
+        }
       }
 
       // 人格卡保存（v1.2 多卡）：全量多卡形 PUT（{default, byAgent}，后端全量
@@ -4050,7 +4074,9 @@ window.__ModuleLoader__.load({
           }),
           h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
             h("button", { className: "mneme-btn", onClick: () => saveProfile() }, t("memory.settings.profileSave")),
-            saved && h("span", { className: "mneme-saved" }, t("memory.settings.profileSaved"))
+            saved && h("span", { className: "mneme-saved" }, t("memory.settings.profileSaved")),
+            profileError ? h("span", { className: "mneme-saved", style: { color: "var(--dsw-danger, #d33)" } },
+              t("memory.settings.profileSaveFailed") + " (" + profileError + ")") : null
           ),
           // 从记忆提取草稿（#497）。两种结局都要显眼：草稿（要用户点「采用」才落库）
           // 与失败原因（开关没开 / 没内容可提 / 模型没配合）。手写的原文在这之上一直
@@ -4067,6 +4093,7 @@ window.__ModuleLoader__.load({
           h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractHint")),
           profileDraft?.kind === "disabled" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractDisabled")) : null,
           profileDraft?.kind === "empty" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractEmpty")) : null,
+          profileDraft?.kind === "noroute" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractNoRoute")) : null,
           profileDraft?.kind === "failed" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractFailed")) : null,
           profileDraft?.kind === "draft" ? h("div", null,
             h("div", { className: "mneme-featnumlabel" }, t("memory.settings.profileDraftTitle")),
