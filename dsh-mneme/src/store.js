@@ -1645,6 +1645,30 @@ export function createStore(path) {
     return rows.map(toRow);
   }
 
+  // Issue #505：写路径的去重候选必须「按同标题定向取」，不能「按 importance 取
+  // 前 N 条」。后者是「该类型最重要的 100 行」，与「找出同标题的那一行」无关：
+  // 某类型里 importance 高于待写行的行数一旦超过窗口，同标题行与待写行双双落在
+  // 窗口外，saveWithDedupe 的 find 恒不命中，于是静默走创建分支——不报错、不告
+  // 警，合并语义随库增长而失效（报告实测 1047 行类型、importance=5 有 180 行时
+  // 稳定复现）。
+  //
+  // 口径刻意与 saveWithDedupe 的比较式对齐：那边用 m.title.trim() 比
+  // String(memory.title).trim()，而 title 入库时并不 trim（见 save() 的
+  // `memory.title` 直写）⇒ 这里必须 TRIM(title)，否则存量里带首尾空白的标题
+  // 会被精确匹配漏掉，退回同一种静默降级。
+  //
+  // archived/forgotten 的过滤与 list() 默认口径一致（两者都为 0）：合并目标必须
+  // 是活跃行，否则会把内容并进一条已经归档/遗忘的记忆里。
+  // 无 LIMIT：同 (type, title) 的活跃行本就极少，加窗口等于把 #505 重新引进来。
+  function activeByTypeAndTitle(type, title) {
+    const rows = db.prepare(
+      `SELECT ${memoryColumnList} FROM memories
+        WHERE type = ? AND TRIM(title) = ?
+          AND forgotten = 0 AND archived = 0`
+    ).all(type, String(title ?? "").trim());
+    return rows.map(toRow);
+  }
+
   // Issue #430：写路径要的「最近若干条正文」。质量过滤的近重复判定只读 content
   // 这一列 + 前 20 行，此前写成 all().slice(0, 20) —— 全表逐行 toRow（27 字段、
   // 三次 JSON 解析）之后只截前 20 条正文；5k 行实测 100ms 级 → 0.06ms 级。
@@ -3355,6 +3379,9 @@ export function createStore(path) {
     getUnrecalledSince,
     list,
     all,
+    // Issue #505：写路径去重的定向候选（按 type + TRIM(title) 精确取活跃行），
+    // 替代「importance 前 N 条」那个会随库增长失效的窗口。
+    activeByTypeAndTitle,
     // #430：有界单列读，写路径（质量过滤）用。
     recentContents,
     search,
