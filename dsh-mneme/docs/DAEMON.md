@@ -6,14 +6,15 @@
 
 daemon 是**数据面**,不是第二个宿主:
 
-- **有**:存储(SQLite)、检索(关键词 + BM25 + 向量,`/search` 统一召回,与宿主共用 `src/semantic.js` 同一套装配)、注入候选(`/context`,issue #370,与宿主注入管线同一份 `injectCandidates`)、镜像同步与人改合并、`/maintenance/reclaim`、`/bootstrap`、recall_runs 检索/注入回执。
+- **有**:存储(SQLite)、检索(关键词 + BM25 + 向量,`/search` 统一召回,与宿主共用 `src/semantic.js` 同一套装配)、注入候选(`/context`,issue #370,与宿主注入管线同一份 `injectCandidates`)、镜像同步与人改合并、`/maintenance/reclaim`、`/share`(记忆分享包,纯读,见 [SHARE.md](SHARE.md))、`/receive` 与 `/receive/undo`(吃包入库与整包退出,车道 C;写的是**本机自己的库**,与 `/share` 同一条 4 MiB 入站上限)、`/bootstrap`、recall_runs 检索/注入回执。
 - **没有(第一期,无 LLM)**:巩固(autoDream)、蒸馏(autoSummarize)、实体抽取、sleep、注入/工具/面板路由。前两者是**结构性缺失**而非开关——daemon 装配里没有 LLM 句柄,巩固只属于 DSH 宿主进程。这就是 daemon 与宿主「单写者」的机械保证(AGENTS.md externalApi/autoDream 单侧纪律的 daemon 版),不依赖用户自觉。
+- **收包在 daemon 上付的是什么**:一个事务里逐条先查 `share_external_id` 再 `store.save`,嵌入随最外层 COMMIT 排空(`--embed local` 时真打向量,`off` 时只落结构),镜像重渲染照 daemon 自己那条回灌路走。**实体一个都不建**——不是 daemon 缺 LLM 才不建,车道 C 对外来行本来就不做抽取(有向量、无实体,实体与图检索看不见它们),宿主侧同样如此。成本的量级读数见 [SHARE.md](SHARE.md)「收侧」那一节实测。
 
 与宿主装配(`src/index.js` apply)的关系:`src/serve.js` 只搬数据面那一半,每步注释锚定 index.js 来源行号;刻意不抽公共装配函数(apply 其余环节与宿主 ctx 纠缠,防御段纪律「最后动或不动」)。装配漂移风险由 `test/serve-bin.test.js` 的多进程共存用例兜底(两进程真开同一个库互写互读)。
 
 ## 2. 对外接口
 
-路由面 = `src/api-standalone.js` 全表(health/status/profile/rules/memories 读写/search/context/maintenance/bootstrap),鉴权同源(Bearer + timingSafeEqual,`GET /health` 免鉴权)。daemon 自身零新路由;#370 的 `/context` 落在 api-standalone 工厂里,宿主外部访问与 daemon 自动同享(参数、scope 语义与 recall_runs 注入分账见包 README 路由表)。daemon 侧唯一自有选项是 `strictPort`(见 §4)。
+路由面 = `src/api-standalone.js` 全表(health/status/profile/rules/memories 读写/search/context/share/receive(含 `/receive/undo`)/maintenance/bootstrap),鉴权同源(Bearer + timingSafeEqual,`GET /health` 免鉴权)。daemon 自身零新路由;#370 的 `/context` 落在 api-standalone 工厂里,宿主外部访问与 daemon 自动同享(参数、scope 语义与 recall_runs 注入分账见包 README 路由表)。daemon 侧唯一自有选项是 `strictPort`(见 §4)。
 
 CLI:
 

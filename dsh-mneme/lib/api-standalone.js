@@ -15,10 +15,12 @@
 // the operator's explicit responsibility (documented in README).
 import { createServer } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { homedir } from "node:os";
 import { TYPES } from "./store.js";
 import { bootstrapFromDirectory } from "./bootstrap.js";
 import { PACKAGE_VERSION } from "./version-check.js";
 import { parseReclaimJson, readReclaimFields, reclaimReply, RECLAIM_UNAVAILABLE } from "./reclaim-http.js";
+import { parseShareBody, shareReply, parseReceiveBody, receiveReply, parseUndoBody, undoReply } from "./share-http.js";
 
 const DEFAULT_PORT = 8790;
 const DEFAULT_HOST = "127.0.0.1";
@@ -578,6 +580,84 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
           });
           sendJson(res, status, body);
         });
+        return;
+      }
+
+      // --- POST /share: 分享包（spec §4）--------------------------------------
+      // 判据一条都不在这里：哪些行进包、超没超限、抛错回什么码，全在 share-http.js
+      // 那份共用实现里（#411 的口径——两张皮只许差在鉴权与路径）。本侧独有的只有
+      // 鉴权（Bearer，除 GET /health 外没有例外）与「不出 Content-Disposition」：
+      // 下面的 sendJson 连 headers 参数都没有，CLI 拿 JSON 自己落盘。
+      //
+      // GET 回 405 而不是掉到末尾的 404，与面板那侧一致。这**故意**与上面的
+      // /maintenance/reclaim（GET → 404）不同：状态码差一次就是第三处差别，而两条
+      // 路由的「两张皮」约束比这份文件里邻居的写法更硬。
+      //
+      // .catch 不是装饰：shareReply 现在自己兜得住，但这条链上 readBody 之前之后的
+      // 任何一处抛错都没人接——本文件那个同步 try/catch 在 .then 的回调里已经退栈，
+      // 漏出去就是未处理拒绝、客户端一个字节都没收到（#410）。
+      if (pathname === "/share") {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "method-not-allowed" });
+          return;
+        }
+        void readBody(req, res).then((text) => {
+          if (text === null) return; // readBody 已经答过 413，再写一次就是双写响应
+          const parsed = parseShareBody(text);
+          if (!parsed.ok) {
+            sendJson(res, 400, { error: parsed.error });
+            return;
+          }
+          const out = shareReply({
+            service,
+            packageVersion: PACKAGE_VERSION,
+            homeDir: homedir(),
+            options: parsed.options,
+            warn: (msg) => logger?.warn?.(msg)
+          });
+          sendJson(res, out.status, out.body);
+        }).catch(() => sendJson(res, 500, { error: "internal" }));
+        return;
+      }
+
+      // --- POST /receive + POST /receive/undo: 分享包入库与整包退出（车道 C）-----
+      // 判据一条都不在这里：包体合格不合格住在 share.js 的闸门（由 service 的
+      // importSharePack 调），错误码 → 状态的映射与 dry_run 那一格住在 src/share-http.js
+      // 这份共用实现里——#411 的口径是两张皮只许差在鉴权与路径（面板那半见
+      // /api/dsh-mneme/receive）。本面独有的只有两件事：鉴权是这里唯一的 Bearer 一道门
+      // （没有 policy 名可用，除 GET /health 外人人都要带），以及 sendJson 连 headers
+      // 参数都没有，所以不出 Content-Disposition。
+      //
+      // 非 POST 一律 405，与面板逐字同款：这**故意**与上面的 /maintenance/reclaim 不同
+      // （那边掉到末尾 404）。状态码差一次就是第三处差别，而每条 receive 都还有个面板
+      // 双胞胎，一致性比照抄本文件的邻居更硬。
+      //
+      // void + .catch，不留外层 try 兜底：本文件那个 try 在 .then 的回调里早已退栈，
+      // 回调里抛出去就是没人接的 rejection、客户端一个字节都收不到（#410）。共用层
+      // 从不抛（连 warn 自己坏都被守卫吞掉），所以这里能被走到的只剩面自己写答复那一步。
+      // readBody 超限时会自己答 413 并把 text 解析成 null：那句 return 是必需的，少了
+      // 它就是在已发出的响应上再写一次。
+      if (pathname === "/receive" || pathname === "/receive/undo") {
+        const isUndo = pathname === "/receive/undo";
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "method-not-allowed" });
+          return;
+        }
+        void readBody(req, res).then((text) => {
+          if (text === null) return; // readBody 已经答过 413，再写一次就是双写响应
+          const parsed = isUndo ? parseUndoBody(text) : parseReceiveBody(text);
+          // 两个解析器都回 {ok:true,…}|{ok:false,error}，所以一处判断就够。别把它写成
+          // 「有 error 就 400」：那会把本面缺路径时该落的 404 与真正的坏 body 混成一种
+          // 答复，排查时看不出是哪一层没接上。
+          if (!parsed.ok) {
+            sendJson(res, 400, { error: parsed.error });
+            return;
+          }
+          const out = isUndo
+            ? undoReply({ service, packId: parsed.packId, dryRun: parsed.dryRun, warn: (msg) => logger?.warn?.(msg) })
+            : receiveReply({ service, pack: parsed.pack, dryRun: parsed.dryRun, warn: (msg) => logger?.warn?.(msg) });
+          sendJson(res, out.status, out.body);
+        }).catch(() => sendJson(res, 500, { error: "internal" }));
         return;
       }
 

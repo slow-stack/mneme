@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { isAbsolute, resolve, sep } from "node:path";
 import { scopeKeyOf } from "./scope.js";
 import { cosineSimilarity } from "./dream/clustering.js";
+import { isImportedRow } from "./memory-source.js";
 
 // C2 vector 档阈值（#164 拍板 0.92，与 findSessionDuplicate 的 vector 档同源）。
 // 刻意不做 24h 时间窗：那个窗是会话去重的「近邻界」（findSessionDuplicate 注释），
@@ -82,7 +83,7 @@ const ABSORB_EXEMPT_TYPES = new Set(["document", "summary"]);
  *
  * @returns {(payload: object, opts?: object) => Promise<object>}
  *   `{ action: "created"|"superseded", memory, superseded?, evidence_kept,
- *      evidence_dropped, evidence_archived, degraded }`
+ *      evidence_dropped, evidence_archived, evidence_skipped, degraded }`
  * @throws flag 关 / 路径非法或文件缺失 / title 或 summary 为空 / evidence 全部
  *   捏造 / 仅 vector 近重复（疑似重复外档，交 agent 裁决而不是静默二选一）。
  */
@@ -262,6 +263,10 @@ export function createDocumentRegistrar({ store, config, embedQuery, pushContent
       let superseded;
       const loser = explicitTarget ? store.getById(explicitTarget.id) : null;
       if (loser && !loser.archived) {
+        // 这里不挂 isImportedRow：loser 只会是 document 行（scopeMatched 全来自
+        // store.list({ type: "document" })），而 document 行永远不可能是外来行——
+        // 分享包格式排除 document，存储层的 document 只由 saveDocument 从这里铸造。
+        // 加谓词是空转，还会让下一个读者误以为 document 行有外来形态。
         store.update(loser.id, {
           content: `${loser.content}${supersededByPointer(created.id)}`,
           content_history: pushContentHistory(loser, "superseded")
@@ -276,18 +281,25 @@ export function createDocumentRegistrar({ store, config, embedQuery, pushContent
       // ABSORB_EXEMPT_TYPES）不吸收，吸收的是原子条；④只翻标志位、内容与审计全留
       // （可恢复），opt-out 走 archiveEvidence。
       // pinnedTypes 拿不到就不做这一步：宁可少做，也不能把保真池当普通行收走。
+      // 外来行不吸收（spec §15 一，车道 C8）：这条旁路不经任何 service.all() 行池，
+      // 车道 B 的九池静态锁看不见它；证据 id 由调用方给，循环里的 setArchived 是
+      // 机器发起的批量归档——正是「本库模型不改写别人的记忆」要禁的动作类。
+      // 引用本身照旧落库（文档合法地为它背书），只是不替别人撤下活跃面，
+      // 跳过条数走 evidence_skipped 报出来，不做静默跳过。
       let evidenceArchived = 0;
+      let evidenceSkipped = 0;
       if (archiveEvidence && pinnedTypes && typeof pinnedTypes.has === "function") {
         for (const id of kept) {
           // 事务内重读：期间被别的进程归档/遗忘的行不重复计数，也不误伤 pinned。
           const row = store.getById(id);
           if (!row || row.archived || row.forgotten) continue;
+          if (isImportedRow(row)) { evidenceSkipped += 1; continue; }
           if (pinnedTypes.has(row.type) || ABSORB_EXEMPT_TYPES.has(row.type)) continue;
           store.setArchived(id, true);
           evidenceArchived += 1;
         }
       }
-      return { created, superseded, evidenceArchived };
+      return { created, superseded, evidenceArchived, evidenceSkipped };
     });
     finalize(result.superseded ? [result.created, result.superseded] : [result.created]);
     return {
@@ -297,6 +309,7 @@ export function createDocumentRegistrar({ store, config, embedQuery, pushContent
       evidence_kept: kept.length,
       evidence_dropped: dropped.length,
       evidence_archived: result.evidenceArchived,
+      evidence_skipped: result.evidenceSkipped,
       degraded: dropped.length > 0
     };
   };

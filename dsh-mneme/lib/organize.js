@@ -30,6 +30,10 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { scopeKeyOf } from "./scope.js";
+// 比对池要先剔掉外来行：报告里的 item.match.id 既给出「命中」结论，也是 apply 的
+// archive 动作唯一许可的目标集（硬规则 3b），而 archive 直接 store.setArchived，
+// 不经 saveWithDedupe 那道闸门——留着外来行，整理接口就能替别人决定归档面。
+import { isImportedRow } from "./memory-source.js";
 import { cosineSimilarity } from "./dream/clustering.js";
 import { buildReceipt } from "./dream.js";
 
@@ -159,7 +163,7 @@ export function createOrganizer({ store, embedQuery, saveWithDedupe, transaction
       if (!rowsByScope.has(key)) {
         rowsByScope.set(
           key,
-          store.list({ type: candidate.type, limit: null }).filter((m) => !m.archived && scopeMatches(m, candidate))
+          store.list({ type: candidate.type, limit: null }).filter((m) => !isImportedRow(m) && !m.archived && scopeMatches(m, candidate))
         );
       }
       return rowsByScope.get(key);

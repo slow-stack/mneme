@@ -46,6 +46,8 @@ dsh-mneme 是 DSH 宿主的记忆插件（蒸馏 / 注入 / 检索 / 巩固 / sc
 | 整理与画像草稿 | `src/organize.js` + `src/profile-extract.js` | agent 主动整理（dryRun 比对报告 → agent 判断 → apply）与从记忆提取画像草稿（只回草稿，绝不写 `user_settings`）。整理里有两种「不要它」，别混：**`discard`** = 这条候选不写，任何东西都不动（只进回执）；**`archive`** = 把报告标为被取代的那条既有行归档——可恢复，绝不物理删除。两个入口都 opt-in 默认关（`organizeEnabled` / `profileExtractEnabled`） |
 | 蒸馏 | `src/summarize.js` + `src/quality-filter.js` | 会话 → 记忆；质量打分与处置（归档/降权） |
 | 巩固与睡眠 | `src/dream.js` + `src/dream/{decisions,clustering,sleep}.js` | LLM 巩固决策、dream_runs 审计回执 |
+| 外来行判据 | `src/memory-source.js` | 「本库不巩固别人导入的原文」这条契约的唯一实现（`isImportedRow`），挂在 saveWithDedupe 汇流口与巩固/睡眠/整理的九个行池上（[docs/SHARE.md](dsh-mneme/docs/SHARE.md)） |
+| 分享包（出与收） | `src/share.js` + `src/share-http.js` + `src/share-import.js` | 出包口径与入包闸门（`buildSharePack` / `validateSharePack`，一条不合格整包拒）、两张皮共用的解析与答复（`shareReply` / `receiveReply` / `undoReply` 各只有一份——**「两张皮只许剩鉴权与路径不同」这条纪律归 `share-http.js`**，它同时承诺「这一层从不抛」）、收侧入库与整包退出（一个事务、按 `share_external_id` 幂等、物删不归档）。面板三件（分享弹层 / 接收弹层 / 外来区筛选与整包退出）在 `lib/client.js`，出包口径、入包闸门、错误码→状态全在那里读、不在那里复述；唯一的例外是外来说的那个字面量 `"imported"`（独立 bundle 不能 `import src/memory-source.js`），它由 `test/client-share.test.js` 的跨文件镜像锁钉回 `IMPORTED_SOURCE` 那一份 |
 | 实体 | `src/entities/extractor.js`（存储侧在 store 三表） | 写入时 LLM 抽取实体/属性/关系 |
 | 检索辅助 | `src/search/{bm25,adaptive}.js`、`src/vector-index.js`、`src/embedding.js`、`src/local-embedder.js`、`src/reranker.js` | BM25 / 自适应阈值 / 向量索引 / 嵌入 / 重排 |
 | 热度 | `src/heat.js` | 纯函数遗忘曲线（opt-in） |

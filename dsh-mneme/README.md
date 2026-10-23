@@ -257,6 +257,8 @@ v0.3.0 起新增**记忆基因**层：从记忆里抽取**命名实体**、**带
 
 图谱 ↔ 记忆双向互跳：图谱详情侧的关联记忆可点击，记忆边的「来源记忆」按 memory_id 直跳三栏视图并自动定位。
 
+- **分享包三步（面板）**：「⋯」菜单里的**分享记忆包…**（报告先于下载：进包条数、同键折叠、六个跳过原因、可展开的跳过清单，超水位回 413 同屏）与**导入分享包…**（选文件 → 干跑预览将新建几条 / 撞名几条 → 确认才写库），外来行带 `from-<别名>` 徽标、工具条「外来」chip 按 `source=imported` 服务端筛、抽屉「收起这个包」两段式整包退出（先清点后物删）。口径与判据一条都不在面板里复述——出包在 `src/share.js`、入包闸门在 `src/share-import.js`、协议层在 `src/share-http.js`，细则与实测见 [docs/SHARE.md](docs/SHARE.md)
+
 ### 四路召回融合与会话热记忆 🔎（v0.5.0，v0.8.4 扩四路）
 
 - **BM25 稀疏第三路召回**（`src/search/bm25.js`）：与向量召回、FTS5/LIKE 关键词并列——ASCII 词元 + CJK bigram 分词、IDF 加权（归一化 [0,1]），专有名词 / ID / 代码片段等散词查询不再依赖子串命中。融合规则：未召回行按 `0.3×BM25分` 回填；仅向量召回行获得词法加分；LIKE 已命中行不叠分。`bm25SearchEnabled` 可关
@@ -504,7 +506,7 @@ dsh plugin --profile web add "C:/path/to/modusensus-dsh-mneme-0.9.0.tgz"
 | `conflictFreezeMaxPending` | `100` | 冲突冻结队列最大挂起数（1-1000）：超出后不再入队（防队列无限膨胀） |
 | `escapePromptVariables` | `true` | 注入文本花括号转义（v0.8.0 恢复，issue #162）：注入边界把 `{{...}}` 转义，防止 hot memory / 记忆原文里的 Go template / Vue 语法触发宿主 interpolate 抛错卡死会话（v0.7.4 曾修复、v0.7.11 误删） |
 
-> 🔐 **API 安全**：DSH 无内置鉴权且默认仅监听 `127.0.0.1`。插件 API 默认开放（便于 Web 面板即装即用）——**未配 `apiToken` 时读和写都开放**，真正的围栏是回环 + 宿主监听器的 Host/Origin 校验（它防 DNS rebinding 与跨站浏览器请求，但不建立身份）。如需防护（如局域网暴露），在配置中设置 `apiToken`：此时**写操作**（新增/更新/删除/导入/画像/规则/命令/开关/开关计费类）与**敏感读**（`/export`、`/external-api`、`/vector-config`、`/vector-reindex`、`/maintenance/*`、`/runtime/provision`）需携带 `Authorization: Bearer <token>`（前端设置面板填同一个 token）；只读的 `list` / `search` / `semantic` / `inject-preview` 等**仍然开放**，不要把它们当成被 token 保护的面。`/api/dsh-mneme/vector-config` 返回的 `apiKey` 已掩码（`sk-***…`），存储仍保留明文供调用；前端回传空或掩码值表示"不改 key"。
+> 🔐 **API 安全**：DSH 无内置鉴权且默认仅监听 `127.0.0.1`。插件 API 默认开放（便于 Web 面板即装即用）——**未配 `apiToken` 时读和写都开放**，真正的围栏是回环 + 宿主监听器的 Host/Origin 校验（它防 DNS rebinding 与跨站浏览器请求，但不建立身份）。如需防护（如局域网暴露），在配置中设置 `apiToken`：此时**写操作**（新增/更新/删除/导入/收包（`/receive`、`/receive/undo`——写的是**本机自己的库**，归 `token-write`，所以免 token 的 GET 在那两条路径上只会拿到 405）/画像/规则/命令/开关/开关计费类）与**敏感读**（`/export`、`/external-api`、`/vector-config`、`/vector-reindex`、`/maintenance/*`、`/runtime/provision`、`/share`）需携带 `Authorization: Bearer <token>`（前端设置面板填同一个 token）；只读的 `list` / `search` / `semantic` / `inject-preview` 等**仍然开放**，不要把它们当成被 token 保护的面。`/api/dsh-mneme/vector-config` 返回的 `apiKey` 已掩码（`sk-***…`），存储仍保留明文供调用；前端回传空或掩码值表示"不改 key"。
 >
 > 安全模型全表（哪些路由免鉴权、为什么）见 [SECURITY.md](../SECURITY.md#5-security-model-what-actually-protects-what)。
 
@@ -537,7 +539,10 @@ dsh plugin --profile web add "C:/path/to/modusensus-dsh-mneme-0.9.0.tgz"
 | `GET` | `/search?q&mode=keyword\|vector\|hybrid\|auto&topK&occurred_from&occurred_to&agent_scope&workspace_scope` | 搜索（关键词 / 向量 / hybrid=向量领位关键词补位 / 自动）。scope 两参声明调用方身份（不传 = 不解析，行为与旧版一致；任一给出则 strictScope 硬过滤与 A2 软加权随之生效） |
 | `GET` | `/context?q&topK&threshold&agent_scope&workspace_scope` | 注入候选一站式聚合（issue #370，#363 承诺）：宿主注入管线 `injectCandidates` 全语义（优先级分层 / 编码门控 / heat / scope 软加权 / hybrid 语义路 / pin 前置）+ 画像 + 规则，返回 `{profile, rules, items, pinnedCount}` 结构化条目，不含渲染文本。`threshold` 是 **importance 阈值**（默认 3，与 `/search` 的相似度阈值同名不同义）；`topK` 默认 5（对齐宿主 `maxInjectedItems`）；scope 语义与 `/search` 同口径；跨轮轮换 / 热记忆 / 时间前缀不含（调用方自管）；recall_runs 注入分账与宿主注入同口径（#217 `mode='inject'`） |
 | `POST` | `/bootstrap` | 冷启动（v0.8.4）：从仓库目录反向构建初始记忆，body `{dir}` 必填；幂等（(type,title,scope) 去重 + `_overwrite` 原地刷新），零 LLM、必有产出 |
-| `POST` | `/maintenance/reclaim` | 无损回收（#275 / #411，与面板同口径）：**只有 POST**（独立面没有 GET 预估分支）。字段只从 JSON body 读；`dryRun` 默认 `true`，只有 `dryRun:false` 且 `confirm:true` 才真删；`vacuum` 只允许显式指定 |
+| `POST` | `/maintenance/reclaim` | 无损回收（#275 / #411，与面板同口径）：**只有 POST**（本路径不提供 GET 预估分支）。字段只从 JSON body 读；`dryRun` 默认 `true`，只有 `dryRun:false` 且 `confirm:true` 才真删；`vacuum` 只允许显式指定 |
+| `POST` | `/share` | 记忆分享包：把活跃记忆按口径打成可外发的 JSON 包，纯读不写库；取行与跳过口径、脱敏规则与 3 MiB 体积水位见 [docs/SHARE.md](docs/SHARE.md)。本路径的 GET 一律 405 |
+| `POST` | `/receive` | 吃进一份分享包（body `{pack, confirm?}`，包内容整个送上来、服务端不读路径）：**默认干跑**，只有 `confirm: true` 才写库；整包一个事务、按 `share_external_id` 幂等（同一个包重跑 `created = 0`），外来行标 `source=imported`，不参与本机巩固/降级。包里一条不合格就**整包拒**（收侧不做逐条修复，也不跑敏感扫描）。入站上限 4 MiB；GET 一律 405。细则与实测见 [docs/SHARE.md](docs/SHARE.md) |
+| `POST` | `/receive/undo` | 整包退出（body `{packId, confirm?}`，同样**默认干跑**只清点）：按 `share_pack_id` **物删**（不是归档——归档行会占住 UNIQUE 位，撤了反而导不回来），`deleted` 是全量、`sample` 只给前 20 条预览；什么都没导入时答 0，不抛。GET 一律 405 |
 
 ### curl 示例
 
@@ -582,9 +587,16 @@ dsh-mneme add --type decision --title "采用 SQLite" \
 dsh-mneme get 42                                     # 查看单条
 dsh-mneme delete 42                                  # 删除
 dsh-mneme config show                                # 查看当前配置（token 打码）
+dsh-mneme share --dry-run                            # 分享包：只看会进几条、跳过几条，不落盘
+dsh-mneme share --out pack.json                      # 写一个可外发的脱敏包（3 MiB 水位在源头拒）
+dsh-mneme receive pack.json                          # 吃包：默认干跑，一个字都不写
+dsh-mneme receive pack.json --apply                  # 确认后真的吃进自己的库（整包一个事务，可重跑）
+dsh-mneme undo-share pack.json --apply               # 按 pack_id 整包收回（物删，不是归档）
 ```
 
 > 所有读取/写入命令支持 `--json` 输出原始 JSON；`config path` 打印配置文件路径（`~/.dsh-mneme/cli.json`）。
+> 人类可读档只转达服务端文案里的 `hint` / `bytes` / `limitBytes`；闸门的 `detail`（坏在哪一格）与
+> 413 的 `limit` 要 `--json` 才看得见——排查收包失败时先加它。
 
 ### 独立服务（daemon，`dsh-mneme-serve`）
 
@@ -598,7 +610,7 @@ dsh-mneme-serve --embed off                                  # 纯关键词 + BM
 
 - **鉴权与端口**：Bearer token 与 DSH 面板 / CLI 共用同一份（kv `external_api`，首次启动自动生成并持久化到 `memory.db`）；端口/主机解析链与「外部访问」一致（显式参数 > 持久值 > 默认 8790/127.0.0.1）。配置端口被占会**直接报错退出**（不做端口顺延）——第三方把 URL 写死，静默换端口等于坏。因此 **daemon 与 DSH 的「外部访问」二选一**，不要同端口同开。
 - **安全**：daemon 使用明文 HTTP，不提供原生 TLS。指定非回环 `--host` 时，请勿直接把服务暴露给不可信网络；远程访问请走 TLS 终止代理或 SSH 隧道。
-- **能力边界（第一期，无 LLM）**：存储 / 检索（关键词 + BM25 + 向量）/ 镜像同步与人改合并 / `POST /maintenance/reclaim` / `/bootstrap` 全可用；巩固（autoDream）与蒸馏不在 daemon 内——巩固只属于 DSH 宿主进程，这是与宿主「单写者」的机械保证。`--embed` 默认 `local`（自管 runtime 与嵌入模型缺失时自动取件，约 200MB；失败降级关键词并打日志），也可选 `ollama` / `openai`（读宿主面板的 vector-config）/ `off`。
+- **能力边界（第一期，无 LLM）**：存储 / 检索（关键词 + BM25 + 向量）/ 镜像同步与人改合并 / `POST /maintenance/reclaim` / `POST /receive`（吃包入库与整包退出：结构落库 + 随提交排空嵌入，**不建实体**——外来行本来就不做抽取，见 [docs/SHARE.md](docs/SHARE.md)）/ `/bootstrap` 全可用；巩固（autoDream）与蒸馏不在 daemon 内——巩固只属于 DSH 宿主进程，这是与宿主「单写者」的机械保证。`--embed` 默认 `local`（自管 runtime 与嵌入模型缺失时自动取件，约 200MB；失败降级关键词并打日志），也可选 `ollama` / `openai`（读宿主面板的 vector-config）/ `off`。
 - **检索回执**：daemon 的 `/search` 同样落 `recall_runs`，第三方检索的复用统计不缺数。
 - **生命周期**：stdout 仅就绪时打一行 `dsh-mneme-serve listening on http://host:port (pid N)`（供脚本解析实际端口），日志走 stderr；SIGINT/SIGTERM 优雅收库，Windows 强杀由 WAL 回放兜底。
 - **已知限制**：与 DSH 同时运行属设计内场景（WAL 多进程并发），但去重是先查后写、库层无 UNIQUE 约束，双进程并发写同一 `(type, title, scope)` 有极小概率产生重复；daemon 与插件请同版本升级。细节与坑清单见 [docs/DAEMON.md](docs/DAEMON.md)。
@@ -716,6 +728,7 @@ npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动
 - [连续性抢救（#249 N3）：触发器口径与事件契约](docs/CONTINUITY.md)
 - [Sleep Mode：空闲四阶段深度维护](docs/SLEEP.md)
 - [存储与回收：表结构、保留期、`dsh-mneme reclaim`](docs/STORAGE.md)
+- [记忆分享包：出包与收包的口径、信任边界与实测（`dsh-mneme share` / `receive` / `undo-share`）](docs/SHARE.md)
 - [独立服务 daemon（`dsh-mneme-serve`）](docs/DAEMON.md)
 - [与 Zep / Graphiti / Mem0 / Letta / Hindsight 的能力对比](../docs/COMPARISON.md)
 

@@ -275,10 +275,12 @@ CREATE INDEX IF NOT EXISTS idx_distill_records_distilled_at ON distill_records(d
 -- 不该因删掉其中一条派生记忆而消失。
 -- memory_id 是 TEXT 而非 issue 草稿里的 INTEGER：memories.id 是 TEXT 主键，
 -- 类型必须与父表一致（否则 join 恒空）。
--- ON DELETE CASCADE 在本库**不生效**——store.js 从不打开 PRAGMA foreign_keys，
--- 全库唯一那条 REFERENCES 也一直是惰性的。与其为一个新表翻转全局 pragma
--- （会同时改变既有 recall_events 的写入行为），不如在 remove() 里显式清链接：
--- 语义相同、影响面只在本表。见 remove() 的注释。
+-- ON DELETE CASCADE 在本库是**生效的**：createStore 走 new DatabaseSync(path) 不带选项，
+-- 而 node:sqlite 的 enableForeignKeyConstraints 默认为真（实测：新库上 PRAGMA foreign_keys
+-- 返回 1，删父行确实级联清掉本表）。本库两条 FK 都因此一直是活的——这一条，以及
+-- recall_evals(recall_run_id) → recall_runs(id)。级联在兜底，remove() 仍然显式清链接，
+-- 理由不是「FK 没开」，而是这份清理不该挂在一条没人钉过的驱动默认上：连接哪天被以
+-- enableForeignKeyConstraints:false 打开，悬空链接只有那条 DELETE 挡得住。见 remove() 的注释。
 CREATE TABLE IF NOT EXISTS memory_provenance (
   memory_id  TEXT    NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
   session_id TEXT    NOT NULL,
@@ -536,6 +538,11 @@ function toRow(row) {
     // 顺手 `?? updated_at` 把代理口径捡回来。
     archived_at: row.archived_at ?? undefined,
     source: row.source ?? undefined,
+    // 车道 C：外来行身份两格。NULL 读作 undefined（与 archived_at 同款「不可知就不编
+    // 值」）。注意「这行是不是外来行」的判据仍是 source（memory-source.js 的
+    // isImportedRow）——这两格只回答「来自哪个包 / 幂等键是什么」，不回答身份。
+    share_pack_id: row.share_pack_id ?? undefined,
+    share_external_id: row.share_external_id ?? undefined,
     content_history: parseJsonArray(row.content_history),
     evidence: parseJsonArray(row.evidence),
     doc_path: row.doc_path ?? undefined,
@@ -886,6 +893,23 @@ export function createStore(path) {
   // 存量行的值是 NULL，且**不推断**：按 updated_at 猜出的模型名会变成日后审计信
   // 以为真的证据。NULL 一律读作「出身未知」，等价的补法是重算，不是猜。
   addColumn("memories", "embedding_model", "ALTER TABLE memories ADD COLUMN embedding_model TEXT");
+  // 车道 C：外来行的身份两件套。share_pack_id 是「整包退出」的寻址键，share_external_id
+  // 是导入的幂等键。它们只对自己铸造的行有意义，所以缺省是 NULL 而不是 ''：空串会参与
+  // 唯一性（第二条本地行就撞响），而存量行零重写、读侧 undefined = 「不是外来行」。
+  addColumn("memories", "share_pack_id", "ALTER TABLE memories ADD COLUMN share_pack_id TEXT");
+  addColumn("memories", "share_external_id", "ALTER TABLE memories ADD COLUMN share_external_id TEXT");
+  // 索引建在加列之后而非写进 SCHEMA（本文件 content_hash 那段：存量库打开时 CREATE TABLE
+  // 是 no-op，列还不存在就建索引会直接 no such column）。
+  // 部分索引（WHERE ... IS NOT NULL）是刻意的，但它承重的地方要说准：SQLite 的 UNIQUE
+  // 本就把 NULL 视为互不相等，本地行（这一格恒 NULL）挂在普通 UNIQUE 上也不撞——变异检验
+  // 证实摘掉 WHERE 五个用例照绿。它承的是另外两件事：①约束的适用范围写进索引本身，
+  // 「只有导入路径铸造的 id 参与唯一性」这条语义没有别的表达渠道，读代码的人不必再去猜
+  // NULL 在这里算什么；②本地行不进这棵 b 树——普通 UNIQUE 要给每一条本地记忆插一个永不
+  // 生效的空键，而库里绝大多数是本地行，每次写都白付一次索引维护。
+  // 「NULL 必须自由共享」那条用例锁的是行为而非实现：它防的是将来有人把空串当缺省值写
+  // 进来（'' 参与唯一性，第二条 '' 直接撞响），不是防 WHERE 子句消失。
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_share_external ON memories(share_external_id) WHERE share_external_id IS NOT NULL");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_memories_share_pack ON memories(share_pack_id)");
   // issue #24 块2（权重演化）：entity_relations 加 weight + source。存量关系
   // 行缺列 → 默认 manual 1.0（最保守：既有语义不因迁移而变弱）。
   addColumn("entity_relations", "weight", "ALTER TABLE entity_relations ADD COLUMN weight REAL NOT NULL DEFAULT 1.0");
@@ -1123,6 +1147,30 @@ export function createStore(path) {
     return toRow(row);
   }
 
+  /**
+   * 车道 C 导入的幂等读：按包内那条记忆的铸造 id 找本库的行。
+   * 走 idx_memories_share_external（部分索引，非 NULL 那一侧），等值 seek。
+   * 本地行这一格恒 NULL，因此本函数永远不会误命中本地记忆。
+   */
+  function getByShareExternalId(externalId) {
+    if (typeof externalId !== "string" || !externalId) return undefined;
+    return toRow(db.prepare("SELECT * FROM memories WHERE share_external_id = ?").get(externalId));
+  }
+
+  /**
+   * 一个包在本库落下的全部行（撤回前的清点 / 面板「外来区」列表）。
+   *
+   * 不过滤 archived / forgotten：整包退出要连归档面与遗忘面一起收走，否则撤回后库里
+   * 还剩几条「来自那个已经收起的包」的行，身份与包对不上。
+   * 读显式列清单而非 SELECT *（#430 的口径）：一个包可以有几百行，每行 9.4 MB 级别
+   * 的 embedding 拖进来没有任何消费方会读。
+   */
+  function listBySharePackId(packId) {
+    if (typeof packId !== "string" || !packId) return [];
+    return db.prepare(`SELECT ${memoryColumnList} FROM memories WHERE share_pack_id = ? ORDER BY updated_at DESC, id DESC`)
+      .all(packId).map(toRow);
+  }
+
   // #230 写入权分离（存储层唯一铸造口，CodeRabbit 复核最终形态）：document
   // 行只能经 saveDocument 铸造，通用 save 整类拒绝。doc_path 是任意调用方
   // 都能捏造的字符串——「必带 doc_path」挡不住绕过注册校验（flag 闸 / 文件
@@ -1168,8 +1216,8 @@ export function createStore(path) {
       : inferEpistemicStatus(memory);
     runAtomically(() => {
       db.prepare(
-        `INSERT INTO memories (id, type, title, content, tags, importance, forgotten, archived, archived_at, source, content_history, quality_score, embedding, epistemic_status, agent_scope, workspace_scope, agent_scope_source, workspace_scope_source, scope_decided_at, sensitivity, occurred_at, evidence, doc_path, content_hash, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO memories (id, type, title, content, tags, importance, forgotten, archived, archived_at, source, content_history, quality_score, embedding, epistemic_status, agent_scope, workspace_scope, agent_scope_source, workspace_scope_source, scope_decided_at, sensitivity, occurred_at, evidence, doc_path, content_hash, share_pack_id, share_external_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         type,
@@ -1197,6 +1245,11 @@ export function createStore(path) {
         evidence,
         docPath,
         contentHash,
+        // 车道 C：外来行身份。空串一律落 NULL——空串会占住 UNIQUE 索引的一格，第二条
+        // 空串外来行就撞响；这两格只由导入路径铸造，其余写入恒 NULL。
+        // created_at / updated_at / content_hash 仍由本函数铸造，不接受调用方传值。
+        typeof memory.share_pack_id === "string" && memory.share_pack_id.trim() ? memory.share_pack_id.trim() : null,
+        typeof memory.share_external_id === "string" && memory.share_external_id.trim() ? memory.share_external_id.trim() : null,
         now,
         now
       );
@@ -1332,16 +1385,77 @@ export function createStore(path) {
 
   function remove(id) {
     runAtomically(() => {
-      // #399：memory_provenance 的 ON DELETE CASCADE 在本库是惰性的（createStore
-      // 从不打开 PRAGMA foreign_keys），所以链接在这里显式清。不用翻转全局 pragma
-      // 换这一条级联：那会同时激活 recall_events 那条既有的 REFERENCES，改变一个
-      // 与 #399 无关的写入路径。记录本身（distill_records）不删——删掉一条派生记忆
+      // #399：memory_provenance 挂着 ON DELETE CASCADE，而 node:sqlite 默认就把
+      // foreign_keys 开成 1（实测 PRAGMA foreign_keys = 1），所以级联今天确实在兜底。
+      // 这条显式 DELETE 不是冗余、也不是「FK 没开才需要」：它是不把清理挂在一份没人
+      // 钉过的驱动默认上——连接哪天以 enableForeignKeyConstraints:false 打开，悬空链接
+      // 只有这一条挡得住。记录本身（distill_records）不删——删掉一条派生记忆
       // 不该让整个窗口的原文凭证消失。
       db.prepare("DELETE FROM memory_provenance WHERE memory_id = ?").run(id);
       db.prepare("DELETE FROM memories WHERE id = ?").run(id);
       // Mirror sync must reflect the deletion; bump desired generation so a
       // crash between the delete and syncMirror leaves a recoverable debt.
       incrementGeneration();
+    });
+  }
+
+  // 一条 DELETE ... WHERE id IN (...) 最多绑多少个 `?`。SQLite 的上限是 32766
+  // （SQLITE_MAX_VARIABLE_NUMBER），取 500 后离上限还有六十多倍余量：这条语句一行一个参数，
+  // 而包的大小按字节不按条数封顶（见 deleteBySharePackId 的分块理由），500 让单条语句的
+  // 解析成本可以忽略、又永远够不到那格上限，块数只随包条数线性增长。
+  const DELETE_ID_CHUNK = 500;
+
+  /**
+   * 整包退出（车道 C）。删空一个不存在的包是幂等的 0，不是错误——对方点第二次「收起
+   * 这个包」与「收起一个从来没导入过的包」都该是这个答案；早退也不 bump generation：
+   * 什么都没删就别记一笔镜像债（remove() 每次必 bump，那是它的既有行为，不在这里扩大）。
+   *
+   * side table 清理口径 = remove() 的口径（#399）：显式同事务清 memory_provenance。
+   * 这条是双保险，不是「FK 没开所以必须手写」：memory_provenance 挂着 ON DELETE CASCADE，
+   * 而 node:sqlite 默认就把 foreign_keys 开成 1（实测 PRAGMA foreign_keys = 1），今天删行
+   * 确实另有级联兜底；显式清理的存在是为了不依赖这份没人钉过的驱动默认，同时跟 remove()
+   * 保持一致的口径（连接哪天以 enableForeignKeyConstraints:false 打开，悬空链接只有它挡得住）。
+   *
+   * remove() 不碰的（entity_attrs / entity_relations 的 memory_id 反查、conflict_pending、
+   * scope_changes、embedding 解析缓存）这里也不碰——批删不是新的清理语义。
+   *
+   * 向量索引这一格 C4 实测过，把 C1 留下的那句「由 C4 在 service 侧处理」改对：service
+   * 侧没有活儿要接。`vector-index.js` 是 memories.embedding 那一列的薄层，余弦检索
+   * (`searchVector`) 每次调用都从 SQL 现取「带向量的行」的 id 集合，行被物理删掉即从集合
+   * 里消失——向量跟着行一起走，一列残值都留不下；事后落到的 embed 也只是
+   * `UPDATE ... WHERE id = ?` 命中 0 行，不会把僵尸行写回来。唯一的残留是 #202 那个
+   * 进程内的解析缓存（id → 已解析向量），它与 remove() 同处置且读不出僵尸：每个调用方
+   * （searchVector / getEmbeddings / document.js / organize.js）的 id 集合都来自活行的
+   * SQL 读，未命中缓存时按 id 点查库，行没了就返回 undefined——最坏是一条等 FIFO 驱逐的
+   * 内存，不是一条搜得到的鬼行。要在这里清它等于给批删加一份 remove() 没有的新语义，
+   * 与本方法的口径声明相反，所以不动（C4 的报告记了这一格，remove() 是否要一起补是
+   * 单独一刀的事）。
+   *
+   * IN 列表分块（chunk = DELETE_ID_CHUNK）：SQLite 一条语句最多绑 32766 个参数
+   * （SQLITE_MAX_VARIABLE_NUMBER，实测第 32767 个报 "too many SQL variables"），而这条
+   * 语句原本一行一个 `?`。车道 A 的包水位按字节不按条数（MAX_PACK_BYTES = 3 MiB），所以
+   * 「正文很短、条数很多」的包理论上能逼近那一格——一条语句撞上限是整笔回滚，效果等于
+   * 「这个包永远撤不掉」，而那正是退出这条路径最不该坏的方式。
+   * 分块不是语义变化，四点逐条对齐分块前的形状：ids 是本事务开头一次读到的固定快照
+   * （slice 出来的连续段，块之间互不相交、并起来就是全集）；按主键删本就幂等；整包裹在同
+   * 一个 runAtomically 里，原子性与快照语义一字未动；generation 只在最后加一次，所以
+   * 「删了行却没记镜像债」这个 crash 窗口和分块前同样不存在。changes 逐块求和——那是
+   * 调用方答复里报出去的数，少加一块就少报一块。
+   */
+  function deleteBySharePackId(packId) {
+    if (typeof packId !== "string" || !packId) return 0;
+    return runAtomically(() => {
+      const ids = db.prepare("SELECT id FROM memories WHERE share_pack_id = ?").all(packId).map((r) => r.id);
+      if (!ids.length) return 0;
+      let deleted = 0;
+      for (let start = 0; start < ids.length; start += DELETE_ID_CHUNK) {
+        const chunk = ids.slice(start, start + DELETE_ID_CHUNK);
+        const marks = chunk.map(() => "?").join(", ");
+        db.prepare(`DELETE FROM memory_provenance WHERE memory_id IN (${marks})`).run(...chunk);
+        deleted += db.prepare(`DELETE FROM memories WHERE id IN (${marks})`).run(...chunk).changes;
+      }
+      incrementGeneration();
+      return deleted;
     });
   }
 
@@ -3338,6 +3452,9 @@ export function createStore(path) {
     db,
     count,
     getById,
+    // 车道 C：外来行身份的两个读口（幂等键 / 整包清点）。
+    getByShareExternalId,
+    listBySharePackId,
     save,
     // document 唯一铸造口（#230 写入权分离）：registerDocument 专用，通用
     // save/update/CAS 均拒绝 document 创建或类型转换。
@@ -3347,6 +3464,15 @@ export function createStore(path) {
     // #254：写入准入的内容哈希候选集（只读）。
     findContentHashMatches,
     remove,
+    // 车道 C：整包退出（幂等批删，side table 口径同 remove()）。
+    deleteBySharePackId,
+    // 只管 SQLite 回滚的存储层原语（本文件每个写方法都在用它，这里只是对外露一层：
+    // 外层已开着事务时它直接执行回调，db.isTransaction 早退，嵌套不会二次 BEGIN）。
+    // **它不是导入口**：车道 C 的导入走 service.transaction()——那层除回滚外还会随
+    // ROLLBACK 截断 pendingEmbed / pendingEntity，用这个裸原语导入会让队列和库分叉。
+    // 露出的用途是存储级批写与用例：C1 的 UNIQUE 撞库用例（test/share-store.test.js）
+    // 就靠它把「撞一条、整批不落」这条 ROLLBACK 路径直接命中。
+    runAtomically,
     setForget,
     setArchived,
     touchLastAccess,

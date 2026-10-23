@@ -23,6 +23,10 @@ import { findPotentialConflicts, cosineSimilarity } from "./clustering.js";
 import { scopeKeyOf } from "../scope.js";
 import { buildReceipt, describeStreamFailure, resolveDreamEffort, withEffortFallback, withMaxTokensFallback, maintainIndexAfterDream } from "../dream.js";
 import { computeHeat } from "../heat.js";
+// 四个相位读的都是行池，而动行的写手不经汇流口：phaseDemotion 直接 setArchived /
+// demoteToSummary，phasePatterns 还会 mint 出新行，所以这条契约要在每处各挡一遍
+// （清单与静态锁见 test/share-imported-guard.test.js）。
+import { isImportedRow } from "../memory-source.js";
 
 // Issue #126 review（Copilot）：默认档（sleepActionSet="conflict"）允许的动作 = 全局
 // ACTIONS 去掉 #126 新增的两个。从 ACTIONS 派生而非硬编码，将来再扩动作集时自动跟随。
@@ -205,7 +209,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   }
   const strictness = config.sleepConflictStrictness ?? "normal";
   const threshold = CONFLICT_THRESHOLDS[strictness] ?? CONFLICT_THRESHOLDS.normal;
-  const memories = withoutPaused(service, service.all().filter((m) => !m.archived && !m.forgotten && m.type !== "summary" && m.type !== "document"));
+  const memories = withoutPaused(service, service.all().filter((m) => !isImportedRow(m) && !m.archived && !m.forgotten && m.type !== "summary" && m.type !== "document"));
   if (memories.length < 2) return { status: "skipped", reason: "too few memories" };
   if (signal?.aborted) return { status: "aborted", reason: "user activity" };
 
@@ -444,7 +448,10 @@ function phaseDemotion(service, config, logger, runId, signal = null) {
   // 政策轴在这里尤其要紧：下面两行会真改归档面（setArchived / demoteToSummary）。
   // 把过滤放在循环之外、而不是在循环体里 continue：一旦将来有人在循环体里加
   // 副作用（现已有），漏掉那条 continue 就是静默改到被按下的行。
-  for (const m of withoutPaused(service, service.all())) {
+  // 外来行也在循环之外挡掉，同一个理由：它不经本方蒸馏，时间分层无权动它的原文或
+  // 归档面；而下面两行动作（setArchived / demoteToSummary）不经 saveWithDedupe，
+  // 汇流口那道闸门到这里已经管不到了。
+  for (const m of withoutPaused(service, service.all().filter((m) => !isImportedRow(m)))) {
     if (signal?.aborted) break;
     if (m.archived || m.forgotten) continue;
     const ref = m.last_accessed_at ?? m.created_at;
@@ -497,7 +504,7 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
   // sleepPatternMinMemories 的名额，而它们既不会被扫、也不该挤掉别人（#471）。
   const memories = withoutPaused(service, service
     .list({ limit: 200, includeForgotten: false, excludeTypes: ["document"] })
-    .filter((m) => !m.archived && m.type !== "summary" && m.type !== "pattern"))
+    .filter((m) => !isImportedRow(m) && !m.archived && m.type !== "summary" && m.type !== "pattern"))
     .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
     .slice(0, limit);
   if (memories.length === 0) return { status: "skipped", reason: "no memories to scan" };
@@ -586,7 +593,7 @@ function phaseRelations(service, config, logger, runId, signal = null) {
   if (entities.length < 2) return { status: "skipped", reason: "too few entities" };
   const orphans = entities.filter((e) => (service.getRelations(e.id) ?? []).length === 0);
   if (orphans.length === 0) return { status: "skipped", reason: "no orphan entities" };
-  const memories = withoutPaused(service, service.all().filter((m) => !m.archived && !m.forgotten));
+  const memories = withoutPaused(service, service.all().filter((m) => !isImportedRow(m) && !m.archived && !m.forgotten));
   const seen = new Set();
   const related = [];
   const MAX_RELATIONS_PER_ORPHAN = 3;
