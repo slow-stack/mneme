@@ -1293,6 +1293,45 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     }
   });
 
+  // --- 记忆级溯源读出口（#399 写、#421 读）-----------------------------------
+  // Read-only like list/search/semantic, so it stays open when apiToken is set.
+  // #399 把蒸馏窗口的原文落进 distill_records、把 memory → (session, seq 区间)
+  // 的归因写进 memory_provenance，但只做了写：库里有答案、service.provenanceFor
+  // 能查，外部（面板 / standalone API / 脚本）拿不到，「这条记忆是从哪几句蒸出来
+  // 的」只能开 sqlite 手写 JOIN。本端点补最后一段接线。
+  //
+  // 一个链接一个窗口：区间 + 区间里的原文行（按 seq 升序）。没有链接的记忆
+  // （memory_save / 工具写入 / 冷启动）返回空 windows——「不是蒸馏来的」本身是
+  // 有效答案，不是错误，所以不 404。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/memory/provenance",
+    policy: "open",
+    handler(req, res) {
+      try {
+        const url = new URL(req.url, "http://localhost");
+        const id = (url.searchParams.get("id") ?? "").trim();
+        if (!id) {
+          sendJson(res, 400, { error: "missing-id" });
+          return;
+        }
+        const links = service.provenanceFor?.(id) ?? [];
+        const windows = links.map((link) => ({
+          session_id: link.session_id,
+          seq_start: link.seq_start,
+          seq_end: link.seq_end,
+          created_at: link.created_at,
+          // 到期裁剪后区间可能变空：链接刻意保留并指向空区间（clearDistillRecords
+          // 的语义），面板据此显示「原文已过期」而非「没有来源」。
+          records: service.distillRecordsFor?.(link.session_id, link.seq_start, link.seq_end) ?? []
+        }));
+        sendJson(res, 200, { memoryId: id, windows });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
   // --- ego graph: 1-2 hop neighborhood of one entity (graph panel P1) ---
   // Read-only like list/search/semantic, so it stays open when apiToken is set.
   // BFS from the root entity over entity_relations (both directions; the

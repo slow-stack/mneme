@@ -749,3 +749,57 @@ test("strictPort: busy port rejects instead of hopping; default path still hops"
     store.close();
   }
 });
+
+// --- GET /memory/provenance：记忆级溯源读出口（#399 写、#421 读）-------------
+// daemon 侧此前和宿主内 API 一样只有写入路径：库里有答案，外部拿不到。
+
+test("GET /memory/provenance returns windows with their original rows", async () => {
+  const { base, auth, store, close } = await setup();
+  try {
+    const saved = await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    const memoryId = saved.memory?.id ?? saved.id;
+    store.saveMemoryProvenance({
+      memoryId, sessionId: "s1", seqStart: 10, seqEnd: 11, createdAt: "2026-10-23T00:00:00Z"
+    });
+    store.saveDistillRecords([
+      { sessionId: "s1", seq: 10, role: "user", text: "第一句原文", windowId: "w1", distilledAt: "2026-10-23T00:00:00Z" },
+      { sessionId: "s1", seq: 11, role: "assistant", text: "第二句原文", windowId: "w1", distilledAt: "2026-10-23T00:00:00Z" }
+    ]);
+
+    const res = await fetch(`${base}/memory/provenance?id=${encodeURIComponent(memoryId)}`, { headers: auth });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.memoryId, memoryId);
+    assert.equal(body.windows.length, 1);
+    assert.equal(body.windows[0].session_id, "s1");
+    assert.deepEqual(body.windows[0].records.map((r) => r.text), ["第一句原文", "第二句原文"], "原文按 seq 升序");
+  } finally {
+    close();
+  }
+});
+
+test("GET /memory/provenance: a memory with no link answers with empty windows, not an error", async () => {
+  const { base, auth, close } = await setup();
+  try {
+    const saved = await saveMemory(base, auth, { type: "preference", title: "语言", content: "中文" });
+    const memoryId = saved.memory?.id ?? saved.id;
+    const res = await fetch(`${base}/memory/provenance?id=${encodeURIComponent(memoryId)}`, { headers: auth });
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).windows, [], "「不是蒸馏来的」是有效答案，不是错误");
+  } finally {
+    close();
+  }
+});
+
+test("GET /memory/provenance is auth-gated and 400s on a missing id", async () => {
+  const { base, auth, close } = await setup();
+  try {
+    const noToken = await fetch(`${base}/memory/provenance?id=x`);
+    assert.equal(noToken.status, 401, "只读端点也在 apiToken 之下（与 /memories 同口径）");
+
+    const missing = await fetch(`${base}/memory/provenance`, { headers: auth });
+    assert.equal(missing.status, 400);
+  } finally {
+    close();
+  }
+});

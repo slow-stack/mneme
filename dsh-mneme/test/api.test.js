@@ -2090,3 +2090,70 @@ test("GET /api/dsh-mneme/pipeline 带观察旁挂：observationsById 真的进�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// --- 记忆级溯源读出口（#399 写、#421 读）---------------------------------------
+// distill_records 与 memory_provenance 自 #399 起就只有写入路径：库里有答案、
+// service.provenanceFor 能查，但外部（面板 / standalone API / 脚本）拿不到——
+// 「这条记忆是从哪几句蒸出来的」只能开 sqlite 手写 JOIN。
+
+test("GET /api/dsh-mneme/memory/provenance 返回窗口区间与原文行", async () => {
+  const { routes, service, store } = setup();
+  // 直接落溯源链接与原文：读取面不关心是谁写的，只关心库里的形状。
+  service.saveWithDedupe({ type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+  const memory = service.all()[0];
+  store.saveMemoryProvenance({
+    memoryId: memory.id, sessionId: "s1", seqStart: 10, seqEnd: 12, createdAt: "2026-10-23T00:00:00Z"
+  });
+  store.saveDistillRecords([
+    { sessionId: "s1", seq: 10, role: "user", text: "第一句原文", windowId: "w1", distilledAt: "2026-10-23T00:00:00Z" },
+    { sessionId: "s1", seq: 11, role: "assistant", text: "第二句原文", windowId: "w1", distilledAt: "2026-10-23T00:00:00Z" },
+    { sessionId: "s1", seq: 12, role: "user", text: "第三句原文", windowId: "w1", distilledAt: "2026-10-23T00:00:00Z" },
+    // 区间外的一句：不该被带出来
+    { sessionId: "s1", seq: 99, role: "user", text: "区间外", windowId: "w1", distilledAt: "2026-10-23T00:00:00Z" }
+  ]);
+
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/memory/provenance?id=" + memory.id), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.equal(data.memoryId, memory.id);
+  assert.equal(data.windows.length, 1, "一个链接一个窗口");
+  const w = data.windows[0];
+  assert.equal(w.session_id, "s1");
+  assert.equal(w.seq_start, 10);
+  assert.equal(w.seq_end, 12);
+  assert.equal(w.created_at, "2026-10-23T00:00:00Z");
+  assert.deepEqual(w.records.map((r) => r.text), ["第一句原文", "第二句原文", "第三句原文"],
+    "原文按 seq 升序，且不越出区间");
+  assert.deepEqual(w.records.map((r) => r.seq), [10, 11, 12]);
+});
+
+test("GET /api/dsh-mneme/memory/provenance：非蒸馏来源的记忆返回空窗口而非报错", async () => {
+  // memory_save 写进来的记忆没有溯源链接——「这条不是蒸馏来的」本身是有效答案，
+  // 不能 404/500。契约：空 windows，不是错误。
+  const { routes, service } = setup();
+  service.saveWithDedupe({ type: "preference", title: "语言", content: "中文" });
+  const memory = service.all()[0];
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/memory/provenance?id=" + memory.id), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.deepEqual(data.windows, [], "没有链接 → 空窗口，不是错误");
+});
+
+test("GET /api/dsh-mneme/memory/provenance 缺 id 报 400，未知 id 返回空窗口", async () => {
+  const { routes } = setup();
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+  const bad = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/memory/provenance"), bad);
+  assert.equal(bad.statusCode, 400);
+
+  // 库里有 distill 数据但这条 id 不存在：读端点不替调用方判断记忆是否存在，
+  // 「没有链接」对未知 id 与对非蒸馏记忆是同一个答案。
+  const unknown = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/memory/provenance?id=nope"), unknown);
+  assert.equal(unknown.statusCode, 200);
+  assert.deepEqual(JSON.parse(unknown.body).windows, []);
+});

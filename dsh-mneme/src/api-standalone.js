@@ -414,6 +414,33 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
         return;
       }
 
+      // --- GET /memory/provenance: 记忆级溯源读出口（#399 写、#421 读）--------
+      // 与宿主内 /api/dsh-mneme/memory/provenance 同一份实现口径：一个链接一个
+      // 窗口（区间 + 区间内原文行，按 seq 升序）。没有链接的记忆返回空 windows
+      // ——「不是蒸馏来的」是有效答案，不是错误。daemon 与宿主共用 service，
+      // 所以这里不需要另算一遍。
+      if (req.method === "GET" && pathname === "/memory/provenance") {
+        const id = (url.searchParams.get("id") ?? "").trim();
+        if (!id) {
+          sendJson(res, 400, { error: "missing-id" });
+          return;
+        }
+        try {
+          const links = service.provenanceFor?.(id) ?? [];
+          const windows = links.map((link) => ({
+            session_id: link.session_id,
+            seq_start: link.seq_start,
+            seq_end: link.seq_end,
+            created_at: link.created_at,
+            records: service.distillRecordsFor?.(link.session_id, link.seq_start, link.seq_end) ?? []
+          }));
+          sendJson(res, 200, { memoryId: id, windows });
+        } catch {
+          sendJson(res, 500, { error: "internal" });
+        }
+        return;
+      }
+
       // --- GET/PUT/DELETE /memories/:id --------------------------------------
       const idMatch = pathname.match(/^\/memories\/([^/]+)$/);
       if (idMatch) {
