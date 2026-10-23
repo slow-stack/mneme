@@ -1,4 +1,6 @@
 {
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": ["modusensus"],
   "name": "mneme-memory",
   "description": "Cross-session memory for AI coding agents: six tools over a local-first SQLite store with Markdown mirror, semantic search and background consolidation.",
   "author": "modusensus",
