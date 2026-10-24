@@ -19,6 +19,7 @@ import { TYPES } from "./store.js";
 import { bootstrapFromDirectory } from "./bootstrap.js";
 import { PACKAGE_VERSION } from "./version-check.js";
 import { parseReclaimJson, readReclaimFields, reclaimReply, RECLAIM_UNAVAILABLE } from "./reclaim-http.js";
+import { parseProvenanceQuery, provenanceReply } from "./provenance-http.js";
 
 const DEFAULT_PORT = 8790;
 const DEFAULT_HOST = "127.0.0.1";
@@ -415,29 +416,21 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
       }
 
       // --- GET /memory/provenance: 记忆级溯源读出口（#399 写、#421 读）--------
-      // 与宿主内 /api/dsh-mneme/memory/provenance 同一份实现口径：一个链接一个
-      // 窗口（区间 + 区间内原文行，按 seq 升序）。没有链接的记忆返回空 windows
-      // ——「不是蒸馏来的」是有效答案，不是错误。daemon 与宿主共用 service，
-      // 所以这里不需要另算一遍。
+      // 与宿主内 /api/dsh-mneme/memory/provenance 同一份实现口径，就在
+      // src/provenance-http.js 里写一份（#411 的教训：两张皮整段复制必然漂移）。
+      // 一个链接一个窗口（区间 + 区间内原文行，按 seq 升序）；没有链接的记忆返回
+      // 空 windows——「不是蒸馏来的」是有效答案，不是错误。
+      //
+      // 这张面本来就要 Bearer token（除 /health 外无例外），所以不涉及宿主侧那次
+      // open → token 的归类调整；daemon 与宿主共用 service，口径天然一致。
       if (req.method === "GET" && pathname === "/memory/provenance") {
-        const id = (url.searchParams.get("id") ?? "").trim();
-        if (!id) {
-          sendJson(res, 400, { error: "missing-id" });
+        const parsed = parseProvenanceQuery(url.searchParams.get("id"));
+        if (!parsed.ok) {
+          sendJson(res, parsed.status, { error: parsed.error });
           return;
         }
-        try {
-          const links = service.provenanceFor?.(id) ?? [];
-          const windows = links.map((link) => ({
-            session_id: link.session_id,
-            seq_start: link.seq_start,
-            seq_end: link.seq_end,
-            created_at: link.created_at,
-            records: service.distillRecordsFor?.(link.session_id, link.seq_start, link.seq_end) ?? []
-          }));
-          sendJson(res, 200, { memoryId: id, windows });
-        } catch {
-          sendJson(res, 500, { error: "internal" });
-        }
+        const { status, body } = provenanceReply({ service, id: parsed.id, warn: (m) => logger?.warn?.(m) });
+        sendJson(res, status, body);
         return;
       }
 
