@@ -226,16 +226,27 @@ async function handlePutBody(res, service, logger, id, text) {
  * /context 的查询嵌入：best-effort，embedder 接口宽容与 searchMemories 同款
  * （embedSingle 优先，兼容 embed-only 的 OpenAI 兼容客户端，issue #10）。
  * 调用方负责 catch——嵌入失败降级规则档，绝不因此 500。
+ *
+ * `diag`（optional，issue #383）：拿不到向量时把原因写进去（`embed-unavailable`
+ * 无可用接口 / `embed-empty` 空或非数组向量），供 daemon 侧日志枚举降级原因。
+ * 不传则行为与既往逐字节一致。
  */
-async function embedQueryVector(embedder, q) {
+async function embedQueryVector(embedder, q, diag) {
   const embedSingle = typeof embedder.embedSingle === "function"
     ? embedder.embedSingle.bind(embedder)
     : typeof embedder.embed === "function"
       ? embedder.embed.bind(embedder)
       : null;
-  if (!embedSingle) return undefined;
+  if (!embedSingle) {
+    if (diag) diag.reason = "embed-unavailable";
+    return undefined;
+  }
   const vector = await embedSingle(q);
-  return Array.isArray(vector) && vector.length ? vector : undefined;
+  if (!Array.isArray(vector) || !vector.length) {
+    if (diag) diag.reason = "embed-empty";
+    return undefined;
+  }
+  return vector;
 }
 
 /**
@@ -244,11 +255,16 @@ async function embedQueryVector(embedder, q) {
  * 按嵌入缺失处理，降级规则档。输掉的 embed promise 无法取消、自行结束后被丢弃，
  * 无害；挂起的主要成本是一个泄漏的挂起任务，可接受。嵌入先完成时清掉定时器
  * （CodeRabbit 同轮 Minor：别让每个请求都留一枚要等满超时的计时器）。
+ *
+ * `diag`（optional，issue #383）：超时写 `embed-timeout`，与上面两个原因同一套枚举。
  */
-function withEmbedTimeout(promise, timeoutMs) {
+function withEmbedTimeout(promise, timeoutMs, diag) {
   let timer;
   const timeout = new Promise((resolve) => {
-    timer = setTimeout(() => resolve(undefined), timeoutMs);
+    timer = setTimeout(() => {
+      if (diag) diag.reason = "embed-timeout";
+      resolve(undefined);
+    }, timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -671,16 +687,35 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
         const thresholdRaw = Number(url.searchParams.get("threshold") ?? 3);
         const threshold = Number.isFinite(thresholdRaw) ? thresholdRaw : 3;
         const scope = scopeFromSearchParams(url);
-        void Promise.resolve(q && embedder ? withEmbedTimeout(embedQueryVector(embedder, q), embedTimeoutMs) : undefined)
-          .catch(() => undefined)   // 查询嵌入失败降级规则档（与 searchMemories 同口径）
+        // #383：降级原因记账用。embedQueryVector / withEmbedTimeout 只负责「拿不到
+        // 向量时返回 undefined」，原因（无可用接口 / 空向量 / 超时）在这里回收，
+        // 供 daemon 侧日志枚举——响应体只多 tier 一个键，不加第二个字段。
+        const diag = {};
+        void Promise.resolve(q && embedder ? withEmbedTimeout(embedQueryVector(embedder, q, diag), embedTimeoutMs, diag) : undefined)
+          .catch((err) => { diag.reason = "embed-error"; return undefined; })   // 查询嵌入失败降级规则档（与 searchMemories 同口径）
           .then((queryVector) => {
             const pinnedStats = {};
             const items = service.injectCandidates({ query: q, maxItems, threshold, queryVector, scope, pinnedStats });
+            // #383 档位信号：嵌入降级在调用方视角原本完全静默（items 看着正常，只是
+            // 召回质量悄悄变差），外部集成方无从感知自己长期跑在降级档上。
+            // 三态 fail-closed——判不出来报 unknown，不报 full：
+            //   full     语义档，查询嵌入真的成功了
+            //   degraded 规则档，且是因为 embedder 缺 / 嵌入超时 / 不可用向量
+            //   unknown  语义路未启用（空 q）——那不是降级，但也不能宣称 full
+            // 比 /search 的 mode 更精确：/search 把「空查询」和「向量失败」都报
+            // keyword，这里能分开（空 q 直接可观测）。
+            let tier = "unknown";
+            if (q && queryVector) tier = "full";
+            else if (q) {
+              tier = "degraded";
+              logger?.warn?.(`dsh-mneme: /context degraded to the rule tier (${diag.reason ?? (embedder ? "embed-failed" : "no-embedder")})`);
+            }
             sendJson(res, 200, {
               profile: (settings?.getProfile?.() ?? "").trim(),
               rules: settings?.getRules?.() ?? [],
               items: service.toApiList(items),
-              pinnedCount: pinnedStats.shown ?? 0
+              pinnedCount: pinnedStats.shown ?? 0,
+              tier
             });
           })
           .catch(() => {

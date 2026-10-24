@@ -588,8 +588,11 @@ test("GET /context returns the injection-shaped aggregate; empty q still serves 
     const res = await fetch(`${base}/context`, { headers: auth });
     assert.equal(res.status, 200);
     const body = await res.json();
-    // 形状锁：四键响应——bridge 等调用方按这四个键渲染，漂移（加塞/漏带）在此变红。
-    assert.deepEqual(Object.keys(body).sort(), ["items", "pinnedCount", "profile", "rules"]);
+    // 形状锁：五键响应——bridge 等调用方按这些键渲染，漂移（加塞/漏带）在此变红。
+    // #383 新增 tier（档位信号）；空 q 时语义路未启用，报 unknown 而不是 full。
+    assert.deepEqual(Object.keys(body).sort(), ["items", "pinnedCount", "profile", "rules", "tier"]);
+    assert.equal(typeof body.tier, "string", "tier 必填");
+    assert.equal(body.tier, "unknown", "空 q = 语义路未启用，不宣称档位（fail-closed，不报 full）");
     assert.equal(body.profile, "我是后端工程师");
     assert.deepEqual(body.rules, ["先验证再修改"]);
     assert.equal(body.pinnedCount, 0, "pinnedInjectBudget 默认 0（opt-in 纪律，issue #370 取舍 3）");
@@ -747,5 +750,63 @@ test("strictPort: busy port rejects instead of hopping; default path still hops"
   } finally {
     blocker.close();
     store.close();
+  }
+});
+
+// --- GET /context 的档位信号（issue #383）---------------------------------------
+// 嵌入降级在调用方视角是完全静默的：items 看起来正常，只是召回质量悄悄变差。
+// 外部集成方（Mneme Bridge 的 remote 模式）无法据此降级自己的期望或打日志。
+// 三态 fail-closed：判不出来报 unknown，不报 full。
+
+/** 可用的 embedder：任何查询都回一个固定向量。 */
+const okEmbedder = { embedSingle: async () => [1, 0, 0], embed: async () => [1, 0, 0] };
+
+test("GET /context tier=full when the query embedding succeeds", async () => {
+  const { base, auth, close } = await setup({ embedder: okEmbedder });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "full", "嵌入成功 → 语义档");
+  } finally {
+    close();
+  }
+});
+
+test("GET /context tier=degraded when no embedder is injected", async () => {
+  // 缺省（不传 embedder）：daemon 与宿主都可能走到这条——embedder 未装配。
+  const { base, auth, close } = await setup();
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "degraded", "无 embedder → 降级到规则档，且必须说出来");
+  } finally {
+    close();
+  }
+});
+
+test("GET /context tier=degraded when the query embedding times out", async () => {
+  // embedder 挂起（不抛错）时由 withEmbedTimeout 兜底——这是最难自查的一种降级，
+  // 因为接口是好的、只是没有响应。
+  const hanging = { embedSingle: () => new Promise(() => {}), embed: () => new Promise(() => {}) };
+  const { base, auth, close } = await setup({ embedder: hanging, embedTimeoutMs: 30 });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "degraded", "嵌入超时 → 降级到规则档");
+  } finally {
+    close();
+  }
+});
+
+test("GET /context tier=degraded when the embedder returns an unusable vector", async () => {
+  // 空数组 / 非数组同样让语义路走不通（embedQueryVector 的既有兜底），一并报降级。
+  const empty = { embedSingle: async () => [], embed: async () => [] };
+  const { base, auth, close } = await setup({ embedder: empty });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "degraded", "不可用向量 → 降级到规则档");
+  } finally {
+    close();
   }
 });
