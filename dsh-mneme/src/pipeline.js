@@ -116,7 +116,7 @@ export function suggestRetirements(pipeline, { runs = [], now = Date.now(), obse
   // 在**同一条 run 里**既没执行也没被跳过。查账本级而不是 run 级，
   // 是因为 tallyRuns 已经把 run 边界抹掉了；这里要保住边界，所以单独扫 runs。
   const violationSeen = new Set();
-  for (const run of runs || []) {
+  for (const [i, run] of (runs || []).entries()) {
     const doneIds = new Set((run.steps || []).filter((s) => s && !s.skipped && !s.detoured).map((s) => s.id));
     for (const step of pipeline.steps) {
       if (!doneIds.has(step.id) || !Array.isArray(step.needs)) continue;
@@ -124,7 +124,14 @@ export function suggestRetirements(pipeline, { runs = [], now = Date.now(), obse
         if (doneIds.has(need)) continue;
         const had = (run.steps || []).some((s) => s && s.id === need);
         if (had) continue; // 前置做过（哪怕是 skipped）就不算违规
-        const vk = `${run.at ?? ""}|${step.id}|${need}`;
+        // #461：at 缺失（null/undefined/空串）时用位置索引兜底，不用空串。
+        // violationSeen 跨整本账本共享，空串会让所有无时间戳的 run 的同
+        // (step, need) 违规塌缩成一条——去重本意是「同一轮里同一条只报一次」，
+        // 不是「所有无时间戳的轮次共享一条」。run 没有 id 字段（normalizeRun
+        // 只产出 at/by/triggeredBy/steps），索引是这里唯一现成的判别项。
+        // at 存在时走原值，行为逐字节不变。
+        const at = isNonEmptyString(run.at) ? run.at : `#${i}`;
+        const vk = `${at}|${step.id}|${need}`;
         if (violationSeen.has(vk)) continue;
         violationSeen.add(vk);
         // 同一步对不同前置各报一条：修图的人需要知道**断在哪条边**上

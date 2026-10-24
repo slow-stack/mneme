@@ -147,3 +147,37 @@ test("坏输入不抛", () => {
   assert.doesNotThrow(() => suggestRetirements(p, { runs: [{}] }));
   assert.doesNotThrow(() => suggestRetirements(p, { runs: [{ at: null, steps: null }] }));
 });
+
+// #461：violationSeen 跨整本账本共享，而键里的 `run.at ?? ""` 在 at 缺失时塌缩成
+// 空串——于是所有无时间戳的 run，其同 (step, need) 违规会被并成一条。去重本意是
+// 「同一轮里同一条只报一次」，不是「所有轮共享一条」。两条独立的 run 就该产出两条。
+// run 没有 id 字段（normalizeRun 只产出 at/by/triggeredBy/steps），所以兜底用位置索引。
+test("#461：两条无 run.at 的 run 的同类违规不被并成一条", () => {
+  const p = makePipeline([
+    step("A", { tool: "npm test" }),
+    step("B", { tool: "git push", needs: ["A"] })
+  ]);
+  // 两条 run 都只做了 B、都没带 at：证据各自独立，该各报一条
+  const runs = [
+    { at: null, by: "human", triggeredBy: "demo", steps: [{ id: "B", at: "x" }] },
+    { at: undefined, by: "human", triggeredBy: "demo", steps: [{ id: "B", at: "x" }] }
+  ];
+  const v = suggestRetirements(p, { runs }).filter((s) => s.kind === "violation-precedence");
+  assert.equal(v.length, 2, "两条独立的 run 各报一条，不被键塌缩吞掉");
+  assert.equal(v[0].stepId, "B");
+  assert.equal(v[1].stepId, "B");
+});
+
+// at 存在时行为不变：同 at 的重复违规仍然只报一条（原有去重语义不能被修坏）。
+test("#461：at 存在时同轮重复违规仍只报一条（回归保护）", () => {
+  const p = makePipeline([
+    step("A", { tool: "npm test" }),
+    step("B", { tool: "git push", needs: ["A"] })
+  ]);
+  const runs = [
+    RUN("2026-10-17T00:00:00Z", [{ id: "B", at: "x" }]),
+    RUN("2026-10-17T00:00:00Z", [{ id: "B", at: "x" }])
+  ];
+  const v = suggestRetirements(p, { runs }).filter((s) => s.kind === "violation-precedence");
+  assert.equal(v.length, 1, "同一 at 的同一违规仍然只报一次");
+});
