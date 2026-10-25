@@ -1323,7 +1323,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           sendJson(res, parsed.status, { error: parsed.error });
           return;
         }
-        const { status, body } = provenanceReply({ service, id: parsed.id, warn: (m) => logger?.warn?.(m) });
+        const { status, body } = provenanceReply({ service, id: parsed.id, warn: (m) => ctx.logger?.warn?.(m) });
         sendJson(res, status, body);
       } catch {
         sendJson(res, 500, { error: "internal" });

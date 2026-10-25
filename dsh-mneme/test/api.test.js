@@ -2200,3 +2200,37 @@ test("GET /api/dsh-mneme/memory/provenance 缺 id 报 400，未知 id 返回空�
   assert.equal(unknown.statusCode, 200);
   assert.deepEqual(JSON.parse(unknown.body).windows, []);
 });
+
+test("GET /api/dsh-mneme/memory/provenance：读失败要留痕，500 不能把 warn 一起吞掉", async () => {
+  // 共用模块的测试已经锁了「抛错 → 调 warn」（provenance-http.test.js），但锁不住
+  // **壳把哪个 logger 递进去**。#509 第二次迭代在这里栽过：壳里写的是裸 `logger`，
+  // 而 createApi 的作用域只有 ctx.logger——warn 回调自己抛 ReferenceError，被外层
+  // catch 吞掉，响应还是 500，但「为什么失败」一个字都不留。下面这条把接线本身锁住。
+  const store = createStore(":memory:");
+  const settings = createSettings(store.db);
+  const service = createService({ store, mirror: null, config: {} });
+  const realFor = service.provenanceFor;
+  service.provenanceFor = (id) => { realFor(id); throw new Error("db locked"); };
+
+  const routes = [];
+  const warnings = [];
+  createApi(
+    {
+      webServer: { register(r) { routes.push(r); return () => {}; } },
+      logger: { warn: (m) => warnings.push(m) }
+    },
+    service, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "secret-token"
+  );
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+  const res = new FakeRes();
+  const r = req("/api/dsh-mneme/memory/provenance?id=m1");
+  r.headers = { authorization: "Bearer secret-token" };
+  await route.handler(r, res);
+
+  assert.equal(res.statusCode, 500, "读失败回 500");
+  assert.equal(JSON.parse(res.body).error, "internal");
+  assert.equal(warnings.length, 1, "500 必须伴随一条 warn——否则失败原因只存在于调用方的猜测里");
+  assert.match(warnings[0], /memory provenance read failed/, "留痕要带原始异常");
+  assert.match(warnings[0], /db locked/);
+  store.close();
+});
