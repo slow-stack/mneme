@@ -506,8 +506,12 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
   // archived 这一轴不在下面出现，不是漏了：list() 默认就带 `archived = 0`
   // （store.js list 的 includeArchived 默认 false、onlyArchived 默认 false），
   // 旧写法那句 `!m.archived` 一直是重复过滤——查询层已经把它挡在外面。
+  // 窗口至少等于本次要扫的名额：`sleepPatternMinMemories` 的合法上限是 1000
+  // （src/config.js:612）。窗口若还是死的 200，那么把这个值配到 200 以上的人
+  // **每一轮**都会触发下面那次无界重取，跟闸门按没按下无关——那是把这条修复
+  // 从「按需」变成「常付」。
   const poolQuery = {
-    limit: 200, includeForgotten: false,
+    limit: Math.max(200, limit), includeForgotten: false,
     // 三条政策轴全部下推到查询层：留在 LIMIT 之后过滤，等于让被丢掉的行为窗口占名额
     // （模式扫描池会因此饿到 sleepPatternMinMemories 以下而静默跳过）。同一取舍见
     // #230 的 document 轴与本文件 #471 的暂停轴，src/service.js:2247 那条注释记着前例。

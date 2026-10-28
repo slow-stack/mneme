@@ -513,6 +513,23 @@ test("#515：重取按需——闸门没按下且窗口够用时，仍只付一�
   store.close();
 });
 
+test("#515：窗口跟着配额走——把 sleepPatternMinMemories 配到 200 之上时，常态仍不触发无界重取", async () => {
+  // 这条锁的是我自己差点留下的坑：合法上限是 1000（src/config.js:612），若窗口仍是死的
+  // 200，凡把这个值配到 200 以上的人**每一轮**都会白付一次全表重取，跟闸门按没按下无关。
+  const config = sleepConfig({ sleepPatternMinMemories: 300 });
+  const { store, service } = setup(config);
+  for (let i = 0; i < 400; i++) {
+    store.save({ type: "project", title: `m-${i}`, content: `m-${i} 正文`, importance: 3 });
+  }
+  const calls = [];
+  const ctx = sleepCtx();
+  await runSleep(ctx, countingList(service, calls), config, ctx.logger, null, null);
+
+  assert.equal(calls.length, 1, `窗口够用时不该重取，实得 ${calls.length} 次`);
+  assert.equal(calls[0].limit, 300, "窗口至少等于本次要扫的名额");
+  store.close();
+});
+
 test("#515：窗口饿死时重取一次，且只放宽 limit——三条过滤轴一条不许动", async () => {
   const { store, service } = setup(sleepConfig());
   seedStarvedPatternPool(store, service);
