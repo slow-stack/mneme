@@ -476,8 +476,8 @@ test("#515：被按下的行占满 LIMIT 200 窗口时，模式扫描不报「�
     llm: {
       async *stream(options) {
         const text = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        // 只收模式扫描的提示（listText 每行以 `id=` 开头），别的时间不掺进来。
-        if (text.startsWith("id=")) seen.push(text);
+        // 认清单**形状**（行里带 `| importance=`），不认首行——#501/#493 那批围栏让 user 段以角色声明开头了
+        if (text.includes("| importance=")) seen.push(text);
         yield { type: "text-delta", index: 0, text: "[]" };
         yield { type: "finish", reason: { kind: "stop" } };
       }
