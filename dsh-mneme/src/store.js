@@ -915,6 +915,15 @@ export function createStore(path) {
   // 进来（'' 参与唯一性，第二条 '' 直接撞响），不是防 WHERE 子句消失。
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_share_external ON memories(share_external_id) WHERE share_external_id IS NOT NULL");
   db.exec("CREATE INDEX IF NOT EXISTS idx_memories_share_pack ON memories(share_pack_id)");
+  // Issue #505：saveWithDedupe 的定向候选是 `type = ? AND TRIM(title) = ?`。只有
+  // idx_memories_type 时这条语句等于「把该类型的行全读一遍、逐行 TRIM」，代价随最大
+  // 类型的行数线性长（本机 node:sqlite 实测同类型 1000 / 5000 / 20000 行 = 0.13 /
+  // 0.68 / 4.63 ms，而它是每存一条都要付一次的写路径）。TRIM 本身不是瓶颈——同句去掉
+  // TRIM 只差 0.07 ms，缺的是能把整个条件当 seek 用的索引；建好之后同一查询在同一批
+  // 数据上 ~0.00 ms。索引表达式必须与 SQL 里的写法逐字相同（TRIM(title)，不是 title），
+  // 差一点优化器就静默不认，而所有行为用例照样全绿——所以 dedupe-candidate-window
+  // 那条用例用 EXPLAIN QUERY PLAN 钉住它真的被选中。改 service 的 WHERE 必须同时改这里。
+  db.exec("CREATE INDEX IF NOT EXISTS idx_memories_type_trimmed_title ON memories(type, TRIM(title))");
   // issue #24 块2（权重演化）：entity_relations 加 weight + source。存量关系
   // 行缺列 → 默认 manual 1.0（最保守：既有语义不因迁移而变弱）。
   addColumn("entity_relations", "weight", "ALTER TABLE entity_relations ADD COLUMN weight REAL NOT NULL DEFAULT 1.0");
@@ -1772,6 +1781,30 @@ export function createStore(path) {
     // Issue #202：显式列清单排除 embedding——toRow 本就不输出向量，SELECT *
     // 纯属把全表最重的列（9.4 MB TEXT/5k 行）拖进内存再丢弃。
     const rows = db.prepare(`SELECT ${memoryColumnList} FROM memories ORDER BY updated_at DESC`).all();
+    return rows.map(toRow);
+  }
+
+  // Issue #505：写路径的去重候选必须「按同标题定向取」，不能「按 importance 取
+  // 前 N 条」。后者是「该类型最重要的 100 行」，与「找出同标题的那一行」无关：
+  // 某类型里 importance 高于待写行的行数一旦超过窗口，同标题行与待写行双双落在
+  // 窗口外，saveWithDedupe 的 find 恒不命中，于是静默走创建分支——不报错、不告
+  // 警，合并语义随库增长而失效（报告实测 1047 行类型、importance=5 有 180 行时
+  // 稳定复现）。
+  //
+  // 口径刻意与 saveWithDedupe 的比较式对齐：那边用 m.title.trim() 比
+  // String(memory.title).trim()，而 title 入库时并不 trim（见 save() 的
+  // `memory.title` 直写）⇒ 这里必须 TRIM(title)，否则存量里带首尾空白的标题
+  // 会被精确匹配漏掉，退回同一种静默降级。
+  //
+  // archived/forgotten 的过滤与 list() 默认口径一致（两者都为 0）：合并目标必须
+  // 是活跃行，否则会把内容并进一条已经归档/遗忘的记忆里。
+  // 无 LIMIT：同 (type, title) 的活跃行本就极少，加窗口等于把 #505 重新引进来。
+  function activeByTypeAndTitle(type, title) {
+    const rows = db.prepare(
+      `SELECT ${memoryColumnList} FROM memories
+        WHERE type = ? AND TRIM(title) = ?
+          AND forgotten = 0 AND archived = 0`
+    ).all(type, String(title ?? "").trim());
     return rows.map(toRow);
   }
 
@@ -3562,6 +3595,9 @@ export function createStore(path) {
     getUnrecalledSince,
     list,
     all,
+    // Issue #505：写路径去重的定向候选（按 type + TRIM(title) 精确取活跃行），
+    // 替代「importance 前 N 条」那个会随库增长失效的窗口。
+    activeByTypeAndTitle,
     // #430：有界单列读，写路径（质量过滤）用。
     recentContents,
     search,
