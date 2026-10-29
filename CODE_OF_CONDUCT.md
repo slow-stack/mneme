@@ -58,7 +58,9 @@ the opposite of the truth. The first is owed to reviewers; the second is refused
 author, GitHub's squash merge writes a `Co-Authored-By` line for each of them. A contributor who
 followed this rule perfectly can still end up with one, and the merge is not their act. If it happens,
 say so in the pull request; nobody will treat it as a violation. Section 8 shows the two times it
-happened here.
+happened here. This carve-out is written into the rule itself, not only into this document: see
+[CONTRIBUTING.md](CONTRIBUTING.md) under *Commit attribution is mandatory*, and the corresponding line
+in [AGENTS.md](AGENTS.md). Three documents, one answer.
 
 That is not an invitation to squash other people's names away. Where the extra authors are you under
 another address, or a machine identity, collapsing them costs nothing. Where they are **another person**,
@@ -365,7 +367,7 @@ AI 模型没有主观能动性。它不做决定、不为任何事负责，也�
 
 披露方法，是告诉读者该怎么审你；把模型写成作者，是告诉读者与事实相反的事。前者是欠评审者的，后者是这里拒绝的。
 
-**有一种 trailer 不用任何人动手就会出现。** 一个 PR 里如果有多位作者的提交，GitHub 的 squash 合并会给每一位写一行 `Co-Authored-By`。一个完全遵守这条规则的贡献者，也可能照样带着一行进来，而那一下不是他做的。真发生了，在 PR 里说明一句；没人会把它当成违规。第 8 节记下了本仓库发生过的那两次。
+**有一种 trailer 不用任何人动手就会出现。** 一个 PR 里如果有多位作者的提交，GitHub 的 squash 合并会给每一位写一行 `Co-Authored-By`。一个完全遵守这条规则的贡献者，也可能照样带着一行进来，而那一下不是他做的。真发生了，在 PR 里说明一句；没人会把它当成违规。第 8 节记下了本仓库发生过的那两次。这个例外不只写在本文里，也写进了规则本身：见 [CONTRIBUTING.md](CONTRIBUTING.md) 的「提交署名是硬性要求」一节，以及 [AGENTS.md](AGENTS.md) 里对应的那一条。三份文档，一个答案。
 
 但这不是允许你把别人的名字 squash 掉的许可。多出来的作者如果是你自己的另一个地址、或是一个机器身份，压掉它没有任何代价；如果是**另一个人**，那份署名必须活过 squash——写进 commit 正文，用文字写，就是下一段说的那种写法。为了让 trailer 规则保持干净而删掉一个真实的共同作者，破坏的是第 6 节。
 
