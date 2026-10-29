@@ -2257,3 +2257,33 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
   // 没配模型是一句可行动的话（先去选模型），不能和「模型没按格式回」共用一条文案。
   assert.ok(clientSource.includes('"no-route" ? "noroute"'), "no-route must map to its own panel outcome, not the generic failure");
 });
+
+// #514：用户以为插件「轻量」关掉了人格定义，实际是宿主 minimal 预设整体压制了注入。
+// 三道锁防复发：① 设置页那两个会被人开关的卡（运行模式 / 人格）都要能看到这条
+// 告示，且两处共用同一份取数与同一组文案，不许各自长一套；② 宿主的 minimal 与
+// 插件的 light 必须在文案里被明确区分，否则两个词在同一个页面里出现就还是混；
+// ③ 告示只在 suppressed 为真时出现——关掉注入的用户、preset 未知的宿主不该被吓。
+test("minimal preset notice reaches the settings page, not just the status tab (issue #514)", () => {
+  for (const key of ["memory.status.minimalPresetTitle", "memory.status.minimalPresetBody", "memory.settings.mode.hostPresetHint"]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  // ② 区分两个词：文案里必须同时点名宿主的极简/预设与插件的轻量档。
+  assert.ok(clientSource.includes("极简模式（minimal 预设）"), "the zh copy must name the host's minimal preset explicitly");
+  assert.ok(/轻量档不会关闭人格定义|Light never disables persona/.test(clientSource),
+    "the copy must say that light mode does not disable persona — that is the exact misreading in #514");
+
+  // ① 两处消费：告示必须在运行模式卡与人格卡各出现一次，且都读同一个 minimalWarn。
+  const uses = clientSource.split('t("memory.status.minimalPresetTitle")').length - 1;
+  assert.ok(uses >= 2, `the notice must render in both the mode card and the persona card (got ${uses})`);
+  assert.ok(clientSource.includes("const minimalWarn = !injectStatus.loading && injectStatus.suppressed;"),
+    "the notice must be gated on the shared inject-status state, not on a second fetch of its own");
+
+  // 取数只有一份：useInjectStatus 之外不许再有人直接打 /inject-status。
+  const fetches = clientSource.split('"/api/dsh-mneme/inject-status"').length - 1;
+  assert.equal(fetches, 1, "inject-status must have exactly one reader; a second fetch lets the two surfaces drift");
+
+  // 3 未压制时零打扰：settings 里判的必须是 injectStatus.suppressed。
+  assert.ok(!/minimalWarn\s*=\s*true/.test(clientSource), "the notice must never be hard-wired on");
+});
+
