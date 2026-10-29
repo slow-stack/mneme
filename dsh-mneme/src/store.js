@@ -915,6 +915,15 @@ export function createStore(path) {
   // 进来（'' 参与唯一性，第二条 '' 直接撞响），不是防 WHERE 子句消失。
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_share_external ON memories(share_external_id) WHERE share_external_id IS NOT NULL");
   db.exec("CREATE INDEX IF NOT EXISTS idx_memories_share_pack ON memories(share_pack_id)");
+  // Issue #505：saveWithDedupe 的定向候选是 `type = ? AND TRIM(title) = ?`。只有
+  // idx_memories_type 时这条语句等于「把该类型的行全读一遍、逐行 TRIM」，代价随最大
+  // 类型的行数线性长（本机 node:sqlite 实测同类型 1000 / 5000 / 20000 行 = 0.13 /
+  // 0.68 / 4.63 ms，而它是每存一条都要付一次的写路径）。TRIM 本身不是瓶颈——同句去掉
+  // TRIM 只差 0.07 ms，缺的是能把整个条件当 seek 用的索引；建好之后同一查询在同一批
+  // 数据上 ~0.00 ms。索引表达式必须与 SQL 里的写法逐字相同（TRIM(title)，不是 title），
+  // 差一点优化器就静默不认，而所有行为用例照样全绿——所以 dedupe-candidate-window
+  // 那条用例用 EXPLAIN QUERY PLAN 钉住它真的被选中。改 service 的 WHERE 必须同时改这里。
+  db.exec("CREATE INDEX IF NOT EXISTS idx_memories_type_trimmed_title ON memories(type, TRIM(title))");
   // issue #24 块2（权重演化）：entity_relations 加 weight + source。存量关系
   // 行缺列 → 默认 manual 1.0（最保守：既有语义不因迁移而变弱）。
   addColumn("entity_relations", "weight", "ALTER TABLE entity_relations ADD COLUMN weight REAL NOT NULL DEFAULT 1.0");

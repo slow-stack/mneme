@@ -9,6 +9,10 @@
 // 但用更小的数字达成同样的窗口溢出，避免测试本身变慢。
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 
@@ -147,4 +151,30 @@ test("#505: 归档行不作为合并目标（口径与 list 默认一致）", ()
   });
   assert.equal(second.action, "created", "已归档行不该被当作活跃合并目标");
   assert.notEqual(second.memory.id, first.memory.id);
+});
+
+
+// #505 把「取该类型前 100 条」换成「按 type + TRIM(title) 精确取」：窗口没了、静默不
+// 合并也没了，但 SQL 形状变了——代价随最大类型的行数线性长（20000 行时 4.6ms 一次，
+// 每存一条付一次），所以 store.js 里配了 (type, TRIM(title)) 表达式索引。这条用例不测
+// 快慢（机器有关节，数字不可复现），测的是**那条索引真的被这条查询选中**：表达式写歪
+// 一点（漏 TRIM、列序不对）优化器就静默退回扫整个类型，而本文件其余用例全绿。
+test("#505: 定向候选那条 SQL 命中表达式索引，而不是扫完整个类型", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mneme-dedupe-idx-"));
+  const file = join(dir, "m.db");
+  const store = createStore(file);
+  store.save({ type: "project", title: "  spaced  ", content: "x", importance: 3 });
+  store.close();
+  const db = new DatabaseSync(file);
+  try {
+    // WHERE 与 store.js 的 activeByTypeAndTitle 逐字同形，只把列表换成单列。
+    const plan = db.prepare(
+      "EXPLAIN QUERY PLAN SELECT id FROM memories WHERE type = ? AND TRIM(title) = ? AND forgotten = 0 AND archived = 0"
+    ).all("project", "spaced").map((r) => r.detail).join(" ");
+    assert.match(plan, /idx_memories_type_trimmed_title/,
+      `定向候选必须走 (type, TRIM(title)) 表达式索引，实得：${plan}`);
+  } finally {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
