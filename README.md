@@ -245,6 +245,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 | 与 Zep / Mem0 / Letta / Hindsight 的能力对比 | [docs/COMPARISON.md](docs/COMPARISON.md) |
 | 版本历史 | [dsh-mneme/CHANGELOG.md](dsh-mneme/CHANGELOG.md) |
 | 安全策略 | [SECURITY.md](SECURITY.md) |
+| 行为守则（署名归人、按证据分配发言权） | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |
 
 ## 🗺️ 路线图
 
@@ -523,6 +524,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 | Capability comparison vs Zep / Mem0 / Letta / Hindsight | [docs/COMPARISON.md](docs/COMPARISON.md)（中文） |
 | Changelog | [dsh-mneme/CHANGELOG.md](dsh-mneme/CHANGELOG.md) |
 | Security | [SECURITY.md](SECURITY.md) |
+| Code of Conduct (attribution, evidence over identity) | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |
 
 ## 🗺️ Roadmap
 
