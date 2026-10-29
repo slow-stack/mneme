@@ -1348,6 +1348,23 @@ test("GET /api/dsh-mneme/dream-status strips every decision index and the free-t
         action: "drop-everything",
         ids: ["y"],
         error: "decision[3]: unknown action"
+      },
+      {
+        // #522 三轮评审：分隔符本身可能出现在 id 里。旧实现按 ", got: " 猜自由文本
+        // 起点，会把这里的引号截断成未闭合状态，后面的引号配对替换随之失效，邮箱
+        // 原样留下。判据必须只看引号，不看分隔符。
+        index: 4,
+        action: "merge",
+        ids: ["q"],
+        error: 'decision[4]: unknown id "alice@example.com, got: x"'
+      },
+      {
+        // 旧版把理由先截到 60 字再 stringify，落库的历史行可能带着一个未闭合引号
+        // （字符串从中间断开）。抹不干净就得砍到结尾——宁可少一句尾巴。
+        index: 5,
+        action: "archive",
+        ids: ["w"],
+        error: 'decision[5]: archive of long-retention type(s) constraint needs a duplicate/outdated rationale, got: "用户说过预算是 12400'
       }
     ]
   });
@@ -1355,7 +1372,7 @@ test("GET /api/dsh-mneme/dream-status strips every decision index and the free-t
   const res = new FakeRes();
   await route.handler(req("/api/dsh-mneme/dream-status"), res);
   const data = JSON.parse(res.body);
-  assert.equal(data.lastRun.skippedCount, 4, "raw skipped count is preserved");
+  assert.equal(data.lastRun.skippedCount, 6, "raw skipped count is preserved");
   const unknownAction = data.lastRun.skippedReasons.find((b) => b.reason === "unknown action");
   assert.equal(unknownAction.action, "", "an action outside the enum is not echoed back to the open route");
   for (const bucket of data.lastRun.skippedReasons) {
@@ -1364,6 +1381,9 @@ test("GET /api/dsh-mneme/dream-status strips every decision index and the free-t
     assert.doesNotMatch(bucket.reason, /12400/, "model-authored text must not ride along with the audit reason");
     assert.doesNotMatch(bucket.reason, /email@example\.com/, "free text split on a fake decision boundary must not leak either");
     assert.doesNotMatch(bucket.reason, /并不过时/, "the whole free-text tail is dropped, not just its first half");
+    assert.doesNotMatch(bucket.reason, /alice@example\.com/, "an id carrying the tail separator is masked by quote pairing, not by the separator");
+    assert.doesNotMatch(bucket.reason, /用户说过预算是/, "a historical row whose reason was cut mid-string still gets masked");
+    assert.doesNotMatch(bucket.reason, /\b12400\b/, "nor does the truncated number survive");
   }
 });
 test("GET /api/dsh-mneme/dream-status returns runs and pending conflict ids", async () => {

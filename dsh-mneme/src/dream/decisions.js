@@ -29,36 +29,45 @@ const NEGATED_RATIONALE_RE = /(?:不|并不|不是|非)\s*(?:重复|过时|陈�
 
 // Issue #521：把 skipped[].error 归一化成可分组的原因。原样字符串不能直接
 // GROUP BY——前缀带 decision[N]: 序号，同一种原因会被拆成 N 组（#521 实测 280
-// 条被拆成 20 组），面板上看不出「一整类动作 100% 失败」。这里只剥两样东西：
-// 序号前缀和具体 id/类型集合，其余措辞保持原样，好让人一眼认出是哪个判据。
+// 条被拆成 20 组），面板上看不出「一整类动作 100% 失败」。这里只剥三样东西：
+// 序号前缀、模型可控的引号文本、具体类型集合，其余措辞保持原样，好让人一眼
+// 认出是哪个判据。
 export function normalizeSkipReason(error) {
   // 一条决策可能攒下多条错误，skipped[].error 用 "; " 把它们拼成一句（见下方
   // skipped.push）。所以先按 decision[N]: 的边界切开、逐段归一化再拼回去——
   // 原先的正则 ^ 锚定，只剥得掉第一个前缀，后面的 decision[1]: 会留在字符串
   // 中间，聚合时又被拆成多组（#522 评审指出）。
-  // 第二轮评审：剥 got: 必须排在切分之前。got: 后面是模型自己写的理由原文，
-  // 若它里面正好出现 "; decision[0]: "（引文、邮箱都算），先切分就会把这段
-  // 自由文本切成独立的一段——那段不带 got: 前缀，剥尾正则够不着它，原文于是
-  // 随 summarizeSkipped 走 open 路由出网关。先整段砍掉 got: 之后的一切，再切。
-  return String(error ?? "")
-    .replace(/,\s*got:[\s\S]*$/, "")
+  // 抹引号必须排在切分之前：模型写的理由原文里可能正好含 "; decision[0]: "
+  // （引文、邮箱都算），先切分就会把这段自由文本切成独立的一段，而那一段不带
+  // 任何可识别的边界，后面对它无从下手。先抹掉引号里的内容，切分就只看得到
+  // 我们自己拼进去的分隔符。
+  return maskModelText(String(error ?? ""))
     .split(/;\s*(?=decision\[\d+\]:\s*)/)
     .map(normalizeSkipSegment)
     .join("; ")
     .trim();
 }
 
-// 单段归一化：剥序号前缀、丢掉自由文本尾巴、把具体 id/类型集合抹成占位符。
+// 引号内的内容一律是模型可控的：id、action 名、理由原文都由 JSON.stringify
+// 加引号，所以「引号内 = 不可信」是这里唯一的判据。成对的那段整段抹成占位符；
+// 万一剩下一个孤立引号（旧版把理由截到 60 字再拼进 error，可能正好断在字符串
+// 中间），从那里砍到结尾——宁可少一句尾巴，也不让记忆正文随 open 路由出网关。
+// 刻意不按「, got: 」这类分隔符猜边界（#522 三轮评审）：分隔符本身可能出现在
+// id 里（unknown id "a@b.c, got: x"），猜错就会把引号截断，脱敏反而失效。
+function maskModelText(text) {
+  return String(text ?? "")
+    .replace(/"(?:[^"\\]|\\.)*"/g, "\u0000")
+    .replace(/"(?:[\s\S])*$/, "\u0000")
+    .replace(/\u0000/g, '"…"');
+}
+
+// 单段归一化：剥序号前缀、丢掉已经抹空的自由文本尾巴、把具体类型集合抹成占位符。
 function normalizeSkipSegment(segment) {
   return String(segment ?? "")
     .replace(/^decision\[\d+\]:\s*/, "")
-    // 校验器回给模型的自由文本尾巴（got: "<reason 截 60 字>"）整段丢掉：
-    // 它可能夹带记忆正文，也可能被截断成没有右引号——那样下面那条按引号配对
-    // 的替换根本剥不掉它。这条路由是 open 的，审计文本不该这样出网关（#522
-    // 评审）；明细仍原样留在 dream_runs.skipped 里供排查。
-    .replace(/,\s*got:[\s\S]*$/, "")
-    // 具体 id 是噪声：同类原因只因 id 不同不该分成两组
-    .replace(/"[^"]*"/g, '"…"')
+    // 抹完之后「, got: "…"」是个固定字面量（maskModelText 的产物），可以整段
+    // 砍掉：它只说明「校验器当时回了一句理由」，内容已经不在字符串里了。
+    .replace(/,\s*got:\s*"…"$/, "")
     // 类型集合同理，但单个类型名保留——「被拦的是哪一类」本身是有效信息
     .replace(/\(([a-z_]+(?:,\s*[a-z_]+)+)\)/g, "(…)")
     .trim();
@@ -212,7 +221,7 @@ export function validateDecisions(decisions, snapshot, options = {}) {
         if (mem && ARCHIVE_GUARDED_TYPES.has(mem.type)) guardedTypes.add(mem.type);
       }
       if (guardedTypes.size > 0 && !ARCHIVE_RATIONALE_RE.test(String(d.reason ?? ""))) {
-        local.push(`${at}: archive of long-retention type(s) ${[...guardedTypes].join(", ")} needs a duplicate/outdated rationale (重复/过时), got: ${JSON.stringify(String(d.reason ?? "")).slice(0, 60)}`);
+        local.push(`${at}: archive of long-retention type(s) ${[...guardedTypes].join(", ")} needs a duplicate/outdated rationale (重复/过时), got: ${JSON.stringify(String(d.reason ?? "").slice(0, 60))}`);
       }
     }
     if (local.length === 0 && d?.action === "update") {
