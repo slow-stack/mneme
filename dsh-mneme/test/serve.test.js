@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServeRuntime } from "../src/serve.js";
+import { createStore } from "../src/store.js";
+import { createSettings } from "../src/settings.js";
 
 // daemon 装配面锁(test/serve-bin.test.js 另有真子进程 + 多进程共存):
 // in-process 起真 HTTP(port 0,OS 分配),fetch 走 health / 401 / save / search /
@@ -192,5 +194,65 @@ test("serve: 非法 embed provider 拒装配;embed=off 时 semantic 为 null", a
   } finally {
     rt.dispose();
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* 同上 */ }
+  }
+});
+
+// --- GET /memory/provenance 的 distillRecords.enabled 门（#509 评审整改）--------
+// 单独立一条 daemon 级用例的理由：standalone 的既有用例是手搭 config 骗过门的，
+// 而 daemon 的 cfg 来自 serve.js 自己装配（原本是最小集，一个 distillRecords 键都没有）
+// ——不测真实装配，就会漏掉「daemon 恒定回功能关了」这一整类回归。
+async function seedFlags(dir, patch) {
+  const seed = createStore(join(dir, "memory.db"));
+  createSettings(seed.db).setFeatureFlags(patch);
+  seed.close();
+}
+
+test("serve: /memory/provenance 跟随面板开关（开着读得到）", async () => {
+  const dir = tmpDir();
+  await seedFlags(dir, { "distillRecords.enabled": true });
+  const rt = await createServeRuntime({ memoryDir: dir, port: 0, embed: "off" });
+  await rt.api.ready;
+  try {
+    const base = `http://127.0.0.1:${rt.api.port}`;
+    const auth = { authorization: `Bearer ${rt.api.token}` };
+    // 先经数据面写一条记忆，再直接落溯源链接与原文（写入面不关心是谁写的）。
+    const saved = await fetch(`${base}/memories`, {
+      method: "POST", headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 })
+    });
+    const savedBody = await saved.json();
+    const memoryId = savedBody.memory?.id ?? savedBody.id;
+    rt.store.saveMemoryProvenance({ memoryId, sessionId: "s1", seqStart: 10, seqEnd: 11, createdAt: "2026-10-23T00:00:00Z" });
+    rt.store.saveDistillRecords([
+      { sessionId: "s1", seq: 10, role: "user", text: "第一句原文", windowId: "w1", distilledAt: "2026-10-23T00:00:00Z" },
+      { sessionId: "s1", seq: 11, role: "assistant", text: "第二句原文", windowId: "w1", distilledAt: "2026-10-23T00:00:00Z" }
+    ]);
+
+    const res = await fetch(`${base}/memory/provenance?id=${encodeURIComponent(memoryId)}`, { headers: auth });
+    assert.equal(res.status, 200, "面板开着的留存，daemon 必须读得到（serve.js 把开关展开进了 cfg）");
+    const body = await res.json();
+    assert.deepEqual(body.windows[0].records.map((r) => r.text), ["第一句原文", "第二句原文"]);
+  } finally {
+    rt.dispose();
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* win 文件锁偶发 */ }
+  }
+});
+
+test("serve: 面板从没设过 distillRecords.enabled → daemon 这一面按关处理（409）", async () => {
+  // 残留不对称（写进 docs/DAEMON.md）：只靠 bundle 配置打开、从没在面板点过的用户，
+  // 宿主认、daemon 不认——daemon 结构上看不到宿主的 bundle config。这是已知的那一半，
+  // 不是本用例要修的；这里锁的是「没设过 → 关」这个 fail-closed 方向本身。
+  const dir = tmpDir();
+  const rt = await createServeRuntime({ memoryDir: dir, port: 0, embed: "off" });
+  await rt.api.ready;
+  try {
+    const res = await fetch(`http://127.0.0.1:${rt.api.port}/memory/provenance?id=m1`, {
+      headers: { authorization: `Bearer ${rt.api.token}` }
+    });
+    assert.equal(res.status, 409);
+    assert.deepEqual(await res.json(), { error: "distill-records-disabled" });
+  } finally {
+    rt.dispose();
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* win 文件锁偶发 */ }
   }
 });

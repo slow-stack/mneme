@@ -14,6 +14,7 @@ import { EFFORT_REJECT_RE, describeStreamFailure, resolveRoute, withEffortFallba
 import { summarizeSkipped } from "./dream/decisions.js";
 import { getInjectionSnapshot } from "./inject.js";
 import { renderUserSettingsBlock } from "./user-settings.js";
+import { parseProvenanceQuery, provenanceReply } from "./provenance-http.js";
 import { describeLocalRuntime, publicRuntimeStatus } from "./runtime/loader.js";
 import { hostModulesDir, provisionRuntime } from "./runtime/provision.js";
 import { classify, fetchLatestVersion, PACKAGE_VERSION } from "./version-check.js";
@@ -1301,6 +1302,52 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const days = Math.max(1, Math.min(365, Number(url.searchParams.get("days") ?? 7) || 7));
         const stats = service.getLlmAuditStats?.({ days }) ?? null;
         sendJson(res, 200, stats ?? { error: "unavailable" });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  // --- 记忆级溯源读出口（#399 写、#421 读）-----------------------------------
+  // #399 把蒸馏窗口的原文落进 distill_records、把 memory → (session, seq 区间)
+  // 的归因写进 memory_provenance，但只做了写：库里有答案、service.provenanceFor
+  // 能查，外部（面板 / standalone API / 脚本）拿不到，「这条记忆是从哪几句蒸出来
+  // 的」只能开 sqlite 手写 JOIN。本端点补最后一段接线。
+  //
+  // 一个链接一个窗口：区间 + 区间里的原文行（按 seq 升序）。没有链接的记忆
+  // （memory_save / 工具写入 / 冷启动）返回空 windows——「不是蒸馏来的」本身是
+  // 有效答案，不是错误，所以不 404。
+  //
+  // policy 是 **token**，不是 open（#509 维护者评审定）：records 带的是蒸馏窗口的
+  // 逐条会话原文，而 /list 是 open 且逐条带 id——两者串起来等于「先枚举 id、再按 id
+  // 捞回原文」，可达结果与 /export（一次拿全库，本仓 2026-10 审计后列 gated）同量级，
+  // 只是换了形状。抽稀不该靠「调用方不知道有这条路」。
+  //
+  // 口径只在 src/provenance-http.js 写一份，两个入口都调它（#411 的教训：两张皮
+  // 整段复制必然漂移）。
+  //
+  // distillRecords.enabled 门（#509 评审整改）：这个读出口吃的是**写侧同一枚开关、
+  // 同一个判据**（isDistillRecordsEnabled，与 src/summarize.js:988 逐字同源；本文件
+  // 不重写那个表达式，静态锁盯着）。关着时回 409，错误码取共用模块导出的
+  // DISTILL_RECORDS_DISABLED——「用户关了」而不是「装配坏了」（后者是 503，
+  // src/index.js:589-591 立的可区分性原则），也不是 404（本端点刻意不就「这条记忆
+  // 是否存在」作断言）。cfg 是启动期冻结值，所以面板改开关要到下次重启才对这里生效；
+  // 该键在 settings 白名单与 NESTED_FLAG_PATHS 里都登记着，面板会显示「待重启」
+  // （#481 的教训）。阶梯全貌见 provenance-http.js 文件头。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/memory/provenance",
+    policy: "token",
+    handler(req, res) {
+      try {
+        const url = new URL(req.url, "http://localhost");
+        const parsed = parseProvenanceQuery(url.searchParams.get("id"));
+        if (!parsed.ok) {
+          sendJson(res, parsed.status, { error: parsed.error });
+          return;
+        }
+        const { status, body } = provenanceReply({ service, id: parsed.id, config, warn: (m) => ctx.logger?.warn?.(m) });
+        sendJson(res, status, body);
       } catch {
         sendJson(res, 500, { error: "internal" });
       }

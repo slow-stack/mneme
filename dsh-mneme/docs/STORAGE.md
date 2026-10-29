@@ -36,7 +36,7 @@ dsh-mneme reclaim --json                        # 原始 JSON，给脚本用
 | 活跃行的向量 | 不动 | 检索正在用 |
 | `distill_records`（窗口外，#399） | 删行 | 蒸馏原文留存是 opt-in 旁路索引；到期即弃。**`memory_provenance` 链接保留**指向空区间（面板显示「来源已过期」），记忆与链接都不删——原文本就是「回查用」的，保留期到了就该走 |
 
-`distill_records` 只在 `distillRecords.enabled=true` 时才有行（默认关，连收集都不做），所以对大多数库这一项恒为 0。
+`distill_records` 只在 `distillRecords.enabled=true` 时才会有行（默认关，连收集都不做），所以对大多数库这一项恒为 0。**曾经开过再关的库有行**：关掉开关只是不再写、也不再经 HTTP 读出去，已留的行一直躺在库里，直到 `dsh-mneme reclaim`（不读这个键）或重新开启后的启动裁剪（见 [蒸馏原文留存](DISTILL.md)）。
 
 取消归档时（`memory_archive` 还原）服务端会重新排队嵌入，所以被回收的向量能拿回来。
 

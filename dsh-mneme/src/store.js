@@ -2657,6 +2657,22 @@ export function createStore(path) {
     ).all(memoryId);
   }
 
+  /**
+   * 一个 (session, seq 区间) 的蒸馏原文行（#399 写入、#421 读出口）。
+   *
+   * 按 seq 升序——原文的先后顺序就是区间顺序，乱序会让「这句从哪来」读不出来。
+   * 到期裁剪后区间可能变空，那时返回 []：链接刻意保留并指向空区间
+   * （见 clearDistillRecords 注释），面板据此显示「原文已过期」而非「没有来源」。
+   */
+  function distillRecordsFor(sessionId, seqStart, seqEnd) {
+    return db.prepare(
+      `SELECT seq, role, text, window_id, distilled_at
+         FROM distill_records
+        WHERE session_id = ? AND seq >= ? AND seq <= ?
+        ORDER BY seq`
+    ).all(sessionId, seqStart, seqEnd);
+  }
+
   // --- 存储生命周期：无损回收（#275 第一批）--------------------------------
   //
   // 两项都零价值判断、零条数变化：行数不变，只把不可重建/不可达的内容丢掉。
@@ -3642,6 +3658,7 @@ export function createStore(path) {
     clearDistillRecords,
     saveMemoryProvenance,
     provenanceFor,
+    distillRecordsFor,
     // 存储生命周期（#275 第一批）：无损回收的统计、清理与体积口径。
     dreamRunInputStats,
     clearDreamRunInputs,

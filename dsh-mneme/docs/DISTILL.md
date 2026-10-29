@@ -165,3 +165,60 @@ cleared: { dream_run_inputs, archived_embeddings, distill_records }
 - **启动期裁剪**：读装配后的 cfg（面板改了保留期也认），且默认关时不动手；
 - **白名单与往返**：两个键过 `settings` 校验（含范围外整数被拒），PUT 往返后 effective 读得回；
 - **轻量模式**：预设关 `enabled`、保留用户显式设的 `retentionDays`、不污染用户对象。
+
+## 10. 读出口：`/memory/provenance` 与 `distillRecords.enabled` 门（#421 写、#509 整改）
+
+两张表自 #399 起只有写入路径：库里有答案、`service.provenanceFor` 能查，外部拿不到——
+「这条记忆是从哪几句蒸出来的」只能开 sqlite 手写 JOIN。#421 补上读出口，两个入口共用
+一份实现：
+
+- 宿主内面板路由 `GET /api/dsh-mneme/memory/provenance`（`policy: token`）；
+- Bearer 数据面 `GET /memory/provenance?id=<memoryId>`（daemon 与宿主外部访问同享）。
+
+口径只写在 `src/provenance-http.js` 一处，两个壳都调它——#411 已经为 reclaim / share 各
+踩过一次「两张皮整段复制必然漂移」，`test/provenance-http.test.js` 的静态锁把「错误码字面
+量与开关判据只许出现在本模块、两个壳都真的把 `config` 转交进来、读侧判据与写侧
+`src/summarize.js:988` 逐字同源」写成断言。
+
+**形状**：一个链接一个窗口 `{session_id, seq_start, seq_end, created_at, records[]}`，
+`records` 是区间内的逐条会话原文（按 `seq` 升序、不越界）。没有链接的记忆返回**空
+`windows`**——「不是蒸馏来的」是有效答案，不是错误；未知 id 同样回空 `windows`（读端点
+不替调用方判断记忆是否存在）。到期裁剪后链接保留、指向空区间，面板据此显示「原文已过期」。
+
+**开关门（#509 评审整改）**：读出口吃 `distillRecords.enabled`——与写侧**同一枚开关、同一
+个判据表达式**（`config?.distillRecords?.enabled === true`，读侧唯一一份在
+`isDistillRecordsEnabled`）。此前全树只有 `src/index.js:270`（启动期裁剪）与
+`src/summarize.js:988`（写入）行为性读它，读出口一处都不读，于是「把 distill_records 关
+掉」的实际语义是*不再写、也永久不再删*，却还多一个能把历史原文读出去的口。状态码阶梯：
+
+| 状态码 | 含义 | 为什么不是别的 |
+|---|---|---|
+| `401` | 没带 token | 两个壳各自的门，在共用模块之前 |
+| `400 {"error":"missing-id"}` | 缺 `id` | 语法畸形，与服务端状态无关，所以排在功能开关之前（与 reclaim 的 `invalid-json` 同档） |
+| `409 {"error":"distill-records-disabled"}` | 用户关了 `distillRecords.enabled` | 与 `src/api.js:525` 的 `profileExtractEnabled` 同型：**用户关了 = 409，装配坏了 = 503**，两个答案必须可区分（`src/index.js:589-591`） |
+| `503 {"error":"provenance-unavailable"}` | service 上没这两个方法（headless / 旧装配） | 「没接线」不是「这条记忆没有来源」，两种空必须分开读数 |
+| `200` | `{memoryId, windows}` | 空 `windows` = 不是蒸馏来的 |
+
+**为什么不是 404**：本端点被明确设计成永远不就「这条记忆是否存在」作断言（缺 id 是 400、
+未知 id 是 200 + 空 windows），而 404 在本仓已有稳定含义——未知路由与资源不存在
+（`/memories/:id`、`entity-not-found`）。把「功能关了」塞进 404，调用方会在状态码这个
+被代理 / 监控 / 重试逻辑唯一读取的通道上，把它读成「这条记忆不存在」；那两种误读的后续
+动作完全不同（一个去开开关，一个去查这条记忆）。409 也不给 200 的形状加说明性键——响应
+体只多一个 `windows`，开关状态走状态码通道。
+
+**生效节奏**：`cfg` 是启动期冻结值（面板改开关与 `panel_mode` 一样在下次启动生效），读写
+两侧取的是同一份快照，所以两道门永不分歧；该键在 settings 白名单与 `NESTED_FLAG_PATHS`
+里都登记着，面板会显示「待重启」（#481「面板开着、功能却不注入」的教训）。
+
+**daemon 这一面**：`src/serve.js` 把 `feature_flags` 里的 `distillRecords.enabled` 展开进
+cfg（与宿主 `index.js:217-233` 同款展开，只取蒸馏这一组），与宿主共用同一个 memory.db 与
+同一份 kv——面板开着，daemon 就读得到。残留不对称：daemon 结构上看不到宿主的 bundle
+config，所以「只写在部署侧 bundle 配置里打开、从没在面板点过」的用户，宿主认、daemon 不
+认（每个请求回 409）。这不是故障，写进 `docs/DAEMON.md` 的那条已知边界。
+
+**关开关 ≠ 删除已留存原文**（本轮之后唯一诚实的表述）：这道门只封 HTTP 读路径。关掉后
+`src/index.js:270` 跳过启动期裁剪，已留的 `distill_records` 行永久冻在盘上，任何能摸到
+memory.db 的进程仍可读；唯一出路是 `dsh-mneme reclaim`（`src/maintenance.js` 不读这个
+键，手动可删）或重新开启后的启动裁剪。把「关 = 删掉」写进任何文档都是谎话。后续可做的
+是让裁剪与写开关解耦（`retentionDays` 有值就裁，无论 `enabled`），那是让开关语义完全诚实
+的唯一修法，超出本轮范围。

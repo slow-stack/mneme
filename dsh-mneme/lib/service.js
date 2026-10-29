@@ -2645,6 +2645,9 @@ export function createService({ store, mirror, config, onWrite, logger, document
     saveDistillRecords: (records) => store.saveDistillRecords(records),
     saveMemoryProvenance: (link) => store.saveMemoryProvenance(link),
     provenanceFor: (memoryId) => store.provenanceFor(memoryId),
+    // #421 读出口：按 (session, seq 区间) 取蒸馏原文。与 provenanceFor 成对——
+    // 一个给区间、一个给区间里的原文，合起来才是「这条记忆从哪几句蒸出来的」。
+    distillRecordsFor: (sessionId, seqStart, seqEnd) => store.distillRecordsFor(sessionId, seqStart, seqEnd),
     enqueue,
     setDreamHook(fn) { dreamHook = fn; },
     setSleepHook(fn) { sleepHook = fn; },
