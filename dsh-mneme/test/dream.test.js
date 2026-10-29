@@ -1428,6 +1428,29 @@ test("validateDecisions mergeGuard: duplicate rationale does not unlock cross-ty
   assert.match(skipped[0].error, /dreamMergeGuard/);
 });
 
+// #522 评审：逃生门的词表只认关键词、不认否定。「并不重复，只是主题相近」与
+// "not a duplicate" 都含「重复」/"duplicate" 子串，放它们过闸等于模型用一句否认
+// 换来合并许可——恰好把 #339 要防的「两条独立表述被揉成一段糊话」放回来。
+test("validateDecisions mergeGuard: a negated duplicate rationale does not open the escape hatch (#522)", () => {
+  const makeSnap = () => new Map([
+    ["p1", { id: "p1", type: "preference", title: "喜欢深色主题", content: "偏好深色", importance: 3, archived: false, forgotten: false }],
+    ["p2", { id: "p2", type: "preference", title: "喜欢等宽字体", content: "偏好等宽", importance: 3, archived: false, forgotten: false }],
+    ["h1", { id: "h1", type: "history", title: "旧事", content: "内容", importance: 3, archived: false, forgotten: false }],
+    ["h2", { id: "h2", type: "history", title: "旧事2", content: "内容2", importance: 3, archived: false, forgotten: false }]
+  ]);
+  // 中英各一条否定表述：都要被拦。配一条合法的非 guarded merge 让批次存活
+  // （单条决策被跳过后覆盖率下限会让整批不成立），单独观察被拦的理由。
+  for (const reason of ["并不重复，只是主题相近", "not a duplicate, just similar"]) {
+    const decisions = [
+      { action: "merge", ids: ["p1", "p2"], keepSource: "p1", title: "界面偏好", content: "深色 + 等宽", importance: 3, reason },
+      { action: "merge", ids: ["h1", "h2"], keepSource: "h1", title: "旧事合并", content: "合并内容", importance: 3 }
+    ];
+    const { ok, skipped } = validateDecisions(decisions, makeSnap(), { skipInvalid: true, mergeGuard: true });
+    assert.equal(ok, true, "skipInvalid keeps the batch alive");
+    assert.equal(skipped.length, 1, `negated rationale must not open the escape hatch: ${reason}`);
+    assert.match(skipped[0].error, /dreamMergeGuard/);
+  }
+});
 test("validateDecisions archive guard: long-retention type without duplicate/outdated rationale is skipped (prior gap)", () => {
   const snap = new Map([
     ["c", { id: "c", type: "constraint", title: "预算", content: "$12,400", importance: 4, archived: false, forgotten: false }],

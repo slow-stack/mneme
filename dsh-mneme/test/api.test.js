@@ -1304,6 +1304,57 @@ test("GET /api/dsh-mneme/dream-status aggregates skipped reasons by kind (issue 
   assert.equal(data.lastRun.skippedReasons[1].action, "archive", "same wording on a different action stays separate");
 });
 
+// #522 评审：一条决策可能攒下多条错误（skipped[].error 用 "; " 拼），原先的剥
+// 前缀正则 ^ 锚定、只剥得掉第一个，后面的 decision[1]: 留在字符串中间，聚合时
+// 同类原因又被拆成多组。另外校验器回给模型的自由文本尾巴（got: "…"）可能夹带
+// 记忆正文、也可能被截断成没有右引号，靠引号配对剥不掉——这条路由是 open 的，
+// 审计文本不该这样出网关。两件事一起锁在下面这条用例里。
+test("GET /api/dsh-mneme/dream-status strips every decision index and the free-text tail (issue #522)", async () => {
+  const { routes, service } = setup();
+  service.saveDreamRun({
+    created_at: "2026-01-04T00:00:00.000Z",
+    status: "degraded",
+    snapshot_hash: "h4",
+    input_count: 200,
+    receipt: "r4",
+    skipped: [
+      {
+        index: 0,
+        action: "merge",
+        ids: ["p1", "p2"],
+        // 两条错误拼成一句：第二个前缀必须也剥掉，否则同一类原因会被拆成两组。
+        error: 'decision[0]: merge of long-retention type(s) preference is blocked by dreamMergeGuard (needs a duplicate/outdated rationale, 重复/过时); decision[0]: unknown id "p9"'
+      },
+      {
+        index: 1,
+        action: "archive",
+        ids: ["x"],
+        // got: 后面是模型写的理由原文（这里故意放一段像记忆正文的话），整段该被丢掉。
+        error: 'decision[1]: archive of long-retention type(s) constraint needs a duplicate/outdated rationale, got: "用户说过预算是 12400 元"'
+      },
+      {
+        index: 2,
+        // action 不在 ACTIONS 枚举里：聚合结果会随 open 路由出网关，来路不明的动作名
+        // 不该由上游脏数据自己决定响应形状，一律归成空串。
+        action: "drop-everything",
+        ids: ["y"],
+        error: "decision[2]: unknown action"
+      }
+    ]
+  });
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/dream-status");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/dream-status"), res);
+  const data = JSON.parse(res.body);
+  assert.equal(data.lastRun.skippedCount, 3, "raw skipped count is preserved");
+  const unknownAction = data.lastRun.skippedReasons.find((b) => b.reason === "unknown action");
+  assert.equal(unknownAction.action, "", "an action outside the enum is not echoed back to the open route");
+  for (const bucket of data.lastRun.skippedReasons) {
+    assert.doesNotMatch(bucket.reason, /decision\[/, "every index prefix is stripped, not just the first");
+    assert.doesNotMatch(bucket.reason, /got:/, "the free-text tail never leaves the gateway");
+    assert.doesNotMatch(bucket.reason, /12400/, "model-authored text must not ride along with the audit reason");
+  }
+});
 test("GET /api/dsh-mneme/dream-status returns runs and pending conflict ids", async () => {
   const { routes, service } = setup();
   service.saveDreamRun({ created_at: "2026-01-01T00:00:00.000Z", status: "ok", provider: "ollama", model: "qwen", snapshot_hash: "h1", input_count: 2, receipt: "r1" });

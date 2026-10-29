@@ -5469,7 +5469,10 @@ window.__ModuleLoader__.load({
       const [stats, setStats] = useState(null);
       const [heatStats, setHeatStats] = useState(null);
       const [statsError, setStatsError] = useState(false);
-      const [conf, setConf] = useState({ loading: true, error: false, pending: 0 });
+      // #521 评审：待确认冲突与「上一轮跳过明细」同源（/dream-status），一次请求两用。
+      // 跳过明细必须出现在首屏——它原先只挂在折叠区里的 DreamStatusCards 上，而那个
+      // 折叠区默认收起、收起时连子卡都不挂载，等于「一整类动作 100% 被拦」仍旧看不见。
+      const [conf, setConf] = useState({ loading: true, error: false, pending: 0, skipped: [] });
       const [focusOp, setFocusOp] = useState(null);
       useEffect(() => {
         let cancelled = false;
@@ -5498,9 +5501,14 @@ window.__ModuleLoader__.load({
             .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
             .then((d) => {
               if (cancelled) return;
-              setConf({ loading: false, error: false, pending: Number((d && d.pendingConflicts) ?? 0) });
+              setConf({
+                loading: false,
+                error: false,
+                pending: Number((d && d.pendingConflicts) ?? 0),
+                skipped: Array.isArray(d && d.lastRun && d.lastRun.skippedReasons) ? d.lastRun.skippedReasons : []
+              });
             })
-            .catch(() => { if (!cancelled) setConf({ loading: false, error: true, pending: 0 }); });
+            .catch(() => { if (!cancelled) setConf({ loading: false, error: true, pending: 0, skipped: [] }); });
         };
         loadConflicts();
         window.addEventListener("mneme:conflicts-changed", loadConflicts);
@@ -5633,6 +5641,7 @@ window.__ModuleLoader__.load({
             cap: t("memory.status.token.conflictsFoot")
           })
         ),
+        h(SkippedReasonsNotice, { t, buckets: conf.skipped, loading: conf.loading, error: conf.error }),
         h("div", { className: "mneme-tokenflow" },
           h("h3", { className: "mneme-xcolhead" }, t("memory.status.token.donut")),
           statsError
@@ -5720,12 +5729,34 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // #521 评审：跳过明细只留一份实现。它原先只挂在折叠区里的 DreamStatusCards 上，
+    // 而那个折叠区默认收起、收起时连子卡都不挂载——首屏照样看不出「一整类动作 100%
+    // 被拦」，等于把 #521 的病换个地方犯。现在由 TokenFlowSection 的 KPI 带下方渲染，
+    // 折叠区不再重复一份。
+    function SkippedReasonsNotice({ t, buckets, loading, error }) {
+      const list = Array.isArray(buckets) ? buckets : [];
+      if (loading || error || list.length === 0) return null;
+      const total = list.reduce((sum, b) => sum + (Number(b.count) || 0), 0);
+      return h("div", { className: "mneme-statuscard", style: { borderColor: "var(--mneme-warn)" } },
+        h("div", { className: "mneme-statusnum", style: { fontSize: "16px", lineHeight: "24px" } },
+          t("memory.status.skippedTitle").replace("{n}", String(total))),
+        h("div", { className: "mneme-statuscap", style: { marginBottom: "6px" } }, t("memory.status.skippedHint")),
+        h("ul", { style: { margin: 0, paddingLeft: "18px", fontSize: "12px", lineHeight: "18px" } },
+          list.slice(0, 4).map((bucket, i) =>
+            h("li", { key: i, style: { color: "var(--mneme-fg-dim)" } },
+              (bucket.action ? bucket.action + " · " : "") + bucket.reason + " ×" + String(bucket.count)))),
+        list.length > 4
+          ? h("div", { className: "mneme-statuscap", style: { marginTop: "6px" } },
+              t("memory.status.skippedMore").replace("{n}", String(list.length - 4)))
+          : null
+      );
+    }
     // 巩固状态卡（×2）：最近一次 autoDream 运行 + 待确认冲突计数。数据来自
     // /dream-status，一次取回两张卡共用；失败只影响这两张卡自身。
     // showConflicts=false 用于 2026-10 改造后的降级折叠区：待确认冲突已升入
     // KPI 带，这里不再重复渲染冲突卡，只留最近运行卡。
     function DreamStatusCards({ t, onGotoQueue, showConflicts = true }) {
-      const [state, setState] = useState({ loading: true, error: false, lastRun: null, pending: 0, skipped: [] });
+      const [state, setState] = useState({ loading: true, error: false, lastRun: null, pending: 0 });
       useEffect(() => {
         let cancelled = false;
         const loadOnce = () => {
@@ -5737,12 +5768,10 @@ window.__ModuleLoader__.load({
                 loading: false,
                 error: false,
                 lastRun: (d && d.lastRun) || null,
-                pending: Number((d && d.pendingConflicts) ?? 0),
-                // #521：最近一轮按归一化原因聚合的跳过明细（后端已合并计数）。
-                skipped: Array.isArray(d && d.lastRun && d.lastRun.skippedReasons) ? d.lastRun.skippedReasons : []
+                pending: Number((d && d.pendingConflicts) ?? 0)
               });
             })
-            .catch(() => { if (!cancelled) setState({ loading: false, error: true, lastRun: null, pending: 0, skipped: [] }); });
+            .catch(() => { if (!cancelled) setState({ loading: false, error: true, lastRun: null, pending: 0 }); });
         };
         loadOnce();
         // #295 评审：裁决完成后队列会广播 mneme:conflicts-changed，这里重取
@@ -5759,29 +5788,10 @@ window.__ModuleLoader__.load({
       // 激活直达队列——StatusPanel 把 onGotoQueue 传进来（一步 prop，无线程）。
       const pending = state.pending > 0;
       const gotoQueue = () => { if (pending && onGotoQueue) onGotoQueue(); };
-      // #521：degraded 轮的跳过明细。此前只回 status，面板上「degraded + 已应用
-      // 若干条」看起来像健康轮，一整类动作 100% 被拦要自己写 SQL 才看得出。
-      // 只在有跳过时渲染；原因按后端归一化后的桶显示，最多 4 类。
-      const skipped = state.skipped;
-      const skippedTotal = skipped.reduce((sum, b) => sum + (Number(b.count) || 0), 0);
-      const skippedCard = !state.loading && !state.error && skipped.length > 0
-        ? h("div", { className: "mneme-statuscard", style: { borderColor: "var(--mneme-warn)" } },
-            h("div", { className: "mneme-statusnum", style: { fontSize: "16px", lineHeight: "24px" } },
-              t("memory.status.skippedTitle").replace("{n}", String(skippedTotal))),
-            h("div", { className: "mneme-statuscap", style: { marginBottom: "6px" } }, t("memory.status.skippedHint")),
-            h("ul", { style: { margin: 0, paddingLeft: "18px", fontSize: "12px", lineHeight: "18px" } },
-              skipped.slice(0, 4).map((bucket, i) =>
-                h("li", { key: i, style: { color: "var(--mneme-fg-dim)" } },
-                  (bucket.action ? bucket.action + " · " : "") + bucket.reason + " ×" + String(bucket.count)))),
-            skipped.length > 4
-              ? h("div", { className: "mneme-statuscap", style: { marginTop: "6px" } },
-                  t("memory.status.skippedMore").replace("{n}", String(skipped.length - 4)))
-              : null
-          )
-        : null;
+      // #521 的跳过明细不在这里渲染：它已提到 TokenFlowSection 的 KPI 带下方，
+      // 首屏可见。这张卡在折叠区里，展开后再重复一遍只会让人以为有两批跳过。
       return h(react.Fragment, null,
         h(StatusCard, { t, title: t("memory.status.dream"), loading: state.loading, error: state.error, num, cap }),
-        skippedCard,
         showConflicts
           ? h("div", {
               role: pending ? "button" : undefined,

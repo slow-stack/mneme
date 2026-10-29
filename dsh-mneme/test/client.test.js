@@ -2282,9 +2282,36 @@ test("dream status card surfaces normalized skip reasons, not just status (issue
   assert.ok(decisionsSource.includes("export function summarizeSkipped("), "aggregation lives in decisions.js");
   assert.ok(!clientSource.includes("normalizeSkipReason("), "the panel must not re-implement normalization");
   // 序号前缀必须被剥掉：不剥的话 decision[0]/decision[1] 会被拆成 N 组（#521 实测 280 条拆成 20 组）。
-  assert.ok(/replace\(\/\^decision\\\[\\d\+\\\]/.test(decisionsSource), "the decision[N]: prefix is stripped");
+  // #522 评审：一条决策可能攒下多条错误（用 "; " 拼接），所以剥前缀必须覆盖每一段，
+  // 不是只剥行首那一个——先按 "; decision[N]:" 切段，逐段再剥。
+  assert.ok(/replace\(\/\^decision\\\[\\d\+\\\]:/.test(decisionsSource), "the decision[N]: prefix is stripped");
+  assert.ok(/split\(\/;\\s\*\(\?=decision/.test(decisionsSource), "multi-error strings are split before prefix stripping");
 });
 
+// #522 评审：跳过明细原先只挂在 StatusPanel 折叠区里的 DreamStatusCards 上，而那个
+// 折叠区默认收起、收起时连子卡都不挂载——于是「一整类动作 100% 被拦」在首屏照样
+// 看不见，等于把 #521 的病换个地方犯。这条锁住：明细由 TokenFlowSection（首屏，
+// 就在 KPI 带下方）渲染，且只有一份实现（SkippedReasonsNotice）。
+test("skipped reasons are visible without expanding the collapsed detail section (#522)", () => {
+  assert.ok(clientSource.includes("function SkippedReasonsNotice("),
+    "the notice must be its own component so both call sites share one implementation");
+  // 首屏：TokenFlowSection 的返回值里必须出现这个组件（KPI 带之后、tokenflow 之前）。
+  const tokenFlow = clientSource.slice(
+    clientSource.indexOf("function TokenFlowSection("),
+    clientSource.indexOf("function DreamStatusCards(")
+  );
+  assert.ok(tokenFlow.includes("h(SkippedReasonsNotice,"),
+    "the first screen must render the skip notice, not only the collapsed section");
+  // 折叠区那份不再重复渲染：同一个数字在首屏与展开区各出现一次，读者会以为有两批跳过。
+  const dreamCards = clientSource.slice(
+    clientSource.indexOf("function DreamStatusCards("),
+    clientSource.indexOf("function InjectStatusCard(")
+  );
+  assert.ok(!dreamCards.includes("h(SkippedReasonsNotice,"),
+    "the collapsed section must not render the same notice a second time");
+  assert.ok(!dreamCards.includes("skippedReasons"),
+    "the collapsed card no longer needs its own copy of the skip buckets");
+});
 // 设置页目录（#518）：用户要的是「左侧一个分类，直接跳到某一节」。这里锁五件事：
 // ① 目录由 tocGroups 一张表生成，五项分组标题全部走 groupHead(key) 渲染——两处各写
 //    一遍清单是这类索引最典型的腐烂方式，而腐烂后的目录会把人领到不存在的锚点；
