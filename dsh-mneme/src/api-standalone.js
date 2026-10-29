@@ -15,10 +15,12 @@
 // the operator's explicit responsibility (documented in README).
 import { createServer } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { homedir } from "node:os";
 import { TYPES } from "./store.js";
 import { bootstrapFromDirectory } from "./bootstrap.js";
 import { PACKAGE_VERSION } from "./version-check.js";
 import { parseReclaimJson, readReclaimFields, reclaimReply, RECLAIM_UNAVAILABLE } from "./reclaim-http.js";
+import { parseShareBody, shareReply, parseReceiveBody, receiveReply, parseUndoBody, undoReply } from "./share-http.js";
 
 const DEFAULT_PORT = 8790;
 const DEFAULT_HOST = "127.0.0.1";
@@ -29,6 +31,46 @@ const MAX_PORT_ATTEMPTS = 20;
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_PAGE_LIMIT = 1000;
 const MAX_SEARCH_TOP_K = 200;
+
+/**
+ * /context 降级原因枚举（#383，issue #508 评审后定稿）——**日志读数**的唯一真源。
+ * 它不进响应体：响应只多 `tier` 一个键，具体原因走 daemon stderr 那行 warn。
+ *
+ * 成例是「修法不同就分开」，于是六值互不吞并：
+ *   embed-unavailable  embedder 对象在，上面没有 embedSingle / embed → 修适配器
+ *   embed-empty        接口返回了，但向量是空数组 / 非数组 → 修接口
+ *   embed-timeout      接口挂起，被 embedTimeoutMs 护栏按缺失处理 → 修端点响应
+ *   embed-error        接口抛错（HTTP 4xx/5xx、网络、解析失败……）→ 查端点
+ *   embed-dimension    接口成功了，但库里没有一条维度相符的活跃向量 → 重建索引
+ *   no-embedder        压根没装配 embedder（daemon `--embed off` / lightMode /
+ *                      宿主未装配）→ 把嵌入装上或开起来。这是**预期态，不是故障**
+ * 最后一个是 #508 Minor 的修正：此前这条路不写 diag.reason，靠日志行的兜底表达式
+ * 临时拼一个值出来，结果那个值不在任何文档声明的枚举里，按枚举解析日志的运维程序
+ * 会整条漏掉。现在它在决策点赋值，与其余五值并列同源。
+ *
+ * 不并进 embed-unavailable 是有意的：那两个读数今天共用「语义路没通」的结果，但
+ * 主体与动作都不同——一个是适配器坏了（异常），一个是语义路没开（设计内常态，
+ * src/index.js 的 lightMode 注释与 src/serve.js 的 `embedder ?? semantic?.embedder
+ * ?? null` 都明写它）。并过去会让按 embed-unavailable 告警的面板对每个轻量模式
+ * 安装报警。用词则与宿主面 /api/dsh-mneme/semantic 的 reason 对齐（src/api.js），
+ * 同一个物理条件在两个面叫同一个名字，运维 grep 时不会分裂。
+ *
+ * **两套同名枚举的分界**：src/api.js 那套是 `no-embedder / not-configured /
+ * initializing / null`，免鉴权状态面板消费，test/api.test.js 锁着。两套同名不同源，
+ * 这里只借词、不改那边；清扫文档时不要顺手统一（会打红那条测试）。
+ *
+ * 这一个常量同时是代码写入方、两份文档（README 外部 API 段 / docs/DAEMON.md §2）与
+ * 契约测试的同一来源：新增降级路径必须在这里加值并同步那两处，否则
+ * test/standalone-api.test.js 的枚举契约测试会红。
+ */
+export const CONTEXT_DEGRADE_REASONS = Object.freeze([
+  "embed-unavailable",
+  "embed-empty",
+  "embed-timeout",
+  "embed-error",
+  "embed-dimension",
+  "no-embedder"
+]);
 
 /**
  * Listen with automatic EADDRINUSE recovery. Tries the configured port, then
@@ -226,16 +268,29 @@ async function handlePutBody(res, service, logger, id, text) {
  * /context 的查询嵌入：best-effort，embedder 接口宽容与 searchMemories 同款
  * （embedSingle 优先，兼容 embed-only 的 OpenAI 兼容客户端，issue #10）。
  * 调用方负责 catch——嵌入失败降级规则档，绝不因此 500。
+ *
+ * `diag`（optional，issue #383）：拿不到向量时把原因写进去，供 daemon 侧日志枚举
+ * 降级原因。枚举是上面那个 CONTEXT_DEGRADE_REASONS（六值，互不吞并），本函数只负
+ * 责其中两个「没拿到向量」的值：无可用接口 → embed-unavailable，空/非数组 →
+ * embed-empty。其余由超时护栏、查询嵌入 .catch 与维度判据写入。不传则行为与既往
+ * 逐字节一致。
  */
-async function embedQueryVector(embedder, q) {
+async function embedQueryVector(embedder, q, diag) {
   const embedSingle = typeof embedder.embedSingle === "function"
     ? embedder.embedSingle.bind(embedder)
     : typeof embedder.embed === "function"
       ? embedder.embed.bind(embedder)
       : null;
-  if (!embedSingle) return undefined;
+  if (!embedSingle) {
+    if (diag) diag.reason = "embed-unavailable";
+    return undefined;
+  }
   const vector = await embedSingle(q);
-  return Array.isArray(vector) && vector.length ? vector : undefined;
+  if (!Array.isArray(vector) || !vector.length) {
+    if (diag) diag.reason = "embed-empty";
+    return undefined;
+  }
+  return vector;
 }
 
 /**
@@ -244,11 +299,17 @@ async function embedQueryVector(embedder, q) {
  * 按嵌入缺失处理，降级规则档。输掉的 embed promise 无法取消、自行结束后被丢弃，
  * 无害；挂起的主要成本是一个泄漏的挂起任务，可接受。嵌入先完成时清掉定时器
  * （CodeRabbit 同轮 Minor：别让每个请求都留一枚要等满超时的计时器）。
+ *
+ * `diag`（optional，issue #383）：超时写 `embed-timeout`，与上面几个原因同一套枚举
+ * （CONTEXT_DEGRADE_REASONS）。
  */
-function withEmbedTimeout(promise, timeoutMs) {
+function withEmbedTimeout(promise, timeoutMs, diag) {
   let timer;
   const timeout = new Promise((resolve) => {
-    timer = setTimeout(() => resolve(undefined), timeoutMs);
+    timer = setTimeout(() => {
+      if (diag) diag.reason = "embed-timeout";
+      resolve(undefined);
+    }, timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -581,6 +642,84 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
         return;
       }
 
+      // --- POST /share: 分享包（spec §4）--------------------------------------
+      // 判据一条都不在这里：哪些行进包、超没超限、抛错回什么码，全在 share-http.js
+      // 那份共用实现里（#411 的口径——两张皮只许差在鉴权与路径）。本侧独有的只有
+      // 鉴权（Bearer，除 GET /health 外没有例外）与「不出 Content-Disposition」：
+      // 下面的 sendJson 连 headers 参数都没有，CLI 拿 JSON 自己落盘。
+      //
+      // GET 回 405 而不是掉到末尾的 404，与面板那侧一致。这**故意**与上面的
+      // /maintenance/reclaim（GET → 404）不同：状态码差一次就是第三处差别，而两条
+      // 路由的「两张皮」约束比这份文件里邻居的写法更硬。
+      //
+      // .catch 不是装饰：shareReply 现在自己兜得住，但这条链上 readBody 之前之后的
+      // 任何一处抛错都没人接——本文件那个同步 try/catch 在 .then 的回调里已经退栈，
+      // 漏出去就是未处理拒绝、客户端一个字节都没收到（#410）。
+      if (pathname === "/share") {
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "method-not-allowed" });
+          return;
+        }
+        void readBody(req, res).then((text) => {
+          if (text === null) return; // readBody 已经答过 413，再写一次就是双写响应
+          const parsed = parseShareBody(text);
+          if (!parsed.ok) {
+            sendJson(res, 400, { error: parsed.error });
+            return;
+          }
+          const out = shareReply({
+            service,
+            packageVersion: PACKAGE_VERSION,
+            homeDir: homedir(),
+            options: parsed.options,
+            warn: (msg) => logger?.warn?.(msg)
+          });
+          sendJson(res, out.status, out.body);
+        }).catch(() => sendJson(res, 500, { error: "internal" }));
+        return;
+      }
+
+      // --- POST /receive + POST /receive/undo: 分享包入库与整包退出（车道 C）-----
+      // 判据一条都不在这里：包体合格不合格住在 share.js 的闸门（由 service 的
+      // importSharePack 调），错误码 → 状态的映射与 dry_run 那一格住在 src/share-http.js
+      // 这份共用实现里——#411 的口径是两张皮只许差在鉴权与路径（面板那半见
+      // /api/dsh-mneme/receive）。本面独有的只有两件事：鉴权是这里唯一的 Bearer 一道门
+      // （没有 policy 名可用，除 GET /health 外人人都要带），以及 sendJson 连 headers
+      // 参数都没有，所以不出 Content-Disposition。
+      //
+      // 非 POST 一律 405，与面板逐字同款：这**故意**与上面的 /maintenance/reclaim 不同
+      // （那边掉到末尾 404）。状态码差一次就是第三处差别，而每条 receive 都还有个面板
+      // 双胞胎，一致性比照抄本文件的邻居更硬。
+      //
+      // void + .catch，不留外层 try 兜底：本文件那个 try 在 .then 的回调里早已退栈，
+      // 回调里抛出去就是没人接的 rejection、客户端一个字节都收不到（#410）。共用层
+      // 从不抛（连 warn 自己坏都被守卫吞掉），所以这里能被走到的只剩面自己写答复那一步。
+      // readBody 超限时会自己答 413 并把 text 解析成 null：那句 return 是必需的，少了
+      // 它就是在已发出的响应上再写一次。
+      if (pathname === "/receive" || pathname === "/receive/undo") {
+        const isUndo = pathname === "/receive/undo";
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "method-not-allowed" });
+          return;
+        }
+        void readBody(req, res).then((text) => {
+          if (text === null) return; // readBody 已经答过 413，再写一次就是双写响应
+          const parsed = isUndo ? parseUndoBody(text) : parseReceiveBody(text);
+          // 两个解析器都回 {ok:true,…}|{ok:false,error}，所以一处判断就够。别把它写成
+          // 「有 error 就 400」：那会把本面缺路径时该落的 404 与真正的坏 body 混成一种
+          // 答复，排查时看不出是哪一层没接上。
+          if (!parsed.ok) {
+            sendJson(res, 400, { error: parsed.error });
+            return;
+          }
+          const out = isUndo
+            ? undoReply({ service, packId: parsed.packId, dryRun: parsed.dryRun, warn: (msg) => logger?.warn?.(msg) })
+            : receiveReply({ service, pack: parsed.pack, dryRun: parsed.dryRun, warn: (msg) => logger?.warn?.(msg) });
+          sendJson(res, out.status, out.body);
+        }).catch(() => sendJson(res, 500, { error: "internal" }));
+        return;
+      }
+
       // --- POST /bootstrap: cold-start memories from repo files (#220) -------
       // 显式收 dir（插件没有工作区根目录概念，不猜路径）；确定性解析零 LLM；
       // 幂等骑 saveWithDedupe 的 (type, title, scope) 去重 + _overwrite 刷新。
@@ -671,16 +810,123 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
         const thresholdRaw = Number(url.searchParams.get("threshold") ?? 3);
         const threshold = Number.isFinite(thresholdRaw) ? thresholdRaw : 3;
         const scope = scopeFromSearchParams(url);
-        void Promise.resolve(q && embedder ? withEmbedTimeout(embedQueryVector(embedder, q), embedTimeoutMs) : undefined)
-          .catch(() => undefined)   // 查询嵌入失败降级规则档（与 searchMemories 同口径）
+        // #383：降级原因记账用。embedQueryVector / withEmbedTimeout 只负责「拿不到
+        // 向量时返回 undefined」，原因（无可用接口 / 空向量 / 超时 / 抛错 / 维度不符 /
+        // 没装配 embedder）在这里回收，供 daemon 侧日志枚举——响应体只多 tier 一个
+        // 键，不加第二个字段。
+        const diag = {};
+        // 记账的唯一决策点：q 非空但没装配 embedder。#508 Minor 的成因正是这条路不写
+        // reason，靠日志行的兜底表达式临时拼一个值（no-embedder），而那个值不在文档
+        // 声明的枚举里；同一表达式里还躺着第二个越界字面量 embed-failed。兜底表达式的
+        // 问题不只是越界：它把「默认值」编码在两处，且 embedder 存在时那个 embed-error
+        // 分支一次都走不到（10 种降级场景实测：只要 embedder 为真，embedQueryVector /
+        // withEmbedTimeout / 下面的 .catch 三者必居其一地写好原因），却会把未来任何新增
+        // 的未记账失败一律谎报成「接口抛错」，把运维引去查 HTTP 端点。现在默认值只有
+        // 这一个来源，日志行不再兜底。
+        if (q && !embedder) diag.reason = "no-embedder";
+        void Promise.resolve(q && embedder ? withEmbedTimeout(embedQueryVector(embedder, q, diag), embedTimeoutMs, diag) : undefined)
+          .catch((err) => { diag.reason = "embed-error"; return undefined; })   // 查询嵌入失败降级规则档（与 searchMemories 同口径）
           .then((queryVector) => {
             const pinnedStats = {};
+            // items 本身失败（injectCandidates 抛错，典型如库被关）回 500 是正当的：
+            // 没有可返回的内容。items 一旦算好，后面的档位判定与降级日志就只是诊断，
+            // 任何一步出错都不该把已经算好的 items 丢掉——所以下面每一处 logger 调用
+            // 都各自包了 try/catch（logger 来自宿主，stdout 管道断裂时 warn 自身抛错是
+            // 真实可发生的，而 `logger?.warn?.()` 只防 logger 缺失，防不了这个）。
             const items = service.injectCandidates({ query: q, maxItems, threshold, queryVector, scope, pinnedStats });
+            // #383 档位信号：嵌入降级在调用方视角原本完全静默（items 看着正常，只是
+            // 召回质量悄悄变差），外部集成方无从感知自己长期跑在降级档上。
+            // 三态 fail-closed——判不出来报 unknown，不报 full：
+            //   full     语义档，查询嵌入真的成功了且与库里的向量可比
+            //   degraded 规则档：没装配 embedder / 嵌入超时 / 不可用向量 / 抛错 /
+            //             维度不符（拿到了向量但语义召回整个不可用）
+            //   unknown  语义路未启用（空 q），或判不出来（维度探针没跑成 / 读不出
+            //             任何向量）——那不是降级，但也不能宣称 full
+            // 比 /search 的 mode 更精确：/search 把「空查询」和「向量失败」都报
+            // keyword，这里能分开（空 q 直接可观测）。
+            //
+            // 预算：判档不是免费的——q 非空且配了 embedder 时，它真的会起一次查询
+            // 嵌入（一次网络往返 + embedTimeoutMs 的超时窗口），因为档位要回答的
+            // 正是「这次嵌入成不成」。这里**没有**复用宿主 /health 那份现成数据源：
+            // standalone 的 /health 只回 {ok:true}，而 embeddingDimensionBreakdown
+            // 是 src/api.js 里的一次全表扫（每行 JSON.parse 一个向量），按请求跑会
+            // 把语义路成本翻倍，且它根本不在 standalone 的装配里。维度探针因此走
+            // service.vectorDimensionState()——存在性判据（有没有一条活跃向量与查询
+            // 同维），成本模型见 store.js 那段注释：常态一次全 id 扫描 + 解析 1 个
+            // 向量，只有要报 degraded 时才走完全表。
+            let tier = "unknown";
+            if (q && queryVector) {
+              // #508 Major：探针判据从「读一行的维度」换成存在性。LIMIT 1 拿任意一条
+              // 代表全库，在混合维度库里两个方向都错——抽到与查询不符的那条会误报
+              // degraded（明明有可比的向量），首条解析失败又会漏报成 full。现在问的是
+              // 「有没有一条活跃向量的维度等于查询维度」，与 searchVector 的行集同源。
+              //
+              // 探针失败（库被锁 / 半开 / 旧装配没有这个方法）判不出来：tier 保持
+              // unknown，不宣称 full，也不把已经算好的 items 丢掉。sentinel 不能用
+              // null / undefined——那正是「库里没有向量」的合法读数，混起来就会把一次
+              // 真实的探针故障谎报成 full（fail-open）。隔离只在调用侧：store 与 service
+              // 透传都保持抛出口，不把异常吞成某个 state。
+              let state;
+              // 判不出来时的留痕。unknown 现在有三个生产者（空 q / 探针没跑成 / 有行却
+              // 一条都读不出来），而响应体只有 tier 一个键、分不出它们，调用方对 unknown
+              // 的策略又常常是「不告警」——不留一条 warn，一次真实的判档故障就从运维面上
+              // 消失了。这条 warn **不是** diag.reason 枚举的一员（tier 不是 degraded，
+              // 没有降级原因可记），运维程序不要按降级原因枚举解析它；消息也与
+              // 「degraded to the rule tier (<reason>)」分开，因为语义路这次是真的跑了，
+              // 只是没判成，两种故障的后续动作不同。
+              let judgeFailure;
+              try {
+                state = typeof service.vectorDimensionState === "function"
+                  ? service.vectorDimensionState(queryVector.length)
+                  : undefined;
+              } catch (error) {
+                state = undefined;
+                judgeFailure = `dimension probe failed (${String(error)})`;
+              }
+              if (state?.state === "match" || state?.state === "none") {
+                // match：有维度相符的活跃向量，语义路通（通 ≠ 有命中，四道门仍可能让
+                // 语义档贡献为 0）。none：行集本身为空——没有东西可比，不是维度不符。
+                tier = "full";
+              } else if (state?.state === "mismatch") {
+                // 维度不符：searchVector 对不等长的行直接跳过（见 store.js 的
+                // distill-tx-embed-gap 注释），不抛错、只是命中为零——于是召回静默
+                // 退回 BM25/规则档，而嵌入侧一切正常。这是 issue #383 点名的那一种
+                // 「悄悄退化」，必须有自己的名字：修法是重建索引，不是查端点。
+                diag.reason = "embed-dimension";
+                tier = "degraded";
+              } else if (state?.state === "unreadable" || state?.state === "invalid") {
+                // 有行却一条都读不出来（比维度不符更严重：语义召回 100% 死亡），或查询
+                // 维度本身不是正整数。判不出来，留 unknown。
+                judgeFailure = `no comparable vector readable (${state.state})`;
+              }
+              // undefined（探针方法缺失 / 返回垃圾 / 异步漂移）同样留 unknown。
+              if (judgeFailure) {
+                try {
+                  logger?.warn?.(`dsh-mneme: /context tier left unknown: ${judgeFailure}`);
+                } catch { /* 日志通道坏了也不是把 items 丢掉的理由 */ }
+              }
+            } else if (q) {
+              tier = "degraded";
+            }
+            if (tier === "degraded") {
+              // reason 由唯一决策点（q && !embedder）+ 三个写入方（embedQueryVector /
+              // withEmbedTimeout / 查询嵌入 .catch）+ 维度判据保证必已赋值，所以这里不再
+              // 写第二份默认值——#508 之前的那份兜底表达式（`embedder ? "embed-failed" :
+              // "no-embedder"`）两个默认值互相矛盾、且都在文档枚举之外，其中 embed-error
+              // 分支在 embedder 存在时一次都走不到，却会把未来任何新增的未记账失败一律
+              // 谎报成「接口抛错」。现在只把枚举内的值写进日志：越界或漏记账都露出
+              // (undefined)，那是看得见的缺陷信号，不是一个编出来的因。
+              const reason = CONTEXT_DEGRADE_REASONS.includes(diag.reason) ? diag.reason : undefined;
+              try {
+                logger?.warn?.(`dsh-mneme: /context degraded to the rule tier (${reason})`);
+              } catch { /* 日志通道坏了也不是把 items 丢掉的理由 */ }
+            }
             sendJson(res, 200, {
               profile: (settings?.getProfile?.() ?? "").trim(),
               rules: settings?.getRules?.() ?? [],
               items: service.toApiList(items),
-              pinnedCount: pinnedStats.shown ?? 0
+              pinnedCount: pinnedStats.shown ?? 0,
+              tier
             });
           })
           .catch(() => {

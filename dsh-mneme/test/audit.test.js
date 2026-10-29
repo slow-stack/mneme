@@ -30,9 +30,9 @@ function mockCtx({ onConsolidation, summaryText = "记忆库总览：用户偏�
     llm: {
       async *stream(options) {
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        if (userText.startsWith("id=")) {
+        if (userText.includes("| type=")) {
           yield { type: "block-start", index: 0, blockType: "text" };
-          yield { type: "text-delta", index: 0, text: onConsolidation ? onConsolidation(userText) : "[]" };
+          yield { type: "text-delta", index: 0, text: onConsolidation ? onConsolidation(userText, options.purpose) : "[]" };
           yield { type: "block-end", index: 0, block: { type: "text" } };
           yield { type: "finish", reason: { kind: "stop" } };
           return;

@@ -240,6 +240,42 @@ window.__ModuleLoader__.load({
         t("memory.explorer.scopeBadge"));
     };
 
+    /**
+     * 「标题 + 类型」两列的小清单。抽屉的整包退出清单与接收弹层的撞名清单是同一个形状
+     * （`{type,title}`），第三份手写 `.map` 就是第三处会各自漂移的地方——所以这里只有一份。
+     * 分享弹层的跳过清单**不走它**：那一列的第二格是 reason 标签，不是类型。
+     */
+    function TypeRowList({ t, rows }) {
+      const list = Array.isArray(rows) ? rows : [];
+      if (!list.length) return null;
+      return h("div", { className: "mneme-sharelist" },
+        list.map((row, i) => h("div", { key: `${row.type}-${i}`, className: "mneme-sharow" },
+          h("span", { className: "mneme-sharowtitle" }, row.title || ""),
+          h("span", { className: "mneme-sharowreason" }, typeLabel(t, row.type)))));
+    }
+
+    /**
+     * 外来行的来源徽标。别名不单独存列：`importedTagFor` 打的那条 `from-<别名>` 标签就是唯一读数，
+     * 所以这里只认标签，不猜别的来源。先判 `source === "imported"` 再判标签——
+     * 一个人手工给自己的一条打了 from-x 不算外来行，徽标会把它误报成别人的。
+     * 搜索态不出现这个徽标，且这是对的：那张 DTO 的 source 是召回渠道（src/service.js:939），
+     * 判据在那一侧读不出来。不许为了让搜索结果显示徽标而改成「认标签就算」——那会把
+     * 手工标签误报成外来行，也是 memory-source.js 那条契约的反面。
+     * from-shared 是空别名的中性值，照原样显示，不兜成「未知来源」。
+     */
+    const ForeignBadge = ({ m, t }) => {
+      // 判据先于标签：`isImported` 就是 src/memory-source.js 那条契约的读数，
+      // 手工打了 from-x 标签的本机行不算外来行。正向字面量也要留着——test/client-share.test.js
+      // 的锁按 `m.source === "imported"` 钉这条契约，写成反向判断会让那条锁无处可钉。
+      const isImported = !!m && m.source === "imported";
+      if (!isImported) return null;
+      const tags = Array.isArray(m.tags) ? m.tags : [];
+      const tag = tags.find((x) => typeof x === "string" && x.startsWith("from-"));
+      if (!tag) return null;
+      return h("span", { className: "mneme-badge mneme-badge--foreign", title: tag },
+        t("memory.explorer.foreignBadge").replace("{alias}", tag.slice(5)));
+    };
+
     // Unified API fetcher: attaches the optional apiToken (set in the settings
     // view, persisted in localStorage) as a Bearer header. When no token has
     // been configured the header is omitted and the API stays open (default).
@@ -277,6 +313,9 @@ window.__ModuleLoader__.load({
         "memory.settings.group.search": "搜索",
         "memory.settings.group.connect": "连接与安全",
         "memory.settings.group.help": "帮助",
+        "memory.settings.toc.label": "目录",
+        "memory.settings.toc.aria": "设置分组目录",
+        "memory.settings.toc.jump": "跳到「{name}」",
         "memory.settings.profile": "用户画像",
         "memory.settings.profileHint": "写一段自我介绍（角色、背景、偏好），Agent 每轮对话都会自动带上。",
         "memory.settings.profileSave": "保存画像",
@@ -454,6 +493,11 @@ window.__ModuleLoader__.load({
         "memory.settings.mode.standard": "标准",
         "memory.settings.mode.savedHint": "已保存，重启 DSH 后生效",
         "memory.settings.mode.offList": "已关闭：巩固（autoDream）· 实体抽取 · 语义搜索",
+        // #514：用户把宿主「极简（minimal）」与插件「轻量」混为一谈，以为关掉人格是
+        // 轻量模式干的。这个词条把两件事分开说清楚，不再让用户自己猜。
+        "memory.settings.mode.hostPresetHint": "注意区分：这里的「轻量 / 标准」是插件的记忆引擎档位，与 DSH 宿主的「极简模式（minimal 预设）」是两回事——轻量档不会关闭人格定义。",
+        "memory.status.minimalPresetTitle": "当前会话用的是宿主的「极简模式」",
+        "memory.status.minimalPresetBody": "极简预设（minimal）把 system prompt 整体接管了，记忆、用户画像、人格定义都不会送达模型。这是宿主的设计边界，插件改不了。想要它们生效：把 DSH 切到标准模式（或在 ~/.dsh/settings.yaml 设 agent-presets.default: standard）；过渡方案是把画像与规则写进 AGENTS.md——那条走指令路径，不受这个压制。",
         "memory.settings.extapi.title": "外部访问 API",
         "memory.settings.extapi.desc": "开放一个本机接口，让其他工具（插件、命令行、桌面应用）也能读写这份记忆库，默认只允许本机连接。改动保存后重启 DSH 生效。",
         "memory.settings.extapi.enabled": "启用",
@@ -753,6 +797,61 @@ window.__ModuleLoader__.load({
         "memory.explorer.imported": "已合并 {n} 条编辑",
         "memory.explorer.importFailed": "导入失败",
         "memory.explorer.importNoFile": "请先选择文件",
+        "memory.explorer.sharePack": "分享记忆包…",
+        "memory.explorer.shareTitle": "分享记忆包",
+        "memory.explorer.shareHint": "把本机活跃记忆打成一个可外发的包：密钥/PII 整条不发，本机路径抹成 ~，归档与遗忘的不进。",
+        "memory.explorer.shareAlias": "分享别名",
+        "memory.explorer.shareAliasBlank": "留空 = from-shared",
+        "memory.explorer.shareType": "只发这一类",
+        "memory.explorer.shareBuild": "生成",
+        "memory.explorer.shareBuilding": "生成中…",
+        "memory.explorer.shareFailed": "生成失败",
+        "memory.explorer.shareIncluded": "进包 {n} 条",
+        "memory.explorer.shareDeduped": "另有 {n} 条同键折叠，够格进包 {m} 条",
+        "memory.explorer.shareSkipped": "跳过 {n} 条",
+        "memory.explorer.share.skip.archived": "归档",
+        "memory.explorer.share.skip.forgotten": "已遗忘",
+        "memory.explorer.share.skip.readonly_type": "只读指针行",
+        "memory.explorer.share.skip.excluded_type": "不外发的类型",
+        "memory.explorer.share.skip.blank_or_noise": "空白或噪声",
+        "memory.explorer.share.skip.sensitive": "密钥或 PII",
+        "memory.explorer.shareSkipList": "跳过清单（{n} 条）",
+        "memory.explorer.shareSkipListCapped": "清单只列前 {n} 条，上面计数是全量",
+        "memory.explorer.shareNoTitle": "（标题不外发）",
+        "memory.explorer.shareTooLarge": "包体 {bytes} 字节，超过 {limit} 字节水位",
+        "memory.explorer.shareEmpty": "没有够格外发的条目，包是空的",
+        "memory.explorer.shareDownload": "下载包文件",
+        "memory.explorer.receivePack": "导入分享包…",
+        "memory.explorer.receiveTitle": "导入分享包",
+        "memory.explorer.receiveHint": "选她发来的包文件。先干跑预览，点确认才写库；导入的行进外来区，不参与本机的巩固、降级或整理。",
+        "memory.explorer.receivePick": "选择包文件…",
+        "memory.explorer.receiveNotJson": "这个文件不是 JSON",
+        "memory.explorer.receiveNotPack": "这个文件不是分享包（顶层应该是一个 JSON 对象）",
+        "memory.explorer.receivePreview": "先干跑预览",
+        "memory.explorer.receiveConfirm": "确认导入",
+        "memory.explorer.receiveFailed": "导入失败",
+        "memory.explorer.receiveFrom": "来自 {alias}",
+        "memory.explorer.receiveAnonymous": "未署名",
+        "memory.explorer.receiveWouldCreate": "将新建 {n} 条",
+        "memory.explorer.receiveDidCreate": "已新建 {n} 条",
+        "memory.explorer.receiveExisting": "{n} 条已在库中",
+        "memory.explorer.receiveUnchanged": "{n} 条正文相同",
+        "memory.explorer.receiveConflicts": "撞名 {n} 条（不合并，请自己看）",
+        "memory.explorer.receivePackCount": "包内 {n} 条",
+        "memory.explorer.receiveStillDry": "没有写库：这一枪仍是干跑",
+        "memory.explorer.filterForeign": "外来",
+        "memory.explorer.filterForeignHint": "只看别人分享进来的记忆（source=imported）。这些行不参与本机的巩固、降级或整理。",
+        "memory.explorer.filterForeignSearchHint": "搜索时这一档不按：搜索结果里没有可用的来源读数。要看外来区请先清掉搜索词。",
+        "memory.explorer.foreignBadge": "来自 {alias}",
+        "memory.explorer.foreignPack": "所属分享包",
+        "memory.explorer.undoPack": "收起这个包",
+        "memory.explorer.undoPackPreview": "将删除这个包的 {n} 条外来记忆（物理删除）",
+        "memory.explorer.undoPackConfirm": "确认删除 {n} 条",
+        "memory.explorer.undoPackDone": "已收起 {n} 条",
+        "memory.explorer.undoPackFailed": "收起失败",
+        "memory.explorer.undoPackBusy": "收起中…",
+        "memory.explorer.undoPackStillDry": "没有删除：这一枪仍是干跑",
+        "memory.explorer.undoPackGone": "这个包在本库里已经没有行了",
         "memory.explorer.newMemory": "新增记忆…",
         "memory.explorer.newTitle": "新增记忆",
         "memory.explorer.newHint": "手动写一条记忆。同类型同标题会并入既有条目，而不是长出第二行。",
@@ -995,6 +1094,9 @@ window.__ModuleLoader__.load({
         "memory.settings.group.search": "Search",
         "memory.settings.group.connect": "Connections & safety",
         "memory.settings.group.help": "Help",
+        "memory.settings.toc.label": "Contents",
+        "memory.settings.toc.aria": "Settings section index",
+        "memory.settings.toc.jump": "Jump to {name}",
         "memory.settings.profile": "User Profile",
         "memory.settings.profileHint": "Describe yourself once — the agent reads it every turn.",
         "memory.settings.profileSave": "Save Profile",
@@ -1168,6 +1270,9 @@ window.__ModuleLoader__.load({
         "memory.settings.mode.standard": "Standard",
         "memory.settings.mode.savedHint": "Saved. Takes effect after restarting DSH",
         "memory.settings.mode.offList": "Off: consolidation (autoDream) · entity extraction · semantic search",
+        "memory.settings.mode.hostPresetHint": "Two different things: Light/Standard here is this plugin's memory engine tier; the host's minimal preset is separate — Light never disables persona.",
+        "memory.status.minimalPresetTitle": "This session runs the host's minimal preset",
+        "memory.status.minimalPresetBody": "The minimal preset takes over the whole system prompt, so memory, profile and persona never reach the model. That is a host design boundary the plugin cannot change. To get them back: switch DSH to standard mode (or set agent-presets.default: standard in ~/.dsh/settings.yaml); as an interim workaround put profile and rules in AGENTS.md — that path is not suppressed.",
         "memory.settings.extapi.title": "External API",
         "memory.settings.extapi.desc": "Opens a local API so other tools (plugins, CLIs, desktop apps) can also read and write this memory store; binds to localhost only by default. Changes take effect after restarting DSH.",
         "memory.settings.extapi.enabled": "Enable",
@@ -1450,6 +1555,61 @@ window.__ModuleLoader__.load({
         "memory.explorer.imported": "Merged {n} edits",
         "memory.explorer.importFailed": "Import failed",
         "memory.explorer.importNoFile": "Choose a file first",
+        "memory.explorer.sharePack": "Share memories…",
+        "memory.explorer.shareTitle": "Memory share pack",
+        "memory.explorer.shareHint": "Pack your active memories for someone else: rows holding secrets are dropped whole, home paths become ~, archived and forgotten rows stay out.",
+        "memory.explorer.shareAlias": "Share alias",
+        "memory.explorer.shareAliasBlank": "blank = from-shared",
+        "memory.explorer.shareType": "Only this type",
+        "memory.explorer.shareBuild": "Build",
+        "memory.explorer.shareBuilding": "Building…",
+        "memory.explorer.shareFailed": "Could not build the pack",
+        "memory.explorer.shareIncluded": "{n} rows in the pack",
+        "memory.explorer.shareDeduped": "{n} folded as duplicates; {m} rows qualified",
+        "memory.explorer.shareSkipped": "{n} rows skipped",
+        "memory.explorer.share.skip.archived": "Archived",
+        "memory.explorer.share.skip.forgotten": "Forgotten",
+        "memory.explorer.share.skip.readonly_type": "Read-only pointers",
+        "memory.explorer.share.skip.excluded_type": "Excluded types",
+        "memory.explorer.share.skip.blank_or_noise": "Blank or noise",
+        "memory.explorer.share.skip.sensitive": "Secrets or PII",
+        "memory.explorer.shareSkipList": "Skip list ({n})",
+        "memory.explorer.shareSkipListCapped": "List shows the first {n}; the counts above are complete",
+        "memory.explorer.shareNoTitle": "(title withheld)",
+        "memory.explorer.shareTooLarge": "Pack is {bytes} bytes, over the {limit}-byte water mark",
+        "memory.explorer.shareEmpty": "Nothing qualified - the pack is empty",
+        "memory.explorer.shareDownload": "Download pack file",
+        "memory.explorer.receivePack": "Import a share pack…",
+        "memory.explorer.receiveTitle": "Import a share pack",
+        "memory.explorer.receiveHint": "Pick the file she sent. The first pass is a dry run; nothing is written until Confirm. Imported rows join the foreign area and never take part in this machine's consolidation, demotion or tidying.",
+        "memory.explorer.receivePick": "Choose pack file…",
+        "memory.explorer.receiveNotJson": "That file is not JSON",
+        "memory.explorer.receiveNotPack": "That file is not a share pack (the top level should be one JSON object)",
+        "memory.explorer.receivePreview": "Preview (dry run)",
+        "memory.explorer.receiveConfirm": "Confirm import",
+        "memory.explorer.receiveFailed": "Import failed",
+        "memory.explorer.receiveFrom": "From {alias}",
+        "memory.explorer.receiveAnonymous": "unnamed",
+        "memory.explorer.receiveWouldCreate": "Would create {n}",
+        "memory.explorer.receiveDidCreate": "Created {n}",
+        "memory.explorer.receiveExisting": "{n} already in the store",
+        "memory.explorer.receiveUnchanged": "{n} identical already",
+        "memory.explorer.receiveConflicts": "{n} title clashes (not merged - check them yourself)",
+        "memory.explorer.receivePackCount": "{n} rows in the pack",
+        "memory.explorer.receiveStillDry": "Nothing was written: that call stayed dry",
+        "memory.explorer.filterForeign": "Foreign",
+        "memory.explorer.filterForeignHint": "Only rows shared in by someone else (source=imported). They never join this machine's consolidation, demotion or tidying.",
+        "memory.explorer.filterForeignSearchHint": "Not applied while searching: search results carry no usable provenance readout. Clear the query to browse the foreign area.",
+        "memory.explorer.foreignBadge": "From {alias}",
+        "memory.explorer.foreignPack": "Share pack",
+        "memory.explorer.undoPack": "Withdraw this pack",
+        "memory.explorer.undoPackPreview": "This would delete {n} foreign rows from that pack (hard delete)",
+        "memory.explorer.undoPackConfirm": "Delete {n} rows",
+        "memory.explorer.undoPackDone": "Withdrew {n} rows",
+        "memory.explorer.undoPackFailed": "Withdrawal failed",
+        "memory.explorer.undoPackBusy": "Withdrawing…",
+        "memory.explorer.undoPackStillDry": "Nothing was deleted: that call stayed dry",
+        "memory.explorer.undoPackGone": "That pack has no rows left in this store",
         "memory.explorer.newMemory": "New memory…",
         "memory.explorer.newTitle": "New memory",
         "memory.explorer.newHint": "Write one memory by hand. Same type + same title merges into the existing entry instead of minting a second row.",
@@ -2104,6 +2264,22 @@ window.__ModuleLoader__.load({
       ".mneme-menu button:hover{background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-impdialog{position:absolute;right:0;top:calc(100% + 6px);width:300px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-1);box-shadow:0 12px 32px color-mix(in srgb,var(--dsw-alias-label-primary) 16%,transparent);padding:14px;z-index:20;animation:mneme-fadein .1s ease-out}",
       ".mneme-improw{display:flex;align-items:center;gap:8px;margin-top:10px}",
+      // 分享/接收弹层：宽度与滚动共用 impdialog 的锚，正文一律 --mneme-* 语义层
+      // （纪律 10：宿主 label-tertiary/label-dimmed 是分隔线层，不是正文色）。
+      ".mneme-sharedialog{width:340px;max-height:min(72vh,560px);overflow-y:auto}",
+      ".mneme-sharebody{margin-top:10px;display:flex;flex-direction:column;gap:2px}",
+      ".mneme-sharebreak{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}",
+      ".mneme-sharebreakitem{font-size:11px;line-height:15px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums}",
+      ".mneme-sharelist{margin-top:4px;max-height:132px;overflow-y:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:6px 8px}",
+      ".mneme-sharow{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;line-height:16px}",
+      ".mneme-sharowtitle{color:var(--dsw-alias-label-primary);min-width:0;word-break:break-word}",
+      ".mneme-sharowreason{flex:none;color:var(--mneme-fg-dim)}",
+      // 外来徽标：只有文字色与描边，**不给底色**。`.mneme-badge--scope` / `--frozen` 那两类
+      // 有自己的 10–12% 色晕，而 `test/contrast.test.js` 的正文对比度是按**该条规则自己的
+      // 背景**合成的：`--mneme-ok` 在画布上是 4.62，铺上 12% 绿晕就掉到 4.17（<4.5）。
+      // 与其为它造一个新语义令牌或改用别的色，不如让这一颗走无晕的形状——来源读数本来就在
+      // 文字里（`from-<别名>`），不靠底色说话。
+      ".mneme-badge--foreign{color:var(--mneme-ok);border:1px solid color-mix(in srgb,var(--mneme-ok) 34%,transparent)}",
       // 瞬时操作提示（删除/归档）：挂在浏览层底部居中，不被抽屉卸载吞掉
       ".mneme-x{position:relative}",
       ".mneme-toast{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-layer-1);font-size:12.5px;line-height:18px;padding:7px 16px;border-radius:10px;z-index:30;box-shadow:0 8px 24px color-mix(in srgb,var(--dsw-alias-label-primary) 25%,transparent);animation:mneme-fadein .15s ease-out}",
@@ -2238,9 +2414,20 @@ window.__ModuleLoader__.load({
       // self-contained unit inside the stacked settings view ---
       ".mneme-set-card{border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px;margin-bottom:10px}",
       // 设置页分组标题（个性化 / 记忆引擎 / 搜索 / 连接与安全 / 帮助）：
-      // 先给「这一段在管什么」，卡片才是具体选项
-      ".mneme-set-grouphead{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin:24px 0 10px}",
-      ".mneme-set-grouphead:first-child{margin-top:8px}",
+      // 先给「这一段在管什么」，卡片才是具体选项；scroll-margin-top 是给 #518 的粘顶目录（实测约 74px 高）留的跳转余量
+      // ——没有它，点 chip 滚过去的标题就停在目录背面
+      ".mneme-set-grouphead{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin:24px 0 10px;scroll-margin-top:84px}",
+      ".mneme-set-toc+.mneme-set-grouphead{margin-top:8px}", // nav 才是第一个孩子：:first-child 自 #518 起永不命中
+      // 设置页目录（#518）：分组标题 + 一栏跳转 chip。粘顶是因为设置页是整块
+      // 滚动的（.mneme-set 自己 overflow-y），长页里目录滚走了就等于没有——用户
+      // 提的诉求正是「方便直接跳转」，跳不回去的目录不算数。
+      // 窄屏收成横向滚动：换行会让粘顶条吃掉半屏高度，而设置页本身已经很挤。
+      ".mneme-set-toc{position:sticky;top:0;z-index:2;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1));padding:8px 0 10px;margin-bottom:4px;border-bottom:1px solid var(--dsw-alias-border-l2)}",
+      ".mneme-set-toclabel{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin-bottom:6px}",
+      ".mneme-set-toclist{display:flex;gap:6px;overflow-x:auto;padding:3px}", // 不 wrap：chip flex:none，窄屏横向滚；3px 给 focus ring 留位（滚动容器会裁掉描边）
+      ".mneme-set-tocchip{flex:none;height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--dsw-alias-border-l2);background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:12px;line-height:24px;transition:border-color .12s,color .12s}",
+      ".mneme-set-tocchip:hover{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary)}",
+      ".mneme-set-tocchip:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
       ".mneme-set-token{font-family:monospace;font-size:12px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);word-break:break-all;user-select:all}",
       ".mneme-set-hint{font-size:12px;color:var(--mneme-fg-dim)}",
       // --- 重要性编辑行：与查看态同一份 Lucide 星形（此前是文本星号下拉，角更尖锐且与其他星不统一） ---
@@ -3546,6 +3733,31 @@ window.__ModuleLoader__.load({
       return "Unknown";
     };
 
+    // #182 / #514 注入状态探测：一处取数，两处消费（状态页告示卡、设置页提示）。
+    // 分成两份读同一接口会让两处的「已知/未知」判断各自漂移——#514 里用户就是在
+    // 设置页开关人格，却只在状态页才看得到原因。普通函数声明（会提升），这里紧
+    // 挨着设置页放，是为了让源码顺序和「先谁用」对得上。
+    function useInjectStatus() {
+      const [state, setState] = useState({ loading: true, suppressed: false, agentPreset: null });
+      useEffect(() => {
+        let cancelled = false;
+        apiFetch("/api/dsh-mneme/inject-status")
+          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+          .then((j) => {
+            if (!cancelled) {
+              setState({
+                loading: false,
+                suppressed: !!(j && j.suppressed),
+                agentPreset: (j && j.agentPreset) || null
+              });
+            }
+          })
+          .catch(() => { if (!cancelled) setState({ loading: false, suppressed: false, agentPreset: null }); });
+        return () => { cancelled = true; };
+      }, []);
+      return state;
+    }
+
     function SettingsContent({ t }) {
       const [profile, setProfile] = react.useState("");
       const [rules, setRules] = react.useState([]);
@@ -3568,6 +3780,10 @@ window.__ModuleLoader__.load({
       const [personaNewName, setPersonaNewName] = react.useState("");
       const [personaSaved, setPersonaSaved] = react.useState(false);
       const [personaError, setPersonaError] = react.useState("");
+      // #514：人是在这一页开关人格的，所以「为什么关了没反应」的答案必须在
+      // 这一页。与状态页告示卡共用 useInjectStatus，两边口径不会各自漂。
+      const injectStatus = useInjectStatus();
+      const minimalWarn = !injectStatus.loading && injectStatus.suppressed;
       // 注入预览：文本由后端渲染（GET /persona 的 preview 字段），前端只显示、不自己拼。
       // 原先这里是一段前端手拼的 profile + rules 列表，注释却写着「注入生效文本」——
       // 它既没有表头、没有「- 用户画像：」前缀，也完全没有人格三行，两份渲染代码必然漂。
@@ -4059,9 +4275,43 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // 目录（#518）：五项分组标题是设置页唯一的骨架，所以索引直接由这张表
+      // 生成，而不是再手写一遍标题——两份清单迟早会漂，而漂了的目录会把人
+      // 领到空处。tocRefs 是滚动目标，与渲染顺序一一对应（同一个 map 里产出）。
+      const tocGroups = [
+        { key: "personal", label: t("memory.settings.group.personal") },
+        { key: "engine", label: t("memory.settings.group.engine") },
+        { key: "search", label: t("memory.settings.group.search") },
+        { key: "connect", label: t("memory.settings.group.connect") },
+        { key: "help", label: t("memory.settings.group.help") }
+      ];
+      const tocRefs = useRef({});
+      function jumpToGroup(key) {
+        const node = tocRefs.current?.[key];
+        // 偏移不在这里算：标题自己带 scroll-margin-top（见 .mneme-set-grouphead）。
+        // 两处各量一次粘顶条高度必然对不上，跳转会把目标停在目录背后。
+        if (node && node.scrollIntoView) node.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+      const groupHead = (key) => h("div", {
+        className: "mneme-set-grouphead",
+        ref: (node) => { if (node) tocRefs.current[key] = node; }
+      }, t("memory.settings.group." + key));
+
       return h("div", null,
+        h("nav", { className: "mneme-set-toc", "aria-label": t("memory.settings.toc.aria") },
+          h("div", { className: "mneme-set-toclabel" }, t("memory.settings.toc.label")),
+          h("div", { className: "mneme-set-toclist" },
+            ...tocGroups.map((group) => h("button", {
+              key: group.key,
+              type: "button",
+              className: "mneme-set-tocchip",
+              title: t("memory.settings.toc.jump").replace("{name}", group.label),
+              onClick: () => jumpToGroup(group.key)
+            }, group.label))
+          )
+        ),
         // —— 个性化：画像 / 人格 / 规则 / 自定义指令（Agent 怎么对你） ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.personal")),
+        groupHead("personal"),
         // 用户画像 — who the agent is talking to
         h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.profile")),
@@ -4112,6 +4362,14 @@ window.__ModuleLoader__.load({
         h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.persona")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.personaHint")),
+          // #514：人格卡是最容易撞上宿主极简压制的地方——这里的提示比运行模式卡
+          // 那句更要紧，因为用户就是在这里点开关的。
+          minimalWarn && h("div", {
+            style: { marginBottom: 10, padding: "8px 10px", borderLeft: "3px solid var(--mneme-warn)", fontSize: 12, lineHeight: "18px" }
+          },
+            h("div", { style: { fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, t("memory.status.minimalPresetTitle")),
+            h("div", { style: { marginTop: 4, color: "var(--mneme-fg-dim)" } }, t("memory.status.minimalPresetBody"))
+          ),
           // 卡列表：default + 各 byAgent 卡，点选切换编辑位；default 标注兜底位
           h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
             h("button", {
@@ -4292,7 +4550,7 @@ window.__ModuleLoader__.load({
           )
         ),
         // —— 记忆引擎：运行模式（粗粒度）在前，功能开关（细粒度）紧随 ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.engine")),
+        groupHead("engine"),
         // 运行模式 — light vs standard chip radios; each click PUTs and the
         // change only lands after a DSH restart (green saved hint says so).
         h("section", { className: "mneme-set-card" },
@@ -4302,6 +4560,10 @@ window.__ModuleLoader__.load({
           mode === null && !modeError
             ? h("div", { className: "mneme-set-hint" }, "…")
             : h(react.Fragment, null,
+                // #514：用户以为「轻量」关掉了人格。两个词都会在界面上出现，不先
+                // 分开说，用户永远会把宿主的 minimal 记成插件的 light。
+                h("div", { className: "mneme-set-hint", style: { marginBottom: 8 } },
+                  t("memory.settings.mode.hostPresetHint")),
                 h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
                   h("button", {
                     className: mode === "light" ? "mneme-chip mneme-active" : "mneme-chip",
@@ -4317,12 +4579,20 @@ window.__ModuleLoader__.load({
                 ),
                 mode === "light" && h("div", { className: "mneme-set-hint", style: { marginTop: 8 } },
                   t("memory.settings.mode.offList"))
-              )
+              ),
+          // #514：suppressed 只在「autoInject 开着 + 宿主确实报了 minimal」时为真，
+          // 所以这里不是吓唬人——关掉注入的用户、preset 未知的宿主都不会看到它。
+          minimalWarn && h("div", {
+            style: { marginTop: 10, padding: "8px 10px", borderLeft: "3px solid var(--mneme-warn)", fontSize: 12, lineHeight: "18px" }
+          },
+            h("div", { style: { fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, t("memory.status.minimalPresetTitle")),
+            h("div", { style: { marginTop: 4, color: "var(--mneme-fg-dim)" } }, t("memory.status.minimalPresetBody"))
+          )
         ),
         // 功能开关 — 后端能力的细粒度闸门；改动即时保存，重启 DSH 后生效。
         h(FeaturesCard, { t }),
         // —— 搜索：语义召回 ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.search")),
+        groupHead("search"),
         // 向量搜索 — semantic recall over an embeddings API
         h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.vectorTitle")),
@@ -4342,7 +4612,7 @@ window.__ModuleLoader__.load({
           )
         ),
         // —— 连接与安全：外部访问 API / 面板令牌 ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.connect")),
+        groupHead("connect"),
         // 外部访问 API — standalone HTTP service for plugins/CLI/desktop tools;
         // the token is generated and kept by the backend, so it is read-only
         // here with a copy affordance. Changes need a DSH restart.
@@ -4459,7 +4729,7 @@ window.__ModuleLoader__.load({
           apiTokenSaved && h("div", { style: { marginTop: 8 } }, h("span", { className: "mneme-saved" }, t("memory.settings.apiTokenSaved")))
         ),
         // —— 帮助：支持与鼓励（图标行 + 检测更新 + star，兼当「关于」收尾） ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.help")),
+        groupHead("help"),
         // 反馈三入口：新建 issue 预填（版本+平台）/ 邮件 / 浏览已知问题。
         // 纯前端链接零后端成本；插件版本来自 /info，平台取 userAgent。GitHub
         // 仓库当前没有 issue 模板，故用 issues/new?title=&body= 直接预填。
@@ -5508,15 +5778,7 @@ window.__ModuleLoader__.load({
     // 主动提示，把「为什么没注入」从逐帧解压日志降为看一眼状态页。只在
     // suppressed=true 时渲染——standard 会话与 preset 未知的宿主零打扰。
     function InjectStatusCard({ t }) {
-      const [state, setState] = useState({ loading: true, suppressed: false });
-      useEffect(() => {
-        let cancelled = false;
-        apiFetch("/api/dsh-mneme/inject-status")
-          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
-          .then((j) => { if (!cancelled) setState({ loading: false, suppressed: !!(j && j.suppressed) }); })
-          .catch(() => { if (!cancelled) setState({ loading: false, suppressed: false }); });
-        return () => { cancelled = true; };
-      }, []);
+      const state = useInjectStatus();
       if (state.loading || !state.suppressed) return null;
       return h("div", { className: "mneme-statuscard", style: { borderColor: "var(--mneme-warn)" } },
         h("div", { className: "mneme-statusnum", style: { fontSize: "16px", lineHeight: "24px" } }, t("memory.status.injectSuppressed")),
@@ -6085,7 +6347,7 @@ window.__ModuleLoader__.load({
         decidedAt ?? null
       ].filter(Boolean).join(" · ");
 
-    function MemoryDrawer({ t, memory, conflict, deleting, deleteError, onClose, onDelete, onSaved }) {
+    function MemoryDrawer({ t, memory, conflict, deleting, deleteError, onClose, onDelete, onSaved, onUndone }) {
       const [editing, setEditing] = useState(false);
       const [title, setTitle] = useState(memory.title || "");
       const [content, setContent] = useState(memory.content || "");
@@ -6102,6 +6364,14 @@ window.__ModuleLoader__.load({
       const [saveError, setSaveError] = useState(false);
       const [copied, setCopied] = useState(false);
       const [entities, setEntities] = useState(null);
+      // 整包退出的两段：先干跑清点（点按钮那一发），再确认物删。撤是**物理删除**不是归档
+      // （归档行仍占 share_external_id 的 UNIQUE 位，撤了会导不回来，理由在
+      // src/share-import.js 的 deleteSharePack），所以这里比删除那条路多一站清点。
+      const [undoPreview, setUndoPreview] = useState(null);
+      const [undoBusy, setUndoBusy] = useState(false);
+      const [undoError, setUndoError] = useState(false);
+      // 确认那一发却回干跑时唯一出声的一格（见 undoPack 的注释）。
+      const [undoStillDry, setUndoStillDry] = useState(false);
 
       useEffect(() => {
         let cancelled = false;
@@ -6130,6 +6400,34 @@ window.__ModuleLoader__.load({
           })
           .catch(() => setSaveError(true))
           .finally(() => setBusy(false));
+      };
+
+      const undoPack = (confirm) => {
+        setUndoBusy(true);
+        setUndoError(false);
+        setUndoStillDry(false);
+        apiFetch("/api/dsh-mneme/receive/undo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // 不带 confirm 就是干跑：第一发只清点，第二发才删。packId 只从行上取
+          // （面板行带这个字段是因为「收起这个包」按 pack_id 整批删），面板不自己拼也不猜。
+          body: JSON.stringify(confirm
+            ? { packId: memory.share_pack_id, confirm: true }
+            : { packId: memory.share_pack_id })
+        })
+          .then(async (res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+          .then((d) => {
+            // 只认答复的 dry_run，**不按「我点的是哪一颗」推断**：确认那一发如果回 dry_run:true
+            // （服务端与面板版本不一致的形态），悄悄把预览重画一遍就等于「按了删除却没删也不说」
+            // ——接收弹层那一侧修过同一个形状，这里不许退回去。
+            if (d.dry_run === false) onUndone(d.deleted ?? 0);
+            else {
+              setUndoPreview(d);
+              if (confirm) setUndoStillDry(true);
+            }
+          })
+          .catch(() => setUndoError(true))
+          .finally(() => setUndoBusy(false));
       };
 
       const save = () => {
@@ -6246,6 +6544,11 @@ window.__ModuleLoader__.load({
             h("span", { className: "mneme-dmetakey" }, t("memory.explorer.updated")),
             h("span", { className: "mneme-dmetaval", title: formatDate(memory.updated_at) },
               `${formatRelativeTime(memory.updated_at, t)}（${formatDateShort(memory.updated_at)}）`),
+            // 包号给人核对：与 `dsh-mneme undo-share <包文件>` 用的是同一个 pack_id，
+            // 两条路撤的是同一批行。
+            memory.share_pack_id && h(react.Fragment, null,
+              h("span", { className: "mneme-dmetakey" }, t("memory.explorer.foreignPack")),
+              h("span", { className: "mneme-dmetaval", title: memory.share_pack_id }, memory.share_pack_id)),
             Array.isArray(memory.tags) && memory.tags.length > 0 && h(react.Fragment, null,
               h("span", { className: "mneme-dmetakey" }, t("memory.explorer.tags")),
               h("span", { className: "mneme-dmetaval" }, memory.tags.join(" · ")))
@@ -6321,7 +6624,41 @@ window.__ModuleLoader__.load({
                   : h("button", { type: "button", className: "mneme-btn mneme-btndanger", onClick: () => setConfirmDelete(true) },
                       t("memory.explorer.delete")),
                 deleteError && h("span", { style: { fontSize: 12, color: "var(--mneme-danger)" } },
-                  t("memory.explorer.deleteFailed"))
+                  t("memory.explorer.deleteFailed")),
+                memory.share_pack_id && h(react.Fragment, null,
+                  undoPreview
+                    ? (undoPreview.deleted ?? 0) === 0
+                      // 「这个包已经不在本库里了」是她真正需要的那一句，而不是
+                      // 「将删除 0 条 + 一颗确认删除 0 条的键」——后者真实但没用。
+                      ? h("span", { style: { fontSize: 12, color: "var(--mneme-warn)" } },
+                          t("memory.explorer.undoPackGone"))
+                      : h(react.Fragment, null,
+                        h("span", { style: { fontSize: 12, color: "var(--mneme-warn)" } },
+                          t("memory.explorer.undoPackPreview").replace("{n}", String(undoPreview.deleted ?? 0))),
+                        // sample 是**清点时**的前 20 条（{type,title}，序为 updated_at DESC），
+                        // deleted 是这一笔真带走几行。两个数并发下可以差一条，谁也不是对方的
+                        // 依据（src/share-import.js 的 deleteSharePack 那段），所以这里只把
+                        // sample 当「我要收起的到底是哪一批」的核对清单，不参与条数。
+                        // 清单形状走 TypeRowList：接收弹层的撞名清单与它是同一个形状，
+                        // 第三份手写 .map 就是第三处会各自漂移的地方。
+                        TypeRowList({ t, rows: undoPreview.sample }),
+                        h("button", { type: "button", className: "mneme-btn mneme-btndangerconfirm", disabled: undoBusy, onClick: () => undoPack(true) },
+                          t("memory.explorer.undoPackConfirm").replace("{n}", String(undoPreview.deleted ?? 0))),
+                        // 取消回到「一颗干净的收起键」：清点结果与那句「仍是干跑」是同一轮的
+                        // 两样东西，只清一样会让旧判词挂在空按钮旁边。
+                        h("button", { type: "button", className: "mneme-btn", disabled: undoBusy, onClick: () => { setUndoPreview(null); setUndoStillDry(false); } },
+                          t("memory.explorer.cancel"))
+                      )
+                    : h("button", { type: "button", className: "mneme-btn mneme-btndanger", disabled: undoBusy, onClick: () => undoPack(false) },
+                        t("memory.explorer.undoPack"))),
+                // 撤销同样是往返一秒量级的枪（清点那一发与接收侧的干跑走的是同一档耗时）：
+                // 只把键按灰而不说在忙，看起来就像没反应。这一句说的是**收起**，不是导入——
+                // 物删在飞的时候写成「导入中」是把两件相反的事挂在同一行字上。
+                undoBusy && h("span", { style: { fontSize: 12 } }, t("memory.explorer.undoPackBusy")),
+                undoStillDry && h("span", { style: { fontSize: 12, color: "var(--mneme-danger)" } },
+                  t("memory.explorer.undoPackStillDry")),
+                undoError && h("span", { style: { fontSize: 12, color: "var(--mneme-danger)" } },
+                  t("memory.explorer.undoPackFailed"))
               )
         )
       );
@@ -6381,6 +6718,338 @@ window.__ModuleLoader__.load({
           h("button", { type: "button", className: "mneme-btn", disabled: busy, onClick: onClose }, t("memory.explorer.importCancel")),
           h("button", { type: "button", className: "mneme-btn", disabled: busy, onClick: submit },
             busy ? t("memory.explorer.importing") : t("memory.explorer.importConfirm"))
+        )
+      );
+    }
+
+    // --- 分享包弹层 ---
+    // 这一面的支点只有一句：**看见 report 之前不给下载**。服务端一次 POST 就把包和报告
+    // 一起交回，所以这一格拦不住靠协议、只能靠界面自己：CLI 那侧没人拦得住，面板至少要让
+    // 「随手把整库外发」停一步。八个类型下拉、六个跳过原因都只许是 src/share.js 的投影，
+    // 一条判据都不在这里复述（#411 口径）。
+    const SHARE_TYPE_OPTIONS = ["preference", "project", "decision", "history", "pitfall", "constraint", "rejected_solution", "pattern"];
+    // 顺序即 share.js 的判序（classifyRowForShare 从上往下命中）；报告按这个顺序排，
+    // 跨文件锁在 test/client-share.test.js 里同时锁内容与顺序。
+    const SHARE_SKIP_REASONS = ["archived", "forgotten", "readonly_type", "excluded_type", "blank_or_noise", "sensitive"];
+
+    /**
+     * 服务端 Content-Disposition 里的文件名。拼法只住在 src/share-http.js 的
+     * shareFilename（日期 + pack_id 前 8 位），面板复制一份就是第二个口径：旧服务端没带
+     * 这一格时宁可短（pack_id 兜底），也不许在这里再拼一次日期。
+     */
+    const dispositionName = (value) => {
+      const m = /filename="?([^";]+)"?/.exec(value || "");
+      return m ? m[1] : "";
+    };
+
+    // 出包报告。两笔账必须同屏：进包条数与「够格」条数是两个数（包内同键折叠），
+    // 跳过计数是全量而跳过清单截到 50——只报清单会让人以为跳过的就清单里那些。
+    function ShareReport({ t, report, listOpen, setListOpen }) {
+      const skipped = report.skipped || {};
+      const list = Array.isArray(report.skip_list) ? report.skip_list : [];
+      const totalSkipped = SHARE_SKIP_REASONS.reduce((n, k) => n + (skipped[k] || 0), 0);
+      return h("div", { className: "mneme-sharebody" },
+        h("div", { className: "mneme-saved" }, t("memory.explorer.shareIncluded").replace("{n}", String(report.included ?? 0))),
+        (report.deduped || 0) > 0 && h("div", { className: "mneme-featsubhint" },
+          t("memory.explorer.shareDeduped")
+            .replace("{n}", String(report.deduped))
+            .replace("{m}", String(report.included + report.deduped))),
+        totalSkipped > 0 && h("div", { className: "mneme-featsubhint" },
+          t("memory.explorer.shareSkipped").replace("{n}", String(totalSkipped))),
+        totalSkipped > 0 && h("div", { className: "mneme-sharebreak" },
+          SHARE_SKIP_REASONS.filter((k) => (skipped[k] || 0) > 0).map((k) =>
+            h("span", { key: k, className: "mneme-sharebreakitem" },
+              `${t(`memory.explorer.share.skip.${k}`)} ${skipped[k]}`))),
+        list.length > 0 && h("div", null,
+          h("button", {
+            type: "button",
+            className: "mneme-footbtn",
+            "aria-expanded": String(listOpen),
+            onClick: () => setListOpen(!listOpen)
+          }, t("memory.explorer.shareSkipList").replace("{n}", String(list.length))),
+          listOpen && h("div", { className: "mneme-sharelist" },
+            list.map((row, i) => h("div", { key: `${i}-${row.reason}`, className: "mneme-sharow" },
+              // 命中密钥/PII 的那几条服务端就不给标题（空串），这里不许拿正文或摘要兜底：
+              // 摘要是递给对面的离线爆破 oracle（src/share.js 的 skipTitle 那段）。
+              h("span", { className: "mneme-sharowtitle" }, row.title || t("memory.explorer.shareNoTitle")),
+              h("span", { className: "mneme-sharowreason" }, t(`memory.explorer.share.skip.${row.reason}`)))),
+            // 截断的判据用「清单比账短」而不是硬写 50：服务端的水位改了，这里跟着走。
+            totalSkipped > list.length && h("div", { className: "mneme-sharow" },
+              h("span", { className: "mneme-sharowreason" },
+                t("memory.explorer.shareSkipListCapped").replace("{n}", String(list.length))))))
+      );
+    }
+
+    function ShareDialog({ t, onClose }) {
+      const [alias, setAlias] = useState("");
+      const [type, setType] = useState(""); // "" = 整库口径：这个键压根不发
+      const [busy, setBusy] = useState(false);
+      const [pack, setPack] = useState(null);
+      const [fileName, setFileName] = useState("");
+      const [tooLarge, setTooLarge] = useState(null);
+      const [err, setErr] = useState("");
+      const [listOpen, setListOpen] = useState(false);
+
+      const build = () => {
+        setBusy(true);
+        setErr("");
+        setPack(null);
+        setTooLarge(null);
+        setFileName("");
+        setListOpen(false);
+        const body = {};
+        if (alias.trim()) body.alias = alias.trim();
+        if (type) body.type = type;
+        apiFetch("/api/dsh-mneme/share", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        })
+          .then(async (res) => {
+            const d = await res.json().catch(() => null);
+            // 413 的答复不是包：{error, bytes, limitBytes, hint, report}。报告要给，
+            // 包体一个字节都不许在内存里留着——服务端正是因为它太大才拒的。
+            if (res.status === 413) { setTooLarge(d || {}); setBusy(false); return; }
+            if (!res.ok) {
+              // 与接收弹层同一份形状：服务端只回一个码（empty-pack / invalid-alias / …），
+              // detail 有就带上——那是「哪一格不合格」的唯一读数，面板不自己编第二套文案。
+              // 不这么做的话，日后 shareReply 新增的码在这里全是「生成失败」六个字。
+              setErr(`${t("memory.explorer.shareFailed")}（${(d && d.error) || res.status}）`
+                + (d && d.detail ? `：${d.detail}` : ""));
+              setBusy(false);
+              return;
+            }
+            // 200 但读不出报告**不是成功**：这一支不给码（没有码可给），只说失败。
+            if (!d || !d.report) { setErr(t("memory.explorer.shareFailed")); setBusy(false); return; }
+            setPack(d);
+            setFileName(dispositionName(res.headers.get("content-disposition")));
+            setBusy(false);
+          })
+          .catch(() => { setErr(t("memory.explorer.shareFailed")); setBusy(false); });
+      };
+
+      const rep = pack && pack.report;
+      // included 为 0 时不给下载：那种包对面吃的是 empty-pack（400），给一个必败的文件
+      // 不如在这里说清「没有够格外发的条目」。
+      const canDownload = !!rep && rep.included > 0;
+
+      const download = () => {
+        // 面板写的字节必须与 `src/share.js` 量水位的、`bin/cli.mjs` 落盘的**同一份形状**
+        // （pretty-print 只属于 `/export` 那个备份面：人读的档，不是要重投的包）。
+        const blob = new Blob([JSON.stringify(pack)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName || `dsh-mneme-share-${pack.pack_id}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      };
+
+      return h("div", { className: "mneme-impdialog mneme-sharedialog", role: "region", "aria-label": t("memory.explorer.shareTitle") },
+        h("div", { className: "mneme-set-title" }, t("memory.explorer.shareTitle")),
+        h("div", { className: "mneme-featsubhint", style: { marginTop: 4 } }, t("memory.explorer.shareHint")),
+        h("div", { className: "mneme-improw" },
+          h("span", { className: "mneme-featnumlabel" }, t("memory.explorer.shareAlias")),
+          // 尺子与服务端同一把：importedTagFor 把整串标签（含 from-）截到 32，留给别名的
+          // 就是 27。不拦的话她打的第 28 个字起在**对面**被静默吃掉，而这条标签是外来行
+          // 唯一的来源读数。数字由 test/client-share.test.js 跨文件钉住。
+          h("input", {
+            type: "text",
+            className: "mneme-select",
+            value: alias,
+            maxLength: 27,
+            placeholder: t("memory.explorer.shareAliasBlank"),
+            onChange: (e) => setAlias(e.target.value)
+          })
+        ),
+        h("div", { className: "mneme-improw" },
+          h("span", { className: "mneme-featnumlabel" }, t("memory.explorer.shareType")),
+          h("select", { className: "mneme-select", value: type, onChange: (e) => setType(e.target.value) },
+            h("option", { value: "" }, t("memory.tab.all")),
+            SHARE_TYPE_OPTIONS.map((k) => h("option", { key: k, value: k }, typeLabel(t, k))))
+        ),
+        h("div", { className: "mneme-improw", style: { justifyContent: "flex-end" } },
+          h("button", { type: "button", className: "mneme-btn", disabled: busy, onClick: onClose },
+            t("memory.explorer.importCancel")),
+          h("button", { type: "button", className: "mneme-btn", disabled: busy, onClick: build },
+            busy ? t("memory.explorer.shareBuilding") : t("memory.explorer.shareBuild"))
+        ),
+        err && h("div", { className: "mneme-featsubhint", style: { color: "var(--mneme-danger)", marginTop: 8 } }, err),
+        tooLarge && h("div", { className: "mneme-featsubhint", style: { color: "var(--mneme-warn)", marginTop: 8 } },
+          // 提示语服务端给（SHARE_ERROR_HINT 只许有一份），面板只补自己那句字节数。
+          // 它写着 --type/--tag 的 CLI 口吻，这一格已知：docs/SHARE.md 的『面板』那一节记着。
+          `${t("memory.explorer.shareTooLarge")
+            .replace("{bytes}", String(tooLarge.bytes ?? "?"))
+            .replace("{limit}", String(tooLarge.limitBytes ?? "?"))} ${tooLarge.hint || ""}`),
+        tooLarge && tooLarge.report && h(ShareReport, { t, report: tooLarge.report, listOpen, setListOpen }),
+        rep && h(ShareReport, { t, report: rep, listOpen, setListOpen }),
+        canDownload && h("div", { className: "mneme-improw", style: { justifyContent: "flex-end" } },
+          h("button", { type: "button", className: "mneme-btn", onClick: download },
+            t("memory.explorer.shareDownload"))),
+        // 没有可下载的东西就一定给一句原因：`included` 为 0 与「这答复没有条数」是两种失败，
+        // 但对她的界面是同一种——数字后面没有键。canDownload 是唯一的门，这里就只认它。
+        rep && !canDownload && h("div", { className: "mneme-featsubhint", style: { marginTop: 8 } },
+          t("memory.explorer.shareEmpty")),
+      );
+    }
+
+    // 干跑与真导入**共用这一份读数**：两者的键完全相同，区别只有 dry_run 那一格。
+    // 拆成两个组件就会各写一套文案，而「将新建」与「已新建」的唯一真凭是 dry_run。
+    function ReceiveSummary({ t, d }) {
+      const conflicts = Array.isArray(d.title_conflicts) ? d.title_conflicts : [];
+      const alias = d.alias || t("memory.explorer.receiveAnonymous");
+      return h("div", { className: "mneme-sharebody" },
+        h("div", { className: "mneme-featsubhint" },
+          `${t("memory.explorer.receiveFrom").replace("{alias}", alias)} · ${d.pack_id || ""}`),
+        // dry_run 缺格（旧服务端）时按「没写」处理：宁可少报一次写入，不可虚报。
+        h("div", { className: "mneme-saved" },
+          t(d.dry_run === false ? "memory.explorer.receiveDidCreate" : "memory.explorer.receiveWouldCreate")
+            .replace("{n}", String(d.created ?? 0))),
+        (d.skipped_existing || 0) > 0 && h("div", { className: "mneme-featsubhint" },
+          t("memory.explorer.receiveExisting").replace("{n}", String(d.skipped_existing))),
+        (d.unchanged || 0) > 0 && h("div", { className: "mneme-featsubhint" },
+          t("memory.explorer.receiveUnchanged").replace("{n}", String(d.unchanged))),
+        // 撞名是 advisory 读数：只对「本轮真正会新建的那些」判过，重吃同一个包时恒空
+        //（src/share-import.js:181-186）。所以这里**只有非空才出声**，绝不写「没有冲突」；
+        // 屏上没有这一行不等于没有撞名，等于「本轮没有新的要报」。
+        conflicts.length > 0 && h("div", { className: "mneme-featsubhint", style: { color: "var(--mneme-warn)" } },
+          t("memory.explorer.receiveConflicts").replace("{n}", String(conflicts.length))),
+        TypeRowList({ t, rows: conflicts }),
+        // `conflicts_checked` 是服务端给的**包内条数**，不是「比过了几条」（同一处注释写明：
+        // 第二次吃同一个包时 title_conflicts 恒空，而这一格仍是全量）。所以文案只说
+        // 「包内 N 条」：它是上一行为什么可能沉默的尺，不许读成「比对了 N 条都没撞」。
+        h("div", { className: "mneme-featsubhint" },
+          t("memory.explorer.receivePackCount").replace("{n}", String(d.conflicts_checked ?? 0)))
+      );
+    }
+
+    function ReceiveDialog({ t, onClose, onImported }) {
+      const [file, setFile] = useState(null);
+      const [pack, setPack] = useState(null);
+      const [preview, setPreview] = useState(null);
+      const [result, setResult] = useState(null);
+      const [busy, setBusy] = useState(false);
+      const [err, setErr] = useState("");
+      const fileRef = useRef(null);
+
+      // 一发 POST 两种用法（干跑 / 确认）都从这走，失败文案只有一份。返回 null 表示
+      // 「已经有一句话摆上屏了」——所以每一条不回 null 的路径都必须自己先 setErr，
+      // 否则调用方读到 null 就是什么都不做，现场变成「按了没反应」。
+      const post = (body) => apiFetch("/api/dsh-mneme/receive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      })
+        .then(async (res) => {
+          const d = await res.json().catch(() => null);
+          setBusy(false);
+          if (!res.ok) {
+            // 闸门只回一个码（invalid-kind / external-id-mismatch / …），detail 有就带上：
+            // 那是「哪一格不合格」的唯一读数，面板不自己编第二套文案。
+            setErr(`${t("memory.explorer.receiveFailed")}（${(d && d.error) || res.status}）`
+              + (d && d.detail ? `：${d.detail}` : ""));
+            return null;
+          }
+          // 200 但正文读不出（前置的 HTML 拦截页、空 body 的代理、被截断的响应）
+          // **不是成功**：这里曾经直接把 null 交回调用方，于是确认那一发悄悄没走完，
+          // 而屏上上一块的「将新建 N 条」还留着——看起来就像她没点确认。
+          if (!d || typeof d !== "object") {
+            setErr(t("memory.explorer.receiveFailed"));
+            return null;
+          }
+          return d;
+        })
+        .catch(() => { setErr(t("memory.explorer.receiveFailed")); setBusy(false); return null; });
+
+      const pick = (f) => {
+        setFile(f || null);
+        setErr("");
+        setPreview(null);
+        setResult(null);
+        setPack(null);
+        if (!f) return;
+        f.text().then((text) => {
+          // 坏 JSON 在本地就拦。「这个文件根本不是 JSON」与「这个包不合格」是两件事，
+          // 后者由服务端的码说（invalid-kind / invalid-entry / …）。
+          // 顶层不是对象的也一样在这里说清：`null`、`0`、`[]` 会让预览键永远灰着且不解释，
+          // 那种「按不动也没话说」的界面比一句错话更坏。
+          let parsed;
+          try {
+            parsed = JSON.parse(text);
+          } catch {
+            setErr(t("memory.explorer.receiveNotJson"));
+            return;
+          }
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            setErr(t("memory.explorer.receiveNotPack"));
+            return;
+          }
+          setPack(parsed);
+        }).catch(() => setErr(t("memory.explorer.receiveFailed")));
+      };
+
+      const runPreview = () => {
+        setBusy(true);
+        setErr("");
+        setResult(null);
+        // 不带 confirm = 干跑（服务端缺省即预览，spec §5 沿用 reclaim 的脾气）。
+        post({ pack }).then((d) => { if (d) setPreview(d); });
+      };
+
+      const runApply = () => {
+        setBusy(true);
+        setErr("");
+        post({ pack, confirm: true }).then((d) => {
+          if (!d) return;
+          setResult(d);
+          // 写完才刷新列表；答复说没写就不刷（dry_run 那一格是唯一凭据）。
+          // 同一支里顺手撤掉预览：写成功之后「将新建 40 条」与「已新建 40 条」是同屏的两种时态，
+          // 上面那一句此时不是信息。回干跑时**保留**预览——那一发确实没写，屏上还该留着清点。
+          if (d.dry_run === false) { setPreview(null); onImported(); }
+        });
+      };
+
+      return h("div", { className: "mneme-impdialog mneme-sharedialog", role: "region", "aria-label": t("memory.explorer.receiveTitle") },
+        h("div", { className: "mneme-set-title" }, t("memory.explorer.receiveTitle")),
+        h("div", { className: "mneme-featsubhint", style: { marginTop: 4 } }, t("memory.explorer.receiveHint")),
+        h("div", { className: "mneme-improw" },
+          // 忙的时候不许再选一个文件：预览那一发还在飞，选第二个会清掉 pack/preview，
+          // 而飞回来的那一块数字说的是**前一个**包——确认键亮着、写的却是后一个文件。
+          // 这条窗口按实测是 0.5–3 秒量级，不是理论风险。
+          h("button", { type: "button", className: "mneme-btn", disabled: busy, onClick: () => fileRef.current?.click() },
+            file ? file.name : t("memory.explorer.receivePick")),
+          h("input", {
+            ref: fileRef,
+            type: "file",
+            accept: ".json,application/json",
+            style: { display: "none" },
+            // 选完就清空控件的值：否则她改完同一个文件再选一次，浏览器不发 change，
+            // 面板会拿着上一版的包继续预览——同一颗键，两个事实。
+            onChange: (e) => { pick((e.target.files && e.target.files[0]) || null); e.target.value = ""; }
+          })
+        ),
+        err && h("div", { className: "mneme-featsubhint", style: { color: "var(--mneme-danger)", marginTop: 8 } }, err),
+        // 入库是逐条先查 + 逐条 INSERT + 排队嵌入：实测 494 µs/条，单批一千多条要跑一秒开外，
+        // 整库量级近 3 秒。busy 必须挂在预览与确认两发上，不然按钮看起来像没反应。
+        busy && h("div", { className: "mneme-featsubhint", style: { marginTop: 8 } }, t("memory.explorer.importing")),
+        preview && h(ReceiveSummary, { t, d: preview }),
+        result && h(ReceiveSummary, { t, d: result }),
+        // 按了确认却回个「仍是干跑」（服务端只认 confirm 的真值 true，缺省、字符串
+        // "true"、别的旋钮一律不写）——这一句是唯一出声的地方：沉默会让人以为已经写进去了。
+        // 它挂在 result 那一支而不是 ReceiveSummary 里：预览本来就该是干跑，那里再说一遍
+        // 只是噪声。
+        result && result.dry_run !== false && h("div", {
+          className: "mneme-featsubhint", style: { color: "var(--mneme-warn)" }
+        }, t("memory.explorer.receiveStillDry")),
+        h("div", { className: "mneme-improw", style: { justifyContent: "flex-end" } },
+          h("button", { type: "button", className: "mneme-btn", disabled: busy, onClick: onClose },
+            t("memory.explorer.importCancel")),
+          h("button", { type: "button", className: "mneme-btn", disabled: busy || !pack, onClick: runPreview },
+            t("memory.explorer.receivePreview")),
+          h("button", { type: "button", className: "mneme-btn", disabled: busy || !preview, onClick: runApply },
+            t("memory.explorer.receiveConfirm"))
         )
       );
     }
@@ -6527,11 +7196,14 @@ window.__ModuleLoader__.load({
       // 方案 A：沉淀/归档筛选 chip——状态页「查看全部」也会带着它们跳转过来。
       const [depositedOnly, setDepositedOnly] = useState(false); // 只看 autoDream 巩固
       const [archivedOnly, setArchivedOnly] = useState(false); // 只看已归档
+      const [foreignOnly, setForeignOnly] = useState(false); // 只看外来行（source=imported）
       const [heatSort, setHeatSort] = useState(false); // 卡片页内热度降序（阶段二补口）
       const [pendingIds, setPendingIds] = useState(() => new Set());
       const [menuOpen, setMenuOpen] = useState(false);
       const [importOpen, setImportOpen] = useState(false);
       const [createOpen, setCreateOpen] = useState(false);
+      const [shareOpen, setShareOpen] = useState(false);
+      const [receiveOpen, setReceiveOpen] = useState(false);
       const itemRefs = useRef(new Map());
       const moreRef = useRef(null);
 
@@ -6569,7 +7241,8 @@ window.__ModuleLoader__.load({
         + (minImp ? `&minImportance=${minImp}` : "")
         + (dateFromIso ? `&updatedFrom=${encodeURIComponent(dateFromIso)}` : "")
         + (depositedOnly ? "&deposited=only" : "")
-        + (archivedOnly ? "&archived=only" : "");
+        + (archivedOnly ? "&archived=only" : "")
+        + (foreignOnly ? "&source=imported" : "");
       const listUrl = (offset) => `/api/dsh-mneme/list?limit=${PAGE_SIZE}&offset=${offset}${filterQS}&order=chrono`;
 
       // Browse = paged, pure-chronological pages (order=chrono). The default
@@ -6881,7 +7554,7 @@ window.__ModuleLoader__.load({
                 "aria-label": t("memory.explorer.more"),
                 "aria-expanded": String(menuOpen),
                 title: t("memory.explorer.more"),
-                onClick: () => { setMenuOpen(!menuOpen); setImportOpen(false); setCreateOpen(false); }
+                onClick: () => { setMenuOpen(!menuOpen); setImportOpen(false); setCreateOpen(false); setShareOpen(false); setReceiveOpen(false); }
               }, "⋯"),
               menuOpen && h("div", { className: "mneme-menu", role: "menu" },
                 h("button", { type: "button", role: "menuitem", onClick: () => { setCreateOpen(true); setMenuOpen(false); } },
@@ -6891,11 +7564,21 @@ window.__ModuleLoader__.load({
                 h("button", { type: "button", role: "menuitem", onClick: () => { setMenuOpen(false); exportData("markdown"); } },
                   t("memory.explorer.exportMarkdown")),
                 h("button", { type: "button", role: "menuitem", onClick: () => { setImportOpen(true); setMenuOpen(false); } },
-                  t("memory.explorer.importMd"))
+                  t("memory.explorer.importMd")),
+                h("button", { type: "button", role: "menuitem", onClick: () => { setShareOpen(true); setMenuOpen(false); } },
+                  t("memory.explorer.sharePack")),
+                h("button", { type: "button", role: "menuitem", onClick: () => { setReceiveOpen(true); setMenuOpen(false); } },
+                  t("memory.explorer.receivePack")),
               ),
               importOpen && h(ImportDialog, {
                 t,
                 onClose: () => setImportOpen(false),
+                onImported: () => setReloadKey((k) => k + 1)
+              }),
+              shareOpen && h(ShareDialog, { t, onClose: () => setShareOpen(false) }),
+              receiveOpen && h(ReceiveDialog, {
+                t,
+                onClose: () => setReceiveOpen(false),
                 onImported: () => setReloadKey((k) => k + 1)
               }),
               createOpen && h(CreateDialog, {
@@ -6973,6 +7656,25 @@ window.__ModuleLoader__.load({
                   title: t("memory.explorer.filterArchivedHint"),
                   onClick: () => setArchivedOnly(!archivedOnly)
                 }, t("memory.explorer.filterArchived")),
+                h("button", {
+                  className: foreignOnly ? "mneme-chip mneme-active" : "mneme-chip",
+                  // 搜索态不许**开启**这一档：/search 的 DTO 读不出行来源（`source` 被
+                  // searchMemories 盖成召回渠道，见 src/service.js:939），按一个假信号筛比筛不动
+                  // 更坏。但已经开着的时候永远许关掉——把它整个 disabled 会把她锁在一个解不开
+                  // 的状态里，只能先去清搜索词。
+                  disabled: !!query.trim() && !foreignOnly,
+                  title: query.trim()
+                    ? t("memory.explorer.filterForeignSearchHint")
+                    : t("memory.explorer.filterForeignHint"),
+                  "aria-pressed": String(foreignOnly),
+                  onClick: () => setForeignOnly(!foreignOnly)
+                }, t("memory.explorer.filterForeign")),
+                // 「为什么这一档在搜索时不按」不能只挂在 title 上：disabled 的按钮不发 focus，
+                // 触屏与键盘用户拿不到提示，而她看到的是一个**亮着**的筛选压在一堆没筛过的
+                // 结果上。所以开着外来档又在搜索时，屏上多一行看得见的说明。
+                foreignOnly && !!query.trim() && h("div", {
+                  className: "mneme-featsubhint", style: { marginTop: 4 }
+                }, t("memory.explorer.filterForeignSearchHint")),
                 heatAvailable && h("button", {
                   className: heatSort ? "mneme-chip mneme-active" : "mneme-chip",
                   title: t("memory.explorer.heatSortHint"),
@@ -7030,6 +7732,7 @@ window.__ModuleLoader__.load({
                           h(ImportanceStars, { value: m.importance || 0, size: 12 }),
                           h(HeatBadge, { value: m.heat }),
                           h(ScopeBadge, { m, t }),
+                          h(ForeignBadge, { m, t }),
                           m.source && h("span", { className: "mneme-cardsrc", title: m.source }, m.source)
                         )
                       )),
@@ -7092,7 +7795,8 @@ window.__ModuleLoader__.load({
                                 h("span", { className: "mneme-xdot", style: { color: memoryTypeColor(m.type) }, title: typeLabel(t, m.type), "aria-hidden": "true" }),
                                 h("span", { className: "mneme-xtime" }, time),
                                 h("span", { className: "mneme-xname" }, m.title || m.content?.slice(0, 40)),
-                                h(ScopeBadge, { m, t })
+                                h(ScopeBadge, { m, t }),
+                                h(ForeignBadge, { m, t })
                               );
                             })
                           ))
@@ -7122,7 +7826,15 @@ window.__ModuleLoader__.load({
         deleteError,
         onClose: () => setSelectedId(null),
         onDelete: deleteById,
-        onSaved: applyMemoryUpdate
+        onSaved: applyMemoryUpdate,
+        onUndone: (n) => {
+          // 撤掉的是整包：选中那一行已经不存在，关抽屉 + 刷新列表 + 一句 toast
+          // （toast 形状照详情抽屉里 restored 那一条的先例，不带行号免得漂）。
+          setSelectedId(null);
+          setReloadKey((k) => k + 1);
+          setToastMsg(t("memory.explorer.undoPackDone").replace("{n}", String(n)));
+          setTimeout(() => setToastMsg(""), 2500);
+        }
       })
         ),
         view === "entity" && h(EntityPanel, { t, focusEntity: graphFocus, onJumpMemory: jumpToMemory }),

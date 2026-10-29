@@ -850,7 +850,7 @@ test("runDream with dreamImplicitKeep=false rejects a partial mock output (missi
     llm: {
       async *stream(options) {
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        if (userText.startsWith("id=")) {
+        if (userText.includes("| type=")) {
           const ids = [...userText.matchAll(/id=([^\s|]+)\s*\|\s*type=(\w+)\s*\|\s*importance=\d+/g)].map((m) => m[1]);
           yield { type: "text-delta", index: 0, text: JSON.stringify(ids.slice(0, 1).map((id) => ({ action: "archive", ids: [id], reason: "stale" }))) };
         } else {
@@ -1091,7 +1091,7 @@ test("issue#89: dream run with a skipped invalid decision lands the valid subset
     llm: {
       async *stream(options) {
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        if (userText.startsWith("id=")) {
+        if (userText.includes("| type=")) {
           // 一条跨类型 merge（非法 → 跳过）+ 两条合法 archive（覆盖 2/4 快照，
   // 高于 50% 显式覆盖率下限）
           yield { type: "text-delta", index: 0, text: JSON.stringify([
@@ -1131,7 +1131,7 @@ test("issue#104: degraded run persists the skipped decision detail into dream_ru
     llm: {
       async *stream(options) {
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        if (userText.startsWith("id=")) {
+        if (userText.includes("| type=")) {
           // 一条跨类型 merge（非法 → 跳过）+ 两条合法 archive（显式覆盖 2/4，过 50% 下限）
           yield { type: "text-delta", index: 0, text: JSON.stringify([
             { action: "merge", ids: [pref.id, a.id], keepSource: pref.id, title: "跨类型", content: "不应合并", importance: 4 },
@@ -1169,7 +1169,7 @@ test("issue#89: dreamSkipInvalid:false restores the whole-batch strict rejection
     llm: {
       async *stream(options) {
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        if (userText.startsWith("id=")) {
+        if (userText.includes("| type=")) {
           yield { type: "text-delta", index: 0, text: JSON.stringify([
             { action: "merge", ids: [pref.id, a.id], keepSource: pref.id, title: "跨类型", content: "不应合并", importance: 4 },
             { action: "archive", ids: [b.id], reason: "stale" }
@@ -1291,7 +1291,7 @@ test("issue#258: dreamSummaryMaxInputs caps summary inputs to the newest N (0 = 
   const origStream = ctx.llm.stream.bind(ctx.llm);
   ctx.llm.stream = async function* (options) {
     const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-    if (!userText.startsWith("id=")) seenUserText.push(userText);
+    if (!userText.includes("| type=")) seenUserText.push(userText);
     yield* origStream(options);
   };
   const dream = createDreamScheduler({ thresholdCount: 1, thresholdChars: 0, delayMs: 0 });
