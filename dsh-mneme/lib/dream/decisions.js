@@ -20,6 +20,36 @@ const ARCHIVE_GUARDED_TYPES = new Set(["preference", "pattern", "rejected_soluti
 // 词表宁可放宽也不误拦——护栏只跳过单条并落明细，不整单拒绝。
 const ARCHIVE_RATIONALE_RE = /重复|过时|陈旧|过期|已被取代|被取代|冗余|不再使用|旧版|废弃|stale|outdated|obsolete|dup(?:licate|licat)?|superseded|redundant|deprecated|expired|replaced/i;
 
+// Issue #521：把 skipped[].error 归一化成可分组的原因。原样字符串不能直接
+// GROUP BY——前缀带 decision[N]: 序号，同一种原因会被拆成 N 组（#521 实测 280
+// 条被拆成 20 组），面板上看不出「一整类动作 100% 失败」。这里只剥两样东西：
+// 序号前缀和具体 id/类型集合，其余措辞保持原样，好让人一眼认出是哪个判据。
+export function normalizeSkipReason(error) {
+  return String(error ?? "")
+    .replace(/^decision\[\d+\]:\s*/, "")
+    // 具体 id 是噪声：同类原因只因 id 不同不该分成两组
+    .replace(/"[^"]*"/g, '"…"')
+    // 类型集合同理，但单个类型名保留——「被拦的是哪一类」本身是有效信息
+    .replace(/\(([a-z_]+(?:,\s*[a-z_]+)+)\)/g, "(…)")
+    .trim();
+}
+
+// Issue #521：按归一化原因聚合 skipped，供面板直接显示。按 (action, reason)
+// 二元组计数——同一句原因在 merge 和 archive 上是两回事，混在一起会误导。
+export function summarizeSkipped(skipped) {
+  const buckets = new Map();
+  for (const item of Array.isArray(skipped) ? skipped : []) {
+    const reason = normalizeSkipReason(item?.error);
+    if (!reason) continue;
+    const action = typeof item?.action === "string" ? item.action : "";
+    const key = action + "\u0000" + reason;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.count += 1;
+    else buckets.set(key, { action, reason, count: 1 });
+  }
+  return [...buckets.values()].sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+}
+
 /**
  * Validate a dream decision list against a snapshot of eligible memories.
  * @param decisions - LLM-produced decision list. In skipInvalid mode, invalid
@@ -222,8 +252,18 @@ export function validateDecisions(decisions, snapshot, options = {}) {
             const mem = snapshot.get(id);
             if (mem && ARCHIVE_GUARDED_TYPES.has(mem.type)) guardedTypes.add(mem.type);
           }
-          if (guardedTypes.size > 0) {
-            local.push(`${at}: merge of long-retention type(s) ${[...guardedTypes].join(", ")} is blocked by dreamMergeGuard`);
+          // Issue #521：与上方 archive 护栏对齐——archive 早就允许「带重复/过时
+          // 理由」的长保留类型通过，merge 却一律拦死，于是一份真重复的
+          // preference 永远合不掉，而提示词还在催模型合并它们。实测（#521）46 轮
+          // 巩固里 280 条 merge 决策全被这条拦下、merge 恒为 0，模型每轮把同一
+          // 簇条目再提一次，满载 token 空转。逃生门条件与 archive 护栏同一条词表
+          // 且要求同类型（跨类型合并本就另受 allowCrossTypeMerge 约束，逃生门
+          // 不跟着放宽）。reason 只写「主题相近」不会命中词表——这是故意的：
+          // 相近不等于重复，只有确属重复/过时才值得牺牲两条独立表述。
+          const sameType = new Set(d.ids.map((id) => snapshot.get(id)?.type)).size === 1;
+          const duplicated = ARCHIVE_RATIONALE_RE.test(String(d.reason ?? ""));
+          if (guardedTypes.size > 0 && !(sameType && duplicated)) {
+            local.push(`${at}: merge of long-retention type(s) ${[...guardedTypes].join(", ")} is blocked by dreamMergeGuard (needs a duplicate/outdated rationale, 重复/过时)`);
           }
         }
       }

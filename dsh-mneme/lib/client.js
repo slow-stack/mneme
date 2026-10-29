@@ -893,6 +893,10 @@ window.__ModuleLoader__.load({
         "memory.status.dreamNever": "尚未运行",
         "memory.status.conflicts": "待确认冲突",
         "memory.status.conflictsHint": "冻结的矛盾记忆，等待人工确认",
+        "memory.status.skippedTitle": "本轮跳过 {n} 条决定",
+        "memory.status.skippedHint": "这些决定被校验器拦下，未执行。同类原因已合并计数——出现一整类动作全部被拦，通常意味着提示词与护栏没对齐，值得看一眼。",
+        "memory.status.skippedMore": "另有 {n} 类",
+        "memory.status.skippedNone": "本轮没有跳过任何决定",
         "memory.status.injectSuppressed": "极简模式下注入按宿主设计关闭",
         "memory.status.injectSuppressedHint": "当前会话使用 minimal 预设：记忆注入 / 用户画像 / 热记忆不会送达模型（宿主设计，非插件缺陷）。切到标准模式，或在 ~/.dsh/settings.yaml 设 agent-presets.default: standard；过渡方案：把画像与规则写进 AGENTS.md",
         "memory.status.injectPreview": "注入预览",
@@ -1645,6 +1649,10 @@ window.__ModuleLoader__.load({
         "memory.status.dreamNever": "Not yet run",
         "memory.status.conflicts": "Pending conflicts",
         "memory.status.conflictsHint": "Frozen contradictory memories awaiting confirmation",
+        "memory.status.skippedTitle": "{n} decisions skipped this run",
+        "memory.status.skippedHint": "These decisions were blocked by the validator and not applied. Identical reasons are counted together — a whole action type being blocked usually means the prompt and the guard disagree, which is worth a look.",
+        "memory.status.skippedMore": "{n} more kinds",
+        "memory.status.skippedNone": "No decisions were skipped this run",
         "memory.status.injectSuppressed": "Injection disabled by host minimal preset",
         "memory.status.injectSuppressedHint": "This session uses the minimal preset: memory injection / profile / hot memory never reach the model (by host design, not a plugin defect). Switch to standard mode, or set agent-presets.default: standard in ~/.dsh/settings.yaml. Interim: put profile and rules in AGENTS.md",
         "memory.status.injectPreview": "Injection preview",
@@ -5609,7 +5617,7 @@ window.__ModuleLoader__.load({
     // showConflicts=false 用于 2026-10 改造后的降级折叠区：待确认冲突已升入
     // KPI 带，这里不再重复渲染冲突卡，只留最近运行卡。
     function DreamStatusCards({ t, onGotoQueue, showConflicts = true }) {
-      const [state, setState] = useState({ loading: true, error: false, lastRun: null, pending: 0 });
+      const [state, setState] = useState({ loading: true, error: false, lastRun: null, pending: 0, skipped: [] });
       useEffect(() => {
         let cancelled = false;
         const loadOnce = () => {
@@ -5621,10 +5629,12 @@ window.__ModuleLoader__.load({
                 loading: false,
                 error: false,
                 lastRun: (d && d.lastRun) || null,
-                pending: Number((d && d.pendingConflicts) ?? 0)
+                pending: Number((d && d.pendingConflicts) ?? 0),
+                // #521：最近一轮按归一化原因聚合的跳过明细（后端已合并计数）。
+                skipped: Array.isArray(d && d.lastRun && d.lastRun.skippedReasons) ? d.lastRun.skippedReasons : []
               });
             })
-            .catch(() => { if (!cancelled) setState({ loading: false, error: true, lastRun: null, pending: 0 }); });
+            .catch(() => { if (!cancelled) setState({ loading: false, error: true, lastRun: null, pending: 0, skipped: [] }); });
         };
         loadOnce();
         // #295 评审：裁决完成后队列会广播 mneme:conflicts-changed，这里重取
@@ -5641,8 +5651,29 @@ window.__ModuleLoader__.load({
       // 激活直达队列——StatusPanel 把 onGotoQueue 传进来（一步 prop，无线程）。
       const pending = state.pending > 0;
       const gotoQueue = () => { if (pending && onGotoQueue) onGotoQueue(); };
+      // #521：degraded 轮的跳过明细。此前只回 status，面板上「degraded + 已应用
+      // 若干条」看起来像健康轮，一整类动作 100% 被拦要自己写 SQL 才看得出。
+      // 只在有跳过时渲染；原因按后端归一化后的桶显示，最多 4 类。
+      const skipped = state.skipped;
+      const skippedTotal = skipped.reduce((sum, b) => sum + (Number(b.count) || 0), 0);
+      const skippedCard = !state.loading && !state.error && skipped.length > 0
+        ? h("div", { className: "mneme-statuscard", style: { borderColor: "var(--mneme-warn)" } },
+            h("div", { className: "mneme-statusnum", style: { fontSize: "16px", lineHeight: "24px" } },
+              t("memory.status.skippedTitle").replace("{n}", String(skippedTotal))),
+            h("div", { className: "mneme-statuscap", style: { marginBottom: "6px" } }, t("memory.status.skippedHint")),
+            h("ul", { style: { margin: 0, paddingLeft: "18px", fontSize: "12px", lineHeight: "18px" } },
+              skipped.slice(0, 4).map((bucket, i) =>
+                h("li", { key: i, style: { color: "var(--mneme-fg-dim)" } },
+                  (bucket.action ? bucket.action + " · " : "") + bucket.reason + " ×" + String(bucket.count)))),
+            skipped.length > 4
+              ? h("div", { className: "mneme-statuscap", style: { marginTop: "6px" } },
+                  t("memory.status.skippedMore").replace("{n}", String(skipped.length - 4)))
+              : null
+          )
+        : null;
       return h(react.Fragment, null,
         h(StatusCard, { t, title: t("memory.status.dream"), loading: state.loading, error: state.error, num, cap }),
+        skippedCard,
         showConflicts
           ? h("div", {
               role: pending ? "button" : undefined,

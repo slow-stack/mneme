@@ -1272,6 +1272,38 @@ test("POST /api/dsh-mneme/import is token-gated", async () => {
   assert.equal(res.statusCode, 401);
 });
 
+// #521：面板要能一眼看出「一整类动作 100% 被拦」。此前 skipped 只存在库里，
+// 响应里没有聚合，status: degraded + applied: 3 从外面看完全是健康轮的样子。
+test("GET /api/dsh-mneme/dream-status aggregates skipped reasons by kind (issue #521)", async () => {
+  const { routes, service } = setup();
+  // 三条同因（序号前缀不同）+ 一条不同因，模拟 #521 现场：merge 被 mergeGuard
+  // 全拦，前缀 decision[N]: 让朴素 GROUP BY 拆成三组。
+  service.saveDreamRun({
+    created_at: "2026-01-03T00:00:00.000Z",
+    status: "degraded",
+    snapshot_hash: "h3",
+    input_count: 200,
+    receipt: "r3",
+    skipped: [
+      { index: 0, action: "merge", ids: ["p1", "p2"], error: 'decision[0]: merge of long-retention type(s) preference is blocked by dreamMergeGuard' },
+      { index: 1, action: "merge", ids: ["p3", "p4"], error: 'decision[1]: merge of long-retention type(s) preference is blocked by dreamMergeGuard' },
+      { index: 2, action: "merge", ids: ["p5", "p6"], error: 'decision[2]: merge of long-retention type(s) preference is blocked by dreamMergeGuard' },
+      { index: 3, action: "archive", ids: ["x"], error: 'decision[3]: archive of long-retention type(s) constraint needs a duplicate/outdated rationale' }
+    ]
+  });
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/dream-status");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/dream-status"), res);
+  const data = JSON.parse(res.body);
+  assert.equal(data.lastRun.skippedCount, 4, "raw skipped count is preserved");
+  assert.equal(data.lastRun.skippedReasons.length, 2, "three same-cause skips collapse into one bucket");
+  assert.equal(data.lastRun.skippedReasons[0].count, 3, "largest bucket first");
+  assert.equal(data.lastRun.skippedReasons[0].action, "merge");
+  assert.match(data.lastRun.skippedReasons[0].reason, /dreamMergeGuard/);
+  assert.doesNotMatch(data.lastRun.skippedReasons[0].reason, /decision\[/, "index prefix is stripped");
+  assert.equal(data.lastRun.skippedReasons[1].action, "archive", "same wording on a different action stays separate");
+});
+
 test("GET /api/dsh-mneme/dream-status returns runs and pending conflict ids", async () => {
   const { routes, service } = setup();
   service.saveDreamRun({ created_at: "2026-01-01T00:00:00.000Z", status: "ok", provider: "ollama", model: "qwen", snapshot_hash: "h1", input_count: 2, receipt: "r1" });
@@ -1286,7 +1318,9 @@ test("GET /api/dsh-mneme/dream-status returns runs and pending conflict ids", as
   assert.equal(data.runs.length, 2);
   assert.equal(data.runs[0].created_at, "2026-01-02T00:00:00.000Z", "created_at DESC");
   assert.deepEqual(data.lastRun, data.runs[0]);
-  assert.deepEqual(Object.keys(data.lastRun).sort(), ["created_at", "demotion", "error", "model", "provider", "run_type", "status"]);
+  // #521：skippedCount / skippedReasons 是本轮新增的两个字段（面板按归一化原因
+  // 显示跳过明细）。这行锁的是 dream-status 的响应形状，加字段必须同步改这里。
+  assert.deepEqual(Object.keys(data.lastRun).sort(), ["created_at", "demotion", "error", "model", "provider", "run_type", "skippedCount", "skippedReasons", "status"]);
   assert.equal(data.lastRun.run_type, "auto", "default run_type is auto");
   assert.equal(data.lastRun.demotion, null, "no demotion info for non-sleep runs");
   assert.equal(data.runs[0].error, "boom");

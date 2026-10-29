@@ -2257,3 +2257,30 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
   // 没配模型是一句可行动的话（先去选模型），不能和「模型没按格式回」共用一条文案。
   assert.ok(clientSource.includes('"no-route" ? "noroute"'), "no-route must map to its own panel outcome, not the generic failure");
 });
+
+// Issue #521：degraded 轮的跳过明细必须能在面板上看见。此前 skipped 只落库，
+// 响应里没有聚合，status: degraded + applied: 3 从外面看完全是健康轮的样子——
+// 一整类动作 100% 被拦要自己写 SQL 才看得出，那个 bug 跑了一整天才被发现。
+test("dream status card surfaces normalized skip reasons, not just status (issue #521)", () => {
+  // 三个新文案键 zh/en 各一份。
+  for (const key of [
+    "memory.status.skippedTitle",
+    "memory.status.skippedHint",
+    "memory.status.skippedMore"
+  ]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+
+  // 面板必须真的消费后端给的聚合字段，而不是自己再拼一份（归一化只有一份实现，
+  // 住在 src/dream/decisions.js，与产生这些 error 的校验器同文件）。
+  assert.ok(clientSource.includes("skippedReasons"), "the card must read the aggregated skippedReasons field");
+
+  // 归一化实现只许有一份，且必须在 decisions.js 里（与校验器同文件，措辞不会漂移）。
+  const decisionsSource = readFileSync(new URL("../src/dream/decisions.js", import.meta.url), "utf8");
+  assert.ok(decisionsSource.includes("export function normalizeSkipReason("), "normalization lives in decisions.js");
+  assert.ok(decisionsSource.includes("export function summarizeSkipped("), "aggregation lives in decisions.js");
+  assert.ok(!clientSource.includes("normalizeSkipReason("), "the panel must not re-implement normalization");
+  // 序号前缀必须被剥掉：不剥的话 decision[0]/decision[1] 会被拆成 N 组（#521 实测 280 条拆成 20 组）。
+  assert.ok(/replace\(\/\^decision\\\[\\d\+\\\]/.test(decisionsSource), "the decision[N]: prefix is stripped");
+});

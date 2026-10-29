@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## 🐛 修复
+
+- **dream 的 merge 被 `dreamMergeGuard` 永久拦死：提示词还在催合并，46 轮零合并、每轮照付满载 token（#521）**：两个护栏从来没对齐过——`archive` 早就有逃生门（`reason` 命中 `ARCHIVE_RATIONALE_RE` 的「重复/过时」词表就放行长保留类型），`merge` 没有；而 `src/lang.js` 的巩固提示词【任务】第 1 条明确要求「识别主题相近的条目 → merge」，【硬性规则】里的长保留类型禁区**只对 archive 说过**。报告者的实测：46 轮巩固、`skipped` 决定 299 条里 280 条（93.6%）被这条护栏拦下且 `action` 全是 merge，整轮 `applied` 合计 375 条、**merge 恒为 0**；模型提的永远是同一簇 preference，全被拦 → 什么也没变 → `updated_at` 不动 → 下一轮同样条目还在 200 条窗口里 → 再提一次。单轮 `input_count` 46 轮全部 200（窗口饱和），同一条记忆 46 轮里被提出去合并 40 次。**模型没错，护栏也没错，两者从未对上。** 两条一起改：① 提示词（zh/en × consolidation + conflictFull 四处）补上 merge 的类型禁区，与 archive 那句同形——「长保留类型仅当确属重复或过时才可 merge，且 reason 必须写明；只是主题相近请输出 keep」；② `src/dream/decisions.js` 的 merge 护栏加逃生门，条件与 archive 护栏同一条词表且**要求所有 id 同类型**（跨类型合并本就另受 `allowCrossTypeMerge` 约束，逃生门不跟着放宽）。reason 只写「主题相近」不会命中词表——这是故意的：相近不等于重复，只有确属重复/过时才值得牺牲两条独立表述。**默认值不变**（`dreamMergeGuard` 仍默认 `true`），报告者也明确不请求关掉它——它默认开有理由（E8 实测 10/26 条被丢约束已归位 guarded 类型仍被 merge 吃掉）。两条链路共用同一 `validateDecisions`（`src/dream.js:1244` 主链路 + `src/dream/sleep.js:393` sleep 链路），改一处两处都受益。回归测试 +3：真重复放行、只有理由不同类不放行、同类型但只写「主题相近」仍拦。
+- **面板看不出「一整类动作 100% 失败」：`status: degraded` + `applied: 3` 从外面看完全是健康轮（#521 附带）**：`skipped` 明细此前只落库，`GET /dream-status` 的响应里没有聚合，不自己写 SQL 展开 `dream_runs.skipped` 根本看不出问题——报告者那个 bug 跑了一整天才发现。`skipped[].error` 还带 `decision[N]:` 序号前缀，朴素 `GROUP BY` 会把同一原因拆成 20 组。新增 `normalizeSkipReason` / `summarizeSkipped`（住在 `src/dream/decisions.js`，与产生这些 error 的校验器同一文件，措辞不会漂移），只剥序号前缀与具体 id/类型集合，其余措辞原样保留；按 `(action, reason)` 二元组计数——同一句原因在 merge 和 archive 上是两回事，混在一起会误导。响应新增 `skippedCount`（原始条数）与 `skippedReasons`（聚合桶，按条数降序），面板状态页在最近巩固卡下方多一张告警色卡，最多列 4 类、其余折叠成「另有 N 类」。
+
 ## [0.9.4] - 2026-10-21
 
 ## 🆕 新增
