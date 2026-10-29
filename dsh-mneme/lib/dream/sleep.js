@@ -506,15 +506,27 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
   // archived 这一轴不在下面出现，不是漏了：list() 默认就带 `archived = 0`
   // （store.js list 的 includeArchived 默认 false、onlyArchived 默认 false），
   // 旧写法那句 `!m.archived` 一直是重复过滤——查询层已经把它挡在外面。
-  const memories = withoutPaused(service, service
-    .list({
-      limit: 200, includeForgotten: false,
-      // 三条政策轴全部下推到查询层：留在 LIMIT 之后过滤，等于让被丢掉的行为窗口占名额
-      // （模式扫描池会因此饿到 sleepPatternMinMemories 以下而静默跳过）。同一取舍见
-      // #230 的 document 轴与本文件 #471 的暂停轴，src/service.js:2247 那条注释记着前例。
-      excludeTypes: ["document", "summary", "pattern"],
-      excludeImported: true
-    }))
+  // 窗口至少等于本次要扫的名额：`sleepPatternMinMemories` 的合法上限是 1000
+  // （src/config.js:612）。窗口若还是死的 200，那么把这个值配到 200 以上的人
+  // **每一轮**都会触发下面那次无界重取，跟闸门按没按下无关——那是把这条修复
+  // 从「按需」变成「常付」。
+  const poolQuery = {
+    limit: Math.max(200, limit), includeForgotten: false,
+    // 三条政策轴全部下推到查询层：留在 LIMIT 之后过滤，等于让被丢掉的行为窗口占名额
+    // （模式扫描池会因此饿到 sleepPatternMinMemories 以下而静默跳过）。同一取舍见
+    // #230 的 document 轴与本文件 #471 的暂停轴，src/service.js:2247 那条注释记着前例。
+    excludeTypes: ["document", "summary", "pattern"],
+    excludeImported: true
+  };
+  const gather = (query) => withoutPaused(service, service.list(query));
+  let pool = gather(poolQuery);
+  // #515：暂停闸门要读 scope_state 并按「这一维有标注」匹配，下推进 SQL 就等于让判定
+  // 长出第二份实现（issue 里写过为什么否掉，`*` 那一行是关键的不可下推处）。所以这里
+  // 不动判定、只放宽取数：**只有窗口过滤后不够本次要扫的名额**才不带窗口重取一次。
+  // 常态仍只付一次有界查询；多付的那一次恰好就是原本会静默跳过的那一次——
+  // 症状从「库里没东西可扫」变成「扫了」，这才是这条闸门该有的行为。
+  if (pool.length < limit) pool = gather({ ...poolQuery, limit: null });
+  const memories = pool
     .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
     .slice(0, limit);
   if (memories.length === 0) return { status: "skipped", reason: "no memories to scan" };
