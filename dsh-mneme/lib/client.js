@@ -2414,16 +2414,17 @@ window.__ModuleLoader__.load({
       // self-contained unit inside the stacked settings view ---
       ".mneme-set-card{border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px;margin-bottom:10px}",
       // 设置页分组标题（个性化 / 记忆引擎 / 搜索 / 连接与安全 / 帮助）：
-      // 先给「这一段在管什么」，卡片才是具体选项
-      ".mneme-set-grouphead{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin:24px 0 10px}",
-      ".mneme-set-grouphead:first-child{margin-top:8px}",
+      // 先给「这一段在管什么」，卡片才是具体选项；scroll-margin-top 是给 #518 的粘顶目录（实测约 74px 高）留的跳转余量
+      // ——没有它，点 chip 滚过去的标题就停在目录背面
+      ".mneme-set-grouphead{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin:24px 0 10px;scroll-margin-top:84px}",
+      ".mneme-set-toc+.mneme-set-grouphead{margin-top:8px}", // nav 才是第一个孩子：:first-child 自 #518 起永不命中
       // 设置页目录（#518）：分组标题 + 一栏跳转 chip。粘顶是因为设置页是整块
       // 滚动的（.mneme-set 自己 overflow-y），长页里目录滚走了就等于没有——用户
       // 提的诉求正是「方便直接跳转」，跳不回去的目录不算数。
       // 窄屏收成横向滚动：换行会让粘顶条吃掉半屏高度，而设置页本身已经很挤。
       ".mneme-set-toc{position:sticky;top:0;z-index:2;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1));padding:8px 0 10px;margin-bottom:4px;border-bottom:1px solid var(--dsw-alias-border-l2)}",
       ".mneme-set-toclabel{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin-bottom:6px}",
-      ".mneme-set-toclist{display:flex;gap:6px;flex-wrap:wrap}",
+      ".mneme-set-toclist{display:flex;gap:6px;overflow-x:auto;padding:3px}", // 不 wrap：chip flex:none，窄屏横向滚；3px 给 focus ring 留位（滚动容器会裁掉描边）
       ".mneme-set-tocchip{flex:none;height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--dsw-alias-border-l2);background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:12px;line-height:24px;transition:border-color .12s,color .12s}",
       ".mneme-set-tocchip:hover{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary)}",
       ".mneme-set-tocchip:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
@@ -4287,8 +4288,8 @@ window.__ModuleLoader__.load({
       const tocRefs = useRef({});
       function jumpToGroup(key) {
         const node = tocRefs.current?.[key];
-        // scrollIntoView 在宿主 webview 里一直可用；refresh 恒 false——整页滚动
-        // 容器是 .mneme-set，带 refresh 会把外层也带着滚一段。
+        // 偏移不在这里算：标题自己带 scroll-margin-top（见 .mneme-set-grouphead）。
+        // 两处各量一次粘顶条高度必然对不上，跳转会把目标停在目录背后。
         if (node && node.scrollIntoView) node.scrollIntoView({ block: "start", behavior: "smooth" });
       }
       const groupHead = (key) => h("div", {

@@ -2257,11 +2257,11 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
   // 没配模型是一句可行动的话（先去选模型），不能和「模型没按格式回」共用一条文案。
   assert.ok(clientSource.includes('"no-route" ? "noroute"'), "no-route must map to its own panel outcome, not the generic failure");
 });
-// 设置页目录（#518）：用户要的是「左侧一个分类，直接跳到某一节」。这里锁三件事：
+// 设置页目录（#518）：用户要的是「左侧一个分类，直接跳到某一节」。这里锁五件事：
 // ① 目录由 tocGroups 一张表生成，五项分组标题全部走 groupHead(key) 渲染——两处各写
 //    一遍清单是这类索引最典型的腐烂方式，而腐烂后的目录会把人领到不存在的锚点；
 // ② 点一下必须真的滚（scrollIntoView），不是摆设；
-// ③ 文案双语齐备——只有中文键的目录在英文界面下会渲染出键名。
+// ③ 文案双语齐备——只有中文键的目录在英文界面下会渲染出键名；④⑤ 两条是布局锁，见断言末尾。
 test("settings page ships a section index that jumps to each group (#518)", () => {
   // 目录与标题同源：tocGroups 的每一项都必须从 group.<key> 取文案。
   const tocBlock = clientSource.match(/const tocGroups = \[([\s\S]*?)\];/);
@@ -2298,6 +2298,17 @@ test("settings page ships a section index that jumps to each group (#518)", () =
   // 占位符是唯一的插值点：写成裸文案就等于把 "{name}" 直接显示给用户。
   assert.ok(clientSource.includes('"memory.settings.toc.jump": "跳到「{name}」"'),
     "the jump tooltip must keep its {name} placeholder");
+
+  // ④ 粘顶条会盖住跳转目标：只锁 scrollIntoView 存在，看不出标题停在目录背后——
+  //    布局里唯一还能在源码上判的一条就是那个偏移，所以钉住它。
+  const headRule = clientSource.match(/"\.mneme-set-grouphead\{([^"]*)\}/);
+  assert.ok(headRule && /scroll-margin-top:\d+px/.test(headRule[1]),
+    "the jump target must clear the sticky index via scroll-margin-top");
+
+  // ⑤ 窄屏是横向滚动，不是换行：换行会把粘顶条撑高，上面那个偏移跟着失准。
+  const listRule = clientSource.match(/"\.mneme-set-toclist\{([^"]*)\}/);
+  assert.ok(listRule && /overflow-x:auto/.test(listRule[1]) && !/flex-wrap:wrap/.test(listRule[1]),
+    "the chip row must scroll sideways on narrow panels instead of wrapping under the sticky bar");
 });
 
 // #514：用户以为插件「轻量」关掉了人格定义，实际是宿主 minimal 预设整体压制了注入。
