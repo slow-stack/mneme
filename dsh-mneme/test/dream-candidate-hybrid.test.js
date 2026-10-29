@@ -39,8 +39,8 @@ function seed(service, vectorIndex, title, vec) {
 }
 
 /** Capture the candidate titles the LLM was handed. */
-// 注意：不能用 helpers 的 mockCtx —— 它靠 userText.startsWith("id=") 区分阶段，而
-// semantic 可用时候选列表以「# 聚类 N」开头（语义预分组），会被误判成 summary。
+// 注：helpers 的 mockCtx 过去靠 userText.startsWith("id=") 区分阶段，semantic 预分组把清单
+// 头换成「# 聚类 N」就误判成 summary；#501/#493 把它的判据换成了清单形状（includes("| type=")），
 // 这里改用 system prompt 判定，与 listText 的形态解耦。
 function stubCtx(consolidationReply) {
   const seen = { titles: [] };

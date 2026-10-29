@@ -72,8 +72,8 @@ function dreamCtx({ onConsolidation, summaryText = "记忆库总览：用户偏�
       async *stream(options) {
         captured.push(options);
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        if (userText.startsWith("id=")) {
-          yield { type: "text-delta", index: 0, text: onConsolidation ? onConsolidation(userText) : "[]" };
+        if (userText.includes("| type=")) {
+          yield { type: "text-delta", index: 0, text: onConsolidation ? onConsolidation(userText, options.purpose) : "[]" };
         } else {
           yield { type: "text-delta", index: 0, text: summaryText };
         }
@@ -282,7 +282,7 @@ test("issue#9: rejected reasoningEffort retries once without it and still consol
       async *stream(options) {
         calls.push(options);
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        if (userText.startsWith("id=")) {
+        if (userText.includes("| type=")) {
           // First attempt forwards reasoningEffort: the provider rejects it.
           if (options.reasoningEffort) {
             throw new Error("UNSUPPORTED_REASONING_EFFORT: DeepSeek does not support reasoning effort \"low\"");
@@ -340,7 +340,7 @@ function sleepCtx(onConsolidation, selection = { provider: "mock", model: "sleep
       async *stream(options) {
         captured.push(options);
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        yield { type: "text-delta", index: 0, text: onConsolidation ? onConsolidation(userText) : "[]" };
+        yield { type: "text-delta", index: 0, text: onConsolidation ? onConsolidation(userText, options.purpose) : "[]" };
         yield { type: "finish", reason: { kind: "stop" } };
       }
     }
@@ -355,7 +355,7 @@ test("issue#9: sleep forwards sleepReasoningEffort on its LLM passes", async () 
   vectorIndex.saveEmbedding(b.id, [1, 0, 0]);
   const captured = [];
   const ctx = sleepCtx(
-    (userText) => userText.startsWith("候选冲突")
+    (userText, purpose) => purpose === "sleep-conflict"
       ? JSON.stringify([{ action: "conflict", winner: a.id, loser: b.id, reason: "重复覆盖" }])
       : "[]",
     { provider: "mock", model: "sleep-model" },
@@ -378,7 +378,7 @@ test("issue#135: sleep unset effort also resolves to the lowest supported", asyn
   vectorIndex.saveEmbedding(b.id, [1, 0, 0]);
   const captured = [];
   const ctx = sleepCtx(
-    (userText) => userText.startsWith("候选冲突")
+    (userText, purpose) => purpose === "sleep-conflict"
       ? JSON.stringify([{ action: "conflict", winner: a.id, loser: b.id, reason: "重复覆盖" }])
       : "[]",
     { provider: "mock", model: "sleep-model" },
@@ -433,7 +433,7 @@ test("rc.1 stream-level effort rejection (error finish chunk) also triggers the 
           return;
         }
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        if (userText.startsWith("id=")) {
+        if (userText.includes("| type=")) {
           yield { type: "text-delta", index: 0, text: JSON.stringify([
             { action: "merge", ids: [a.id, b.id], keepSource: b.id, title: "合并标题", content: "合并内容", importance: 4 }
           ]) };
@@ -500,7 +500,7 @@ test("sleep passes the stream failure accessor so a stream-level effort rejectio
       return;
     }
     const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-    yield { type: "text-delta", index: 0, text: userText.startsWith("候选冲突")
+    yield { type: "text-delta", index: 0, text: options.purpose === "sleep-conflict"
       ? JSON.stringify([{ action: "conflict", winner: a.id, loser: b.id, reason: "重复覆盖" }])
       : "[]" };
     yield { type: "finish", reason: { kind: "stop" } };
@@ -625,7 +625,7 @@ test("defaultEffort trap: capability query failure falls back to configured effo
           throw new Error("UNSUPPORTED_REASONING_EFFORT: mock does not support reasoning effort \"high\"");
         }
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        if (userText.startsWith("id=")) {
+        if (userText.includes("| type=")) {
           yield { type: "text-delta", index: 0, text: JSON.stringify([
             { action: "merge", ids: [a.id, b.id], keepSource: b.id, title: "合并标题", content: "合并内容", importance: 4 }
           ]) };
@@ -655,7 +655,7 @@ test("defaultEffort trap: sleep conflict pass remaps a poison effort too", async
   vectorIndex.saveEmbedding(b.id, [1, 0, 0]);
   const captured = [];
   const ctx = sleepCtx(
-    (userText) => userText.startsWith("候选冲突")
+    (userText, purpose) => purpose === "sleep-conflict"
       ? JSON.stringify([{ action: "conflict", winner: a.id, loser: b.id, reason: "重复覆盖" }])
       : "[]",
     { provider: "mock", model: "sleep-model" },
