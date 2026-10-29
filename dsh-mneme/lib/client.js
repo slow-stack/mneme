@@ -313,6 +313,9 @@ window.__ModuleLoader__.load({
         "memory.settings.group.search": "搜索",
         "memory.settings.group.connect": "连接与安全",
         "memory.settings.group.help": "帮助",
+        "memory.settings.toc.label": "目录",
+        "memory.settings.toc.aria": "设置分组目录",
+        "memory.settings.toc.jump": "跳到「{name}」",
         "memory.settings.profile": "用户画像",
         "memory.settings.profileHint": "写一段自我介绍（角色、背景、偏好），Agent 每轮对话都会自动带上。",
         "memory.settings.profileSave": "保存画像",
@@ -490,6 +493,11 @@ window.__ModuleLoader__.load({
         "memory.settings.mode.standard": "标准",
         "memory.settings.mode.savedHint": "已保存，重启 DSH 后生效",
         "memory.settings.mode.offList": "已关闭：巩固（autoDream）· 实体抽取 · 语义搜索",
+        // #514：用户把宿主「极简（minimal）」与插件「轻量」混为一谈，以为关掉人格是
+        // 轻量模式干的。这个词条把两件事分开说清楚，不再让用户自己猜。
+        "memory.settings.mode.hostPresetHint": "注意区分：这里的「轻量 / 标准」是插件的记忆引擎档位，与 DSH 宿主的「极简模式（minimal 预设）」是两回事——轻量档不会关闭人格定义。",
+        "memory.status.minimalPresetTitle": "当前会话用的是宿主的「极简模式」",
+        "memory.status.minimalPresetBody": "极简预设（minimal）把 system prompt 整体接管了，记忆、用户画像、人格定义都不会送达模型。这是宿主的设计边界，插件改不了。想要它们生效：把 DSH 切到标准模式（或在 ~/.dsh/settings.yaml 设 agent-presets.default: standard）；过渡方案是把画像与规则写进 AGENTS.md——那条走指令路径，不受这个压制。",
         "memory.settings.extapi.title": "外部访问 API",
         "memory.settings.extapi.desc": "开放一个本机接口，让其他工具（插件、命令行、桌面应用）也能读写这份记忆库，默认只允许本机连接。改动保存后重启 DSH 生效。",
         "memory.settings.extapi.enabled": "启用",
@@ -1090,6 +1098,9 @@ window.__ModuleLoader__.load({
         "memory.settings.group.search": "Search",
         "memory.settings.group.connect": "Connections & safety",
         "memory.settings.group.help": "Help",
+        "memory.settings.toc.label": "Contents",
+        "memory.settings.toc.aria": "Settings section index",
+        "memory.settings.toc.jump": "Jump to {name}",
         "memory.settings.profile": "User Profile",
         "memory.settings.profileHint": "Describe yourself once — the agent reads it every turn.",
         "memory.settings.profileSave": "Save Profile",
@@ -1263,6 +1274,9 @@ window.__ModuleLoader__.load({
         "memory.settings.mode.standard": "Standard",
         "memory.settings.mode.savedHint": "Saved. Takes effect after restarting DSH",
         "memory.settings.mode.offList": "Off: consolidation (autoDream) · entity extraction · semantic search",
+        "memory.settings.mode.hostPresetHint": "Two different things: Light/Standard here is this plugin's memory engine tier; the host's minimal preset is separate — Light never disables persona.",
+        "memory.status.minimalPresetTitle": "This session runs the host's minimal preset",
+        "memory.status.minimalPresetBody": "The minimal preset takes over the whole system prompt, so memory, profile and persona never reach the model. That is a host design boundary the plugin cannot change. To get them back: switch DSH to standard mode (or set agent-presets.default: standard in ~/.dsh/settings.yaml); as an interim workaround put profile and rules in AGENTS.md — that path is not suppressed.",
         "memory.settings.extapi.title": "External API",
         "memory.settings.extapi.desc": "Opens a local API so other tools (plugins, CLIs, desktop apps) can also read and write this memory store; binds to localhost only by default. Changes take effect after restarting DSH.",
         "memory.settings.extapi.enabled": "Enable",
@@ -2408,9 +2422,20 @@ window.__ModuleLoader__.load({
       // self-contained unit inside the stacked settings view ---
       ".mneme-set-card{border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px;margin-bottom:10px}",
       // 设置页分组标题（个性化 / 记忆引擎 / 搜索 / 连接与安全 / 帮助）：
-      // 先给「这一段在管什么」，卡片才是具体选项
-      ".mneme-set-grouphead{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin:24px 0 10px}",
-      ".mneme-set-grouphead:first-child{margin-top:8px}",
+      // 先给「这一段在管什么」，卡片才是具体选项；scroll-margin-top 是给 #518 的粘顶目录（实测约 74px 高）留的跳转余量
+      // ——没有它，点 chip 滚过去的标题就停在目录背面
+      ".mneme-set-grouphead{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin:24px 0 10px;scroll-margin-top:84px}",
+      ".mneme-set-toc+.mneme-set-grouphead{margin-top:8px}", // nav 才是第一个孩子：:first-child 自 #518 起永不命中
+      // 设置页目录（#518）：分组标题 + 一栏跳转 chip。粘顶是因为设置页是整块
+      // 滚动的（.mneme-set 自己 overflow-y），长页里目录滚走了就等于没有——用户
+      // 提的诉求正是「方便直接跳转」，跳不回去的目录不算数。
+      // 窄屏收成横向滚动：换行会让粘顶条吃掉半屏高度，而设置页本身已经很挤。
+      ".mneme-set-toc{position:sticky;top:0;z-index:2;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1));padding:8px 0 10px;margin-bottom:4px;border-bottom:1px solid var(--dsw-alias-border-l2)}",
+      ".mneme-set-toclabel{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin-bottom:6px}",
+      ".mneme-set-toclist{display:flex;gap:6px;overflow-x:auto;padding:3px}", // 不 wrap：chip flex:none，窄屏横向滚；3px 给 focus ring 留位（滚动容器会裁掉描边）
+      ".mneme-set-tocchip{flex:none;height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--dsw-alias-border-l2);background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:12px;line-height:24px;transition:border-color .12s,color .12s}",
+      ".mneme-set-tocchip:hover{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary)}",
+      ".mneme-set-tocchip:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
       ".mneme-set-token{font-family:monospace;font-size:12px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);word-break:break-all;user-select:all}",
       ".mneme-set-hint{font-size:12px;color:var(--mneme-fg-dim)}",
       // --- 重要性编辑行：与查看态同一份 Lucide 星形（此前是文本星号下拉，角更尖锐且与其他星不统一） ---
@@ -3716,6 +3741,31 @@ window.__ModuleLoader__.load({
       return "Unknown";
     };
 
+    // #182 / #514 注入状态探测：一处取数，两处消费（状态页告示卡、设置页提示）。
+    // 分成两份读同一接口会让两处的「已知/未知」判断各自漂移——#514 里用户就是在
+    // 设置页开关人格，却只在状态页才看得到原因。普通函数声明（会提升），这里紧
+    // 挨着设置页放，是为了让源码顺序和「先谁用」对得上。
+    function useInjectStatus() {
+      const [state, setState] = useState({ loading: true, suppressed: false, agentPreset: null });
+      useEffect(() => {
+        let cancelled = false;
+        apiFetch("/api/dsh-mneme/inject-status")
+          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+          .then((j) => {
+            if (!cancelled) {
+              setState({
+                loading: false,
+                suppressed: !!(j && j.suppressed),
+                agentPreset: (j && j.agentPreset) || null
+              });
+            }
+          })
+          .catch(() => { if (!cancelled) setState({ loading: false, suppressed: false, agentPreset: null }); });
+        return () => { cancelled = true; };
+      }, []);
+      return state;
+    }
+
     function SettingsContent({ t }) {
       const [profile, setProfile] = react.useState("");
       const [rules, setRules] = react.useState([]);
@@ -3738,6 +3788,10 @@ window.__ModuleLoader__.load({
       const [personaNewName, setPersonaNewName] = react.useState("");
       const [personaSaved, setPersonaSaved] = react.useState(false);
       const [personaError, setPersonaError] = react.useState("");
+      // #514：人是在这一页开关人格的，所以「为什么关了没反应」的答案必须在
+      // 这一页。与状态页告示卡共用 useInjectStatus，两边口径不会各自漂。
+      const injectStatus = useInjectStatus();
+      const minimalWarn = !injectStatus.loading && injectStatus.suppressed;
       // 注入预览：文本由后端渲染（GET /persona 的 preview 字段），前端只显示、不自己拼。
       // 原先这里是一段前端手拼的 profile + rules 列表，注释却写着「注入生效文本」——
       // 它既没有表头、没有「- 用户画像：」前缀，也完全没有人格三行，两份渲染代码必然漂。
@@ -4229,9 +4283,43 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // 目录（#518）：五项分组标题是设置页唯一的骨架，所以索引直接由这张表
+      // 生成，而不是再手写一遍标题——两份清单迟早会漂，而漂了的目录会把人
+      // 领到空处。tocRefs 是滚动目标，与渲染顺序一一对应（同一个 map 里产出）。
+      const tocGroups = [
+        { key: "personal", label: t("memory.settings.group.personal") },
+        { key: "engine", label: t("memory.settings.group.engine") },
+        { key: "search", label: t("memory.settings.group.search") },
+        { key: "connect", label: t("memory.settings.group.connect") },
+        { key: "help", label: t("memory.settings.group.help") }
+      ];
+      const tocRefs = useRef({});
+      function jumpToGroup(key) {
+        const node = tocRefs.current?.[key];
+        // 偏移不在这里算：标题自己带 scroll-margin-top（见 .mneme-set-grouphead）。
+        // 两处各量一次粘顶条高度必然对不上，跳转会把目标停在目录背后。
+        if (node && node.scrollIntoView) node.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+      const groupHead = (key) => h("div", {
+        className: "mneme-set-grouphead",
+        ref: (node) => { if (node) tocRefs.current[key] = node; }
+      }, t("memory.settings.group." + key));
+
       return h("div", null,
+        h("nav", { className: "mneme-set-toc", "aria-label": t("memory.settings.toc.aria") },
+          h("div", { className: "mneme-set-toclabel" }, t("memory.settings.toc.label")),
+          h("div", { className: "mneme-set-toclist" },
+            ...tocGroups.map((group) => h("button", {
+              key: group.key,
+              type: "button",
+              className: "mneme-set-tocchip",
+              title: t("memory.settings.toc.jump").replace("{name}", group.label),
+              onClick: () => jumpToGroup(group.key)
+            }, group.label))
+          )
+        ),
         // —— 个性化：画像 / 人格 / 规则 / 自定义指令（Agent 怎么对你） ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.personal")),
+        groupHead("personal"),
         // 用户画像 — who the agent is talking to
         h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.profile")),
@@ -4282,6 +4370,14 @@ window.__ModuleLoader__.load({
         h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.persona")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.personaHint")),
+          // #514：人格卡是最容易撞上宿主极简压制的地方——这里的提示比运行模式卡
+          // 那句更要紧，因为用户就是在这里点开关的。
+          minimalWarn && h("div", {
+            style: { marginBottom: 10, padding: "8px 10px", borderLeft: "3px solid var(--mneme-warn)", fontSize: 12, lineHeight: "18px" }
+          },
+            h("div", { style: { fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, t("memory.status.minimalPresetTitle")),
+            h("div", { style: { marginTop: 4, color: "var(--mneme-fg-dim)" } }, t("memory.status.minimalPresetBody"))
+          ),
           // 卡列表：default + 各 byAgent 卡，点选切换编辑位；default 标注兜底位
           h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
             h("button", {
@@ -4462,7 +4558,7 @@ window.__ModuleLoader__.load({
           )
         ),
         // —— 记忆引擎：运行模式（粗粒度）在前，功能开关（细粒度）紧随 ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.engine")),
+        groupHead("engine"),
         // 运行模式 — light vs standard chip radios; each click PUTs and the
         // change only lands after a DSH restart (green saved hint says so).
         h("section", { className: "mneme-set-card" },
@@ -4472,6 +4568,10 @@ window.__ModuleLoader__.load({
           mode === null && !modeError
             ? h("div", { className: "mneme-set-hint" }, "…")
             : h(react.Fragment, null,
+                // #514：用户以为「轻量」关掉了人格。两个词都会在界面上出现，不先
+                // 分开说，用户永远会把宿主的 minimal 记成插件的 light。
+                h("div", { className: "mneme-set-hint", style: { marginBottom: 8 } },
+                  t("memory.settings.mode.hostPresetHint")),
                 h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
                   h("button", {
                     className: mode === "light" ? "mneme-chip mneme-active" : "mneme-chip",
@@ -4487,12 +4587,20 @@ window.__ModuleLoader__.load({
                 ),
                 mode === "light" && h("div", { className: "mneme-set-hint", style: { marginTop: 8 } },
                   t("memory.settings.mode.offList"))
-              )
+              ),
+          // #514：suppressed 只在「autoInject 开着 + 宿主确实报了 minimal」时为真，
+          // 所以这里不是吓唬人——关掉注入的用户、preset 未知的宿主都不会看到它。
+          minimalWarn && h("div", {
+            style: { marginTop: 10, padding: "8px 10px", borderLeft: "3px solid var(--mneme-warn)", fontSize: 12, lineHeight: "18px" }
+          },
+            h("div", { style: { fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, t("memory.status.minimalPresetTitle")),
+            h("div", { style: { marginTop: 4, color: "var(--mneme-fg-dim)" } }, t("memory.status.minimalPresetBody"))
+          )
         ),
         // 功能开关 — 后端能力的细粒度闸门；改动即时保存，重启 DSH 后生效。
         h(FeaturesCard, { t }),
         // —— 搜索：语义召回 ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.search")),
+        groupHead("search"),
         // 向量搜索 — semantic recall over an embeddings API
         h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.vectorTitle")),
@@ -4512,7 +4620,7 @@ window.__ModuleLoader__.load({
           )
         ),
         // —— 连接与安全：外部访问 API / 面板令牌 ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.connect")),
+        groupHead("connect"),
         // 外部访问 API — standalone HTTP service for plugins/CLI/desktop tools;
         // the token is generated and kept by the backend, so it is read-only
         // here with a copy affordance. Changes need a DSH restart.
@@ -4629,7 +4737,7 @@ window.__ModuleLoader__.load({
           apiTokenSaved && h("div", { style: { marginTop: 8 } }, h("span", { className: "mneme-saved" }, t("memory.settings.apiTokenSaved")))
         ),
         // —— 帮助：支持与鼓励（图标行 + 检测更新 + star，兼当「关于」收尾） ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.help")),
+        groupHead("help"),
         // 反馈三入口：新建 issue 预填（版本+平台）/ 邮件 / 浏览已知问题。
         // 纯前端链接零后端成本；插件版本来自 /info，平台取 userAgent。GitHub
         // 仓库当前没有 issue 模板，故用 issues/new?title=&body= 直接预填。
@@ -5701,15 +5809,7 @@ window.__ModuleLoader__.load({
     // 主动提示，把「为什么没注入」从逐帧解压日志降为看一眼状态页。只在
     // suppressed=true 时渲染——standard 会话与 preset 未知的宿主零打扰。
     function InjectStatusCard({ t }) {
-      const [state, setState] = useState({ loading: true, suppressed: false });
-      useEffect(() => {
-        let cancelled = false;
-        apiFetch("/api/dsh-mneme/inject-status")
-          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
-          .then((j) => { if (!cancelled) setState({ loading: false, suppressed: !!(j && j.suppressed) }); })
-          .catch(() => { if (!cancelled) setState({ loading: false, suppressed: false }); });
-        return () => { cancelled = true; };
-      }, []);
+      const state = useInjectStatus();
       if (state.loading || !state.suppressed) return null;
       return h("div", { className: "mneme-statuscard", style: { borderColor: "var(--mneme-warn)" } },
         h("div", { className: "mneme-statusnum", style: { fontSize: "16px", lineHeight: "24px" } }, t("memory.status.injectSuppressed")),
