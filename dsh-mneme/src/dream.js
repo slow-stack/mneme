@@ -10,6 +10,10 @@ import { scopeKeyOf } from "./scope.js";
 import { isInPeakWindow, nextOffPeakAt } from "./peak-hours.js";
 import { createHash, randomUUID } from "node:crypto";
 import { STR, langOf } from "./lang.js";
+// 巩固读的是行池，而动行的写手不经汇流口：applyDecisions 归档败者直接走
+// service.setArchived（dream/decisions.js），所以「不许改写外来行」这条契约要在
+// 每个池子各挡一遍。清单与静态锁见 share-imported-guard.test.js。
+import { isImportedRow } from "./memory-source.js";
 export { validateDecisions, applyDecisions, withEffortFallback, withMaxTokensFallback, parseMaxTokensCap, describeStreamFailure, resolveDreamEffort, resolveRoute, streamText, runAuditedLlm };
 
 // Extract the first JSON array from LLM output, tolerating markdown fences,
@@ -57,7 +61,7 @@ function totalChars(memories) {
 // 两处若各写一份过滤条件，重启播种读到的基线就会和运行期判定口径漂移（一个把
 // document 算进去、一个不算），阈值随之失真，且这种漂移只会在重启后才显形。
 function activeStoreSize(service) {
-  const memories = withoutPaused(service, service.all().filter((m) => !m.archived && m.type !== "summary" && m.type !== "document"));
+  const memories = withoutPaused(service, service.all().filter((m) => !isImportedRow(m) && !m.archived && m.type !== "summary" && m.type !== "document"));
   return { count: memories.length, chars: totalChars(memories) };
 }
 
@@ -486,7 +490,7 @@ async function reEmbedMemory(semantic, memory, logger) {
  * 任何失败降级为 0 条，绝不反噬 dream 主流程。
  */
 async function generateNarratives({ ctx, service, config, route, language, effort, semantic, logger }) {
-  const inputs = withoutPaused(service, service.all().filter((m) => !m.archived && !m.forgotten && m.type !== "summary" && m.type !== "document"));
+  const inputs = withoutPaused(service, service.all().filter((m) => !isImportedRow(m) && !m.archived && !m.forgotten && m.type !== "summary" && m.type !== "document"));
   const clusters = clusterByTag(inputs, { minCluster: config.dreamNarrativeMinCluster ?? 3 });
   if (!clusters.length) return 0;
 
@@ -1014,7 +1018,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
   async function runDream(ctx, service, config) {
     const language = langOf(config);
     const logger = ctx.logger;
-    let memories = withoutPaused(service, service.all().filter((m) => !m.archived && m.type !== "summary" && m.type !== "document"));
+    let memories = withoutPaused(service, service.all().filter((m) => !isImportedRow(m) && !m.archived && m.type !== "summary" && m.type !== "document"));
     if (memories.length === 0) return { ok: true, applied: 0, skipped: true, summary: false };
     // Issue #89：开跑时刻既喂给审计行（created_at），也是调度器闸门的时间基准。
     const dreamStartedAt = Date.now();
@@ -1476,7 +1480,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     // （saveWithDedupe 不带 agent_scope/workspace_scope），所以被按下作用域的内容
     // 一旦进了总览，注入侧按作用域过滤就再也拦不住它：内容已经洗成了全局行。
     // 别的入口漏了只是「那一条漏过去」，这里漏了是「洗一遍之后一直漏」。
-    const summaryAll = withoutPaused(service, service.all().filter((m) => !m.archived && m.type !== "summary" && m.type !== "document"));
+    const summaryAll = withoutPaused(service, service.all().filter((m) => !isImportedRow(m) && !m.archived && m.type !== "summary" && m.type !== "document"));
     const summaryMaxInputs = Number.isInteger(config.dreamSummaryMaxInputs) ? config.dreamSummaryMaxInputs : 0;
     const summaryInputs = summaryMaxInputs > 0 && summaryAll.length > summaryMaxInputs
       ? [...summaryAll]

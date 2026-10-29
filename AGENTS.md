@@ -28,7 +28,7 @@ dsh-mneme 是 DSH 宿主的记忆插件（蒸馏 / 注入 / 检索 / 巩固 / sc
 - `lib/` 是 sync 产物（见上）：各自树内同步，`npm run sync` **只在准备提交前跑一次**，别当保存键用；
 - 共享资源同一时刻只有一个写入者：`npm install`、`npm publish`（且只在 `dsh-mneme/` 内执行；发布走 GitHub Actions 的 release.yml，不在本机跑）、插件 relink——**被 link 的那棵树才是「活」的**；
 - 不 `amend` / force-push 别人的提交，不把别人未提交的改动 `stash` 走；
-- **提交不得有 AI 署名**，且**任何 `Co-Authored-By` trailer 都不许**（不管它指向人、bot 还是 AI 工具），也不许 "Generated with" 之类的工具署名。规则自 2026-09-19 生效，此前的历史提交不追溯、不改写——见 [CONTRIBUTING](CONTRIBUTING.md)；
+- **提交不得有 AI 署名**，且**任何 `Co-Authored-By` trailer 都不许**（不管它指向人、bot 还是 AI 工具），也不许 "Generated with" 之类的工具署名。规则自 2026-09-19 生效，此前的历史提交不追溯、不改写。**唯一例外是 GitHub squash 合并自己生成的那一行**——它不是任何人写的、贡献者也拦不住，在 PR 里说明即可；压掉真实共同作者的名字仍属违规。见 [CONTRIBUTING](CONTRIBUTING.md) 与 [CODE_OF_CONDUCT](CODE_OF_CONDUCT.md) 第 1 节；
 - **本机私有信息不进公开文件**：车道分配、端口占用、记忆库路径这类只对某台机器成立的东西，放不进库的本地板（`.worktrees/coordination.md`）或 `.git/info/exclude`；本文件只放对所有人都成立的纪律（定位见开头：薄入口）；
 - 两个宿主都加载本插件时：`memoryDir` 可共用（`src/store.js` 的 `busy_timeout` + WAL 已为多进程就绪），但 `externalApiEnabled`（默认端口 8790）与 `autoDream` 后台任务**只能一边开**，否则 EADDRINUSE + 重复做梦（镜像/审计双写）。独立服务（`dsh-mneme-serve`）同理：与 DSH 外部访问抢同一端口、**二选一**；它第一期无 LLM，巩固结构性只在宿主侧，不构成第二个做梦者。
 
@@ -46,6 +46,8 @@ dsh-mneme 是 DSH 宿主的记忆插件（蒸馏 / 注入 / 检索 / 巩固 / sc
 | 整理与画像草稿 | `src/organize.js` + `src/profile-extract.js` | agent 主动整理（dryRun 比对报告 → agent 判断 → apply）与从记忆提取画像草稿（只回草稿，绝不写 `user_settings`）。整理里有两种「不要它」，别混：**`discard`** = 这条候选不写，任何东西都不动（只进回执）；**`archive`** = 把报告标为被取代的那条既有行归档——可恢复，绝不物理删除。两个入口都 opt-in 默认关（`organizeEnabled` / `profileExtractEnabled`） |
 | 蒸馏 | `src/summarize.js` + `src/quality-filter.js` | 会话 → 记忆；质量打分与处置（归档/降权） |
 | 巩固与睡眠 | `src/dream.js` + `src/dream/{decisions,clustering,sleep}.js` | LLM 巩固决策、dream_runs 审计回执 |
+| 外来行判据 | `src/memory-source.js` | 「本库不巩固别人导入的原文」这条契约的唯一实现（`isImportedRow`），挂在 saveWithDedupe 汇流口与巩固/睡眠/整理的九个行池上（[docs/SHARE.md](dsh-mneme/docs/SHARE.md)） |
+| 分享包（出与收） | `src/share.js` + `src/share-http.js` + `src/share-import.js` | 出包口径与入包闸门（`buildSharePack` / `validateSharePack`，一条不合格整包拒）、两张皮共用的解析与答复（`shareReply` / `receiveReply` / `undoReply` 各只有一份——**「两张皮只许剩鉴权与路径不同」这条纪律归 `share-http.js`**，它同时承诺「这一层从不抛」）、收侧入库与整包退出（一个事务、按 `share_external_id` 幂等、物删不归档）。面板三件（分享弹层 / 接收弹层 / 外来区筛选与整包退出）在 `lib/client.js`，出包口径、入包闸门、错误码→状态全在那里读、不在那里复述；唯一的例外是外来说的那个字面量 `"imported"`（独立 bundle 不能 `import src/memory-source.js`），它由 `test/client-share.test.js` 的跨文件镜像锁钉回 `IMPORTED_SOURCE` 那一份 |
 | 实体 | `src/entities/extractor.js`（存储侧在 store 三表） | 写入时 LLM 抽取实体/属性/关系 |
 | 检索辅助 | `src/search/{bm25,adaptive}.js`、`src/vector-index.js`、`src/embedding.js`、`src/local-embedder.js`、`src/reranker.js` | BM25 / 自适应阈值 / 向量索引 / 嵌入 / 重排 |
 | 热度 | `src/heat.js` | 纯函数遗忘曲线（opt-in） |

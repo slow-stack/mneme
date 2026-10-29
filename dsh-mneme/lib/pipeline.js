@@ -118,13 +118,33 @@ export function suggestRetirements(pipeline, { runs = [], now = Date.now(), obse
   const violationSeen = new Set();
   for (const run of runs || []) {
     const doneIds = new Set((run.steps || []).filter((s) => s && !s.skipped && !s.detoured).map((s) => s.id));
+    // #461：一条 run 的判别键分两类，两类永不相撞。
+    //
+    // at 存在（合法账本的唯一形态——normalizeRun 在写侧强制必填）走 `at:<值>`。
+    // at 缺失（读侧被独立喂进非法形状，或未来写契约放宽）走 `anon:<内容指纹>`：
+    // by + triggeredBy + 按序的结构化 step 字段（字段取舍见下方 anonymousRunKey）。
+    // 用**内容**而不是数组索引，是因为
+    // violationSeen 跨整本账本共享，而索引只在「本次遍历的数组顺序」里唯一——
+    // 同一条 run 在账本里出现两次时，索引会让它的同一条违规被记成两条，
+    // 那正是本条要修的那类「键塌缩」的反面形态（#507 评审）。
+    //
+    // 评审里希望中间加一层 run.id，但 normalizeRun（src/pipeline-runs.js:187）
+    // 只产出 { at, by, triggeredBy, steps }，没有 id 字段，而 suggestRetirements
+    // 收到的已经是归一化后的 run；补 id 要改写侧契约，不属这条防御深度问题。
+    // 内容指纹是同一意图下不需要动 schema 的等价物。
+    //
+    // 两类键必须带不同前缀：否则「第 0 条缺 at」与「另一条 at 字面量正好是
+    // #0」会生成同一个键，后一条 violation-precedence 被静默吞掉。
+    const runKey = isNonEmptyString(run.at)
+      ? `at:${run.at}`
+      : anonymousRunKey(run);
     for (const step of pipeline.steps) {
       if (!doneIds.has(step.id) || !Array.isArray(step.needs)) continue;
       for (const need of step.needs) {
         if (doneIds.has(need)) continue;
         const had = (run.steps || []).some((s) => s && s.id === need);
         if (had) continue; // 前置做过（哪怕是 skipped）就不算违规
-        const vk = `${run.at ?? ""}|${step.id}|${need}`;
+        const vk = `${runKey}|${step.id}|${need}`;
         if (violationSeen.has(vk)) continue;
         violationSeen.add(vk);
         // 同一步对不同前置各报一条：修图的人需要知道**断在哪条边**上
@@ -239,6 +259,47 @@ function isPlainObject(value) {
 
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim() !== "";
+}
+
+/**
+ * at 缺失时一条 run 的判别键（#461 / CodeRabbit #507）：给无时间戳的 run 一个
+ * **按内容**的稳定身份，好让 violationSeen 只并掉「同一条 run 重复出现」的同类
+ * 违规，而不把内容不同的两条 run 并成一条。
+ *
+ * 覆盖 normalizeSteps（src/pipeline-runs.js:242）产出的**全部结构化字段**——
+ * id / at / skipped / detoured / refuted。之所以必须收 step.at：漏了它，两条只在
+ * 某一步时间上不同的 at-less run 会共键，后一条的 violation-precedence 被去重吞掉
+ * （#507 指出的正是这条）。
+ *
+ * 用 JSON.stringify 而不是手写 `${id}@${at}` 拼接：run 侧 step id 只过
+ * isSafeSegment（src/pipeline-runs.js:83），`@` `,` `:` 都是合法 id，手写拼接会与
+ * 「id 里恰好含这些字符」的另一条 step 撞串——那会新造一类键塌缩（把另一类 at-less
+ * 输入从「不漏报」改成「漏报」）。JSON 自带无歧义分隔，顺带把 by/triggeredBy 里的
+ * `|`、以及 Date 与 ISO 串（Date.toJSON 归一成 ISO）的歧义一并收掉。
+ *
+ * note 不进来：它是自由文本，序列化进去会让「只差备注的同一条观测」被当成两次。
+ *
+ * 如实记下代价：skipped/detoured/refuted 对去重正确性是**惰性**的——violation 判定
+ * 只读 doneIds（由 id + skipped/detoured 决定）与 id 是否存在，refuted 根本不被读
+ * （见下方 suggestRetirements）。所以收这三个布尔防不住任何错误合并，却会让两条只差
+ * 这些旗标的 at-less run 各报一条**逐字相同**的提议。仍选择全收，是为了让规则统一
+ * （指纹 = 归一化 step 的每个结构化字段，唯一例外是自由文本 note），且将来 violation
+ * 逻辑若开始读某个旗标时不会突然开始漏合并；anon 路径本身没有身份锚点，接受这一条
+ * 重复的代价。注意这条路径在生产不可达：readStoredRun（src/pipeline-runs.js:262）
+ * 强制 run.at 存在，正常账本永远走 `at:` 分支，此处纯属直接调用边界的防御深度。
+ */
+function anonymousRunKey(run) {
+  return `anon:${JSON.stringify({
+    by: run.by ?? null,
+    triggeredBy: run.triggeredBy ?? null,
+    steps: (run.steps || []).map((s) => ({
+      id: s?.id ?? null,
+      at: s?.at ?? null,
+      skipped: !!s?.skipped,
+      detoured: !!s?.detoured,
+      refuted: !!s?.refuted
+    }))
+  })}`;
 }
 
 /**

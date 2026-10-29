@@ -147,3 +147,132 @@ test("坏输入不抛", () => {
   assert.doesNotThrow(() => suggestRetirements(p, { runs: [{}] }));
   assert.doesNotThrow(() => suggestRetirements(p, { runs: [{ at: null, steps: null }] }));
 });
+
+// #461：violationSeen 跨整本账本共享，而键里的 `run.at ?? ""` 在 at 缺失时塌缩成
+// 空串——于是**所有**无时间戳的 run，其同 (step, need) 违规会被并成一条。去重本意是
+// 「同一轮里同一条只报一次」，不是「所有轮共享一条」。内容不同的两条 run 该产出两条。
+test("#461：两条内容不同、都无 run.at 的 run，同类违规不被并成一条", () => {
+  const p = makePipeline([
+    step("A", { tool: "npm test" }),
+    step("B", { tool: "git push", needs: ["A"] })
+  ]);
+  // 都只做了 B、都没带 at，但走的不是同一条路：by 不同 → 内容指纹不同 → 各报一条
+  const runs = [
+    { at: null, by: "human", triggeredBy: "demo", steps: [{ id: "B", at: "x" }] },
+    { at: undefined, by: "agent", triggeredBy: "nightly", steps: [{ id: "B", at: "x" }] }
+  ];
+  const v = suggestRetirements(p, { runs }).filter((s) => s.kind === "violation-precedence");
+  assert.equal(v.length, 2, "两条独立的 run 各报一条，不被键塌缩吞掉");
+  assert.equal(v[0].stepId, "B");
+  assert.equal(v[1].stepId, "B");
+});
+
+// #507 评审：同一个 run 在账本里出现两次，同一条违规仍只报一次。
+// 位置索引做不到这件事——它只在「本次遍历的数组顺序」里唯一，同一条 run 出现在
+// 下标 0 和 1 时会拿到两个键。所以 at 缺失时兜底用内容指纹，不用索引。
+test("#507：同一条 run 出现两次，同类违规仍只报一次", () => {
+  const p = makePipeline([
+    step("A", { tool: "npm test" }),
+    step("B", { tool: "git push", needs: ["A"] })
+  ]);
+  const same = { at: null, by: "human", triggeredBy: "demo", steps: [{ id: "B", at: "x" }] };
+  const v = suggestRetirements(p, { runs: [same, same] }).filter((s) => s.kind === "violation-precedence");
+  assert.equal(v.length, 1, "同一条 run 的两份记录是同一个观测，不是两次违规");
+});
+
+// #507 评审（CodeRabbit）：两类键必须不相撞。第 0 条缺 at，而另一条的 at 字面量
+// 正好是 "#0"——用位置索引兜底时两者生成同一个键，后一条违规被静默吞掉。
+test("#507：at 字面量与兜底键不相撞（第 0 条缺 at vs 另一条 at 是 \"#0\"）", () => {
+  const p = makePipeline([
+    step("A", { tool: "npm test" }),
+    step("B", { tool: "git push", needs: ["A"] })
+  ]);
+  const runs = [
+    { at: null, by: "human", triggeredBy: "demo", steps: [{ id: "B", at: "x" }] },
+    { at: "#0", by: "human", triggeredBy: "demo", steps: [{ id: "B", at: "x" }] }
+  ];
+  const v = suggestRetirements(p, { runs }).filter((s) => s.kind === "violation-precedence");
+  assert.equal(v.length, 2, "字面量 #0 与兜底键不是同一个东西，两条都要报");
+});
+
+// at 存在时行为不变：同 at 的重复违规仍然只报一条（原有去重语义不能被修坏）。
+test("#461：at 存在时同轮重复违规仍只报一条（回归保护）", () => {
+  const p = makePipeline([
+    step("A", { tool: "npm test" }),
+    step("B", { tool: "git push", needs: ["A"] })
+  ]);
+  const runs = [
+    RUN("2026-10-17T00:00:00Z", [{ id: "B", at: "x" }]),
+    RUN("2026-10-17T00:00:00Z", [{ id: "B", at: "x" }])
+  ];
+  const v = suggestRetirements(p, { runs }).filter((s) => s.kind === "violation-precedence");
+  assert.equal(v.length, 1, "同一 at 的同一违规仍然只报一次");
+});
+
+// #507（CodeRabbit）：匿名指纹必须收 step 的 at。两条都缺 run.at、只在 steps[0].at 上
+// 不同的 run 是两次不同的观测；漏了 at 会让它们共键，后一条的 violation-precedence 被
+// 去重吞掉。修复前（只取 step.id）报 1 条，修复后（收 at）报 2 条——这是本条的 red→green。
+test("#507：匿名指纹收 step.at——只差 steps[0].at 的两条 at-less run 各报一条", () => {
+  const p = makePipeline([
+    step("A", { tool: "npm test" }),
+    step("B", { tool: "git push", needs: ["A"] })
+  ]);
+  const runs = [
+    { at: null, by: "human", triggeredBy: "demo", steps: [{ id: "B", at: "2026-10-17T00:00:00Z" }] },
+    { at: undefined, by: "human", triggeredBy: "demo", steps: [{ id: "B", at: "2026-10-18T00:00:00Z" }] }
+  ];
+  const v = suggestRetirements(p, { runs }).filter((s) => s.kind === "violation-precedence");
+  assert.equal(v.length, 2, "只差步骤时间的两条 at-less run 是两次观测，不能被并成一条");
+});
+
+// #507：匿名指纹**不能**把整个 step 对象序列化进去——note 是自由文本，进去会让「只差
+// 备注的同一条观测」被当成两次。今天没有任何测试锁这条；不加，未来重构把 note 加回来
+// 还会全绿。这是前瞻守卫：当前修复前后都是 1，但把 note 塞进指纹就会转红（见复盘）。
+test("#507：匿名指纹排除 note——只差 steps[0].note 的两条 at-less run 仍是同一条", () => {
+  const p = makePipeline([
+    step("A", { tool: "npm test" }),
+    step("B", { tool: "git push", needs: ["A"] })
+  ]);
+  const runs = [
+    { at: null, by: "human", triggeredBy: "demo", steps: [{ id: "B", at: "x", note: "第一次跑，网络慢" }] },
+    { at: undefined, by: "human", triggeredBy: "demo", steps: [{ id: "B", at: "x", note: "重跑，还是慢" }] }
+  ];
+  const v = suggestRetirements(p, { runs }).filter((s) => s.kind === "violation-precedence");
+  assert.equal(v.length, 1, "note 是自由文本不是身份，只差备注应仍算同一条观测");
+});
+
+// #507：锁定旗标语义。指纹覆盖归一化 step 的全部结构化字段（含 skipped/detoured/refuted），
+// 而这三个布尔对去重正确性是**惰性**的（violation 判定只读 doneIds 与 id 是否存在，
+// refuted 根本不被读）。代价如实记在这里：两条只差惰性旗标的 at-less run 会各报一条
+// **逐字相同**的提议。锁成 2 + deepEqual，防止将来无声漂移；anon 路径在生产不可达
+// （readStoredRun 强制 run.at），故此代价不落到真实账本上。
+test("#507：只差 refuted 的两条 at-less run 给出两条逐字相同的提议（锁旗标语义）", () => {
+  const p = makePipeline([
+    step("A", { tool: "npm test" }),
+    step("B", { tool: "git push", needs: ["A"] })
+  ]);
+  const runs = [
+    { at: null, by: "human", triggeredBy: "demo", steps: [{ id: "B", at: "x", refuted: false }] },
+    { at: null, by: "human", triggeredBy: "demo", steps: [{ id: "B", at: "x", refuted: true }] }
+  ];
+  const v = suggestRetirements(p, { runs }).filter((s) => s.kind === "violation-precedence");
+  assert.equal(v.length, 2, "refuted 在指纹里：两条只差 refuted 的 run 拿到两个键");
+  assert.deepEqual(v[0], v[1], "两条提议逐字相同——这正是把惰性旗标收进指纹的代价");
+});
+
+// #507：锁编码必须是**无歧义**序列化（JSON.stringify），不能退回手写 `${id}@${at}`。
+// run 侧 step id 只过 isSafeSegment（src/pipeline-runs.js:83），`@` `,` `:` 都是合法 id：
+// 手写拼接会把 [{A,t1},{B,t1},{C,t1}] 与 [{"A@t1,B",t1},{C,t1}] 撞成同一个键，run2 的
+// (C,P) 违规被静默吞掉（只报 3 条）。当前实现与更早的 id-only 实现都报 4；退回手写拼接会红。
+test("#507：step id 含 @/, 不撞键（锁 JSON.stringify 编码，手写拼接会漏报）", () => {
+  const p = makePipeline([
+    step("P"),
+    step("A", { needs: ["P"] }), step("B", { needs: ["P"] }), step("C", { needs: ["P"] })
+  ]);
+  const runs = [
+    { at: null, by: "human", triggeredBy: "demo", steps: [{ id: "A", at: "t1" }, { id: "B", at: "t1" }, { id: "C", at: "t1" }] },
+    { at: null, by: "human", triggeredBy: "demo", steps: [{ id: "A@t1,B", at: "t1" }, { id: "C", at: "t1" }] }
+  ];
+  const v = suggestRetirements(p, { runs }).filter((s) => s.kind === "violation-precedence");
+  assert.equal(v.length, 4, "两条 run 内容不同：run1 断 A/B/C 三条边、run2 断 C 一条，共 4 条");
+});

@@ -2257,3 +2257,86 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
   // 没配模型是一句可行动的话（先去选模型），不能和「模型没按格式回」共用一条文案。
   assert.ok(clientSource.includes('"no-route" ? "noroute"'), "no-route must map to its own panel outcome, not the generic failure");
 });
+// 设置页目录（#518）：用户要的是「左侧一个分类，直接跳到某一节」。这里锁五件事：
+// ① 目录由 tocGroups 一张表生成，五项分组标题全部走 groupHead(key) 渲染——两处各写
+//    一遍清单是这类索引最典型的腐烂方式，而腐烂后的目录会把人领到不存在的锚点；
+// ② 点一下必须真的滚（scrollIntoView），不是摆设；
+// ③ 文案双语齐备——只有中文键的目录在英文界面下会渲染出键名；④⑤ 两条是布局锁，见断言末尾。
+test("settings page ships a section index that jumps to each group (#518)", () => {
+  // 目录与标题同源：tocGroups 的每一项都必须从 group.<key> 取文案。
+  const tocBlock = clientSource.match(/const tocGroups = \[([\s\S]*?)\];/);
+  assert.ok(tocBlock, "the settings view must declare tocGroups");
+  const tocKeys = [...tocBlock[1].matchAll(/key: "([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(tocKeys, ["personal", "engine", "search", "connect", "help"],
+    "the index must cover every settings group, in render order");
+  for (const key of tocKeys) {
+    assert.ok(tocBlock[1].includes('t("memory.settings.group.' + key + '")'),
+      'tocGroups entry "' + key + '" must read its label from memory.settings.group.' + key);
+    // 分组标题只有一条通路：正文里的五个标题都经过 groupHead(key)，
+    // 没有一处再手写 className 为 mneme-set-grouphead 的 div。
+    const headCalls = clientSource.split('groupHead("' + key + '")').length - 1;
+    assert.equal(headCalls, 1, 'group "' + key + '" must be rendered exactly once, via groupHead()');
+  }
+  const rawHeads = clientSource.split('className: "mneme-set-grouphead"').length - 1;
+  assert.equal(rawHeads, 1, "no section may hand-write the group head; only groupHead() may (it owns the jump ref)");
+
+  // 跳转必须落到 ref 上并调用 scrollIntoView——目录不滚动等于没有目录。
+  assert.match(clientSource, /tocRefs\.current\[key\] = node/,
+    "every group head must register itself as a jump target");
+  assert.match(clientSource, /node\.scrollIntoView\(\{ block: "start"/,
+    "jumping must scroll the target section into view");
+
+  // 双语：三条新键都要在 zh 与 en 各出现一次（en 块在后，计数 >= 2）。
+  for (const key of [
+    "memory.settings.toc.label",
+    "memory.settings.toc.aria",
+    "memory.settings.toc.jump"
+  ]) {
+    const occurrences = clientSource.split('"' + key + '"').length - 1;
+    assert.ok(occurrences >= 2, "i18n key " + key + " must exist in both zh and en (got " + occurrences + ")");
+  }
+  // 占位符是唯一的插值点：写成裸文案就等于把 "{name}" 直接显示给用户。
+  assert.ok(clientSource.includes('"memory.settings.toc.jump": "跳到「{name}」"'),
+    "the jump tooltip must keep its {name} placeholder");
+
+  // ④ 粘顶条会盖住跳转目标：只锁 scrollIntoView 存在，看不出标题停在目录背后——
+  //    布局里唯一还能在源码上判的一条就是那个偏移，所以钉住它。
+  const headRule = clientSource.match(/"\.mneme-set-grouphead\{([^"]*)\}/);
+  assert.ok(headRule && /scroll-margin-top:\d+px/.test(headRule[1]),
+    "the jump target must clear the sticky index via scroll-margin-top");
+
+  // ⑤ 窄屏是横向滚动，不是换行：换行会把粘顶条撑高，上面那个偏移跟着失准。
+  const listRule = clientSource.match(/"\.mneme-set-toclist\{([^"]*)\}/);
+  assert.ok(listRule && /overflow-x:auto/.test(listRule[1]) && !/flex-wrap:wrap/.test(listRule[1]),
+    "the chip row must scroll sideways on narrow panels instead of wrapping under the sticky bar");
+});
+
+// #514：用户以为插件「轻量」关掉了人格定义，实际是宿主 minimal 预设整体压制了注入。
+// 三道锁防复发：① 设置页那两个会被人开关的卡（运行模式 / 人格）都要能看到这条
+// 告示，且两处共用同一份取数与同一组文案，不许各自长一套；② 宿主的 minimal 与
+// 插件的 light 必须在文案里被明确区分，否则两个词在同一个页面里出现就还是混；
+// ③ 告示只在 suppressed 为真时出现——关掉注入的用户、preset 未知的宿主不该被吓。
+test("minimal preset notice reaches the settings page, not just the status tab (issue #514)", () => {
+  for (const key of ["memory.status.minimalPresetTitle", "memory.status.minimalPresetBody", "memory.settings.mode.hostPresetHint"]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  // ② 区分两个词：文案里必须同时点名宿主的极简/预设与插件的轻量档。
+  assert.ok(clientSource.includes("极简模式（minimal 预设）"), "the zh copy must name the host's minimal preset explicitly");
+  assert.ok(/轻量档不会关闭人格定义|Light never disables persona/.test(clientSource),
+    "the copy must say that light mode does not disable persona — that is the exact misreading in #514");
+
+  // ① 两处消费：告示必须在运行模式卡与人格卡各出现一次，且都读同一个 minimalWarn。
+  const uses = clientSource.split('t("memory.status.minimalPresetTitle")').length - 1;
+  assert.ok(uses >= 2, `the notice must render in both the mode card and the persona card (got ${uses})`);
+  assert.ok(clientSource.includes("const minimalWarn = !injectStatus.loading && injectStatus.suppressed;"),
+    "the notice must be gated on the shared inject-status state, not on a second fetch of its own");
+
+  // 取数只有一份：useInjectStatus 之外不许再有人直接打 /inject-status。
+  const fetches = clientSource.split('"/api/dsh-mneme/inject-status"').length - 1;
+  assert.equal(fetches, 1, "inject-status must have exactly one reader; a second fetch lets the two surfaces drift");
+
+  // 3 未压制时零打扰：settings 里判的必须是 injectStatus.suppressed。
+  assert.ok(!/minimalWarn\s*=\s*true/.test(clientSource), "the notice must never be hard-wired on");
+});
+
