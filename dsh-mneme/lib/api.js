@@ -1322,6 +1322,15 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   //
   // 口径只在 src/provenance-http.js 写一份，两个入口都调它（#411 的教训：两张皮
   // 整段复制必然漂移）。
+  //
+  // distillRecords.enabled 门（#509 评审整改）：这个读出口吃的是**写侧同一枚开关、
+  // 同一个判据**（isDistillRecordsEnabled，与 src/summarize.js:988 逐字同源；本文件
+  // 不重写那个表达式，静态锁盯着）。关着时回 409，错误码取共用模块导出的
+  // DISTILL_RECORDS_DISABLED——「用户关了」而不是「装配坏了」（后者是 503，
+  // src/index.js:589-591 立的可区分性原则），也不是 404（本端点刻意不就「这条记忆
+  // 是否存在」作断言）。cfg 是启动期冻结值，所以面板改开关要到下次重启才对这里生效；
+  // 该键在 settings 白名单与 NESTED_FLAG_PATHS 里都登记着，面板会显示「待重启」
+  // （#481 的教训）。阶梯全貌见 provenance-http.js 文件头。
   register({
     kind: "exact",
     path: "/api/dsh-mneme/memory/provenance",
@@ -1334,7 +1343,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           sendJson(res, parsed.status, { error: parsed.error });
           return;
         }
-        const { status, body } = provenanceReply({ service, id: parsed.id, warn: (m) => ctx.logger?.warn?.(m) });
+        const { status, body } = provenanceReply({ service, id: parsed.id, config, warn: (m) => ctx.logger?.warn?.(m) });
         sendJson(res, status, body);
       } catch {
         sendJson(res, 500, { error: "internal" });

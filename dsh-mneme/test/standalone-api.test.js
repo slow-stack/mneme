@@ -1148,9 +1148,15 @@ test("维度探针状态机：五种读数各自归位（含 invalid 的 fail-cl
 
 // --- GET /memory/provenance：记忆级溯源读出口（#399 写、#421 读）-------------
 // daemon 侧此前和宿主内 API 一样只有写入路径：库里有答案，外部拿不到。
+//
+// #509 评审整改：这个面吃 distillRecords.enabled（与写侧同一个开关、同一个判据），
+// 关着时 409 {error:"distill-records-disabled"}。createStandaloneApi 的 config 缺省
+// {}，而 {} 在这道门上的含义就是「关」（fail-closed）——所以下面的用例必须显式把
+// 开关打开，没有一个「默认开」的路径。
+const RECORDS_ON = { distillRecords: { enabled: true } };
 
 test("GET /memory/provenance returns windows with their original rows", async () => {
-  const { base, auth, store, close } = await setup();
+  const { base, auth, store, close } = await setup({ config: RECORDS_ON });
   try {
     const saved = await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
     const memoryId = saved.memory?.id ?? saved.id;
@@ -1175,7 +1181,7 @@ test("GET /memory/provenance returns windows with their original rows", async ()
 });
 
 test("GET /memory/provenance: a memory with no link answers with empty windows, not an error", async () => {
-  const { base, auth, close } = await setup();
+  const { base, auth, close } = await setup({ config: RECORDS_ON });
   try {
     const saved = await saveMemory(base, auth, { type: "preference", title: "语言", content: "中文" });
     const memoryId = saved.memory?.id ?? saved.id;
@@ -1188,13 +1194,76 @@ test("GET /memory/provenance: a memory with no link answers with empty windows, 
 });
 
 test("GET /memory/provenance is auth-gated and 400s on a missing id", async () => {
-  const { base, auth, close } = await setup();
+  const { base, auth, close } = await setup({ config: RECORDS_ON });
   try {
     const noToken = await fetch(`${base}/memory/provenance?id=x`);
     assert.equal(noToken.status, 401, "只读端点也在 apiToken 之下（与 /memories 同口径）");
 
     const missing = await fetch(`${base}/memory/provenance`, { headers: auth });
     assert.equal(missing.status, 400);
+  } finally {
+    close();
+  }
+});
+
+test("GET /memory/provenance: distillRecords.enabled off answers 409, not 404 and not empty windows", async () => {
+  // #509 评审整改。四个刻度必须分开：401 没鉴权 / 400 缺 id / 409 用户关了 /
+  // 503 装配没接线 / 200 空 windows = 「这条记忆不是蒸馏来的」。把「关了」报成 404，
+  // 调用方会按本仓既有的「404 = 命名的东西不存在」（/memories/:id）读成「这条记忆
+  // 不存在」——而这两种误读的后续动作完全不同（一个去开开关，一个去查这条记忆）。
+  const { base, auth, close } = await setup({ config: { distillRecords: { enabled: false } } });
+  try {
+    const saved = await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    const memoryId = saved.memory?.id ?? saved.id;
+    const res = await fetch(`${base}/memory/provenance?id=${encodeURIComponent(memoryId)}`, { headers: auth });
+    assert.equal(res.status, 409);
+    assert.deepEqual(await res.json(), { error: "distill-records-disabled" }, "body 只准 error 一个键");
+  } finally {
+    close();
+  }
+});
+
+test("GET /memory/provenance: no config at all is fail-closed (409)", async () => {
+  // 构造时不传 config（createStandaloneApi 的默认 {}）：这个端点返回逐字原文，
+  // 默认方向必须是「不读」。别把 409 当 bug 修成默认开。
+  const { base, auth, close } = await setup();
+  try {
+    const res = await fetch(`${base}/memory/provenance?id=m1`, { headers: auth });
+    assert.equal(res.status, 409);
+    assert.deepEqual(await res.json(), { error: "distill-records-disabled" });
+  } finally {
+    close();
+  }
+});
+
+test("GET /memory/provenance: 400 beats 409 and 409 is not an existence oracle", async () => {
+  const { base, auth, close } = await setup({ config: { distillRecords: { enabled: false } } });
+  try {
+    const missing = await fetch(`${base}/memory/provenance`, { headers: auth });
+    assert.equal(missing.status, 400, "缺 id 是语法畸形，排在功能开关之前");
+
+    // 关着时已知 id 与未知 id 同一个答案，否则这个端点能用来枚举「哪些记忆有原文」。
+    const saved = await saveMemory(base, auth, { type: "preference", title: "语言", content: "中文" });
+    const known = saved.memory?.id ?? saved.id;
+    for (const id of [known, "nope"]) {
+      const res = await fetch(`${base}/memory/provenance?id=${encodeURIComponent(id)}`, { headers: auth });
+      assert.equal(res.status, 409, `${id} → 409`);
+      assert.deepEqual(await res.json(), { error: "distill-records-disabled" });
+    }
+  } finally {
+    close();
+  }
+});
+
+test("GET /memory/provenance: 409 beats 503 — feature off is more specific than unwired", async () => {
+  // 关着 + service 上连 distillRecordsFor 都没有（旧装配 / headless）：报 503 会让人
+  // 去查一个没坏的部署。与 api.js:525-526 立的两段式同构。
+  const { base, auth, service, close } = await setup({ config: { distillRecords: { enabled: false } } });
+  try {
+    delete service.distillRecordsFor;
+    const res = await fetch(`${base}/memory/provenance?id=x`, { headers: auth });
+    assert.equal(res.status, 409);
+    assert.equal((await res.json()).error, "distill-records-disabled");
   } finally {
     close();
   }

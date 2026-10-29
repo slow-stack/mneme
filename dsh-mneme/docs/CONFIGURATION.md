@@ -117,10 +117,12 @@
 
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |
 |---|---|---|---|
-| `distillRecords.enabled` **light** | `false` | 蒸馏时顺带留存窗口原文 + 写记忆级溯源链接 | opt-in；关 = 一行不写、连收集都不做，行为与 #399 之前逐字节一致 |
+| `distillRecords.enabled` **light** | `false` | 蒸馏时顺带留存窗口原文 + 写记忆级溯源链接；同时是溯源读出口（`GET /memory/provenance` 与宿主内 `/api/dsh-mneme/memory/provenance`）的总闸 | opt-in；关 = 一行不写、连收集都不做，行为与 #399 之前逐字节一致；读出口此时回 `409 {"error":"distill-records-disabled"}`（与「装配没接线」的 503 分开读数）。**关开关 ≠ 删掉已留存的原文**：只不再经 HTTP 提供，盘上的行要 `dsh-mneme reclaim` 或重新开启后的启动裁剪才走。开关是**启动快照**（与 `panel_mode` 同节奏），面板改完要到下次启动生效，面板会显示「待重启」 |
 | `distillRecords.retentionDays` | `90` | 原文保留天数（1–3650） | **只管启动期裁剪**（`src/index.js`，`enabled` 时动手）。`dsh-mneme reclaim` 不读这个键：它对三个表用同一条 `--older-than` 截止（默认 7 天），想对齐就显式传成与 `retentionDays` 相同的值（见 STORAGE.md）。两处都**只删 `distill_records`**，溯源链接保留指向空区间（显示「来源已过期」），绝不级联删记忆 |
 
 两个键都走 feature_flags 白名单（面板可启停）；`enabled` 进 lightMode 预设关闭清单，`retentionDays` 不进（它是时长不是行为面，用户显式设过就照旧）。`dsh-mneme reclaim` 的报告从两项变三项（`planned` / `column_bytes` / `cleared` 各多一个 `distill_records`），入口语义（默认 dry-run、`--apply` 才动手）不变。已知边界：无历史回填、从未蒸馏过的窗口不留记录、不覆盖工具结果与 code 输出。
+
+`enabled` 这一格**同时管读写两侧**（#509 评审整改后）：写侧是蒸馏时是否落盘（`src/summarize.js:988`），读侧是溯源读出口是否把原文读出去（判据在 `src/provenance-http.js`，与写侧逐字同源，只此一份）。关着时读出口回 `409 {"error":"distill-records-disabled"}`——但**盘上的原文不会因此消失**：保留期裁剪与写入同在 `src/index.js:270` 一道门里，关掉开关意味着「不再写、启动期也不再裁」，已留的行会一直躺在库里，直到 `dsh-mneme reclaim`（它不读这个键，手动可删）或重新开启后的启动裁剪。所以「关掉就干净了」是误读，诚实的表述是「关掉 = 不再经 HTTP 提供」。
 
 ## 注入
 

@@ -506,7 +506,7 @@ dsh plugin --profile web add "C:/path/to/modusensus-dsh-mneme-0.9.0.tgz"
 | `conflictFreezeMaxPending` | `100` | 冲突冻结队列最大挂起数（1-1000）：超出后不再入队（防队列无限膨胀） |
 | `escapePromptVariables` | `true` | 注入文本花括号转义（v0.8.0 恢复，issue #162）：注入边界把 `{{...}}` 转义，防止 hot memory / 记忆原文里的 Go template / Vue 语法触发宿主 interpolate 抛错卡死会话（v0.7.4 曾修复、v0.7.11 误删） |
 
-> 🔐 **API 安全**：DSH 无内置鉴权且默认仅监听 `127.0.0.1`。插件 API 默认开放（便于 Web 面板即装即用）——**未配 `apiToken` 时读和写都开放**，真正的围栏是回环 + 宿主监听器的 Host/Origin 校验（它防 DNS rebinding 与跨站浏览器请求，但不建立身份）。如需防护（如局域网暴露），在配置中设置 `apiToken`：此时**写操作**（新增/更新/删除/导入/收包（`/receive`、`/receive/undo`——写的是**本机自己的库**，归 `token-write`，所以免 token 的 GET 在那两条路径上只会拿到 405）/画像/规则/命令/开关/开关计费类）与**敏感读**（`/export`、`/external-api`、`/vector-config`、`/vector-reindex`、`/maintenance/*`、`/runtime/provision`、`/share`）需携带 `Authorization: Bearer <token>`（前端设置面板填同一个 token）；只读的 `list` / `search` / `semantic` / `inject-preview` 等**仍然开放**，不要把它们当成被 token 保护的面。`/api/dsh-mneme/vector-config` 返回的 `apiKey` 已掩码（`sk-***…`），存储仍保留明文供调用；前端回传空或掩码值表示"不改 key"。
+> 🔐 **API 安全**：DSH 无内置鉴权且默认仅监听 `127.0.0.1`。插件 API 默认开放（便于 Web 面板即装即用）——**未配 `apiToken` 时读和写都开放**，真正的围栏是回环 + 宿主监听器的 Host/Origin 校验（它防 DNS rebinding 与跨站浏览器请求，但不建立身份）。如需防护（如局域网暴露），在配置中设置 `apiToken`：此时**写操作**（新增/更新/删除/导入/收包（`/receive`、`/receive/undo`——写的是**本机自己的库**，归 `token-write`，所以免 token 的 GET 在那两条路径上只会拿到 405）/画像/规则/命令/开关/开关计费类）与**敏感读**（`/export`、`/external-api`、`/vector-config`、`/vector-reindex`、`/maintenance/*`、`/runtime/provision`、`/share`、`/memory/provenance`（蒸馏窗口的逐条会话原文，另受 `distillRecords.enabled` 门控））需携带 `Authorization: Bearer <token>`（前端设置面板填同一个 token）；只读的 `list` / `search` / `semantic` / `inject-preview` 等**仍然开放**，不要把它们当成被 token 保护的面。`/api/dsh-mneme/vector-config` 返回的 `apiKey` 已掩码（`sk-***…`），存储仍保留明文供调用；前端回传空或掩码值表示"不改 key"。
 >
 > 安全模型全表（哪些路由免鉴权、为什么）见 [SECURITY.md](../SECURITY.md#5-security-model-what-actually-protects-what)。
 
@@ -532,6 +532,7 @@ dsh plugin --profile web add "C:/path/to/modusensus-dsh-mneme-0.9.0.tgz"
 | `GET` | `/profile` | 用户画像，返回 `{profile:"..."}`；未设置时为空字符串 |
 | `GET` | `/rules` | 行为规则列表，返回 `{rules:[...]}`；未设置时为空数组 |
 | `GET` | `/memories?limit&offset&type&minImportance&source&order=chrono&include_archived&occurred_from&occurred_to` | 分页列出记忆（`include_archived=true` 含归档；occurred 时间窗按 `occurred_at` 回退 `created_at`） |
+| `GET` | `/memory/provenance?id=<memoryId>` | 记忆级溯源读出口（#399 写、#421 读；宿主内面板路由 `/api/dsh-mneme/memory/provenance` 同一口径）：一条溯源链接一个窗口 `{session_id, seq_start, seq_end, created_at, records[]}`，`records` 是那段蒸馏窗口的**逐条会话原文**（按 `seq` 升序、不越出区间）。没有链接的记忆返回**空 `windows`**——「不是蒸馏来的」是有效答案，不是错误。状态码阶梯：`401` 无 token → `400` 缺 `id` → `409 {"error":"distill-records-disabled"}`（`distillRecords.enabled` 关着；该开关是**启动快照**，面板改完要到下次启动生效，面板会显示「待重启」）→ `503 {"error":"provenance-unavailable"}`（装配没接线）→ `200`。`409` 与 `503` 必须分开读数：前者是「用户关了」，后者是「装配坏了」。**关开关 ≠ 删掉已留存原文**——只是不再经 HTTP 提供，盘上的行要 `dsh-mneme reclaim`（或重新开启后的启动裁剪）才走，详见 [docs/DISTILL.md](docs/DISTILL.md) |
 | `GET` | `/memories/:id` | 单条记忆 |
 | `POST` | `/memories` | 新增记忆 `{type,title,content,importance?,tags?,source?,sensitivity?,occurred_at?,agent_scope?,workspace_scope?}`；响应含 `action: created\|merged` |
 | `PUT` | `/memories/:id` | 局部更新 `{title?,content?,type?,importance?,tags?,reason?,agent_scope?,workspace_scope?}`；content 改写按 human_override 入档 |

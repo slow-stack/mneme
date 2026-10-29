@@ -8,7 +8,7 @@ import { createApi } from "../src/api.js";
 import { createInjector } from "../src/inject.js";
 import { createSettings } from "../src/settings.js";
 import { createVectorIndex } from "../src/vector-index.js";
-import { Config } from "../src/config.js";
+import { Config, applyLightModePreset } from "../src/config.js";
 import { parseHumanEdits } from "../src/mirror.js";
 
 // 解析后的 schema 默认值，作为 /features effective 的 bundle 配置侧样本。
@@ -2095,9 +2095,14 @@ test("GET /api/dsh-mneme/pipeline 带观察旁挂：observationsById 真的进�
 // distill_records 与 memory_provenance 自 #399 起就只有写入路径：库里有答案、
 // service.provenanceFor 能查，但外部（面板 / standalone API / 脚本）拿不到——
 // 「这条记忆是从哪几句蒸出来的」只能开 sqlite 手写 JOIN。
+//
+// #509 评审整改：读出口吃 distillRecords.enabled（与写侧同一个开关、同一个判据）。
+// 关着时 409 {error:"distill-records-disabled"}。所以这一族的用例必须显式把开关
+// 打开——setup 的 config 缺省 null，而 null 在这道门上的含义就是「关」（fail-closed）。
+const RECORDS_ON = { distillRecords: { enabled: true } };
 
 test("GET /api/dsh-mneme/memory/provenance 返回窗口区间与原文行", async () => {
-  const { routes, service, store } = setup(null, "secret-token");
+  const { routes, service, store } = setup(null, "secret-token", RECORDS_ON);
   // 直接落溯源链接与原文：读取面不关心是谁写的，只关心库里的形状。
   service.saveWithDedupe({ type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
   const memory = service.all()[0];
@@ -2134,7 +2139,7 @@ test("GET /api/dsh-mneme/memory/provenance 返回窗口区间与原文行", asyn
 });
 
 test("GET /api/dsh-mneme/memory/provenance：无 token 401，装配没接线 503", async () => {
-  const { routes, service } = setup(null, "secret-token");
+  const { routes, service } = setup(null, "secret-token", RECORDS_ON);
   service.saveWithDedupe({ type: "preference", title: "语言", content: "中文" });
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
 
@@ -2153,7 +2158,8 @@ test("GET /api/dsh-mneme/memory/provenance：无 token 401，装配没接线 503
   const bareRoutes = [];
   createApi(
     { webServer: { register(r) { bareRoutes.push(r); return () => {}; } } },
-    bare, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "secret-token"
+    bare, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "secret-token",
+    RECORDS_ON
   );
   const bareRoute = bareRoutes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   const res503 = new FakeRes();
@@ -2168,7 +2174,7 @@ test("GET /api/dsh-mneme/memory/provenance：无 token 401，装配没接线 503
 test("GET /api/dsh-mneme/memory/provenance：非蒸馏来源的记忆返回空窗口而非报错", async () => {
   // memory_save 写进来的记忆没有溯源链接——「这条不是蒸馏来的」本身是有效答案，
   // 不能 404/500。契约：空 windows，不是错误。
-  const { routes, service } = setup(null, "secret-token");
+  const { routes, service } = setup(null, "secret-token", RECORDS_ON);
   service.saveWithDedupe({ type: "preference", title: "语言", content: "中文" });
   const memory = service.all()[0];
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
@@ -2182,7 +2188,7 @@ test("GET /api/dsh-mneme/memory/provenance：非蒸馏来源的记忆返回空�
 });
 
 test("GET /api/dsh-mneme/memory/provenance 缺 id 报 400，未知 id 返回空窗口", async () => {
-  const { routes } = setup(null, "secret-token");
+  const { routes } = setup(null, "secret-token", RECORDS_ON);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   // 400 要赢过 401：调用方发坏了，报「没鉴权」是误导（reclaimReply 同款顺序）。
   const bad = new FakeRes();
@@ -2219,7 +2225,8 @@ test("GET /api/dsh-mneme/memory/provenance：读失败要留痕，500 不能把 
       webServer: { register(r) { routes.push(r); return () => {}; } },
       logger: { warn: (m) => warnings.push(m) }
     },
-    service, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "secret-token"
+    service, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "secret-token",
+    RECORDS_ON
   );
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   const res = new FakeRes();
@@ -2233,4 +2240,105 @@ test("GET /api/dsh-mneme/memory/provenance：读失败要留痕，500 不能把 
   assert.match(warnings[0], /memory provenance read failed/, "留痕要带原始异常");
   assert.match(warnings[0], /db locked/);
   store.close();
+});
+
+// --- distillRecords.enabled 门（#509 评审整改）--------------------------------
+// 维护者在 #509 里指出的缺口：读出口此前一处都不读这个开关，于是「把 distill_records
+// 关掉」的语义是不再写、也不再删，却还多一个能读出去的口。门落在共用模块，两个壳
+// 都吃它；这里锁宿主面的外壳与顺序。
+
+test("GET /api/dsh-mneme/memory/provenance：distillRecords.enabled 关着 → 409，不是 404 也不是空 windows", async () => {
+  const { routes, service } = setup(null, "secret-token", { distillRecords: { enabled: false } });
+  service.saveWithDedupe({ type: "preference", title: "语言", content: "中文" });
+  const memory = service.all()[0];
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+  const res = new FakeRes();
+  const r = req("/api/dsh-mneme/memory/provenance?id=" + memory.id);
+  r.headers = { authorization: "Bearer secret-token" };
+  await route.handler(r, res);
+
+  assert.equal(res.statusCode, 409, "用户关了功能 = 409（src/api.js:525 的 profileExtract 同型先例）");
+  assert.deepEqual(JSON.parse(res.body), { error: "distill-records-disabled" });
+});
+
+test("GET /api/dsh-mneme/memory/provenance：config 整个缺席也按关处理（fail-closed）", async () => {
+  // 旧调用方直连 createApi 不传第 8 参、或宿主没装配 cfg：这个端点返回逐字原文，
+  // 判不出来时必须往「不读」那一侧倒。
+  const { routes } = setup(null, "secret-token");
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+  const res = new FakeRes();
+  const r = req("/api/dsh-mneme/memory/provenance?id=whatever");
+  r.headers = { authorization: "Bearer secret-token" };
+  await route.handler(r, res);
+  assert.equal(res.statusCode, 409);
+  assert.deepEqual(JSON.parse(res.body), { error: "distill-records-disabled" });
+});
+
+test("GET /api/dsh-mneme/memory/provenance：400 赢 409——缺 id 是语法畸形，与服务端状态无关", async () => {
+  const { routes } = setup(null, "secret-token", { distillRecords: { enabled: false } });
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+  const res = new FakeRes();
+  const r = req("/api/dsh-mneme/memory/provenance");
+  r.headers = { authorization: "Bearer secret-token" };
+  await route.handler(r, res);
+  assert.equal(res.statusCode, 400, "请求本身不成立时报「功能关了」是误导");
+  assert.equal(JSON.parse(res.body).error, "missing-id");
+});
+
+test("GET /api/dsh-mneme/memory/provenance：409 赢 503——功能关比装配坏更具体", async () => {
+  // 关着 + service 上连方法都没有：503 会让人去查一个没坏的部署。
+  const store = createStore(":memory:");
+  const settings = createSettings(store.db);
+  const bare = createService({ store, mirror: null, config: {} });
+  delete bare.provenanceFor;
+  delete bare.distillRecordsFor;
+  const bareRoutes = [];
+  createApi(
+    { webServer: { register(r) { bareRoutes.push(r); return () => {}; } } },
+    bare, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "secret-token",
+    { distillRecords: { enabled: false } }
+  );
+  const route = bareRoutes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+  const res = new FakeRes();
+  const r = req("/api/dsh-mneme/memory/provenance?id=x");
+  r.headers = { authorization: "Bearer secret-token" };
+  await route.handler(r, res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(JSON.parse(res.body).error, "distill-records-disabled");
+  store.close();
+});
+
+test("GET /api/dsh-mneme/memory/provenance：关着时对已知 id 与未知 id 同一个答案——不当存在性预言机", async () => {
+  // 如果关着只对「有原文的 id」回 409、对别的 id 回空 windows，调用方就能拿这个
+  // 端点枚举「哪些记忆有蒸馏原文」。功能关是端点的属性，每个 id 答案必须一样。
+  const { routes, service } = setup(null, "secret-token", { distillRecords: { enabled: false } });
+  service.saveWithDedupe({ type: "preference", title: "语言", content: "中文" });
+  const memory = service.all()[0];
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+  for (const id of [memory.id, "nope", ""]) {
+    const res = new FakeRes();
+    const r = req("/api/dsh-mneme/memory/provenance?id=" + id);
+    r.headers = { authorization: "Bearer secret-token" };
+    await route.handler(r, res);
+    if (id === "") {
+      assert.equal(res.statusCode, 400, "空 id 仍是语法问题，409 不该吃掉它");
+      continue;
+    }
+    assert.equal(res.statusCode, 409, `${id} → 409`);
+    assert.deepEqual(JSON.parse(res.body), { error: "distill-records-disabled" });
+  }
+});
+
+test("GET /api/dsh-mneme/memory/provenance：lightMode 预设把关掉 → 409（与写侧同源）", async () => {
+  // applyLightModePreset 把 distillRecords.enabled 置 false（pre-inject-gate.test.js
+  // 锁的是写入侧那个方向）；读侧必须跟着变，否则轻量模式下用户以为自己关了、原文
+  // 却还能从 HTTP 读出去。
+  const { routes } = setup(null, "secret-token", applyLightModePreset({ lightMode: true, distillRecords: { enabled: true } }));
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+  const res = new FakeRes();
+  const r = req("/api/dsh-mneme/memory/provenance?id=m1");
+  r.headers = { authorization: "Bearer secret-token" };
+  await route.handler(r, res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(JSON.parse(res.body).error, "distill-records-disabled");
 });

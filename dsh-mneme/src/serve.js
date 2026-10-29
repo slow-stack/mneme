@@ -61,6 +61,19 @@ export async function createServeRuntime({
   // documentMemoryEnabled 关掉 document 子系统(daemon 不建 documentIndex,service
   // 内部 if-guard 安全,index.js:261 的 documentIndex 仅宿主装配)。
   const cfg = { language: "zh", documentMemoryEnabled: false };
+  // #509 评审整改补的一格:GET /memory/provenance 的读门读 cfg.distillRecords.enabled
+  // (判据在 src/provenance-http.js,与写侧 src/summarize.js:988 同源)。daemon 与宿主
+  // 共用同一个 memory.db、同一份 feature_flags kv,所以这里把用户显式开关展开进 cfg
+  // ——index.js:217-233 同款展开,只取蒸馏这一组(daemon 其余键仍刻意不吃宿主 config
+  // schema)。不展开的后果:daemon 对这一面恒定回「功能关了」,哪怕用户在面板里开着、
+  // 库里明明有原文——对这个端点那是一句谎话,而「两种空必须分开读数」正是本仓纪律。
+  // 残留不对称(写进 docs/DAEMON.md 与 PR):只靠 bundle 配置打开、从没在面板点过的
+  // 用户,宿主认、daemon 不认——daemon 结构上看不到宿主的 bundle config,这是它看不见
+  // 的那一半,不是本处能补的。
+  const persistedFlags = settings.getFeatureFlags?.() ?? {};
+  if (typeof persistedFlags["distillRecords.enabled"] === "boolean") {
+    cfg.distillRecords = { ...(cfg.distillRecords ?? {}), enabled: persistedFlags["distillRecords.enabled"] };
+  }
   const mirror = createMirror(dir, langOf(cfg));
   const service = createService({ store, mirror, config: cfg, logger });
 

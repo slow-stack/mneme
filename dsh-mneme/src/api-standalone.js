@@ -343,6 +343,11 @@ function scopeFromSearchParams(url) {
  *   - embedTimeoutMs: /context query-embed guard (default 3000) — a hung
  *     embedder must not hold the HTTP connection; timeout degrades to the rule
  *     tier. Factory option (like strictPort), not a user config key.
+ *   - config: 缺省 `{}` 对 /memory/provenance 意味着**功能关着**——该读出口的门读
+ *     config.distillRecords.enabled（判据见 src/provenance-http.js），而它返回的是
+ *     蒸馏窗口的逐字原文，所以「不传即关」是故意的 fail-closed 方向（reclaim-http
+ *     「没接线如实报」同族）。将来新增第三个构造点忘传 config，这个端点会安静地
+ *     回 409 而不是把原文读出去——那是想要的行为，不要修成默认开。
  * Returns { server, port, host, token, ready }: `port` is the effective bound
  * port (updated to the OS-assigned one after `ready` resolves when asked to
  * bind port 0), `ready` resolves once listening and rejects if the bind fails.
@@ -484,13 +489,20 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
       //
       // 这张面本来就要 Bearer token（除 /health 外无例外），所以不涉及宿主侧那次
       // open → token 的归类调整；daemon 与宿主共用 service，口径天然一致。
+      //
+      // distillRecords.enabled 门（#509 评审整改）：config 原样转交给共用模块，
+      // 判据只在那边算一次（isDistillRecordsEnabled，与写侧 src/summarize.js:988
+      // 同源，本文件不重写）。config 缺省 {} → 判据为假 → 409，错误码取共用模块导出的
+      // DISTILL_RECORDS_DISABLED：「不传即关」对这个返回逐字原文的端点是正确的失败
+      // 方向，别当成 bug 修掉。阶梯全貌（401 → 400 → 409 → 503 → 读）见
+      // provenance-http.js 文件头。
       if (req.method === "GET" && pathname === "/memory/provenance") {
         const parsed = parseProvenanceQuery(url.searchParams.get("id"));
         if (!parsed.ok) {
           sendJson(res, parsed.status, { error: parsed.error });
           return;
         }
-        const { status, body } = provenanceReply({ service, id: parsed.id, warn: (m) => logger?.warn?.(m) });
+        const { status, body } = provenanceReply({ service, id: parsed.id, config, warn: (m) => logger?.warn?.(m) });
         sendJson(res, status, body);
         return;
       }
