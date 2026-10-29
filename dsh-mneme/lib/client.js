@@ -493,6 +493,11 @@ window.__ModuleLoader__.load({
         "memory.settings.mode.standard": "标准",
         "memory.settings.mode.savedHint": "已保存，重启 DSH 后生效",
         "memory.settings.mode.offList": "已关闭：巩固（autoDream）· 实体抽取 · 语义搜索",
+        // #514：用户把宿主「极简（minimal）」与插件「轻量」混为一谈，以为关掉人格是
+        // 轻量模式干的。这个词条把两件事分开说清楚，不再让用户自己猜。
+        "memory.settings.mode.hostPresetHint": "注意区分：这里的「轻量 / 标准」是插件的记忆引擎档位，与 DSH 宿主的「极简模式（minimal 预设）」是两回事——轻量档不会关闭人格定义。",
+        "memory.status.minimalPresetTitle": "当前会话用的是宿主的「极简模式」",
+        "memory.status.minimalPresetBody": "极简预设（minimal）把 system prompt 整体接管了，记忆、用户画像、人格定义都不会送达模型。这是宿主的设计边界，插件改不了。想要它们生效：把 DSH 切到标准模式（或在 ~/.dsh/settings.yaml 设 agent-presets.default: standard）；过渡方案是把画像与规则写进 AGENTS.md——那条走指令路径，不受这个压制。",
         "memory.settings.extapi.title": "外部访问 API",
         "memory.settings.extapi.desc": "开放一个本机接口，让其他工具（插件、命令行、桌面应用）也能读写这份记忆库，默认只允许本机连接。改动保存后重启 DSH 生效。",
         "memory.settings.extapi.enabled": "启用",
@@ -1265,6 +1270,9 @@ window.__ModuleLoader__.load({
         "memory.settings.mode.standard": "Standard",
         "memory.settings.mode.savedHint": "Saved. Takes effect after restarting DSH",
         "memory.settings.mode.offList": "Off: consolidation (autoDream) · entity extraction · semantic search",
+        "memory.settings.mode.hostPresetHint": "Two different things: Light/Standard here is this plugin's memory engine tier; the host's minimal preset is separate — Light never disables persona.",
+        "memory.status.minimalPresetTitle": "This session runs the host's minimal preset",
+        "memory.status.minimalPresetBody": "The minimal preset takes over the whole system prompt, so memory, profile and persona never reach the model. That is a host design boundary the plugin cannot change. To get them back: switch DSH to standard mode (or set agent-presets.default: standard in ~/.dsh/settings.yaml); as an interim workaround put profile and rules in AGENTS.md — that path is not suppressed.",
         "memory.settings.extapi.title": "External API",
         "memory.settings.extapi.desc": "Opens a local API so other tools (plugins, CLIs, desktop apps) can also read and write this memory store; binds to localhost only by default. Changes take effect after restarting DSH.",
         "memory.settings.extapi.enabled": "Enable",
@@ -3724,6 +3732,31 @@ window.__ModuleLoader__.load({
       return "Unknown";
     };
 
+    // #182 / #514 注入状态探测：一处取数，两处消费（状态页告示卡、设置页提示）。
+    // 分成两份读同一接口会让两处的「已知/未知」判断各自漂移——#514 里用户就是在
+    // 设置页开关人格，却只在状态页才看得到原因。普通函数声明（会提升），这里紧
+    // 挨着设置页放，是为了让源码顺序和「先谁用」对得上。
+    function useInjectStatus() {
+      const [state, setState] = useState({ loading: true, suppressed: false, agentPreset: null });
+      useEffect(() => {
+        let cancelled = false;
+        apiFetch("/api/dsh-mneme/inject-status")
+          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+          .then((j) => {
+            if (!cancelled) {
+              setState({
+                loading: false,
+                suppressed: !!(j && j.suppressed),
+                agentPreset: (j && j.agentPreset) || null
+              });
+            }
+          })
+          .catch(() => { if (!cancelled) setState({ loading: false, suppressed: false, agentPreset: null }); });
+        return () => { cancelled = true; };
+      }, []);
+      return state;
+    }
+
     function SettingsContent({ t }) {
       const [profile, setProfile] = react.useState("");
       const [rules, setRules] = react.useState([]);
@@ -3746,6 +3779,10 @@ window.__ModuleLoader__.load({
       const [personaNewName, setPersonaNewName] = react.useState("");
       const [personaSaved, setPersonaSaved] = react.useState(false);
       const [personaError, setPersonaError] = react.useState("");
+      // #514：人是在这一页开关人格的，所以「为什么关了没反应」的答案必须在
+      // 这一页。与状态页告示卡共用 useInjectStatus，两边口径不会各自漂。
+      const injectStatus = useInjectStatus();
+      const minimalWarn = !injectStatus.loading && injectStatus.suppressed;
       // 注入预览：文本由后端渲染（GET /persona 的 preview 字段），前端只显示、不自己拼。
       // 原先这里是一段前端手拼的 profile + rules 列表，注释却写着「注入生效文本」——
       // 它既没有表头、没有「- 用户画像：」前缀，也完全没有人格三行，两份渲染代码必然漂。
@@ -4324,6 +4361,14 @@ window.__ModuleLoader__.load({
         h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.persona")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.personaHint")),
+          // #514：人格卡是最容易撞上宿主极简压制的地方——这里的提示比运行模式卡
+          // 那句更要紧，因为用户就是在这里点开关的。
+          minimalWarn && h("div", {
+            style: { marginBottom: 10, padding: "8px 10px", borderLeft: "3px solid var(--mneme-warn)", fontSize: 12, lineHeight: "18px" }
+          },
+            h("div", { style: { fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, t("memory.status.minimalPresetTitle")),
+            h("div", { style: { marginTop: 4, color: "var(--mneme-fg-dim)" } }, t("memory.status.minimalPresetBody"))
+          ),
           // 卡列表：default + 各 byAgent 卡，点选切换编辑位；default 标注兜底位
           h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
             h("button", {
@@ -4514,6 +4559,10 @@ window.__ModuleLoader__.load({
           mode === null && !modeError
             ? h("div", { className: "mneme-set-hint" }, "…")
             : h(react.Fragment, null,
+                // #514：用户以为「轻量」关掉了人格。两个词都会在界面上出现，不先
+                // 分开说，用户永远会把宿主的 minimal 记成插件的 light。
+                h("div", { className: "mneme-set-hint", style: { marginBottom: 8 } },
+                  t("memory.settings.mode.hostPresetHint")),
                 h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
                   h("button", {
                     className: mode === "light" ? "mneme-chip mneme-active" : "mneme-chip",
@@ -4529,7 +4578,15 @@ window.__ModuleLoader__.load({
                 ),
                 mode === "light" && h("div", { className: "mneme-set-hint", style: { marginTop: 8 } },
                   t("memory.settings.mode.offList"))
-              )
+              ),
+          // #514：suppressed 只在「autoInject 开着 + 宿主确实报了 minimal」时为真，
+          // 所以这里不是吓唬人——关掉注入的用户、preset 未知的宿主都不会看到它。
+          minimalWarn && h("div", {
+            style: { marginTop: 10, padding: "8px 10px", borderLeft: "3px solid var(--mneme-warn)", fontSize: 12, lineHeight: "18px" }
+          },
+            h("div", { style: { fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, t("memory.status.minimalPresetTitle")),
+            h("div", { style: { marginTop: 4, color: "var(--mneme-fg-dim)" } }, t("memory.status.minimalPresetBody"))
+          )
         ),
         // 功能开关 — 后端能力的细粒度闸门；改动即时保存，重启 DSH 后生效。
         h(FeaturesCard, { t }),
@@ -5720,15 +5777,7 @@ window.__ModuleLoader__.load({
     // 主动提示，把「为什么没注入」从逐帧解压日志降为看一眼状态页。只在
     // suppressed=true 时渲染——standard 会话与 preset 未知的宿主零打扰。
     function InjectStatusCard({ t }) {
-      const [state, setState] = useState({ loading: true, suppressed: false });
-      useEffect(() => {
-        let cancelled = false;
-        apiFetch("/api/dsh-mneme/inject-status")
-          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
-          .then((j) => { if (!cancelled) setState({ loading: false, suppressed: !!(j && j.suppressed) }); })
-          .catch(() => { if (!cancelled) setState({ loading: false, suppressed: false }); });
-        return () => { cancelled = true; };
-      }, []);
+      const state = useInjectStatus();
       if (state.loading || !state.suppressed) return null;
       return h("div", { className: "mneme-statuscard", style: { borderColor: "var(--mneme-warn)" } },
         h("div", { className: "mneme-statusnum", style: { fontSize: "16px", lineHeight: "24px" } }, t("memory.status.injectSuppressed")),
