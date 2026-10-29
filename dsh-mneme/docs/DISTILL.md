@@ -111,10 +111,15 @@ distillRecords:
 **不读这个键**，跟同一条 `--older-than`（默认 7 天）走——两个窗口互不联动，想一次对齐就把
 `--older-than` 显式传成与 `retentionDays` 相同的值。
 
-删记忆是另一条路：`store.remove(id)` 在事务内**显式**清掉它的溯源链接。之所以不靠
-`ON DELETE CASCADE`，是因为 `src/store.js` 从不启用 `PRAGMA foreign_keys`（全库唯一的
-`REFERENCES` 是 `recall_events → recall_runs`，翻这个 pragma 会顺带激活那条既有约束的
-行为，不是本次改动的范围）。声明式约束保留在 schema 里作为意图记录，实际清理是显式的。
+删记忆是另一条路：`store.remove(id)` 在事务内**显式**清掉它的溯源链接。这条显式清理**不是**
+「外键没开才要手工补」——`createStore` 走 `new DatabaseSync(path)` 不带选项，而 node:sqlite 的
+`enableForeignKeyConstraints` 默认为真（C1 实测：新库上 `PRAGMA foreign_keys` 返回 1，删父行
+确实级联清掉本表），所以 `ON DELETE CASCADE` 今天一直是**活的**。显式 DELETE 留着是为了不把
+清理押在一份没人钉过的驱动默认值上：连接哪天以 `enableForeignKeyConstraints: false` 打开，
+悬空链接只有那条 DELETE 挡得住（口径见 `src/store.js:278-283` 与 `:1387-1391` 的注释，
+`deleteBySharePackId` 同处置）。本库一共**两条**外键，都是活的——这一条与
+`recall_evals(recall_run_id) → recall_runs(id)`；此前本节写的 `recall_events` 那张表并不存在。
+声明式约束因此既是意图记录、也是今天实际生效的执行，两边不矛盾。
 
 `reclaim` 报告因此从两项变三项：
 

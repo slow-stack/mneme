@@ -1,18 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
-import { createStandaloneApi } from "../src/api-standalone.js";
+import { createStandaloneApi, CONTEXT_DEGRADE_REASONS } from "../src/api-standalone.js";
 import { PACKAGE_VERSION } from "../src/version-check.js";
 import { Config, applyLightModePreset } from "../src/config.js";
 
 // Real HTTP server on an OS-assigned port (port: 0), driven with fetch.
-async function setup({ config = {}, embedder = null, embedTimeoutMs } = {}) {
+// `logger` 可传（默认 null）：#383 的降级原因只进 daemon stderr 那行 warn、不进响应体，
+// 不接住 logger 就观测不到它——而「日志值 ∈ 枚举」正是 #508 Minor 唯一的可观测效应，
+// 也是它当初能溜进来的原因（没有任何测试看过那行日志）。
+async function setup({ config = {}, embedder = null, embedTimeoutMs, logger = null } = {}) {
   const store = createStore(":memory:");
   const service = createService({ store, mirror: null, config });
   const settings = createSettings(store.db);
-  const api = createStandaloneApi({ service, store, config, settings, logger: null, port: 0, embedder, embedTimeoutMs });
+  const api = createStandaloneApi({ service, store, config, settings, logger, port: 0, embedder, embedTimeoutMs });
   await api.ready;
   const base = `http://127.0.0.1:${api.port}`;
   const auth = { authorization: `Bearer ${api.token}` };
@@ -588,8 +592,13 @@ test("GET /context returns the injection-shaped aggregate; empty q still serves 
     const res = await fetch(`${base}/context`, { headers: auth });
     assert.equal(res.status, 200);
     const body = await res.json();
-    // 形状锁：四键响应——bridge 等调用方按这四个键渲染，漂移（加塞/漏带）在此变红。
-    assert.deepEqual(Object.keys(body).sort(), ["items", "pinnedCount", "profile", "rules"]);
+    // 形状锁：五键响应——bridge 等调用方按这些键渲染，漂移（加塞/漏带）在此变红。
+    // #383 新增 tier（档位信号）；空 q 时语义路未启用，报 unknown 而不是 full。
+    // 注意 unknown **不只**是空 q：#508 之后「维度探针没跑成」与「有行但一条向量都读
+    // 不出来」也落这里（判不出来就不宣称 full）——三态不变，unknown 的生产者多了两个。
+    assert.deepEqual(Object.keys(body).sort(), ["items", "pinnedCount", "profile", "rules", "tier"]);
+    assert.equal(typeof body.tier, "string", "tier 必填");
+    assert.equal(body.tier, "unknown", "空 q = 语义路未启用，不宣称档位（fail-closed，不报 full）");
     assert.equal(body.profile, "我是后端工程师");
     assert.deepEqual(body.rules, ["先验证再修改"]);
     assert.equal(body.pinnedCount, 0, "pinnedInjectBudget 默认 0（opt-in 纪律，issue #370 取舍 3）");
@@ -747,5 +756,392 @@ test("strictPort: busy port rejects instead of hopping; default path still hops"
   } finally {
     blocker.close();
     store.close();
+  }
+});
+
+// --- GET /context 的档位信号（issue #383）---------------------------------------
+// 嵌入降级在调用方视角是完全静默的：items 看起来正常，只是召回质量悄悄变差。
+// 外部集成方（Mneme Bridge 的 remote 模式）无法据此降级自己的期望或打日志。
+// 三态 fail-closed：判不出来报 unknown，不报 full。
+
+/** 可用的 embedder：任何查询都回一个固定向量。 */
+const okEmbedder = { embedSingle: async () => [1, 0, 0], embed: async () => [1, 0, 0] };
+
+test("GET /context tier=full when the query embedding succeeds", async () => {
+  const { base, auth, close } = await setup({ embedder: okEmbedder });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "full", "嵌入成功 → 语义档");
+  } finally {
+    close();
+  }
+});
+
+test("GET /context tier=degraded when no embedder is injected", async () => {
+  // 缺省（不传 embedder）：daemon 与宿主都可能走到这条——embedder 未装配。
+  const { base, auth, close } = await setup();
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "degraded", "无 embedder → 降级到规则档，且必须说出来");
+  } finally {
+    close();
+  }
+});
+
+test("GET /context tier=degraded when the query embedding times out", async () => {
+  // embedder 挂起（不抛错）时由 withEmbedTimeout 兜底——这是最难自查的一种降级，
+  // 因为接口是好的、只是没有响应。
+  const hanging = { embedSingle: () => new Promise(() => {}), embed: () => new Promise(() => {}) };
+  const { base, auth, close } = await setup({ embedder: hanging, embedTimeoutMs: 30 });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "degraded", "嵌入超时 → 降级到规则档");
+  } finally {
+    close();
+  }
+});
+
+test("GET /context tier=degraded when the embedder returns an unusable vector", async () => {
+  // 空数组 / 非数组同样让语义路走不通（embedQueryVector 的既有兜底），一并报降级。
+  const empty = { embedSingle: async () => [], embed: async () => [] };
+  const { base, auth, close } = await setup({ embedder: empty });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "degraded", "不可用向量 → 降级到规则档");
+  } finally {
+    close();
+  }
+});
+
+test("GET /context tier=degraded when the query vector's dimension differs from the stored one", async () => {
+  // #383 点名的那一种「悄悄退化」，也是 #508 评审里问「维度不符去哪了」的那一档：
+  // 嵌入接口一切正常（真的返回了向量），但库里躺着旧维度的向量——searchVector 对
+  // `v.length !== vector.length` 的行直接跳过，不抛错、只是命中为零，于是召回静默
+  // 退回 BM25/规则档。没有这个读数时，调用方看到的是 tier=full 加一份看着正常的
+  // items，而语义召回其实整条是死的。
+  const { base, auth, close, store, service } = await setup({ embedder: okEmbedder });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    // 手工塞一个 4 维向量：模拟「换了嵌入模型，旧向量还没重建索引」。okEmbedder 出
+    // 来的是 3 维，所以这一行的维度与查询向量不可比。
+    const memory = service.all().find((m) => m.title === "核心决策");
+    store.setEmbedding(memory.id, [1, 0, 0, 0]);
+    assert.deepEqual(store.vectorDimensionState(3), { state: "mismatch" }, "夹具前置：库里有向量，但没有一条与 3 维查询同维");
+
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "degraded", "维度不符 → 语义召回实际不可用，报降级而不是 full");
+  } finally {
+    close();
+  }
+});
+
+test("GET /context：库里还没有向量时不算维度不符（两种空的读数必须分开）", async () => {
+  // 「没有东西可比」与「维度对不上」是两件事：前者是全新库（或还没建索引），
+  // 语义路只是还没有内容，不是坏了。探针回 none 时必须继续报 full，否则每个新装
+  // 用户的第一次 /context 都是 degraded。
+  const { base, auth, close, store } = await setup({ embedder: okEmbedder });
+  try {
+    assert.deepEqual(store.vectorDimensionState(3), { state: "none" }, "夹具前置：行集为空，库里没有任何向量");
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "full", "没有已存向量 → 不是维度不符");
+  } finally {
+    close();
+  }
+});
+
+// --- 降级原因契约（issue #508 Minor #1）----------------------------------------
+// 缺陷本身：非空 q 但没有装配 embedder 时 diag.reason 不赋值，日志靠兜底表达式拼出
+// `no-embedder`，而文档声明的枚举里没有这个值；同一表达式里还躺着第二个越界字面量
+// `embed-failed`。按枚举解析日志的运维程序会整条漏掉这一种**已测试**的降级路径。
+// 根因是「日志契约没有测试锁」：setup() 曾把 logger 硬编码成 null，全仓没有任何一条
+// 测试观测过那行 warn 的内容。下面把三侧钉在一起——代码导出的枚举、六条降级路径的实吐
+// 值、两份文档声明的集合。
+
+const DEGRADE_LOG_PREFIX = "dsh-mneme: /context degraded to the rule tier (";
+
+/** 从抓到的 warn 行里抽出括号内的 reason 令牌，顺带锁前缀字面量（两份文档都写了它）。 */
+function degradedReason(logs) {
+  const line = logs.find((l) => l.startsWith(DEGRADE_LOG_PREFIX));
+  assert.ok(line, `必须打出降级 warn（前缀 ${DEGRADE_LOG_PREFIX}），实际：${JSON.stringify(logs)}`);
+  const token = line.slice(DEGRADE_LOG_PREFIX.length, -1);
+  assert.ok(token.length > 0, "reason 令牌不许为空（兜底默认值已删，漏记账会在这里露出 (undefined)）");
+  return token;
+}
+
+test("降级原因枚举：代码导出、README、docs/DAEMON 三侧同一个集合", () => {
+  // 枚举从常量派生，不把字符串再抄一遍——新增第七个值时必须改这一个常量 + 两份文档，
+  // 漏一边这里就红。
+  assert.ok(Object.isFrozen(CONTEXT_DEGRADE_REASONS), "枚举必须是 frozen 常量");
+  const docTokens = new Set();
+  for (const file of ["README.md", "docs/DAEMON.md"]) {
+    const text = readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+    // 只收降级原因形状的反引号令牌：`embed-<suffix>` 或 `no-embedder`。bare `embed`、
+    // `--embed off` 不是枚举成员，别收进来。注意「embedder」是一个词，所以匹配必须是
+    // `^(?:embed-|no-embed)`——写成 `embed-[a-z]+` 会把 no-embedder 整条漏掉，而那正是
+    // #508 Minor 漏掉它的同一种手法。
+    for (const m of text.matchAll(/`([a-z][a-z-]*)`/g)) {
+      if (/^(?:embed-|no-embed)/.test(m[1])) docTokens.add(m[1]);
+    }
+  }
+  assert.deepEqual(
+    [...docTokens].sort(),
+    [...CONTEXT_DEGRADE_REASONS].sort(),
+    "两份文档声明的降级原因必须与代码导出的枚举同集合（改一边忘另一边会红）"
+  );
+});
+
+test("每条降级路径写进日志的 reason 都是枚举成员（#508 的日志契约）", async () => {
+  // 六条路径逐个抓 warn 行抽 reason。embed-dimension 那条要夹具（库里得有旧维度向量），
+  // 其余五条纯 embedder 形状。每条都断言令牌 ∈ CONTEXT_DEGRADE_REASONS——枚举外的值
+  // 在这里变红，这正是当初漏掉 no-embedder 的那道门。
+  const paths = [
+    {
+      name: "没装配 embedder（daemon --embed off / lightMode）",
+      embedder: null,
+      reason: "no-embedder",
+      note: "预期态不是故障，所以它必须是枚举里一个有自己的名字，而不是并进 embed-unavailable"
+    },
+    {
+      name: "embedder 对象上没有 embedSingle / embed",
+      embedder: {},
+      reason: "embed-unavailable"
+    },
+    {
+      name: "接口返回空数组",
+      embedder: { embedSingle: async () => [], embed: async () => [] },
+      reason: "embed-empty"
+    },
+    {
+      name: "接口挂起，被超时护栏按缺失处理",
+      embedder: { embedSingle: () => new Promise(() => {}), embed: () => new Promise(() => {}) },
+      embedTimeoutMs: 30,
+      reason: "embed-timeout"
+    },
+    {
+      name: "接口抛错",
+      embedder: { embedSingle: async () => { throw new Error("model offline"); } },
+      reason: "embed-error"
+    }
+  ];
+  for (const path of paths) {
+    const logs = [];
+    const { base, auth, close } = await setup({
+      embedder: path.embedder,
+      embedTimeoutMs: path.embedTimeoutMs,
+      logger: { info: () => {}, warn: (m) => logs.push(String(m)) }
+    });
+    try {
+      await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+      const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+      assert.equal(body.tier, "degraded", `${path.name} → 降级档`);
+      const reason = degradedReason(logs);
+      assert.equal(reason, path.reason, `${path.name} → reason${path.note ? `（${path.note}）` : ""}`);
+      assert.ok(CONTEXT_DEGRADE_REASONS.includes(reason), `${reason} 必须 ∈ 导出的枚举`);
+    } finally {
+      close();
+    }
+  }
+});
+
+test("维度不符写进日志的 reason 是 embed-dimension（枚举成员）", async () => {
+  const logs = [];
+  const { base, auth, close, store, service } = await setup({
+    embedder: okEmbedder,
+    logger: { info: () => {}, warn: (m) => logs.push(String(m)) }
+  });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    const memory = service.all().find((m) => m.title === "核心决策");
+    store.setEmbedding(memory.id, [1, 0, 0, 0]);
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "degraded");
+    assert.equal(degradedReason(logs), "embed-dimension");
+  } finally {
+    close();
+  }
+});
+
+// --- 维度探针（issue #508 Major + Minor #2）------------------------------------
+// Major：LIMIT 1 拿任意一条向量代表全库，混合维度库里两个方向都错。抽到与查询不符的那条
+// → 明明有可比的向量却误报 degraded；首条恰好解析失败 → 其余有效向量都不匹配时又漏报成
+// full。判据换成存在性：有没有一条活跃向量的维度等于查询维度。
+// Minor #2：探针自身抛异常（库被锁 / 半开）会掉进最终 .catch()，把已经算好的 items 丢掉
+// 并回 500——违反 fail-closed。隔离在调用侧，tier 留 unknown。
+
+/** 库内插入序的 id（探针的行集顺序即插入序，无 ORDER BY 的全表扫）。 */
+function insertedIds(store) {
+  return store.db.prepare("SELECT id FROM memories ORDER BY rowid").all().map((r) => r.id);
+}
+
+test("混合维度库：有一条与查询同维的活跃向量 → full，不误报 degraded（#508 Major 场景一）", async () => {
+  // LIMIT 1 时代这条是红的：先插入的旧维度行被抽中 → 判「维度不符」，而库里明明躺着
+  // 一条可比的 3 维向量，语义召回并没有死。
+  const { base, auth, close, store } = await setup({ embedder: okEmbedder });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "旧维度行", content: "四维向量", importance: 5 });
+    await saveMemory(base, auth, { type: "decision", title: "新维度行", content: "三维向量", importance: 5 });
+    const [oldId, newId] = insertedIds(store);
+    store.setEmbedding(oldId, [1, 0, 0, 0]);   // 先插入 = 旧维度
+    store.setEmbedding(newId, [1, 0, 0]);      // 后插入 = 与查询同维
+    assert.deepEqual(store.vectorDimensionState(3), { state: "match" }, "夹具前置：库里有一条 3 维活跃向量");
+
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "full", "有可比向量 → 语义路通，不能因为抽到 4 维那条就误报降级");
+  } finally {
+    close();
+  }
+});
+
+test("首条向量损坏、其余有效向量都不匹配 → degraded，不误报 full（#508 Major 场景二）", async () => {
+  // LIMIT 1 时代这条也是红的：首条解析失败 → 探针回 null → 走「库里没有向量」分支 → full，
+  // 而语义召回其实整条是死的。
+  const { base, auth, close, store } = await setup({ embedder: okEmbedder });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "损坏行", content: "向量文本损坏", importance: 5 });
+    await saveMemory(base, auth, { type: "decision", title: "旧维度行", content: "四维向量", importance: 5 });
+    const [brokenId, oldDimId] = insertedIds(store);
+    // 直接改列，不走 setEmbedding（那条路会归一成 JSON.stringify(array)，造不出损坏文本）。
+    store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run("{not json", brokenId);
+    store.setEmbedding(oldDimId, [1, 0, 0, 0]);
+    assert.deepEqual(store.vectorDimensionState(3), { state: "mismatch" }, "夹具前置：有向量、没有一条与 3 维查询同维");
+
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "degraded", "首条损坏不该把 mismatch 洗成 full");
+  } finally {
+    close();
+  }
+});
+
+test("有行但一条向量都读不出来 → unknown，不是 full（两种空必须分开）", async () => {
+  // 「还没有内容」（none → full）与「内容在那儿却读不出来」（unreadable）是两种空。
+  // 后者判不出来，按 fail-closed 报 unknown，绝不因为读不到就宣称 full。
+  const logs = [];
+  const { base, auth, close, store } = await setup({
+    embedder: okEmbedder,
+    logger: { info: () => {}, warn: (m) => logs.push(String(m)) }
+  });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "损坏行", content: "向量文本损坏", importance: 5 });
+    const [brokenId] = insertedIds(store);
+    store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run("{not json", brokenId);
+    assert.deepEqual(store.vectorDimensionState(3), { state: "unreadable" }, "夹具前置：行集非空但零条可解析");
+
+    const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+    assert.equal(body.tier, "unknown", "读不出任何向量 → 判不出来，不宣称 full");
+    assert.ok(body.items.length > 0, "items 照常返回");
+    // unknown 在响应体里只有一个键，分不出「空 q」与「判不出来」；留痕只能走日志，
+    // 否则调用方对 unknown 的策略是「不告警」时，这条故障就从运维面上整个消失。
+    assert.ok(
+      logs.some((l) => l.startsWith("dsh-mneme: /context tier left unknown: no comparable vector readable (unreadable)")),
+      `判不出来必须留痕（不是降级原因枚举的一员），实际：${JSON.stringify(logs)}`
+    );
+  } finally {
+    close();
+  }
+});
+
+test("维度探针抛异常 → tier=unknown 且 items 不丢，绝不 500（#508 Minor #2）", async () => {
+  const logs = [];
+  const { base, auth, close, service } = await setup({
+    embedder: okEmbedder,
+    logger: { info: () => {}, warn: (m) => logs.push(String(m)) }
+  });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    // 仓内惯用的故障注入（同 test/audit.test.js / test/conflict-freeze.test.js）。
+    service.vectorDimensionState = () => { throw new Error("database is locked"); };
+
+    const res = await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth });
+    assert.equal(res.status, 200, "探针异常不许把已经算好的 items 变成 500");
+    const body = await res.json();
+    assert.equal(body.tier, "unknown", "判不出来 → unknown，不宣称 full");
+    assert.ok(body.items.length > 0, "已经算好的 items 不许被丢掉");
+    assert.ok(
+      logs.some((l) => l.startsWith("dsh-mneme: /context tier left unknown: dimension probe failed (Error: database is locked)")),
+      `探针故障必须留痕，实际：${JSON.stringify(logs)}`
+    );
+    assert.ok(!logs.some((l) => l.startsWith(DEGRADE_LOG_PREFIX)), "tier 不是 degraded，不该打降级 warn");
+  } finally {
+    close();
+  }
+});
+
+test("探针没跑成（方法缺失 / 返回垃圾 / 异步漂移）一律 unknown，不宣称 full", async () => {
+  // typeof 守卫与 sentinel 都要 fail-closed：旧实现里这三种都落到「不是 number」分支
+  // 报 full。异步漂移那条是纪律锁——try/catch 只能同步包住一个同步调用，探针一旦被
+  // 改成异步，抛错就重新变成 rejection 落回最终 .catch()。
+  const shapes = [
+    { name: "方法缺失（旧装配）", patch: (s) => { delete s.vectorDimensionState; } },
+    { name: "返回字符串", patch: (s) => { s.vectorDimensionState = () => "3"; } },
+    { name: "返回 undefined", patch: (s) => { s.vectorDimensionState = () => undefined; } },
+    { name: "返回 Promise（异步漂移）", patch: (s) => { s.vectorDimensionState = () => Promise.resolve({ state: "match" }); } }
+  ];
+  for (const shape of shapes) {
+    const { base, auth, close, service } = await setup({ embedder: okEmbedder });
+    try {
+      await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+      shape.patch(service);
+      const body = await (await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth })).json();
+      assert.equal(body.tier, "unknown", `${shape.name} → 判不出来，不宣称 full`);
+    } finally {
+      close();
+    }
+  }
+});
+
+test("探针失败与降级 warn 自身抛错也不许把响应变成 500（logger 来自宿主，warn 会抛）", async () => {
+  // `logger?.warn?.()` 只防 logger 缺失，防不了 warn 自己抛错（宿主 stdout 管道断裂时
+  // 真实可发生）。items 算好之后，日志通道坏了不是丢掉它的理由。
+  const logs = [];
+  const logger = { info: () => {}, warn: (m) => { logs.push(String(m)); throw new Error("stderr broken"); } };
+  const { base, auth, close, service } = await setup({ embedder: okEmbedder, logger });
+  try {
+    await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+    service.vectorDimensionState = () => { throw new Error("boom"); };
+    const res = await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth });
+    assert.equal(res.status, 200, "warn 自身抛错 + 探针抛错 → 仍然 200");
+    assert.equal((await res.json()).tier, "unknown");
+
+    // 降级路径同样：warn 抛错被自己的 try/catch 吃掉，tier 与 items 不受影响。
+    service.vectorDimensionState = () => ({ state: "mismatch" });
+    const degraded = await fetch(`${base}/context?q=${encodeURIComponent("数据库选型")}`, { headers: auth });
+    assert.equal(degraded.status, 200, "降级 warn 抛错也不许 500");
+    assert.equal((await degraded.json()).tier, "degraded");
+  } finally {
+    close();
+  }
+});
+
+test("维度探针状态机：五种读数各自归位（含 invalid 的 fail-closed 兜底）", async () => {
+  // 直接锁 store 的状态机：match / mismatch / none / unreadable / invalid。
+  // invalid 当前 /context 不可达（embedQueryVector 保证返回非空数组），但它不许落到
+  // full 上——「判不了」与「没有东西可比」不是同一个读数。
+  const { store, close } = await setup();
+  try {
+    assert.deepEqual(store.vectorDimensionState(3), { state: "none" }, "空库 → 行集为空");
+    assert.deepEqual(store.vectorDimensionState(0), { state: "invalid" });
+    assert.deepEqual(store.vectorDimensionState(-1), { state: "invalid" });
+    assert.deepEqual(store.vectorDimensionState(2.5), { state: "invalid" });
+    assert.deepEqual(store.vectorDimensionState("3"), { state: "invalid" });
+
+    const a = store.save({ type: "decision", title: "同维", content: "c", importance: 4 });
+    const b = store.save({ type: "decision", title: "异维", content: "c", importance: 4 });
+    store.setEmbedding(a.id, [1, 0, 0]);
+    store.setEmbedding(b.id, [1, 0, 0, 0]);
+    assert.deepEqual(store.vectorDimensionState(3), { state: "match" }, "有一条同维 → match（短路，不看完）");
+    assert.deepEqual(store.vectorDimensionState(5), { state: "mismatch" }, "有向量但没有一条同维 → mismatch");
+
+    // 清掉解析缓存再写坏列（getParsedEmbedding 只缓存成功解析，缓存在的话直接改列看不见）。
+    store.setEmbedding(a.id, null);
+    store.setEmbedding(b.id, null);
+    store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run("{oops", a.id);
+    store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run("[]", b.id);
+    assert.deepEqual(store.vectorDimensionState(3), { state: "unreadable" }, "有行但零条可解析 → unreadable（不是 none）");
+  } finally {
+    close();
   }
 });

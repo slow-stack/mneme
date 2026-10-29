@@ -33,11 +33,56 @@ function normalizeDistilledOccurredAt(raw, nowMs = Date.now()) {
   }
 }
 
-function parseSummaryJsonResult(raw) {
+/**
+ * 失败形态分类（#502），只在结果不 ok 时产出：
+ * - no-array：连 `[` 都没有——模型在说话，不是没按格式；
+ * - syntax：有方括号、整体 parse 失败且括号扫描也没救回条目（#339 那一族）；
+ * - filtered-empty：JSON 合法、`arr` 非空，条目却被 VALID 全数滤掉。**这一种最贵**：
+ *   读起来像「没按格式写」，实际是分类词不在枚举内，而游标不推进会让整窗反复重放。
+ */
+function describeParseFailure(arr, entries, salvaged, hasBracket) {
+  if (!Array.isArray(arr) || salvaged) return { kind: hasBracket ? "syntax" : "no-array", arrCount: 0, sampleTypes: [] };
+  if (arr.length === 0) return { kind: "no-array", arrCount: 0, sampleTypes: [] };
+  if (entries.length > 0) return null;
+  const sampleTypes = [...new Set(arr.map((item) => (typeof item?.type === "string" ? item.type.trim() : "")).filter(Boolean))].slice(0, 5);
+  return { kind: "filtered-empty", arrCount: arr.length, sampleTypes };
+}
+
+/**
+ * 失败行的审计读数（纯函数：不驱动整条蒸馏管线也能测）。filtered-empty 的
+ * errorMessage 直接写出 arr/valid 两个数，一眼可辨；metadata 补 failure_kind /
+ * arr_count / invalid_entries / sample_types / raw_tail——尾巴是给「先写几条合法
+ * 条目再跑偏」那种输出准备的，前 300 字看不出来。
+ */
+export function summarizeParseFailureAudit(raw, failure) {
+  const text = String(raw ?? "");
+  const kind = failure?.kind ?? (text.includes("[") ? "syntax" : "no-array");
+  const tail = text.length > 500 ? text.slice(-200) : "";
+  const filtered = kind === "filtered-empty" ? failure : null;
+  return {
+    errorMessage: filtered ? `no valid summary entries (arr=${filtered.arrCount}, valid=0)` : "invalid summary JSON",
+    metadata: {
+      parse_failure: true,
+      failure_kind: kind,
+      raw_len: text.length,
+      raw_head: text.slice(0, 300),
+      ...(tail ? { raw_tail: tail } : {}),
+      raw_has_bracket: text.includes("["),
+      ...(filtered ? { arr_count: filtered.arrCount, invalid_entries: filtered.arrCount, sample_types: filtered.sampleTypes } : {})
+    }
+  };
+}
+
+/** 导出的原因：#502 要能锁住「哪一种失败」这条判据本身，而不是只锁它的下游读数。 */
+export function parseSummaryJsonResult(raw) {
   const text = String(raw ?? "");
   const start = text.indexOf("[");
   const end = text.lastIndexOf("]");
-  if (start === -1 || end === -1 || end <= start) return { ok: false, entries: [] };
+  // 连方括号都没有 = 模型在说话（#493 的 B 臂正是这一型）。早退也要带上下：否则下游
+  // 只能靠「输出里有没有 [」再猜一次，而猜出来的东西不该写进错误消息。
+  if (start === -1 || end === -1 || end <= start) {
+    return { ok: false, entries: [], failure: describeParseFailure(null, [], false, text.includes("[")) };
+  }
   let arr;
   let salvaged = false;
   try {
@@ -77,10 +122,16 @@ function parseSummaryJsonResult(raw) {
   // 空数组表示模型明确判断本轮没有可沉淀内容；非空数组若全部无效，
   // 则不能消费窗口，否则无效输出会永久推进 seq 游标。salvage 路径
   // 没有「显式空数组」可言——ok 只看是否救回了条目。
+  const ok = salvaged ? entries.length > 0 : (arr.length === 0 || entries.length > 0);
   return {
-    ok: salvaged ? entries.length > 0 : (arr.length === 0 || entries.length > 0),
+    ok,
     entries,
-    salvaged
+    salvaged,
+    // #502：失败时要能说出**是哪一种**失败。「压根没写数组」与「写了合法数组、但条目
+    // type 全不在枚举里」过去共用一句 invalid summary JSON，而两者要修的地方完全不同
+    // ——后者是菜单与闸门不一致（summary prompt 只列 4 个类型、VALID 吃 7 个），且失败
+    // 路径游标不推进，同一窗口会被一遍遍重放（社区报告 #493 追加的实测形态）。
+    ...(!ok ? { failure: describeParseFailure(arr, entries, salvaged, text.includes("[")) } : {})
   };
 }
 
@@ -918,15 +969,13 @@ export function createSummarizer(ctx, service, config, deps = {}) {
         }
         if (audit) {
           audit.status = "error";
-          audit.errorMessage = "invalid summary JSON";
+          // 读数与错误文案由同一个纯函数产出（#502）：三种失败形态各有各的说法，
+          // 「模型在说话」与「分类词不在枚举内」不能都写成 invalid summary JSON。
+          const failureAudit = summarizeParseFailureAudit(raw, parsedResult?.failure);
+          audit.errorMessage = failureAudit.errorMessage;
           audit.metadata = {
             distillChars,
-            parse_failure: true,
-            raw_len: raw.length,
-            raw_head: raw.slice(0, 300),
-            // 有没有出现过 `[` 是区分「模型没按格式写」与「格式对但内容救不回来」
-            // 的唯一低成本判据，也正是 #493 现场那 20 条失败的关键特征。
-            raw_has_bracket: raw.includes("["),
+            ...failureAudit.metadata,
             streak,
             ...(maxParseRetries > 0 ? { maxRetries: maxParseRetries } : {}),
             ...(skipWindow ? { skipped: "parse-failure-streak" } : {})

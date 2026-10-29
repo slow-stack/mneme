@@ -7,9 +7,13 @@ import { STR, langOf } from "./lang.js";
 import { computeHeat } from "./heat.js";
 import { recallStats } from "./recall-stats.js";
 import { evaluateMemoryQuality } from "./quality-filter.js";
+// 外来行（source='imported'，导入路径落的来源）的身份判定只许有一个定义处——本文件的
+// 两处汇流口与巩固/降级那些读侧行池都调这同一个谓词，避免各处自己写字符串比较然后各自漂移。
+import { isImportedRow } from "./memory-source.js";
 import { applyDecisions } from "./dream/decisions.js";
 import { createDocumentRegistrar } from "./document.js";
 import { createOrganizer } from "./organize.js";
+import { createShareImport } from "./share-import.js";
 import { createBM25Index } from "./search/bm25.js";
 import { adaptiveThreshold } from "./search/adaptive.js";
 import { anchorSeeds, normalizePath, cascadeDepths, HOP_QUOTA } from "./graph/anchoring.js";
@@ -1375,7 +1379,15 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // 窗口外，下面的 find 恒不命中，于是静默走创建分支：不报错、不告警，合并语义
     // 随库增长而失效（实测 1047 行类型、importance=5 有 180 行时稳定复现）。
     // 改为按同标题定向取（store.activeByTypeAndTitle，无窗口）。
-    const candidates = store.activeByTypeAndTitle(memory.type, memory.title);
+    //
+    // spec §5 决策 2：本机巩固不许改写别人的原文。这里不是防呆——蒸馏路径的每一次
+    // 同题命中都会 appendContent 覆盖外来行的正文与 updated_at，别人的记忆从此变成
+    // 我们两家的混杂物。把外来行剔出候选集后只会落回既有的「新建一行」分支。
+    // 谓词挂在**两个**候选集上：sourceScopedCandidates 在 dream/narrative 那两条分支
+    // 里就是候选集本身，只挂 candidates 等于给外来行留一条后门。这一处过滤留在 JS 侧
+    // 而不是下推 SQL（同 #515 的反面）：那里下推是因为外来行会吃掉 LIMIT 窗口名额，
+    // 这里 limit: null 本就无界，没有窗口可饿，而下推会多出第二份外来行判据。
+    const candidates = store.activeByTypeAndTitle(memory.type, memory.title).filter((m) => !isImportedRow(m));
     // dream/narrative 两条分支按 source（及 tags[0]）匹配，而不是按标题：它们的
     // 去重键本来就不含标题（语言切换后标题会变）。定向取同标题会把这两条路径
     // 打回「永远不命中」——所以这两类仍走「该类型活跃行」的候选集，只是窗口换成
@@ -1383,9 +1395,8 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // generateNarratives）决定，量级远小于普通记忆，且这两条分支本来就要求扫全
     // 类型才能找到同 source 的那一行——原来的 100 行窗口对它们同样是错的。
     const sourceScopedCandidates = (memory.type === "summary" && (memory.source === "dream" || memory.source === "narrative"))
-      ? store.list({ type: memory.type, limit: null })
+      ? store.list({ type: memory.type, limit: null }).filter((m) => !isImportedRow(m))
       : candidates;
-    const dreamCandidates = sourceScopedCandidates;
     // v0.8.0 A1（issue #17）：去重键由 (type, title) 扩展为
     // (type, title, agent_scope, workspace_scope, sensitivity)——不同作用域的同
     // 标题记忆绝不互相物理合并（旧逻辑跨 agent/workspace 并行，事后无法拆分）。
@@ -1403,17 +1414,20 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // 下面这段并入逻辑（appendContent + content_history + 质量处置），不另写第二份
     // 实现。目标已被并发删除时回落到常规匹配。显式目标同样过 scope 门：跨作用域
     // 的语义相似不并入（防泄漏），回落为独立新行。
-    const explicitTarget = memory._mergeInto ? store.getById(memory._mergeInto) : undefined;
+    // 显式目标还过外来门（spec §5 决策 2）：调用方指到别人导入的原文时，这个目标
+    // 按「未命中」处理，同样落回新建一行——两条路都只有 merged/created 两种结局。
+    const explicitCandidate = memory._mergeInto ? store.getById(memory._mergeInto) : undefined;
+    const explicitTarget = explicitCandidate && !isImportedRow(explicitCandidate) ? explicitCandidate : undefined;
     const existing = explicitTarget
       ? (scopeMatches(explicitTarget) ? explicitTarget : undefined)
       : (memory.type === "summary" && memory.source === "dream")
-        ? (dreamCandidates.find((m) => m.source === "dream" && scopeMatches(m))
+        ? (sourceScopedCandidates.find((m) => m.source === "dream" && scopeMatches(m))
           ?? candidates.find((m) => scopeMatches(m) && m.title.trim() === String(memory.title).trim()))
         : (memory.type === "summary" && memory.source === "narrative")
           // 叙述条（#164）按主题键去重而非本地化标题：标题随语言变
           // （叙述：X / Narrative: X），title 匹配在语言切换后会残留同 tag 双行。
           // tag 存于 tags[0]（generateNarratives 落库），跨语言稳定 → 原地刷新。
-          ? (dreamCandidates.find((m) => m.source === "narrative" && m.tags?.[0] === memory.tags?.[0] && scopeMatches(m))
+          ? (sourceScopedCandidates.find((m) => m.source === "narrative" && m.tags?.[0] === memory.tags?.[0] && scopeMatches(m))
             ?? candidates.find((m) => scopeMatches(m) && m.title.trim() === String(memory.title).trim()))
         : candidates.find((m) => scopeMatches(m) && m.title.trim() === String(memory.title).trim());
     if (existing) {
@@ -2581,6 +2595,12 @@ export function createService({ store, mirror, config, onWrite, logger, document
     }
   });
 
+  // 车道 C 收侧的入库与整包退出（spec §5）：内聚块在 src/share-import.js，这里只做依赖
+  // 注入 + barrel 出口。注入的是本文件的 transaction 而不是 store.runAtomically——嵌入
+  // 队列由 transaction 的最外层 COMMIT 排空，换那个助手等于静默不嵌入（#372 修过两次）；
+  // 退出那侧用它则是为了 finally 里的 syncMirror + notifyWrite（删完得让其余读侧知道）。
+  const shareImport = createShareImport({ store, transaction, scheduleEmbed });
+
   return {
     saveWithDedupe,
     registerDocument,
@@ -2594,6 +2614,15 @@ export function createService({ store, mirror, config, onWrite, logger, document
     getMirrorState: () => store.getMirrorState(),
     injectCandidates,
     mergeHumanEdits,
+    // 车道 C 收侧：两张皮（面板路由 / standalone 数据面）各自的壳只认这一份实现——
+    // createApi 手里没有 store，「api 层不直接摸 store」这条纪律（见下面 embeddedCount
+    // 那组 passthrough 的注释）要求导入从 service 进，否则两皮各摸一遍 store、幂等
+    // 口径随之变成两份。
+    importSharePack: shareImport.importSharePack,
+    // 整包退出（C4）与导入同住 src/share-import.js：收侧的「进与出」共用同一份 store
+    // 注入与同一个事务口径，键名照计划里的契约留在 service 的返回表上，两张皮（C5/C6）
+    // 只认 service 这一个入口——api 层不直接摸 store 那条纪律对退出同样成立。
+    deleteSharePack: shareImport.deleteSharePack,
     toApiList,
     isVisibleInScope,
     // issue #471 政策轴：按下/松开与读取照 store 那三条件透传（纯 bookkeeping，
@@ -2687,6 +2716,20 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // passthrough 形状与 embeddedCount 同款，api 层不直接摸 store。
     embeddingModelBreakdown: () => store.embeddingModelBreakdown(),
     embeddingDimensionBreakdown: () => store.embeddingDimensionBreakdown(),
+    // #383：维度探针，供 /context 判「库里有没有一条活跃向量与查询同维」。注意
+    // 它**不再是**「读一行的维度」（那个判据在混合维度库里两个方向都错，见 store.js
+    // vectorDimensionState 的注释）：换成存在性判据后成本是「一次全 id 扫描 + 按匹配
+    // 短路的解析」，同维度健康库只解析 1 个向量，只有要报 degraded 时才走完全表。
+    // 与上面那个全表扫的 breakdown 仍是两件事：一个是状态页的完整分布，一个是每请求
+    // 用得起的判据。透传而非让 api 层摸 store，与同组其他条目一致；api 侧负责把探针
+    // 异常隔离成 unknown，不在这里吞。
+    vectorDimensionState: (dimension) => store.vectorDimensionState(dimension),
+    // 整包透传：store.list 的每个口径（excludeTypes / excludeImported / includeArchived…）
+    // 都从这里过去，service 侧不再枚举一遍——枚举就是第二份口径表，加一个键就要改两处，
+    // 漏改的那处静默失效。政策轴一律走这里的查询参数，不许退回调用方的 .filter：
+    // LIMIT 先生效的话，被丢掉的行照样吃掉窗口名额。前例是同文件 syncMirror 的那条注释
+    // （src/service.js:2247，document 轴改由 excludeTypes 在 LIMIT 之前排除），
+    // 同一取舍的另两次是 #230 与 #471。
     list: (o) => store.list(o),
     all: () => store.all(),
     count: (type, opts) => store.count(type, opts),

@@ -6,14 +6,17 @@
 
 daemon 是**数据面**,不是第二个宿主:
 
-- **有**:存储(SQLite)、检索(关键词 + BM25 + 向量,`/search` 统一召回,与宿主共用 `src/semantic.js` 同一套装配)、注入候选(`/context`,issue #370,与宿主注入管线同一份 `injectCandidates`)、镜像同步与人改合并、`/maintenance/reclaim`、`/bootstrap`、recall_runs 检索/注入回执。
+- **有**:存储(SQLite)、检索(关键词 + BM25 + 向量,`/search` 统一召回,与宿主共用 `src/semantic.js` 同一套装配)、注入候选(`/context`,issue #370,与宿主注入管线同一份 `injectCandidates`)、镜像同步与人改合并、`/maintenance/reclaim`、`/share`(记忆分享包,纯读,见 [SHARE.md](SHARE.md))、`/receive` 与 `/receive/undo`(吃包入库与整包退出,车道 C;写的是**本机自己的库**,与 `/share` 同一条 4 MiB 入站上限)、`/bootstrap`、recall_runs 检索/注入回执。
 - **没有(第一期,无 LLM)**:巩固(autoDream)、蒸馏(autoSummarize)、实体抽取、sleep、注入/工具/面板路由。前两者是**结构性缺失**而非开关——daemon 装配里没有 LLM 句柄,巩固只属于 DSH 宿主进程。这就是 daemon 与宿主「单写者」的机械保证(AGENTS.md externalApi/autoDream 单侧纪律的 daemon 版),不依赖用户自觉。
+- **收包在 daemon 上付的是什么**:一个事务里逐条先查 `share_external_id` 再 `store.save`,嵌入随最外层 COMMIT 排空(`--embed local` 时真打向量,`off` 时只落结构),镜像重渲染照 daemon 自己那条回灌路走。**实体一个都不建**——不是 daemon 缺 LLM 才不建,车道 C 对外来行本来就不做抽取(有向量、无实体,实体与图检索看不见它们),宿主侧同样如此。成本的量级读数见 [SHARE.md](SHARE.md)「收侧」那一节实测。
 
 与宿主装配(`src/index.js` apply)的关系:`src/serve.js` 只搬数据面那一半,每步注释锚定 index.js 来源行号;刻意不抽公共装配函数(apply 其余环节与宿主 ctx 纠缠,防御段纪律「最后动或不动」)。装配漂移风险由 `test/serve-bin.test.js` 的多进程共存用例兜底(两进程真开同一个库互写互读)。
 
 ## 2. 对外接口
 
-路由面 = `src/api-standalone.js` 全表(health/status/profile/rules/memories 读写/search/context/maintenance/bootstrap),鉴权同源(Bearer + timingSafeEqual,`GET /health` 免鉴权)。daemon 自身零新路由;#370 的 `/context` 落在 api-standalone 工厂里,宿主外部访问与 daemon 自动同享(参数、scope 语义与 recall_runs 注入分账见包 README 路由表)。daemon 侧唯一自有选项是 `strictPort`(见 §4)。
+路由面 = `src/api-standalone.js` 全表(health/status/profile/rules/memories 读写/search/context/share/receive(含 `/receive/undo`)/maintenance/bootstrap),鉴权同源(Bearer + timingSafeEqual,`GET /health` 免鉴权)。daemon 自身零新路由;#370 的 `/context` 落在 api-standalone 工厂里,宿主外部访问与 daemon 自动同享(参数、scope 语义与 recall_runs 注入分账见包 README 路由表)。daemon 侧唯一自有选项是 `strictPort`(见 §4)。
+
+`/context` 的档位信号(#383):响应多一个 `tier`(`full` 语义档 / `degraded` 规则档 / `unknown` 语义路未启用或判不出来,fail-closed),**具体降级原因只在 stderr**——`dsh-mneme: /context degraded to the rule tier (<reason>)`,不进响应体。原因是给运维的读数,六值互不吞并(成例「修法不同就分开」):`embed-unavailable` 无可用接口(embedder 对象在、缺 `embedSingle`/`embed`,修适配器)/ `embed-empty` 空向量 / `embed-timeout` 挂起 / `embed-error` 抛错 / `embed-dimension` 维度不符(有向量但没有一条与查询同维,修法是重建索引)/ `no-embedder` 压根没装配 embedder(`--embed off` / lightMode / 宿主未装配,**预期态不是故障**,修法是把嵌装扮上或开起来)。`tier` 是给调用方的读数,两套消费者分开;六值的唯一真源是 `src/api-standalone.js` 的 `CONTEXT_DEGRADE_REASONS`,契约测试从它派生。`unknown` 之下(维度探针没跑成 / 有行却一条向量都读不出来)另有一行 `dsh-mneme: /context tier left unknown: <what>`,**不是**那六值的一员(`tier` 不是 degraded,没有降级原因可记),运维程序不要按原因枚举解析它——没有它,调用方对 unknown 的策略是「不告警」时,一次真实的判档故障会整个消失。`no-embedder` 不并进 `embed-unavailable` 是故意的:那两者共用「语义路没通」的结果,但一个是适配器坏了(异常)、一个是语义路没开(设计内常态),并成一个值会让按 `embed-unavailable` 告警的面板对每个轻量模式安装报警;用词则与宿主面 `/api/dsh-mneme/semantic` 的 `reason` 对齐(那边是另一套枚举、另一个消费者,别顺手统一)。这里最值得盯的是 `embed-dimension`:嵌入接口一切正常,但库里是旧维度向量,`searchVector` 直接跳过、不抛错,召回静默退回关键词档——修法是重建索引,不是查端点。判档有成本:`q` 非空且装了 embedder 时一次 `/context` 会真起一次查询嵌入(一次往返 + `embedTimeoutMs` 窗口),维度探针本身是**按匹配短路的存在性判据**(有没有一条活跃向量与查询同维,不是 `LIMIT 1` 读一行——混合维度库里那会抽错维误报 degraded、首条损坏又会漏报 full):一次无 `LIMIT` 的全 id 扫描 + 短路解析,同维度健康库只解析 1 个向量,只有要报 degraded 时才走完全表;不复用 `/health`(它只回 `{ok:true}`)也不做全表扫。
 
 CLI:
 

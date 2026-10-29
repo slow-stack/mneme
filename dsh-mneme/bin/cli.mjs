@@ -77,6 +77,18 @@ const USAGE = `${CLI_NAME} —— DSH 记忆插件（@modusensus/dsh-mneme）外
                                --vacuum        执行后整库 VACUUM（需配 --apply）
                                只清「可由记忆库重建的输入快照」与「归档行的向量」，
                                一条记忆都不删；收益按 VACUUM 前后体积量
+  share [--alias 名字] [--type a,b] [--tag 标签] --out <文件>
+                               打一个可外发的脱敏分享包（不改库，纯读）
+                               --alias 名字     在包里署名，对方看到的是这个而不是你的路径
+                               --type/--tag     收窄到某几类/某个标签（超限分批用这两个）
+                               --out <文件>     写出包文件；--dry-run 只报数不落盘
+                               跳过归档/已遗忘/只读指针行/summary，密钥 PII 整条不进包
+  receive <包文件> [--apply]
+                               把对方 share 出来的包吃进自己的库（默认干跑，一个字都不写）
+                               外来行标 source=imported，不参与本机的巩固/降级，也不并入你的条目
+                               --apply 才真的写；重复吃同一个包不会多出第二份
+  undo-share <包文件> [--apply]
+                               按 pack_id 收起整包（物删：包还能重新导入，归档位会占住 UNIQUE）
 
 选项：
   --url <url>                  覆盖服务地址
@@ -98,7 +110,12 @@ const USAGE = `${CLI_NAME} —— DSH 记忆插件（@modusensus/dsh-mneme）外
   ${CLI_NAME} get 42
   ${CLI_NAME} delete 42
   ${CLI_NAME} reclaim                       （先看：会清几行、库多大）
-  ${CLI_NAME} reclaim --apply --vacuum      （确认后执行，并把空间真的收回来）`;
+  ${CLI_NAME} reclaim --apply --vacuum      （确认后执行，并把空间真的收回来）
+  ${CLI_NAME} share --dry-run               （先看：会进几条、为什么跳过那些，不落盘）
+  ${CLI_NAME} share --out pack.json         （写包；~/… 由 CLI 自己展开，PowerShell/cmd 不会）
+  ${CLI_NAME} receive pack.json             （吃包：默认干跑，只报账，一个字都不写）
+  ${CLI_NAME} receive pack.json --apply     （确认数字后真的吃进自己的库；重跑同一个包 created=0）
+  ${CLI_NAME} undo-share pack.json --apply  （按包里那个 pack_id 整包收回：物删，之后还能重新导入）`;
 
 /* ---------------------------------- 参数解析 ---------------------------------- */
 
@@ -124,8 +141,10 @@ const KNOWN_FLAGS = new Set([
   'url', 'token', 'type', 'title', 'content', 'importance', 'tags', 'source',
   'limit', 'offset', 'mode', 'topk', 'top-k', 'min-importance', 'minimportance',
   'older-than', 'olderthandays',
+  'alias', 'tag', 'out',
   // 布尔旗标
-  'apply', 'vacuum', 'json', 'help', 'version'
+  'apply', 'vacuum', 'json', 'help', 'version',
+  'dry-run', 'dryrun',
 ]);
 
 /** `--foo=bar` / `--foo` 取出小写键名；非旗标词返回 null。 */
@@ -245,6 +264,24 @@ function failHttp(cfg, status, pathname, data, text) {
       `然后用 \`${CLI_NAME} config set <url> <token>\`、环境变量 DSH_MNEME_TOKEN 或 --token 配置。`;
   } else if (status === 404) {
     hint = `\n资源不存在：${pathname}`;
+  }
+  // 拒答体自己带的下一步必须转出去，不然命令侧只能再写一份错误分支。撞上的这一刀是
+  // share 的 413：响应体是 {error:"too-large", bytes, limitBytes, hint, report}，
+  // 旧实现只取 data.error，于是现场只剩「请求失败（HTTP 413）：too-large」——「大了
+  // 多少」与「用 --type/--tag 分批」那两句留在体里没人看得见（措辞只许有一份，就在
+  // 拒发的那侧，同 RECLAIM_CONFIRM_HINT 的口径）。完整 report（含 skip_list）走
+  // --json：下面 rawJson 把整个响应体原样交给 stderr，这里不复制第二份打印器。
+  //
+  // 已知取舍（C10 记档，见 docs/SHARE.md「已知还没做」）：这里只转 hint / bytes /
+  // limitBytes 三样，所以 receive 那侧 400 的 `detail`（闸门指到哪一格）与数据面 413 的
+  // `limit` 到不了人类可读的输出。刻意不补：补一格就得在这里多一条按路由分支的判断，
+  // 而「错误文案只许有一份」是 #411 那条纪律的另一半。要逐格看就加 --json——rawJson
+  // 那行给的正是原样响应体，一格都不丢。
+  if (data && typeof data === 'object') {
+    if (typeof data.hint === 'string' && data.hint.trim()) hint += `\n${data.hint.trim()}`;
+    if (Number.isFinite(data.bytes) && Number.isFinite(data.limitBytes)) {
+      hint += `\n量到 ${formatBytes(data.bytes)}，水位 ${formatBytes(data.limitBytes)}`;
+    }
   }
   fail(cfg, `请求失败（HTTP ${status}）${serverError ? `：${serverError}` : ''} [${pathname}]${hint}`, {
     rawJson: cfg.jsonMode && text ? text : undefined,
@@ -687,6 +724,176 @@ async function cmdReclaim(cfg, flags) {
   }
 }
 
+// --out 的例子写的是 `~/Desktop/pack.json`。Git Bash 会替她展开，PowerShell 与 cmd
+// 不会——那两侧 `~/…` 是字面量，writeFileSync 直接 ENOENT，现场只剩一坨堆栈。CLI 不
+// 接管 shell 的活，但引号里这一格得自己补（同 CONFIG_DIR 走 os.homedir()）。
+function expandHome(p) {
+  if (typeof p !== 'string') return p;
+  if (p !== '~' && !p.startsWith('~/') && !p.startsWith('~\\')) return p;
+  const rest = p.slice(1).replace(/^[/\\]+/, '');
+  return path.join(os.homedir(), rest);
+}
+
+function printShare(pack, { dryRun }) {
+  const r = pack?.report ?? {};
+  const s = r.skipped ?? {};
+  console.log(`${dryRun ? '干跑报告' : '分享包'}: ${r.included ?? 0} 条` +
+    (pack?.alias ? `  来自 ${pack.alias}` : ''));
+  const named = [['archived', '归档'], ['forgotten', '已遗忘'], ['readonly_type', '只读指针行'],
+    ['excluded_type', '不随包走'], ['blank_or_noise', '空白/噪声'], ['sensitive', '密钥/PII']];
+  const parts = named.filter(([k]) => (s[k] ?? 0) > 0).map(([k, zh]) => `${zh} ${s[k]}`);
+  console.log(`  跳过: ${parts.length ? parts.join(', ') : '无'}`);
+  // 折叠不是跳过：那条记忆够格进包，只是包里已经有了它（同标题同正文同内容锚、scope
+  // 不同的两条）。不印出来的话 `included` 会比她心里的「够格的条数」少几条，而那正好是
+  // 会让人怀疑口径少发了的那类差额。src/share.js 的 report.deduped。
+  if ((r.deduped ?? 0) > 0) console.log(`  包内重复已折叠: ${r.deduped} 条（对面只吃一条）`);
+  for (const item of (r.skip_list ?? []).slice(0, 20)) {
+    // 标题为空有两种：这条本来没标题，或它整行被密钥判据命中、标题在源头就留空了
+    // （src/share.js：skip_list 随包外发，而凭据常常就写在标题里）。终端要让人看清
+    // 后一种是「有意不给」，不是「数据缺失」。
+    console.log(`    - [${item.reason}] ${item.title || '（标题不外发）'}`);
+  }
+  // 判据用「六个计数之和 > 清单长度」而不是「清单等于 50」：前者是「账比清单长」这个事实本身，
+  // 恰好 50 条被跳时后者会误报截断（面板侧同一条判据）。50 这个数不在这里出现，
+  // 水位改了判据仍然对。
+  const skippedTotal = ['archived', 'forgotten', 'readonly_type', 'excluded_type', 'blank_or_noise', 'sensitive']
+    .reduce((n, k) => n + (r.skipped?.[k] ?? 0), 0);
+  if (skippedTotal > (r.skip_list ?? []).length) console.log('    … 跳过清单已截断，计数仍为全量');
+  if (dryRun) console.log(`  没写文件：加 --out <路径> 才会落盘`);
+  else console.log(`  发给对方即可，她用自己的 ${CLI_NAME} receive 吃进去`);
+}
+
+async function cmdShare(cfg, flags) {
+  requireToken(cfg);
+  const out = expandHome(flagValue(flags, 'out'));
+  const dryRun = flagBool(flags, 'dry-run') || flagBool(flags, 'dryrun');
+  if (!out && !dryRun) {
+    fail(
+      cfg,
+      `share 要么写文件（--out <路径>），要么只看报告（--dry-run）：` +
+        `不写文件又把整库打到 stdout 会让报告被 JSON 淹掉。\n` +
+        `例子：${CLI_NAME} share --out ~/Desktop/pack.json`
+    );
+  }
+  const typeRaw = flagValue(flags, 'type');
+  const body = {};
+  if (typeRaw) body.type = typeRaw.split(',').map((t) => t.trim()).filter(Boolean);
+  const alias = flagValue(flags, 'alias');
+  if (alias) body.alias = alias;
+  const tag = flagValue(flags, 'tag');
+  if (tag) body.tag = tag;
+  // 超水位那次服务端答 413，apiRequest 对非 2xx 走的是 failHttp：它把响应体里的 hint
+  // 与量到的字节转出去再 exit(1)。所以这里**没有**可达的 error 分支——加 `if
+  // (pack?.error)` 就是第二份出口，措辞迟早跟拒发那一侧分家（#411 的同一口径）。
+  const pack = await apiRequest(cfg, 'POST', '/share', { body });
+  const r = pack?.report ?? {};
+  if (cfg.jsonMode) {
+    console.log(stringify(dryRun ? { report: r, pack } : { report: r, file: out }));
+  } else {
+    printShare(pack, { dryRun });
+  }
+  if (dryRun) return;
+  fs.writeFileSync(out, JSON.stringify(pack), 'utf8');
+  // --json 时 stdout 只许那一份 JSON：后面追一行「已写出」会把 JSON.parse 撞在
+  // position 536（jq 同理）。落盘路径已在上面的 payload 里（file 键），这行只对
+  // 人有用，就只给人看（同 cmdReclaim：json 模式打印完就结束）。
+  if (!cfg.jsonMode) console.log(`  已写出: ${out}`);
+}
+
+// 入库面（车道 C）。包文件在**本地**读、把包内容整个送上去：服务端永远看不到路径，
+// 也就不需要任何文件系统权限——这是 receive 协议选「传包不传路径」的全部理由。
+// confirm 的脾气照 reclaim：缺省即干跑，写收件人的库（或物删整包）要 --apply 显式确认。
+async function cmdReceive(cfg, rest, flags) {
+  requireToken(cfg);
+  const file = rest[0];
+  if (!file) {
+    fail(cfg, `receive 需要包文件：${CLI_NAME} receive <包文件>（不带 --apply 只干跑，一个字都不写）`);
+  }
+  let pack;
+  try {
+    pack = JSON.parse(fs.readFileSync(expandHome(file), 'utf8'));
+  } catch (e) {
+    // 读坏/读不到都在发请求之前拒掉：半读出来的包发过去只会换回一个闸门错，
+    // 而那一格现场已经说不清是「文件本来就这样」还是「传输坏了」。
+    fail(cfg, `读不到包文件 ${file}：${String(e?.message ?? e)}\n包文件是对方 ${CLI_NAME} share --out 出来的那个 .json。`);
+  }
+  const applied = flagBool(flags, 'apply');
+  const body = { pack };
+  if (applied) body.confirm = true;
+  const data = await apiRequest(cfg, 'POST', '/receive', { body });
+  if (cfg.jsonMode) {
+    console.log(stringify(data));
+    return;
+  }
+  printReceive(data, { applied });
+  if (!applied) console.log('  没写库：确认数字之后加 --apply 真的导入');
+}
+
+// 撤销收的是**包文件**而不是裸 pack_id：让人抄 16 位十六进制去删自己库里的行，
+// 抄错一位就是「删了个没删成的包还自以为收掉了」。pack_id 就写在包文件第一层。
+async function cmdUndoShare(cfg, rest, flags) {
+  requireToken(cfg);
+  const file = rest[0];
+  if (!file) {
+    fail(cfg, `undo-share 需要当初那个包文件（pack_id 从文件里取）：${CLI_NAME} undo-share <包文件> [--apply]`);
+  }
+  let pack;
+  try {
+    pack = JSON.parse(fs.readFileSync(expandHome(file), 'utf8'));
+  } catch (e) {
+    fail(cfg, `读不到包文件 ${file}：${String(e?.message ?? e)}\n要的是当初 ${CLI_NAME} share --out 出来、发给对面那个 .json。`);
+  }
+  // trim 在这儿做：只有空格的 pack_id 与「没有 pack_id」是同一种「这个文件收不了」，
+  // 放它出门只是绕一圈换回 400 missing-pack-id，而那一格会被读成服务端的问题（服务端
+  // parseUndoBody 同样 trim，这里不改它的行为，只是不必为空格 round-trip）。
+  const packId = typeof pack?.pack_id === 'string' ? pack.pack_id.trim() : '';
+  if (!packId) {
+    fail(cfg, `这个文件里没有 pack_id，收起不了：${file}\nundo-share 收的是整包，编号就写在包文件的第一层，不用也不该手抄 16 位十六进制。`);
+  }
+  const applied = flagBool(flags, 'apply');
+  const body = { packId };
+  if (applied) body.confirm = true;
+  const data = await apiRequest(cfg, 'POST', '/receive/undo', { body });
+  if (cfg.jsonMode) {
+    console.log(stringify(data));
+    return;
+  }
+  printReceive({ ...data, created: data?.deleted, alias: '' }, { applied, undo: true });
+  if (!applied) console.log('  没删：确认条数之后加 --apply 真的收起这个包');
+}
+
+function printReceive(d, { applied, undo = false }) {
+  const conflicts = Array.isArray(d?.title_conflicts) ? d.title_conflicts : [];
+  console.log(`${undo ? (applied ? '已收起' : '将收起') : applied ? '已导入' : '干跑'}: ${d?.created ?? 0} 条` +
+    (d?.alias ? `  来自 ${d.alias}` : '') + (d?.skipped_existing ? `  已存在 ${d.skipped_existing}` : ''));
+  if (undo && applied) {
+    // 服务端是物删不是归档（src/share-import.js 的 deleteSharePack）：这句话是 --apply
+    // 与人之间唯一的说明书，不许软化成「移除」。干跑那一笔一个字都没动，说「直接从库里
+    // 带走」是假话，还会把下面的样例压成「已经删掉的这几条」——干跑那侧的话术是 cmdUndo-
+    // Share 结尾的「没删：…加 --apply」，两句不许同时出现（同一件事说两遍就没人细看）。
+    console.log('  物删：这些行直接从库里带走，不是归档；包文件还在，重新 receive 一遍即可再来');
+  }
+  if (conflicts.length) {
+    // 撞名是 advisory 读数（src/share-import.js：只对本轮真正会新建的条目判），
+    // 所以这里只说「这几条要你看一眼」，永远不许说「除此之外没有别的撞名」。
+    console.log(`  撞名提醒：和你自己的条目同名 ${conflicts.length} 条（同类型同标题，不会被并入，需要你处置）：`);
+    for (const c of conflicts.slice(0, 10)) console.log(`    - [${c.type}] ${c.title}`);
+    if (conflicts.length > 10) console.log('    … 只列前 10 条');
+  }
+  const sample = Array.isArray(d?.sample) ? d.sample : [];
+  if (sample.length) {
+    // 撞名那段有标题、有截断话，样例这段原先两样都没有：服务端把 sample 截到 20
+    // （src/share-import.js 的 DELETE_SAMPLE_MAX），CLI 再截到 10，而 deleted 才是全集。
+    // 一个 500 行的包就这样留下 10 条无名要点，人会当成「要收走的就是这些」。
+    // 全集那一格只报服务端的数，不报「还剩几条」——两次截断混在一起就没人能对得上账。
+    console.log('  样例：下面只是这一批里的几条，不是全部清单');
+    const shown = sample.slice(0, 10);
+    for (const s of shown) console.log(`    · [${s.type}] ${s.title}`);
+    const total = typeof d?.deleted === 'number' ? d.deleted : (d?.created ?? 0);
+    if (shown.length < total) console.log(`    … 只列前 ${shown.length} 条；整批共 ${total} 条（这个数来自服务端计数）`);
+  }
+}
+
 /* ---------------------------------- 入口 ---------------------------------- */
 async function main(argv) {
   const { positionals, flags } = parseArgv(argv);
@@ -724,6 +931,12 @@ async function main(argv) {
       return cmdDelete(cfg, rest);
     case 'reclaim':
       return cmdReclaim(cfg, flags);
+    case 'share':
+      return cmdShare(cfg, flags);
+    case 'receive':
+      return cmdReceive(cfg, rest, flags);
+    case 'undo-share':
+      return cmdUndoShare(cfg, rest, flags);
     default:
       fail(cfg, `未知命令: ${cmd}\n运行 \`${CLI_NAME} --help\` 查看帮助。`);
   }
