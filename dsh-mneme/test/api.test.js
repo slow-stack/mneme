@@ -1333,12 +1333,21 @@ test("GET /api/dsh-mneme/dream-status strips every decision index and the free-t
         error: 'decision[1]: archive of long-retention type(s) constraint needs a duplicate/outdated rationale, got: "用户说过预算是 12400 元"'
       },
       {
+        // #522 第二轮评审：模型写的理由里可能正好含 "; decision[0]: "，先切分就会把
+        // 这段自由文本变成新的一段，而新段没有 got: 前缀，剥尾正则够不着它——原文
+        // 于是随 open 路由出网关。切分必须排在剥 got: 之后。
         index: 2,
+        action: "archive",
+        ids: ["z"],
+        error: 'decision[2]: archive of long-retention type(s) preference needs a duplicate/outdated rationale (重复/过时), got: "并不过时; decision[0]: email@example.com 说的"'
+      },
+      {
+        index: 3,
         // action 不在 ACTIONS 枚举里：聚合结果会随 open 路由出网关，来路不明的动作名
         // 不该由上游脏数据自己决定响应形状，一律归成空串。
         action: "drop-everything",
         ids: ["y"],
-        error: "decision[2]: unknown action"
+        error: "decision[3]: unknown action"
       }
     ]
   });
@@ -1346,13 +1355,15 @@ test("GET /api/dsh-mneme/dream-status strips every decision index and the free-t
   const res = new FakeRes();
   await route.handler(req("/api/dsh-mneme/dream-status"), res);
   const data = JSON.parse(res.body);
-  assert.equal(data.lastRun.skippedCount, 3, "raw skipped count is preserved");
+  assert.equal(data.lastRun.skippedCount, 4, "raw skipped count is preserved");
   const unknownAction = data.lastRun.skippedReasons.find((b) => b.reason === "unknown action");
   assert.equal(unknownAction.action, "", "an action outside the enum is not echoed back to the open route");
   for (const bucket of data.lastRun.skippedReasons) {
     assert.doesNotMatch(bucket.reason, /decision\[/, "every index prefix is stripped, not just the first");
     assert.doesNotMatch(bucket.reason, /got:/, "the free-text tail never leaves the gateway");
     assert.doesNotMatch(bucket.reason, /12400/, "model-authored text must not ride along with the audit reason");
+    assert.doesNotMatch(bucket.reason, /email@example\.com/, "free text split on a fake decision boundary must not leak either");
+    assert.doesNotMatch(bucket.reason, /并不过时/, "the whole free-text tail is dropped, not just its first half");
   }
 });
 test("GET /api/dsh-mneme/dream-status returns runs and pending conflict ids", async () => {

@@ -22,8 +22,10 @@ const ARCHIVE_RATIONALE_RE = /重复|过时|陈旧|过期|已被取代|被取代
 // Issue #522 评审：上面那张词表只认关键词，不认否定——「并不重复，只是主题相近」
 // 与 "not a duplicate" 都会命中「重复」/"duplicate" 子串。archive 护栏从 #104 起
 // 就带着这个洞（既有行为，改它会扩大范围，先记在这里），但 #521 给 merge 加的
-// 逃生门是本 PR 新开的口子，必须自己堵上：否定表述一票否决。
-const NEGATED_DUPLICATE_RE = /(?:不|并不|不是|非)\s*重复|\b(?:not|no|isn't|is not)\s+(?:a\s+)?duplicat/i;
+// 逃生门是本 PR 新开的口子，必须自己堵上：否定表述一票否决。第二轮评审又指出
+// 词表里「过时 / stale / outdated」同样是钥匙，只挡「重复」等于留了半边门——
+// 「并不过时，只是主题相近」照样能换到合并许可，所以否定词按整张词表铺开。
+const NEGATED_RATIONALE_RE = /(?:不|并不|不是|非)\s*(?:重复|过时|陈旧|过期|已被取代|被取代|冗余|旧版|废弃)|\b(?:not|no|isn't|is not|never)\s+(?:a\s+|an\s+)?(?:duplicat\w*|stale|outdated|obsolete|superseded|redundant|deprecated|expired|replaced)/i;
 
 // Issue #521：把 skipped[].error 归一化成可分组的原因。原样字符串不能直接
 // GROUP BY——前缀带 decision[N]: 序号，同一种原因会被拆成 N 组（#521 实测 280
@@ -34,7 +36,12 @@ export function normalizeSkipReason(error) {
   // skipped.push）。所以先按 decision[N]: 的边界切开、逐段归一化再拼回去——
   // 原先的正则 ^ 锚定，只剥得掉第一个前缀，后面的 decision[1]: 会留在字符串
   // 中间，聚合时又被拆成多组（#522 评审指出）。
+  // 第二轮评审：剥 got: 必须排在切分之前。got: 后面是模型自己写的理由原文，
+  // 若它里面正好出现 "; decision[0]: "（引文、邮箱都算），先切分就会把这段
+  // 自由文本切成独立的一段——那段不带 got: 前缀，剥尾正则够不着它，原文于是
+  // 随 summarizeSkipped 走 open 路由出网关。先整段砍掉 got: 之后的一切，再切。
   return String(error ?? "")
+    .replace(/,\s*got:[\s\S]*$/, "")
     .split(/;\s*(?=decision\[\d+\]:\s*)/)
     .map(normalizeSkipSegment)
     .join("; ")
@@ -290,7 +297,7 @@ export function validateDecisions(decisions, snapshot, options = {}) {
           const reasonText = String(d.reason ?? "");
           // #522 评审：词表命中还不够——「并不重复」「not a duplicate」也含关键词，
           // 放它们过闸等于让模型用一句否认换来合并许可。否定表述直接判不重复。
-          const duplicated = !NEGATED_DUPLICATE_RE.test(reasonText) && ARCHIVE_RATIONALE_RE.test(reasonText);
+          const duplicated = !NEGATED_RATIONALE_RE.test(reasonText) && ARCHIVE_RATIONALE_RE.test(reasonText);
           if (guardedTypes.size > 0 && !(sameType && duplicated)) {
             local.push(`${at}: merge of long-retention type(s) ${[...guardedTypes].join(", ")} is blocked by dreamMergeGuard (needs a duplicate/outdated rationale, 重复/过时)`);
           }

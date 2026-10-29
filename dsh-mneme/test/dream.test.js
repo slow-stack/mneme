@@ -1440,7 +1440,8 @@ test("validateDecisions mergeGuard: a negated duplicate rationale does not open 
   ]);
   // 中英各一条否定表述：都要被拦。配一条合法的非 guarded merge 让批次存活
   // （单条决策被跳过后覆盖率下限会让整批不成立），单独观察被拦的理由。
-  for (const reason of ["并不重复，只是主题相近", "not a duplicate, just similar"]) {
+  // 第二轮评审：词表里「过时 / stale / outdated」也是钥匙，同样要挡。
+  for (const reason of ["并不重复，只是主题相近", "not a duplicate, just similar", "并不过时，只是主题相近", "not outdated, merely similar", "not stale, just similar"]) {
     const decisions = [
       { action: "merge", ids: ["p1", "p2"], keepSource: "p1", title: "界面偏好", content: "深色 + 等宽", importance: 3, reason },
       { action: "merge", ids: ["h1", "h2"], keepSource: "h1", title: "旧事合并", content: "合并内容", importance: 3 }
