@@ -861,9 +861,22 @@ test("an all-invalid summary leaves the same window retryable until valid memori
       assert.equal(retryTranscript, firstTranscript, "retry receives the original transcript");
       assert.equal(service.count(), 1);
       assert.equal(service.list()[0].content, valid.content);
+      // #502：这一族（JSON 合法、条目全被枚举滤掉）从此报成 filtered-empty 的专属消息，
+      // 不再与「模型压根没写数组」共用 invalid summary JSON。状态与「窗口可重试」不变，
+      // 所以下面三条断言一条都不放松。
       assert.ok(service.listLlmAudits({ source: "autoSummarize" }).some(
-        (audit) => audit.status === "error" && audit.error_message === "invalid summary JSON"
-      ), "an all-invalid summary must be audited as an error");
+        (audit) => audit.status === "error" && audit.error_message === `no valid summary entries (arr=${invalid.length}, valid=0)`
+      ), "an all-invalid summary must be audited as an error, named as a filtered-empty window");
+      // metadata 读回来可能是串也可能是对象（store 存的是 JSON 串，列表接口按形状
+      // 解析过），两种形状都归一成串再判——否则这条锁会随下游解析行为假红。
+      const metaText = (audit) => {
+        const m = audit.metadata;
+        if (typeof m === "string") return m;
+        try { return JSON.stringify(m ?? ""); } catch { return ""; }
+      };
+      assert.ok(service.listLlmAudits({ source: "autoSummarize" }).some(
+        (audit) => audit.status === "error" && metaText(audit).includes("filtered-empty")
+      ), "metadata 要能说出是滤空而不是没写格式（sample_types 带着模型自造的分类词）");
 
       await handler(session, { seq: 2, type: "turn/end" });
       assert.equal(calls.length, 2, "the successfully retried window is consumed once");
