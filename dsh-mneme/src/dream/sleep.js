@@ -21,7 +21,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { validateDecisions, applyDecisions, ACTIONS } from "./decisions.js";
 import { findPotentialConflicts, cosineSimilarity } from "./clustering.js";
 import { scopeKeyOf } from "../scope.js";
-import { buildReceipt, describeStreamFailure, resolveDreamEffort, withEffortFallback, withMaxTokensFallback, maintainIndexAfterDream } from "../dream.js";
+import { buildReceipt, describeStreamFailure, resolveDreamEffort, withEffortFallback, withMaxTokensFallback, maintainIndexAfterDream, fenceListBody, parseFailureMeta } from "../dream.js";
 import { computeHeat } from "../heat.js";
 // 四个相位读的都是行池，而动行的写手不经汇流口：phaseDemotion 直接 setArchived /
 // demoteToSummary，phasePatterns 还会 mint 出新行，所以这条契约要在每处各挡一遍
@@ -106,8 +106,11 @@ async function auditedSleepLlm(ctx, service, config, logger, spec, body) {
   let outputTokens = 0;
   let status = "success";
   let errorMessage = null;
+  // 提到 try 之外：finally 里的 metadataFrom 要读这一轮的原始输出（dream.js 的
+  // runAuditedLlm 就是这么声明的）。留在 try 里，finally 看不见它，读数会静默变空。
+  let result;
   try {
-    const result = await body((usage) => {
+    result = await body((usage) => {
       if (!usage) return;
       const i = usage.input_tokens ?? usage.inputTokens ?? usage.prompt_tokens ?? usage.promptTokens;
       const o = usage.output_tokens ?? usage.outputTokens ?? usage.completion_tokens ?? usage.completionTokens;
@@ -133,6 +136,17 @@ async function auditedSleepLlm(ctx, service, config, logger, spec, body) {
     errorMessage = String(error?.message ?? error);
     throw error;
   } finally {
+    // spec.metadataFrom(result)：与 dream.js 的 runAuditedLlm 同一形状（这里是一份并行
+    // 实现，不是同一个函数——两份审计写法的字段必须一致，否则面板按 operation_type
+    // 筛出来的读数会时有时没有）。判据函数只读 result，不读闭包，理由同 dream.js。
+    let metadata;
+    if (result !== undefined && typeof spec.metadataFrom === "function") {
+      try {
+        metadata = spec.metadataFrom(result) ?? undefined;
+      } catch {
+        metadata = undefined;
+      }
+    }
     try {
       service.saveLlmAudit({
         timestamp,
@@ -146,7 +160,8 @@ async function auditedSleepLlm(ctx, service, config, logger, spec, body) {
         duration_ms: Date.now() - startedAt,
         status,
         error_message: errorMessage,
-        related_memory_ids: spec.relatedMemoryIds ?? []
+        related_memory_ids: spec.relatedMemoryIds ?? [],
+        ...(metadata ? { metadata } : {})
       });
     } catch (auditError) {
       logger?.warn?.(`dsh-mneme sleep: llm audit write failed: ${String(auditError)}`);
@@ -346,7 +361,10 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       // 解析结果存进闭包给下面的控制流用——审计关闭时 auditedSleepLlm 整段早退、
       // 这个钩子不会被调用，控制流会跟着失效（dream 的既有坑）。代价是审计开启时
       // 多解析一次，换来两条路径彻底解耦。
-      auditError: (text) => (parseJsonArray(text) ? null : "no json array in llm output")
+      auditError: (text) => (parseJsonArray(text) ? null : "no json array in llm output"),
+      // 纯判据，与 auditError 同一条约定：重解析一次、不读闭包（审计关掉时那些闭包
+      // 根本不会被赋值，读它会让「审计说了什么」依赖调用方走到了哪一行）。
+      metadataFrom: (text) => (parseJsonArray(text) ? null : parseFailureMeta(text))
     }, (reportUsage) => streamText(ctx, {
     provider: route.provider,
     model: route.model,
@@ -355,7 +373,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     ...(withEffort && sleepEffort ? { reasoningEffort: sleepEffort } : {}),
     messages: [
       { role: "system", content: [{ type: "text", text: conflictPrompt }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
-      { role: "user", content: [{ type: "text", text: listText }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
+      { role: "user", content: [{ type: "text", text: fenceListBody(language, listText) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
     ]
   }, reportUsage, (reason) => { conflictStreamFailure = describeStreamFailure(reason); }));
   };
@@ -547,7 +565,10 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
       relatedMemoryIds: memories.map((m) => m.id),
       streamError: () => patternStreamFailure,
       // 纯判据，同 conflict 阶段：不把解析结果存进闭包供控制流使用。
-      auditError: (text) => (parseJsonArray(text) ? null : "no json array in llm output")
+      auditError: (text) => (parseJsonArray(text) ? null : "no json array in llm output"),
+      // 纯判据，与 auditError 同一条约定：重解析一次、不读闭包（审计关掉时那些闭包
+      // 根本不会被赋值，读它会让「审计说了什么」依赖调用方走到了哪一行）。
+      metadataFrom: (text) => (parseJsonArray(text) ? null : parseFailureMeta(text))
     }, (reportUsage) => streamText(ctx, {
     provider: route.provider,
     model: route.model,
@@ -556,7 +577,7 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
     ...(withEffort && sleepEffort ? { reasoningEffort: sleepEffort } : {}),
     messages: [
       { role: "system", content: [{ type: "text", text: STR.prompts.pattern[language].replace("N", String(maxPatterns)) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
-      { role: "user", content: [{ type: "text", text: listText }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
+      { role: "user", content: [{ type: "text", text: fenceListBody(language, listText) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
     ]
   }, reportUsage, (reason) => { patternStreamFailure = describeStreamFailure(reason); }));
   };

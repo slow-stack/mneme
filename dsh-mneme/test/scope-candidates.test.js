@@ -53,7 +53,7 @@ function llmCtx(captured = [], selection = { provider: "mock", model: "sleep-mod
       async *stream(options) {
         captured.push(options);
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        yield { type: "text-delta", index: 0, text: userText.startsWith("候选冲突") || userText.startsWith("Candidate conflicts") ? "[]" : "[]" };
+        yield { type: "text-delta", index: 0, text: options.purpose === "sleep-conflict" ? "[]" : "[]" };
         yield { type: "finish", reason: { kind: "stop" } };
       }
     }
@@ -210,7 +210,7 @@ test("non-freeze with an LLM: cross-scope pair bypasses adjudication; same-scope
   ctx.llm.stream = async function* (options) {
     captured.push(options);
     const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-    const isConflictPass = userText.startsWith("候选冲突") || userText.startsWith("Candidate conflicts");
+    const isConflictPass = options.purpose === "sleep-conflict";
     const text = isConflictPass
       ? JSON.stringify([{ action: "conflict", winner: yNew.id, loser: yOld.id, reason: "同归属重复" }])
       : "[]";
@@ -221,9 +221,12 @@ test("non-freeze with an LLM: cross-scope pair bypasses adjudication; same-scope
   const result = await runSleep(ctx, service, baseConfig(), ctx.logger, { embedder, vectorIndex }, null);
   assert.equal(result.status, "ok");
 
+  // 认「哪一次是冲突裁决」改按 purpose，不再看 user 段首行：#493 追加的围栏让 user 段以
+  // 角色声明开头，而败者行的溯源注释里也会出现「候选冲突」这个词——用 includes 会把模式
+  // 阶段误判成冲突阶段。purpose 与 prompt 形态彻底解耦。
   const conflictPassTexts = captured
-    .map((o) => o.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "")
-    .filter((t) => t.startsWith("候选冲突") || t.startsWith("Candidate conflicts"));
+    .filter((o) => o.purpose === "sleep-conflict")
+    .map((o) => o.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "");
   assert.ok(conflictPassTexts.length >= 1, "conflict pass ran for the same-scope pair");
   for (const t of conflictPassTexts) {
     assert.ok(!t.includes(xNew.id) && !t.includes(xOld.id), "cross-scope pair must never enter the LLM prompt");
