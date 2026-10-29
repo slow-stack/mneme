@@ -113,6 +113,8 @@ Common scripts (all run under `dsh-mneme/`):
 
 > Effective 2026-09-19. Earlier history is **not** rewritten: a handful of pre-rule commits carry `Co-Authored-By: Claude` trailers, and they stay as they are — rewriting public history to satisfy a later rule is worse than the trailers themselves.
 
+**One carve-out, because the alternative is a rule nobody can follow.** This clause governs what a person writes into a commit message. When GitHub squash-merges a pull request carrying commits from more than one author, the merge itself writes a `Co-Authored-By` line for each of them. Nobody typed that line and no contributor can prevent it, so it is not a violation — say so in the pull request so it is on the record. The carve-out is narrow: it covers lines the merge generates, and nothing else. Squashing a real co-author's name out of existence is still a violation; their credit has to survive in the commit body or the pull request description, in words. See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), Section 1.
+
 ---
 
 ## Contributor Workflow: Issue → Claim → PR
@@ -323,6 +325,12 @@ npm run test:coverage # c8 覆盖率
 - **强烈建议签名提交**（GPG/SSH，即 "Verified" 徽章）——这是作者身份的唯一密码学证明。
 - 提交邮箱被 GitHub 归属到**他人账号**、或完全无法归属到你的 commit，**不予合并**：无法署名的代码，在 review 提问或出现回归时找不到责任人。
 - 你需要参与 review 并能回答自己代码的问题——这正是署名的意义。
+
+**不得有共同作者 trailer。** commit 信息里不许带 `Co-Authored-By:`——不管它指向人、bot 还是 AI 工具——也不许 `Generated with …` 之类的工具署名。这里唯一的署名机制是作者行。
+
+> 自 2026-09-19 生效。更早的历史**不**改写：规则生效前有几笔提交带着 `Co-Authored-By: Claude` trailer，它们原样留着——为了满足后来的规则去重写公开历史，比那些 trailer 本身更糟。
+
+**一个例外，因为另一种写法是没人能遵守的规则。** 这一条管的是**人写进 commit 信息**的内容。当 GitHub 对一个含多位作者提交的 PR 做 squash 合并时，那一下合并动作本身会给每位作者写一行 `Co-Authored-By`。那一行不是任何人敲的，贡献者也拦不住，所以不算违规——在 PR 里说明一句，留个记录即可。这个例外很窄：只覆盖合并动作生成的行，别的都不算。把真实共同作者的名字压掉仍然违规，那份署名必须活过 squash——写进 commit 正文或 PR 描述，用文字写。见 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) 第 1 节。
 
 ---
 
