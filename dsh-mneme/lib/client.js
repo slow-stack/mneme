@@ -313,6 +313,9 @@ window.__ModuleLoader__.load({
         "memory.settings.group.search": "搜索",
         "memory.settings.group.connect": "连接与安全",
         "memory.settings.group.help": "帮助",
+        "memory.settings.toc.label": "目录",
+        "memory.settings.toc.aria": "设置分组目录",
+        "memory.settings.toc.jump": "跳到「{name}」",
         "memory.settings.profile": "用户画像",
         "memory.settings.profileHint": "写一段自我介绍（角色、背景、偏好），Agent 每轮对话都会自动带上。",
         "memory.settings.profileSave": "保存画像",
@@ -1091,6 +1094,9 @@ window.__ModuleLoader__.load({
         "memory.settings.group.search": "Search",
         "memory.settings.group.connect": "Connections & safety",
         "memory.settings.group.help": "Help",
+        "memory.settings.toc.label": "Contents",
+        "memory.settings.toc.aria": "Settings section index",
+        "memory.settings.toc.jump": "Jump to {name}",
         "memory.settings.profile": "User Profile",
         "memory.settings.profileHint": "Describe yourself once — the agent reads it every turn.",
         "memory.settings.profileSave": "Save Profile",
@@ -2408,9 +2414,20 @@ window.__ModuleLoader__.load({
       // self-contained unit inside the stacked settings view ---
       ".mneme-set-card{border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px;margin-bottom:10px}",
       // 设置页分组标题（个性化 / 记忆引擎 / 搜索 / 连接与安全 / 帮助）：
-      // 先给「这一段在管什么」，卡片才是具体选项
-      ".mneme-set-grouphead{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin:24px 0 10px}",
-      ".mneme-set-grouphead:first-child{margin-top:8px}",
+      // 先给「这一段在管什么」，卡片才是具体选项；scroll-margin-top 是给 #518 的粘顶目录（实测约 74px 高）留的跳转余量
+      // ——没有它，点 chip 滚过去的标题就停在目录背面
+      ".mneme-set-grouphead{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin:24px 0 10px;scroll-margin-top:84px}",
+      ".mneme-set-toc+.mneme-set-grouphead{margin-top:8px}", // nav 才是第一个孩子：:first-child 自 #518 起永不命中
+      // 设置页目录（#518）：分组标题 + 一栏跳转 chip。粘顶是因为设置页是整块
+      // 滚动的（.mneme-set 自己 overflow-y），长页里目录滚走了就等于没有——用户
+      // 提的诉求正是「方便直接跳转」，跳不回去的目录不算数。
+      // 窄屏收成横向滚动：换行会让粘顶条吃掉半屏高度，而设置页本身已经很挤。
+      ".mneme-set-toc{position:sticky;top:0;z-index:2;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1));padding:8px 0 10px;margin-bottom:4px;border-bottom:1px solid var(--dsw-alias-border-l2)}",
+      ".mneme-set-toclabel{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin-bottom:6px}",
+      ".mneme-set-toclist{display:flex;gap:6px;overflow-x:auto;padding:3px}", // 不 wrap：chip flex:none，窄屏横向滚；3px 给 focus ring 留位（滚动容器会裁掉描边）
+      ".mneme-set-tocchip{flex:none;height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--dsw-alias-border-l2);background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:12px;line-height:24px;transition:border-color .12s,color .12s}",
+      ".mneme-set-tocchip:hover{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary)}",
+      ".mneme-set-tocchip:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
       ".mneme-set-token{font-family:monospace;font-size:12px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);word-break:break-all;user-select:all}",
       ".mneme-set-hint{font-size:12px;color:var(--mneme-fg-dim)}",
       // --- 重要性编辑行：与查看态同一份 Lucide 星形（此前是文本星号下拉，角更尖锐且与其他星不统一） ---
@@ -4258,9 +4275,43 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // 目录（#518）：五项分组标题是设置页唯一的骨架，所以索引直接由这张表
+      // 生成，而不是再手写一遍标题——两份清单迟早会漂，而漂了的目录会把人
+      // 领到空处。tocRefs 是滚动目标，与渲染顺序一一对应（同一个 map 里产出）。
+      const tocGroups = [
+        { key: "personal", label: t("memory.settings.group.personal") },
+        { key: "engine", label: t("memory.settings.group.engine") },
+        { key: "search", label: t("memory.settings.group.search") },
+        { key: "connect", label: t("memory.settings.group.connect") },
+        { key: "help", label: t("memory.settings.group.help") }
+      ];
+      const tocRefs = useRef({});
+      function jumpToGroup(key) {
+        const node = tocRefs.current?.[key];
+        // 偏移不在这里算：标题自己带 scroll-margin-top（见 .mneme-set-grouphead）。
+        // 两处各量一次粘顶条高度必然对不上，跳转会把目标停在目录背后。
+        if (node && node.scrollIntoView) node.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+      const groupHead = (key) => h("div", {
+        className: "mneme-set-grouphead",
+        ref: (node) => { if (node) tocRefs.current[key] = node; }
+      }, t("memory.settings.group." + key));
+
       return h("div", null,
+        h("nav", { className: "mneme-set-toc", "aria-label": t("memory.settings.toc.aria") },
+          h("div", { className: "mneme-set-toclabel" }, t("memory.settings.toc.label")),
+          h("div", { className: "mneme-set-toclist" },
+            ...tocGroups.map((group) => h("button", {
+              key: group.key,
+              type: "button",
+              className: "mneme-set-tocchip",
+              title: t("memory.settings.toc.jump").replace("{name}", group.label),
+              onClick: () => jumpToGroup(group.key)
+            }, group.label))
+          )
+        ),
         // —— 个性化：画像 / 人格 / 规则 / 自定义指令（Agent 怎么对你） ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.personal")),
+        groupHead("personal"),
         // 用户画像 — who the agent is talking to
         h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.profile")),
@@ -4499,7 +4550,7 @@ window.__ModuleLoader__.load({
           )
         ),
         // —— 记忆引擎：运行模式（粗粒度）在前，功能开关（细粒度）紧随 ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.engine")),
+        groupHead("engine"),
         // 运行模式 — light vs standard chip radios; each click PUTs and the
         // change only lands after a DSH restart (green saved hint says so).
         h("section", { className: "mneme-set-card" },
@@ -4541,7 +4592,7 @@ window.__ModuleLoader__.load({
         // 功能开关 — 后端能力的细粒度闸门；改动即时保存，重启 DSH 后生效。
         h(FeaturesCard, { t }),
         // —— 搜索：语义召回 ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.search")),
+        groupHead("search"),
         // 向量搜索 — semantic recall over an embeddings API
         h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.vectorTitle")),
@@ -4561,7 +4612,7 @@ window.__ModuleLoader__.load({
           )
         ),
         // —— 连接与安全：外部访问 API / 面板令牌 ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.connect")),
+        groupHead("connect"),
         // 外部访问 API — standalone HTTP service for plugins/CLI/desktop tools;
         // the token is generated and kept by the backend, so it is read-only
         // here with a copy affordance. Changes need a DSH restart.
@@ -4678,7 +4729,7 @@ window.__ModuleLoader__.load({
           apiTokenSaved && h("div", { style: { marginTop: 8 } }, h("span", { className: "mneme-saved" }, t("memory.settings.apiTokenSaved")))
         ),
         // —— 帮助：支持与鼓励（图标行 + 检测更新 + star，兼当「关于」收尾） ——
-        h("div", { className: "mneme-set-grouphead" }, t("memory.settings.group.help")),
+        groupHead("help"),
         // 反馈三入口：新建 issue 预填（版本+平台）/ 邮件 / 浏览已知问题。
         // 纯前端链接零后端成本；插件版本来自 /info，平台取 userAgent。GitHub
         // 仓库当前没有 issue 模板，故用 issues/new?title=&body= 直接预填。
