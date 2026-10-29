@@ -70,8 +70,12 @@ export function mockCtx({ onConsolidation, summaryText = "记忆库总览：用�
     llm: {
       async *stream(options) {
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        if (userText.startsWith("id=")) {
-          yield { type: "text-delta", index: 0, text: onConsolidation ? onConsolidation(userText) : "[]" };
+        // 认「这是巩固那一次调用」的判据：以前看 userText 是否以 `id=` 开头，但
+        // #493 追加的围栏让 user 段以角色声明开头了。改判清单**形状**而不是首行——
+        // `| type=` 只有巩固清单有（叙述条的 listing 形如 `- id=… | title=…`，没有
+        // type=），所以两条调用路径不会串台。
+        if (userText.includes("| type=")) {
+          yield { type: "text-delta", index: 0, text: onConsolidation ? onConsolidation(userText, options.purpose) : "[]" };
         } else {
           yield { type: "text-delta", index: 0, text: summaryText };
         }

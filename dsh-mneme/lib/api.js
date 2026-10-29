@@ -9,6 +9,9 @@ import { TYPE_FILE, renderMirrorText, renderFileHeader, parseHumanEdits, MIRROR_
 import { langOf } from "./lang.js";
 import { computeHeat } from "./heat.js";
 import { EFFORT_REJECT_RE, describeStreamFailure, resolveRoute, withEffortFallback } from "./dream.js";
+// Issue #521：面板要按归一化原因显示 skipped，归一化只有一份实现（住在
+// decisions.js，与产生这些 error 的校验器同一文件，避免措辞漂移）。
+import { summarizeSkipped } from "./dream/decisions.js";
 import { getInjectionSnapshot } from "./inject.js";
 import { renderUserSettingsBlock } from "./user-settings.js";
 import { parseProvenanceQuery, provenanceReply } from "./provenance-http.js";
@@ -1767,7 +1770,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           // 数据来自 runSleep 写入的 decisions.demotion（{demoted,archived} 数组）。
           demotion: r.decisions?.demotion
             ? { demoted: (r.decisions.demotion.demoted ?? []).length, archived: (r.decisions.demotion.archived ?? []).length }
-            : null
+            : null,
+          // Issue #521：degraded 轮的 skipped 明细按归一化原因聚合。status:
+          // degraded + applied: 3 从外面看完全是健康轮的样子，不展开 skipped
+          // 看不出「一整个 action 类型 100% 失败」——实测那个 bug 跑了一整天才
+          // 被发现。这里只回聚合（原因 + 动作 + 条数），明细仍留在库里。
+          skippedCount: Array.isArray(r.skipped) ? r.skipped.length : 0,
+          skippedReasons: summarizeSkipped(r.skipped)
         }));
         const pendingConflicts = service.countConflictPending?.() ?? 0;
         const ids = new Set();

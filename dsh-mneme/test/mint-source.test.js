@@ -127,7 +127,7 @@ function sleepCtx(decisionsJson) {
     llm: {
       async *stream(options) {
         const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
-        yield { type: "text-delta", index: 0, text: userText.startsWith("id=") ? decisionsJson : "[]" };
+        yield { type: "text-delta", index: 0, text: userText.includes("| type=") ? decisionsJson : "[]" };
         yield { type: "finish", reason: { kind: "stop" } };
       }
     }

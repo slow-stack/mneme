@@ -1372,10 +1372,31 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // dream 总览按 source 身份去重，而非本地化标题：memory.language 切换后
     // 标题变化，若仍按 (type, title) 匹配会出现两个活跃的 summary 同时注入。
     // 其余类型维持 (type, title) 匹配不变。
+    //
+    // Issue #505：候选集此前是 store.list({ type, limit: 100 }) —— 那是「该类型
+    // 最重要的 100 行」（order 默认 importance），与「找出同标题的那一行」无关。
+    // 某类型里 importance 高于待写行的行数一旦超过 100，同标题行与待写行双双落在
+    // 窗口外，下面的 find 恒不命中，于是静默走创建分支：不报错、不告警，合并语义
+    // 随库增长而失效（实测 1047 行类型、importance=5 有 180 行时稳定复现）。
+    // 改为按同标题定向取（store.activeByTypeAndTitle，无窗口）。
+    //
     // spec §5 决策 2：本机巩固不许改写别人的原文。这里不是防呆——蒸馏路径的每一次
     // 同题命中都会 appendContent 覆盖外来行的正文与 updated_at，别人的记忆从此变成
     // 我们两家的混杂物。把外来行剔出候选集后只会落回既有的「新建一行」分支。
-    const candidates = store.list({ type: memory.type, limit: 100 }).filter((m) => !isImportedRow(m));
+    // 谓词挂在**两个**候选集上：sourceScopedCandidates 在 dream/narrative 那两条分支
+    // 里就是候选集本身，只挂 candidates 等于给外来行留一条后门。这一处过滤留在 JS 侧
+    // 而不是下推 SQL（同 #515 的反面）：那里下推是因为外来行会吃掉 LIMIT 窗口名额，
+    // 这里 limit: null 本就无界，没有窗口可饿，而下推会多出第二份外来行判据。
+    const candidates = store.activeByTypeAndTitle(memory.type, memory.title).filter((m) => !isImportedRow(m));
+    // dream/narrative 两条分支按 source（及 tags[0]）匹配，而不是按标题：它们的
+    // 去重键本来就不含标题（语言切换后标题会变）。定向取同标题会把这两条路径
+    // 打回「永远不命中」——所以这两类仍走「该类型活跃行」的候选集，只是窗口换成
+    // 了无界且不带 importance 排序。类型内行数由 summary 的生产方（autoDream /
+    // generateNarratives）决定，量级远小于普通记忆，且这两条分支本来就要求扫全
+    // 类型才能找到同 source 的那一行——原来的 100 行窗口对它们同样是错的。
+    const sourceScopedCandidates = (memory.type === "summary" && (memory.source === "dream" || memory.source === "narrative"))
+      ? store.list({ type: memory.type, limit: null }).filter((m) => !isImportedRow(m))
+      : candidates;
     // v0.8.0 A1（issue #17）：去重键由 (type, title) 扩展为
     // (type, title, agent_scope, workspace_scope, sensitivity)——不同作用域的同
     // 标题记忆绝不互相物理合并（旧逻辑跨 agent/workspace 并行，事后无法拆分）。
@@ -1400,13 +1421,13 @@ export function createService({ store, mirror, config, onWrite, logger, document
     const existing = explicitTarget
       ? (scopeMatches(explicitTarget) ? explicitTarget : undefined)
       : (memory.type === "summary" && memory.source === "dream")
-        ? (candidates.find((m) => m.source === "dream" && scopeMatches(m))
+        ? (sourceScopedCandidates.find((m) => m.source === "dream" && scopeMatches(m))
           ?? candidates.find((m) => scopeMatches(m) && m.title.trim() === String(memory.title).trim()))
         : (memory.type === "summary" && memory.source === "narrative")
           // 叙述条（#164）按主题键去重而非本地化标题：标题随语言变
           // （叙述：X / Narrative: X），title 匹配在语言切换后会残留同 tag 双行。
           // tag 存于 tags[0]（generateNarratives 落库），跨语言稳定 → 原地刷新。
-          ? (candidates.find((m) => m.source === "narrative" && m.tags?.[0] === memory.tags?.[0] && scopeMatches(m))
+          ? (sourceScopedCandidates.find((m) => m.source === "narrative" && m.tags?.[0] === memory.tags?.[0] && scopeMatches(m))
             ?? candidates.find((m) => scopeMatches(m) && m.title.trim() === String(memory.title).trim()))
         : candidates.find((m) => scopeMatches(m) && m.title.trim() === String(memory.title).trim());
     if (existing) {

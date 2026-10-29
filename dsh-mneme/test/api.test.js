@@ -1272,6 +1272,120 @@ test("POST /api/dsh-mneme/import is token-gated", async () => {
   assert.equal(res.statusCode, 401);
 });
 
+// #521：面板要能一眼看出「一整类动作 100% 被拦」。此前 skipped 只存在库里，
+// 响应里没有聚合，status: degraded + applied: 3 从外面看完全是健康轮的样子。
+test("GET /api/dsh-mneme/dream-status aggregates skipped reasons by kind (issue #521)", async () => {
+  const { routes, service } = setup();
+  // 三条同因（序号前缀不同）+ 一条不同因，模拟 #521 现场：merge 被 mergeGuard
+  // 全拦，前缀 decision[N]: 让朴素 GROUP BY 拆成三组。
+  service.saveDreamRun({
+    created_at: "2026-01-03T00:00:00.000Z",
+    status: "degraded",
+    snapshot_hash: "h3",
+    input_count: 200,
+    receipt: "r3",
+    skipped: [
+      { index: 0, action: "merge", ids: ["p1", "p2"], error: 'decision[0]: merge of long-retention type(s) preference is blocked by dreamMergeGuard' },
+      { index: 1, action: "merge", ids: ["p3", "p4"], error: 'decision[1]: merge of long-retention type(s) preference is blocked by dreamMergeGuard' },
+      { index: 2, action: "merge", ids: ["p5", "p6"], error: 'decision[2]: merge of long-retention type(s) preference is blocked by dreamMergeGuard' },
+      { index: 3, action: "archive", ids: ["x"], error: 'decision[3]: archive of long-retention type(s) constraint needs a duplicate/outdated rationale' }
+    ]
+  });
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/dream-status");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/dream-status"), res);
+  const data = JSON.parse(res.body);
+  assert.equal(data.lastRun.skippedCount, 4, "raw skipped count is preserved");
+  assert.equal(data.lastRun.skippedReasons.length, 2, "three same-cause skips collapse into one bucket");
+  assert.equal(data.lastRun.skippedReasons[0].count, 3, "largest bucket first");
+  assert.equal(data.lastRun.skippedReasons[0].action, "merge");
+  assert.match(data.lastRun.skippedReasons[0].reason, /dreamMergeGuard/);
+  assert.doesNotMatch(data.lastRun.skippedReasons[0].reason, /decision\[/, "index prefix is stripped");
+  assert.equal(data.lastRun.skippedReasons[1].action, "archive", "same wording on a different action stays separate");
+});
+
+// #522 评审：一条决策可能攒下多条错误（skipped[].error 用 "; " 拼），原先的剥
+// 前缀正则 ^ 锚定、只剥得掉第一个，后面的 decision[1]: 留在字符串中间，聚合时
+// 同类原因又被拆成多组。另外校验器回给模型的自由文本尾巴（got: "…"）可能夹带
+// 记忆正文、也可能被截断成没有右引号，靠引号配对剥不掉——这条路由是 open 的，
+// 审计文本不该这样出网关。两件事一起锁在下面这条用例里。
+test("GET /api/dsh-mneme/dream-status strips every decision index and the free-text tail (issue #522)", async () => {
+  const { routes, service } = setup();
+  service.saveDreamRun({
+    created_at: "2026-01-04T00:00:00.000Z",
+    status: "degraded",
+    snapshot_hash: "h4",
+    input_count: 200,
+    receipt: "r4",
+    skipped: [
+      {
+        index: 0,
+        action: "merge",
+        ids: ["p1", "p2"],
+        // 两条错误拼成一句：第二个前缀必须也剥掉，否则同一类原因会被拆成两组。
+        error: 'decision[0]: merge of long-retention type(s) preference is blocked by dreamMergeGuard (needs a duplicate/outdated rationale, 重复/过时); decision[0]: unknown id "p9"'
+      },
+      {
+        index: 1,
+        action: "archive",
+        ids: ["x"],
+        // got: 后面是模型写的理由原文（这里故意放一段像记忆正文的话），整段该被丢掉。
+        error: 'decision[1]: archive of long-retention type(s) constraint needs a duplicate/outdated rationale, got: "用户说过预算是 12400 元"'
+      },
+      {
+        // #522 第二轮评审：模型写的理由里可能正好含 "; decision[0]: "，先切分就会把
+        // 这段自由文本变成新的一段，而新段没有 got: 前缀，剥尾正则够不着它——原文
+        // 于是随 open 路由出网关。切分必须排在剥 got: 之后。
+        index: 2,
+        action: "archive",
+        ids: ["z"],
+        error: 'decision[2]: archive of long-retention type(s) preference needs a duplicate/outdated rationale (重复/过时), got: "并不过时; decision[0]: email@example.com 说的"'
+      },
+      {
+        index: 3,
+        // action 不在 ACTIONS 枚举里：聚合结果会随 open 路由出网关，来路不明的动作名
+        // 不该由上游脏数据自己决定响应形状，一律归成空串。
+        action: "drop-everything",
+        ids: ["y"],
+        error: "decision[3]: unknown action"
+      },
+      {
+        // #522 三轮评审：分隔符本身可能出现在 id 里。旧实现按 ", got: " 猜自由文本
+        // 起点，会把这里的引号截断成未闭合状态，后面的引号配对替换随之失效，邮箱
+        // 原样留下。判据必须只看引号，不看分隔符。
+        index: 4,
+        action: "merge",
+        ids: ["q"],
+        error: 'decision[4]: unknown id "alice@example.com, got: x"'
+      },
+      {
+        // 旧版把理由先截到 60 字再 stringify，落库的历史行可能带着一个未闭合引号
+        // （字符串从中间断开）。抹不干净就得砍到结尾——宁可少一句尾巴。
+        index: 5,
+        action: "archive",
+        ids: ["w"],
+        error: 'decision[5]: archive of long-retention type(s) constraint needs a duplicate/outdated rationale, got: "用户说过预算是 12400'
+      }
+    ]
+  });
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/dream-status");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/dream-status"), res);
+  const data = JSON.parse(res.body);
+  assert.equal(data.lastRun.skippedCount, 6, "raw skipped count is preserved");
+  const unknownAction = data.lastRun.skippedReasons.find((b) => b.reason === "unknown action");
+  assert.equal(unknownAction.action, "", "an action outside the enum is not echoed back to the open route");
+  for (const bucket of data.lastRun.skippedReasons) {
+    assert.doesNotMatch(bucket.reason, /decision\[/, "every index prefix is stripped, not just the first");
+    assert.doesNotMatch(bucket.reason, /got:/, "the free-text tail never leaves the gateway");
+    assert.doesNotMatch(bucket.reason, /12400/, "model-authored text must not ride along with the audit reason");
+    assert.doesNotMatch(bucket.reason, /email@example\.com/, "free text split on a fake decision boundary must not leak either");
+    assert.doesNotMatch(bucket.reason, /并不过时/, "the whole free-text tail is dropped, not just its first half");
+    assert.doesNotMatch(bucket.reason, /alice@example\.com/, "an id carrying the tail separator is masked by quote pairing, not by the separator");
+    assert.doesNotMatch(bucket.reason, /用户说过预算是/, "a historical row whose reason was cut mid-string still gets masked");
+    assert.doesNotMatch(bucket.reason, /\b12400\b/, "nor does the truncated number survive");
+  }
+});
 test("GET /api/dsh-mneme/dream-status returns runs and pending conflict ids", async () => {
   const { routes, service } = setup();
   service.saveDreamRun({ created_at: "2026-01-01T00:00:00.000Z", status: "ok", provider: "ollama", model: "qwen", snapshot_hash: "h1", input_count: 2, receipt: "r1" });
@@ -1286,7 +1400,9 @@ test("GET /api/dsh-mneme/dream-status returns runs and pending conflict ids", as
   assert.equal(data.runs.length, 2);
   assert.equal(data.runs[0].created_at, "2026-01-02T00:00:00.000Z", "created_at DESC");
   assert.deepEqual(data.lastRun, data.runs[0]);
-  assert.deepEqual(Object.keys(data.lastRun).sort(), ["created_at", "demotion", "error", "model", "provider", "run_type", "status"]);
+  // #521：skippedCount / skippedReasons 是本轮新增的两个字段（面板按归一化原因
+  // 显示跳过明细）。这行锁的是 dream-status 的响应形状，加字段必须同步改这里。
+  assert.deepEqual(Object.keys(data.lastRun).sort(), ["created_at", "demotion", "error", "model", "provider", "run_type", "skippedCount", "skippedReasons", "status"]);
   assert.equal(data.lastRun.run_type, "auto", "default run_type is auto");
   assert.equal(data.lastRun.demotion, null, "no demotion info for non-sleep runs");
   assert.equal(data.runs[0].error, "boom");

@@ -19,6 +19,78 @@ const ARCHIVE_GUARDED_TYPES = new Set(["preference", "pattern", "rejected_soluti
 // 「重复 / 过时」类理由的关键词（中英双语）。命中才允许归档长保留类型；
 // 词表宁可放宽也不误拦——护栏只跳过单条并落明细，不整单拒绝。
 const ARCHIVE_RATIONALE_RE = /重复|过时|陈旧|过期|已被取代|被取代|冗余|不再使用|旧版|废弃|stale|outdated|obsolete|dup(?:licate|licat)?|superseded|redundant|deprecated|expired|replaced/i;
+// Issue #522 评审：上面那张词表只认关键词，不认否定——「并不重复，只是主题相近」
+// 与 "not a duplicate" 都会命中「重复」/"duplicate" 子串。archive 护栏从 #104 起
+// 就带着这个洞（既有行为，改它会扩大范围，先记在这里），但 #521 给 merge 加的
+// 逃生门是本 PR 新开的口子，必须自己堵上：否定表述一票否决。第二轮评审又指出
+// 词表里「过时 / stale / outdated」同样是钥匙，只挡「重复」等于留了半边门——
+// 「并不过时，只是主题相近」照样能换到合并许可，所以否定词按整张词表铺开。
+const NEGATED_RATIONALE_RE = /(?:不|并不|不是|非)\s*(?:重复|过时|陈旧|过期|已被取代|被取代|冗余|旧版|废弃)|\b(?:not|no|isn't|is not|never)\s+(?:a\s+|an\s+)?(?:duplicat\w*|stale|outdated|obsolete|superseded|redundant|deprecated|expired|replaced)/i;
+
+// Issue #521：把 skipped[].error 归一化成可分组的原因。原样字符串不能直接
+// GROUP BY——前缀带 decision[N]: 序号，同一种原因会被拆成 N 组（#521 实测 280
+// 条被拆成 20 组），面板上看不出「一整类动作 100% 失败」。这里只剥三样东西：
+// 序号前缀、模型可控的引号文本、具体类型集合，其余措辞保持原样，好让人一眼
+// 认出是哪个判据。
+export function normalizeSkipReason(error) {
+  // 一条决策可能攒下多条错误，skipped[].error 用 "; " 把它们拼成一句（见下方
+  // skipped.push）。所以先按 decision[N]: 的边界切开、逐段归一化再拼回去——
+  // 原先的正则 ^ 锚定，只剥得掉第一个前缀，后面的 decision[1]: 会留在字符串
+  // 中间，聚合时又被拆成多组（#522 评审指出）。
+  // 抹引号必须排在切分之前：模型写的理由原文里可能正好含 "; decision[0]: "
+  // （引文、邮箱都算），先切分就会把这段自由文本切成独立的一段，而那一段不带
+  // 任何可识别的边界，后面对它无从下手。先抹掉引号里的内容，切分就只看得到
+  // 我们自己拼进去的分隔符。
+  return maskModelText(String(error ?? ""))
+    .split(/;\s*(?=decision\[\d+\]:\s*)/)
+    .map(normalizeSkipSegment)
+    .join("; ")
+    .trim();
+}
+
+// 引号内的内容一律是模型可控的：id、action 名、理由原文都由 JSON.stringify
+// 加引号，所以「引号内 = 不可信」是这里唯一的判据。成对的那段整段抹成占位符；
+// 万一剩下一个孤立引号（旧版把理由截到 60 字再拼进 error，可能正好断在字符串
+// 中间），从那里砍到结尾——宁可少一句尾巴，也不让记忆正文随 open 路由出网关。
+// 刻意不按「, got: 」这类分隔符猜边界（#522 三轮评审）：分隔符本身可能出现在
+// id 里（unknown id "a@b.c, got: x"），猜错就会把引号截断，脱敏反而失效。
+function maskModelText(text) {
+  return String(text ?? "")
+    .replace(/"(?:[^"\\]|\\.)*"/g, "\u0000")
+    .replace(/"(?:[\s\S])*$/, "\u0000")
+    .replace(/\u0000/g, '"…"');
+}
+
+// 单段归一化：剥序号前缀、丢掉已经抹空的自由文本尾巴、把具体类型集合抹成占位符。
+function normalizeSkipSegment(segment) {
+  return String(segment ?? "")
+    .replace(/^decision\[\d+\]:\s*/, "")
+    // 抹完之后「, got: "…"」是个固定字面量（maskModelText 的产物），可以整段
+    // 砍掉：它只说明「校验器当时回了一句理由」，内容已经不在字符串里了。
+    .replace(/,\s*got:\s*"…"$/, "")
+    // 类型集合同理，但单个类型名保留——「被拦的是哪一类」本身是有效信息
+    .replace(/\(([a-z_]+(?:,\s*[a-z_]+)+)\)/g, "(…)")
+    .trim();
+}
+
+// Issue #521：按归一化原因聚合 skipped，供面板直接显示。按 (action, reason)
+// 二元组计数——同一句原因在 merge 和 archive 上是两回事，混在一起会误导。
+export function summarizeSkipped(skipped) {
+  const buckets = new Map();
+  for (const item of Array.isArray(skipped) ? skipped : []) {
+    const reason = normalizeSkipReason(item?.error);
+    if (!reason) continue;
+    // #522 评审：action 也走白名单。这条聚合结果会随 open 路由出网关，放任意字符串
+    // 过去等于让上游的脏数据（或将来某个新字段）自己决定响应形状；不在枚举里的一律
+    // 归成空串，面板少显示一个动作标签，比显示一段来路不明的文本安全。
+    const action = ACTIONS.has(item?.action) ? item.action : "";
+    const key = action + "\u0000" + reason;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.count += 1;
+    else buckets.set(key, { action, reason, count: 1 });
+  }
+  return [...buckets.values()].sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+}
 
 /**
  * Validate a dream decision list against a snapshot of eligible memories.
@@ -149,7 +221,7 @@ export function validateDecisions(decisions, snapshot, options = {}) {
         if (mem && ARCHIVE_GUARDED_TYPES.has(mem.type)) guardedTypes.add(mem.type);
       }
       if (guardedTypes.size > 0 && !ARCHIVE_RATIONALE_RE.test(String(d.reason ?? ""))) {
-        local.push(`${at}: archive of long-retention type(s) ${[...guardedTypes].join(", ")} needs a duplicate/outdated rationale (重复/过时), got: ${JSON.stringify(String(d.reason ?? "")).slice(0, 60)}`);
+        local.push(`${at}: archive of long-retention type(s) ${[...guardedTypes].join(", ")} needs a duplicate/outdated rationale (重复/过时), got: ${JSON.stringify(String(d.reason ?? "").slice(0, 60))}`);
       }
     }
     if (local.length === 0 && d?.action === "update") {
@@ -222,8 +294,21 @@ export function validateDecisions(decisions, snapshot, options = {}) {
             const mem = snapshot.get(id);
             if (mem && ARCHIVE_GUARDED_TYPES.has(mem.type)) guardedTypes.add(mem.type);
           }
-          if (guardedTypes.size > 0) {
-            local.push(`${at}: merge of long-retention type(s) ${[...guardedTypes].join(", ")} is blocked by dreamMergeGuard`);
+          // Issue #521：与上方 archive 护栏对齐——archive 早就允许「带重复/过时
+          // 理由」的长保留类型通过，merge 却一律拦死，于是一份真重复的
+          // preference 永远合不掉，而提示词还在催模型合并它们。实测（#521）46 轮
+          // 巩固里 280 条 merge 决策全被这条拦下、merge 恒为 0，模型每轮把同一
+          // 簇条目再提一次，满载 token 空转。逃生门条件与 archive 护栏同一条词表
+          // 且要求同类型（跨类型合并本就另受 allowCrossTypeMerge 约束，逃生门
+          // 不跟着放宽）。reason 只写「主题相近」不会命中词表——这是故意的：
+          // 相近不等于重复，只有确属重复/过时才值得牺牲两条独立表述。
+          const sameType = new Set(d.ids.map((id) => snapshot.get(id)?.type)).size === 1;
+          const reasonText = String(d.reason ?? "");
+          // #522 评审：词表命中还不够——「并不重复」「not a duplicate」也含关键词，
+          // 放它们过闸等于让模型用一句否认换来合并许可。否定表述直接判不重复。
+          const duplicated = !NEGATED_RATIONALE_RE.test(reasonText) && ARCHIVE_RATIONALE_RE.test(reasonText);
+          if (guardedTypes.size > 0 && !(sameType && duplicated)) {
+            local.push(`${at}: merge of long-retention type(s) ${[...guardedTypes].join(", ")} is blocked by dreamMergeGuard (needs a duplicate/outdated rationale, 重复/过时)`);
           }
         }
       }
