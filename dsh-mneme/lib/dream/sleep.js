@@ -23,6 +23,10 @@ import { findPotentialConflicts, cosineSimilarity } from "./clustering.js";
 import { scopeKeyOf } from "../scope.js";
 import { buildReceipt, describeStreamFailure, resolveDreamEffort, withEffortFallback, withMaxTokensFallback, maintainIndexAfterDream, fenceListBody, parseFailureMeta } from "../dream.js";
 import { computeHeat } from "../heat.js";
+// 四个相位读的都是行池，而动行的写手不经汇流口：phaseDemotion 直接 setArchived /
+// demoteToSummary，phasePatterns 还会 mint 出新行，所以这条契约要在每处各挡一遍
+// （清单与静态锁见 test/share-imported-guard.test.js）。
+import { isImportedRow } from "../memory-source.js";
 
 // Issue #126 review（Copilot）：默认档（sleepActionSet="conflict"）允许的动作 = 全局
 // ACTIONS 去掉 #126 新增的两个。从 ACTIONS 派生而非硬编码，将来再扩动作集时自动跟随。
@@ -220,7 +224,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   }
   const strictness = config.sleepConflictStrictness ?? "normal";
   const threshold = CONFLICT_THRESHOLDS[strictness] ?? CONFLICT_THRESHOLDS.normal;
-  const memories = withoutPaused(service, service.all().filter((m) => !m.archived && !m.forgotten && m.type !== "summary" && m.type !== "document"));
+  const memories = withoutPaused(service, service.all().filter((m) => !isImportedRow(m) && !m.archived && !m.forgotten && m.type !== "summary" && m.type !== "document"));
   if (memories.length < 2) return { status: "skipped", reason: "too few memories" };
   if (signal?.aborted) return { status: "aborted", reason: "user activity" };
 
@@ -462,7 +466,10 @@ function phaseDemotion(service, config, logger, runId, signal = null) {
   // 政策轴在这里尤其要紧：下面两行会真改归档面（setArchived / demoteToSummary）。
   // 把过滤放在循环之外、而不是在循环体里 continue：一旦将来有人在循环体里加
   // 副作用（现已有），漏掉那条 continue 就是静默改到被按下的行。
-  for (const m of withoutPaused(service, service.all())) {
+  // 外来行也在循环之外挡掉，同一个理由：它不经本方蒸馏，时间分层无权动它的原文或
+  // 归档面；而下面两行动作（setArchived / demoteToSummary）不经 saveWithDedupe，
+  // 汇流口那道闸门到这里已经管不到了。
+  for (const m of withoutPaused(service, service.all().filter((m) => !isImportedRow(m)))) {
     if (signal?.aborted) break;
     if (m.archived || m.forgotten) continue;
     const ref = m.last_accessed_at ?? m.created_at;
@@ -513,9 +520,31 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
   // 先生效的话，指针行一多就会把普通记忆挤出扫描窗，池子饿到门槛以下。
   // 政策轴同理必须排在 `.slice(0, limit)` **之前**，否则被按下的行照样占掉
   // sleepPatternMinMemories 的名额，而它们既不会被扫、也不该挤掉别人（#471）。
-  const memories = withoutPaused(service, service
-    .list({ limit: 200, includeForgotten: false, excludeTypes: ["document"] })
-    .filter((m) => !m.archived && m.type !== "summary" && m.type !== "pattern"))
+  //
+  // archived 这一轴不在下面出现，不是漏了：list() 默认就带 `archived = 0`
+  // （store.js list 的 includeArchived 默认 false、onlyArchived 默认 false），
+  // 旧写法那句 `!m.archived` 一直是重复过滤——查询层已经把它挡在外面。
+  // 窗口至少等于本次要扫的名额：`sleepPatternMinMemories` 的合法上限是 1000
+  // （src/config.js:612）。窗口若还是死的 200，那么把这个值配到 200 以上的人
+  // **每一轮**都会触发下面那次无界重取，跟闸门按没按下无关——那是把这条修复
+  // 从「按需」变成「常付」。
+  const poolQuery = {
+    limit: Math.max(200, limit), includeForgotten: false,
+    // 三条政策轴全部下推到查询层：留在 LIMIT 之后过滤，等于让被丢掉的行为窗口占名额
+    // （模式扫描池会因此饿到 sleepPatternMinMemories 以下而静默跳过）。同一取舍见
+    // #230 的 document 轴与本文件 #471 的暂停轴，src/service.js:2247 那条注释记着前例。
+    excludeTypes: ["document", "summary", "pattern"],
+    excludeImported: true
+  };
+  const gather = (query) => withoutPaused(service, service.list(query));
+  let pool = gather(poolQuery);
+  // #515：暂停闸门要读 scope_state 并按「这一维有标注」匹配，下推进 SQL 就等于让判定
+  // 长出第二份实现（issue 里写过为什么否掉，`*` 那一行是关键的不可下推处）。所以这里
+  // 不动判定、只放宽取数：**只有窗口过滤后不够本次要扫的名额**才不带窗口重取一次。
+  // 常态仍只付一次有界查询；多付的那一次恰好就是原本会静默跳过的那一次——
+  // 症状从「库里没东西可扫」变成「扫了」，这才是这条闸门该有的行为。
+  if (pool.length < limit) pool = gather({ ...poolQuery, limit: null });
+  const memories = pool
     .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
     .slice(0, limit);
   if (memories.length === 0) return { status: "skipped", reason: "no memories to scan" };
@@ -607,7 +636,7 @@ function phaseRelations(service, config, logger, runId, signal = null) {
   if (entities.length < 2) return { status: "skipped", reason: "too few entities" };
   const orphans = entities.filter((e) => (service.getRelations(e.id) ?? []).length === 0);
   if (orphans.length === 0) return { status: "skipped", reason: "no orphan entities" };
-  const memories = withoutPaused(service, service.all().filter((m) => !m.archived && !m.forgotten));
+  const memories = withoutPaused(service, service.all().filter((m) => !isImportedRow(m) && !m.archived && !m.forgotten));
   const seen = new Set();
   const related = [];
   const MAX_RELATIONS_PER_ORPHAN = 3;

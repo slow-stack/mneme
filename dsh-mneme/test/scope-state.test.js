@@ -421,6 +421,135 @@ test("睡眠侧：被按下作用域的行不进 pattern 扫描池，也就不�
   store.close();
 });
 
+// --- issue #515：闸门把可扫行挡在 LIMIT 窗口之外 ---------------------------
+//
+// 上面那条用例锁的是「政策轴排在截断之前」，但它的库只有 4 行，根本碰不到
+// store.list 的 `LIMIT 200`，所以它测不到 #515 真正的症状：被按下的行**多到占满窗口**
+// 时，过滤前它们吃掉全部名额、过滤后自家行一条都不剩，相位回 `no memories to scan`
+// ——读起来像「库里没东西可扫」，实际是「闸门把可扫的行挡在了窗口里」。
+// 修复方向是不动判定、只放宽取数：窗口过滤后不够本次要扫的名额时，不带窗口重取一次。
+//
+// 造「自家行在窗口之外」用的是 importance 而不是 updated_at：默认档位是
+// `importance DESC, updated_at DESC, id`，而 store.save 的时间戳由实现内部取
+// nowIso()（调用方传不进去），同毫秒落库的行会退到 id 平局键——靠时间戳排序会依赖
+// 插入速度，快机器上自家行可能反而排进窗口，用例就成了偶发绿。importance 差（5 vs 1）
+// 让被按下的那批恒占窗口前排，与毫秒无关。
+
+/** 填满 200 窗口的按下行 + 两条落在窗口之外的自家行。 */
+function seedStarvedPatternPool(store, service) {
+  const own = [];
+  for (const t of ["own-1", "own-2"]) {
+    own.push(store.save({ type: "project", title: t, content: `${t} 正文`, importance: 1 }));
+  }
+  for (let i = 0; i < 200; i++) {
+    store.save({
+      type: "project", title: `paused-${i}`, content: `paused-${i} 正文`, importance: 5,
+      workspace_scope: "proj-a", workspace_scope_source: "explicit"
+    });
+  }
+  service.setScopeState({ dimension: "workspace", scope_value: "proj-a", state: "paused" });
+  return own;
+}
+
+/** 记录 service.list 的入参（只包 list，其余方法原样透出），用于「付了几次查询」。 */
+function countingList(service, calls) {
+  return new Proxy(service, {
+    get(target, prop) {
+      if (prop === "list") {
+        return (query) => {
+          calls.push(query);
+          return target.list(query);
+        };
+      }
+      return Reflect.get(target, prop, target);
+    }
+  });
+}
+
+test("#515：被按下的行占满 LIMIT 200 窗口时，模式扫描不报「没东西可扫」", async () => {
+  const { store, service } = setup(sleepConfig());
+  seedStarvedPatternPool(store, service);
+
+  const seen = [];
+  const ctx = {
+    ...sleepCtx(),
+    llm: {
+      async *stream(options) {
+        const text = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
+        // 只收模式扫描的提示（listText 每行以 `id=` 开头），别的时间不掺进来。
+        if (text.startsWith("id=")) seen.push(text);
+        yield { type: "text-delta", index: 0, text: "[]" };
+        yield { type: "finish", reason: { kind: "stop" } };
+      }
+    }
+  };
+  const result = await runSleep(ctx, service, sleepConfig(), ctx.logger, null, null);
+  const patterns = result.phases.patterns;
+
+  assert.notEqual(patterns?.reason, "no memories to scan",
+    `窗口被按下行占满时不该静默跳过，实得 ${JSON.stringify(patterns)}`);
+  // 反向断言：这条才是「真的扫了」的证据——只断上面那句的话，一个「相位整个没跑」
+  // 的实现（连 reason 都不产出）也能过。
+  assert.equal(seen.length, 1, "模式扫描必须真发起了这次 LLM 调用");
+  assert.ok(seen[0].includes("own-1") && seen[0].includes("own-2"), "窗口外的自家行要被重取回来");
+  // 重取只放宽窗口，不放宽判定：被按下的行一条都不许混进提示。
+  assert.ok(!seen[0].includes("paused-"), "被按下的行不该因为重取而混进扫描池");
+  store.close();
+});
+
+test("#515：重取按需——闸门没按下且窗口够用时，仍只付一次有界查询", async () => {
+  const { store, service } = setup(sleepConfig());
+  // 120 条自家行（无闸门）：过滤后的池子 ≥ sleepPatternMinMemories(100)，窗口没被吃掉，
+  // 第二趟不该发生。这一条锁的是「常态仍只付一次有界查询」那半句承诺。
+  for (let i = 0; i < 120; i++) {
+    store.save({ type: "project", title: `m-${i}`, content: `m-${i} 正文`, importance: 3 });
+  }
+  const calls = [];
+  const ctx = sleepCtx();
+  await runSleep(ctx, countingList(service, calls), sleepConfig(), ctx.logger, null, null);
+
+  assert.equal(calls.length, 1, `常态只该取一次，实得 ${calls.length} 次`);
+  assert.equal(calls[0].limit, 200, "常态走的是有界窗口");
+  store.close();
+});
+
+test("#515：窗口跟着配额走——把 sleepPatternMinMemories 配到 200 之上时，常态仍不触发无界重取", async () => {
+  // 这条锁的是我自己差点留下的坑：合法上限是 1000（src/config.js:612），若窗口仍是死的
+  // 200，凡把这个值配到 200 以上的人**每一轮**都会白付一次全表重取，跟闸门按没按下无关。
+  const config = sleepConfig({ sleepPatternMinMemories: 300 });
+  const { store, service } = setup(config);
+  for (let i = 0; i < 400; i++) {
+    store.save({ type: "project", title: `m-${i}`, content: `m-${i} 正文`, importance: 3 });
+  }
+  const calls = [];
+  const ctx = sleepCtx();
+  await runSleep(ctx, countingList(service, calls), config, ctx.logger, null, null);
+
+  assert.equal(calls.length, 1, `窗口够用时不该重取，实得 ${calls.length} 次`);
+  assert.equal(calls[0].limit, 300, "窗口至少等于本次要扫的名额");
+  store.close();
+});
+
+test("#515：窗口饿死时重取一次，且只放宽 limit——三条过滤轴一条不许动", async () => {
+  const { store, service } = setup(sleepConfig());
+  seedStarvedPatternPool(store, service);
+
+  const calls = [];
+  const ctx = sleepCtx();
+  await runSleep(ctx, countingList(service, calls), sleepConfig(), ctx.logger, null, null);
+
+  assert.equal(calls.length, 2, `饿死时补一趟无界重取，实得 ${calls.length} 次`);
+  assert.equal(calls[0].limit, 200);
+  assert.equal(calls[1].limit, null, "重取是不带窗口（store.list 的 limit == null 即无界档）");
+  // 除 limit 之外的口径必须逐字段相同：重取放宽的是窗口，不是判定。
+  assert.deepEqual(
+    { ...calls[0], limit: null },
+    calls[1],
+    "第二趟只能比第一趟少一个窗口，excludeTypes/excludeImported/includeForgotten 都得在"
+  );
+  store.close();
+});
+
 test("睡眠侧：被按下作用域的行不进关系补全的候选池", async () => {
   const { store, service } = setup(sleepConfig());
   const alpha = service.createEntity({ name: "Alpha", type: "project" });

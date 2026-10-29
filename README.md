@@ -237,6 +237,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 | 独立服务 daemon（不开 DSH 常驻数据面） | [dsh-mneme/docs/DAEMON.md](dsh-mneme/docs/DAEMON.md) |
 | 配置说明（全键参考） | [dsh-mneme/docs/CONFIGURATION.md](dsh-mneme/docs/CONFIGURATION.md) |
 | 蒸馏原文留存与记忆级溯源（#399） | [dsh-mneme/docs/DISTILL.md](dsh-mneme/docs/DISTILL.md) |
+| 记忆分享包：出包与收包（`dsh-mneme share` / `receive` / `undo-share`） | [dsh-mneme/docs/SHARE.md](dsh-mneme/docs/SHARE.md) |
 | 实体结构化设计 | [dsh-mneme/docs/ENTITIES.md](dsh-mneme/docs/ENTITIES.md) |
 | 工作流（M.O.）：本体住仓库、证据住记忆库 | [dsh-mneme/docs/WORKFLOWS.md](dsh-mneme/docs/WORKFLOWS.md) |
 | 语义架构 | [dsh-mneme/docs/SEMANTIC.md](dsh-mneme/docs/SEMANTIC.md) |
@@ -244,6 +245,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 | 与 Zep / Mem0 / Letta / Hindsight 的能力对比 | [docs/COMPARISON.md](docs/COMPARISON.md) |
 | 版本历史 | [dsh-mneme/CHANGELOG.md](dsh-mneme/CHANGELOG.md) |
 | 安全策略 | [SECURITY.md](SECURITY.md) |
+| 行为守则（署名归人、按证据分配发言权） | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |
 
 ## 🗺️ 路线图
 
@@ -514,6 +516,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 | Standalone daemon (serve memories without DSH) | [dsh-mneme/docs/DAEMON.md](dsh-mneme/docs/DAEMON.md)（中文） |
 | Configuration reference (all keys) | [dsh-mneme/docs/CONFIGURATION.md](dsh-mneme/docs/CONFIGURATION.md)（中文） |
 | Distill record retention & memory-level provenance (#399) | [dsh-mneme/docs/DISTILL.md](dsh-mneme/docs/DISTILL.md)（中文） |
+| Memory share pack: export and import (`dsh-mneme share` / `receive` / `undo-share`) | [dsh-mneme/docs/SHARE.md](dsh-mneme/docs/SHARE.md)（中文） |
 | Entity structure design | [dsh-mneme/docs/ENTITIES.md](dsh-mneme/docs/ENTITIES.md) |
 | Workflows (M.O.): the workflow lives in the repo, the evidence in memory | [dsh-mneme/docs/WORKFLOWS.md](dsh-mneme/docs/WORKFLOWS.md)（中文） |
 | Semantic architecture | [dsh-mneme/docs/SEMANTIC.md](dsh-mneme/docs/SEMANTIC.md) |
@@ -521,6 +524,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 | Capability comparison vs Zep / Mem0 / Letta / Hindsight | [docs/COMPARISON.md](docs/COMPARISON.md)（中文） |
 | Changelog | [dsh-mneme/CHANGELOG.md](dsh-mneme/CHANGELOG.md) |
 | Security | [SECURITY.md](SECURITY.md) |
+| Code of Conduct (attribution, evidence over identity) | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |
 
 ## 🗺️ Roadmap
 
