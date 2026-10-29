@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/@modusensus/dsh-mneme?color=blue&label=npm)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Awesome](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
-[![tests](https://img.shields.io/badge/tests-2302%20passed-success)](https://github.com/slow-stack/mneme)
+[![tests](https://img.shields.io/badge/tests-2541%20passed-success)](https://github.com/slow-stack/mneme)
 [![CI](https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml)](https://github.com/slow-stack/mneme/actions)
 [![node](https://img.shields.io/badge/node-22%2B-blue)](https://nodejs.org)
 [![npm downloads](https://img.shields.io/npm/d18m/@modusensus/dsh-mneme.svg?color=blue&label=downloads)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
@@ -281,6 +281,7 @@ v0.3.0 起新增**记忆基因**层：从记忆里抽取**命名实体**、**带
 | **v0.9.2**（2026-10-19） | 让「看不见的失败」显形：功能开关的第三态「待重启」把「面板显示已改 ≠ 运行时已改」摆到界面上（#481）；作用域级可逆闸门让一路记忆能被单独按下与松开、不必改配置重启（#471，默认关）；巩固用的 `dreamMaxTokens` 默认值撞服务商上限、八天 180 次全失败，面板现在能改、超上限还会自动降级重试（#478）；CLI 把 `--` 开头的值当新旗标的真实缺陷（一次 1/4096 概率的 CI 红揪出来的）、人格卡删除 × 永远不可见、自动蒸馏写入的行 100% 拿不到向量（#477） |
 | **v0.9.3**（2026-10-20） | M.O. 从「挖得出来」到「会被叫去挖」：沉淀链算法自 v0.9.1 起就完整实现（多帧 zstd → 重复序列 → 缺席对照 → draft 草稿），运行时却没有任何调用点——机器挖得出来、却永远不会被叫去挖。这一版把归属与触发接上：按会话头 `cwd` 反查项目桶（桶名是路径的有损变形，查不到整跑跳过而不是降级成全局普查）、挂 `turn/end`、冷却 10 分钟、单次预算 4 秒、延到宏任务、一次一个项目、抛错只 `warn`，**只产提议不产草稿**（`actionNudgeEnabled`，beta，默认关）；面板加「现在沉淀一次」，与自动跑同一条入口，区别只有它不改仓库；另修作用域反查自 v0.8.0 起每次都抛错走降级（#487）、`/nudge` 三处「没看全」被报成「确实没有」（#489 评审）、多帧 zstd 反证断言绑了 Node 整块解语义（#490），并把整个 M.O. 的「手法」改回「工作流」 |
 | **v0.9.4**（2026-10-21） | 三条链各自补上「最后一环」——东西早就造好了，只差没人能叫它：**agent 主动整理**（`memory_organize`，先 dryRun 出比对报告 → agent 判断 → apply 落库，筛除只归档不删、全程留审计回执；`organizeEnabled` 默认关，关时工具根本不注册）；**画像提取草稿**（面板按钮读活跃记忆 + 一次模型调用，产一段「助手眼中的用户」草稿，`profileExtractEnabled` 默认关）——**只出草稿**，采用是用户再点一次，手写的画像原文不会被模型改写，空库与解析失败都直接报错、绝不回空草稿冒充「没提炼出东西」；**人格寻址收口**（`default` 卡以前无条件落给所有没建卡的身份，宿主里自带身份的 bot 每帧收到两句「你是谁」；`personaStrictAddressing` 默认关，把「没建卡」与「卡被显式关掉」都收回为不注入）。同版补蒸馏的**转录围栏 + 解析失败护栏**（#494：一条会话被同一窗口卡死、重试 20 次越试越贵的根因；失败行现在恒带原始输出形状），把面板自称「注入生效文本」的只读区改成后端单源渲染（并修它从不显示人格行），评审另收掉两处「坏了却不报」：整理报告侧的存在性探测口（`strictScope` 下按调用方可见性过滤落点并重算计数）、画像保存不判 `res.ok` 却提示已保存 |
+| **v0.9.5**（2026-10-30） | （待填） |
 
 | **v0.8.x** | 作用域隔离（agent / workspace 双维 + opt-in 硬过滤）、冲突队列人工裁决、生态化（stdio MCP server / 图召回轴 / 冷启动 / 注入截断） |
 
@@ -716,7 +717,7 @@ src/
 ├── api.js            # HTTP 路由（Web 面板数据通道，含 /conflicts 冲突队列）
 └── index.js          # 插件接线
 lib/                  # src 的同步分发产物（npm run sync，prepack 钩子在发布时自动跑；一致性由 scripts/check-sync.js 在 CI 与 release.yml 校验——它只查不同步；唯一手写例外 lib/client.js——Web 面板 bundle，sync 不覆盖）
-test/                 # 2302 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
+test/                 # 2541 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
 scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压测 · sync-lib.js 同步 · check-sync.js 发布闸门 · benchmark-recall.js / benchmark-embed.js / benchmark-rerank.js 基准 · sync-test-badge.mjs 测试徽章 · build-runtime-manifest.mjs 运行时清单
 ```
 
@@ -725,7 +726,7 @@ scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压
 ```bash
 cd dsh-mneme
 npm install        # 安装 peer 依赖（以 devDependencies 形式，用于本地测试）
-npm test           # 运行 2302 个测试
+npm test           # 运行 2541 个测试
 npm run stress     # 三轴线压测：长会话检索 / 冲突仲裁 / 多 Agent 并发（离线 mock LLM）
 npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动执行）
 ```
