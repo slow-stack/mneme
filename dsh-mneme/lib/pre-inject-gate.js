@@ -207,6 +207,13 @@ export function createPreInjectGate({ llm, agentDefaultModel, service, config, l
     const startedAt = Date.now();
     const timestamp = new Date(startedAt).toISOString();
     const source = { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" };
+    // 刻意不套 fenceListBody（dream.js:330，Issue #380 的复盘）：本闸的 system 契约把
+    // user 侧形状写死成「你将收到一个 JSON 对象，包含 query 与 memories」（lang.js:57/58），
+    // 套围栏会让提示词与载荷互相矛盾；而且判定池靠 JSON.parse 直接取 m#<i> 局部序号还原
+    // 候选（test/pre-inject-gate.test.js 锁着这个形状），外包围栏文本会让解析整条失败。
+    // 这里的注入防线不是围栏而是**判定结果绝不进模型上下文**：判到的记忆整条不注入，
+    // 模型永远看不到任何标记（给模型看标记的整条线已被 E2/E3 关闭，见 lang.js:52-55）。
+    // 没有围栏可闭合，也就没有闭合风险——记忆正文里的指令句由判定本身消化掉。
     const messages = [
       { role: "system", content: [{ type: "text", text: STR.prompts.preInjectGate[language] }], source },
       { role: "user", content: [{ type: "text", text: JSON.stringify({ query, memories: candidates.map((c, i) => ({ id: `m#${i}`, content: c.content })) }) }], source },
