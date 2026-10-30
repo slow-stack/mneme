@@ -207,6 +207,20 @@ export function createPreInjectGate({ llm, agentDefaultModel, service, config, l
     const startedAt = Date.now();
     const timestamp = new Date(startedAt).toISOString();
     const source = { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" };
+    // 刻意不套 fenceListBody（dream.js:330，Issue #380 的复盘）：本闸的 system 契约把
+    // user 侧形状写死成「你将收到一个 JSON 对象，包含 query 与 memories」（lang.js:57/58），
+    // 套围栏会让提示词与载荷互相矛盾；而且判定池靠 JSON.parse 直接取 m#<i> 局部序号还原
+    // 候选（test/pre-inject-gate.test.js 锁着这个形状），外包围栏文本会让解析整条失败。
+    // 这里的注入防线不是围栏而是**判定结果绝不进模型上下文**：没有任何标记（判到的、
+    // 没判到的）会被写回提示词，给模型看标记的整条线已被 E2/E3 关闭（见 lang.js:52-55）。
+    // 但这条「移出候选」的保证是**有条件的**，写清楚免得被读成无条件：
+    //   · 只有 enforce 开着、且本帧缓存命中（gateFrame.state === "filtered"）时才真移除候选
+    //     （service.injectCandidates 的移除分支）；
+    //   · 观察档（enforce 关）、冷缓存首帧、判定失败/超时、整池被标记的 fail-open 帧，
+    //     候选原样注入——那些帧里记忆正文会照常到达模型；
+    //   · 判定器识别的是「意见或立场」，它**不**承诺消化正文里任何指令句（越狱式记忆
+    //     不在本闸的判据里），别把这段读成对注入指令的保证。
+    // 没有围栏可闭合，也就没有「闭合标记被伪造」这一路风险。
     const messages = [
       { role: "system", content: [{ type: "text", text: STR.prompts.preInjectGate[language] }], source },
       { role: "user", content: [{ type: "text", text: JSON.stringify({ query, memories: candidates.map((c, i) => ({ id: `m#${i}`, content: c.content })) }) }], source },
