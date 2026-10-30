@@ -25,7 +25,8 @@ const STANCE_PATTERNS = [
   [/立场纪律|Stance discipline/, "立场纪律小节本身"],
   [/不要记录对用户本人|Never record evaluations of the user/, "规则 a：不记对用户本人的性格/能力/情绪评价"],
   [/可信度不同|differ in trustworthiness/, "规则 b：转录三种角色可信度不同"],
-  [/以用户陈述为准|the user statement wins/, "规则 c：用户陈述压过助手推断"],
+  [/事实归属以用户陈述为准|the user statement wins on the facts/, "规则 c：事实归属不记成助手推断"],
+  [/如实并存|keep both sides/, "规则 c：两种说法并存，不写成谁对谁错"],
   [/不是提高 importance 的理由|never a reason to raise it/, "规则 d：赞许不抬 importance"],
 ];
 
