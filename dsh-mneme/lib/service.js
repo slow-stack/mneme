@@ -2822,6 +2822,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
     listConflictQueue,
     resolveConflictPending,
     countConflictPending: () => store.countConflictPending(),
+    // Issue #533：differentiate 的裁决账本。同样只做记账、绝不改正文——正文
+    // 一旦互相追加同一段注记，两条向量会被同向拉近（复现见 store 侧建表注释）。
+    saveDifferentiatedPair: (r) => store.saveDifferentiatedPair(r),
+    findDifferentiatedPair: (a, b) => store.findDifferentiatedPair(a, b),
+    listDifferentiatedPairs: (opts) => store.listDifferentiatedPairs(opts),
     // Recall evaluation trail (方案 B): audit-bookkeeping semantics like the
     // dream/recall passthroughs above — a recall_evals write is a snapshot, not
     // a memory mutation, so it never triggers write hooks.

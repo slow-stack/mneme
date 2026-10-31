@@ -476,6 +476,31 @@ test("countConflictPending counts unresolved rows only; resolve unknown id is un
   store.close();
 });
 
+// Issue #533：differentiate 的裁决账本。正文不再追加注记，改由这张表记住「这一对
+// 已经判过、两条都留」，候选构造阶段读它避免同一对每轮重判。
+test("Issue #533: differentiated_pairs survives a reopen and normalizes pair order", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-diffpair-"));
+  const path = join(dir, "memory.db");
+  const s1 = createStore(path);
+  // 送审顺序与存储顺序相反也要落到同一行（账本按 id 排序归一）。
+  s1.saveDifferentiatedPair({ run_id: "r1", memory_a: "mb", memory_b: "ma", hash_a: "hb", hash_b: "ha", distinctions: ["只看甲", "只看乙"] });
+  assert.equal(s1.listDifferentiatedPairs().length, 1);
+  s1.close();
+  const s2 = createStore(path);
+  const found = s2.findDifferentiatedPair("ma", "mb");
+  assert.ok(found, "lookups work in either argument order");
+  assert.equal(found.memory_a, "ma", "the row is stored sorted");
+  assert.equal(found.hash_a, "ha", "hashes travel with their side");
+  assert.deepEqual(found.distinctions, ["只看甲", "只看乙"]);
+  assert.equal(s2.listDifferentiatedPairs().length, 1, "re-saving the same pair updates instead of duplicating");
+  s2.saveDifferentiatedPair({ run_id: "r2", memory_a: "ma", memory_b: "mb", hash_a: "ha2", hash_b: "hb2" });
+  assert.equal(s2.listDifferentiatedPairs().length, 1, "still one row for one pair");
+  const updated = s2.findDifferentiatedPair("ma", "mb");
+  assert.equal(updated.hash_a, "ha2", "the refresh overwrites the hashes");
+  assert.equal(updated.distinctions, undefined, "an empty distinctions lands as NULL, not as an empty array");
+  s2.close();
+});
+
 test("conflict_pending table persists across store reopen", () => {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-conflict-"));
   const path = join(dir, "memory.db");

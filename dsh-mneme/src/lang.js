@@ -248,12 +248,17 @@ export const STR = {
     zh: (content, winnerTitle) => `${content}\n\n（已被取代：${winnerTitle}）`,
     en: (content, winnerTitle) => `${content}\n\n(superseded by: ${winnerTitle})`
   },
-  // Issue #126：differentiate 的差异注记，双方都要追加（进正文 → 进注入与
-  // embedding，下一轮就不会再被判成重复）。
-  differentiatedMarker: {
-    zh: (notes) => `\n\n（差异注记：${notes.join("；")}）`,
-    en: (notes) => `\n\n(differences: ${notes.join("; ")})`
-  },
+  // Issue #533：differentiate 不再往正文写注记。原设计（#126）指望「注记进正文 →
+  // 进注入与 embedding → 下一轮就不会再被判成重复」，离线复现把它证伪了：两侧
+  // 共享同一段后缀时向量同向靠拢（5 轮 0.876→0.960，注记截到 0 字也一样），
+  // 于是同一对每轮再判一次、再追加一段，单条堆到 19 段。现在裁决只记在
+  // differentiated_pairs 账本里（src/store.js），正文一个字节都不动。
+  //
+  // 这里保留的是一句识别式，只用来兼容存量库：旧版本已经写进正文的注记块仍然
+  // 算「这一对已裁决」，免得升级后又把老行原样重判一遍。用户切过 language，两种
+  // 语言都可能留在库里，所以一条正则同时认 zh/en 开头。注记永远追加在正文末尾，
+  // 故锚到结尾；非贪婪 + `$` 也吃得住旧版本堆叠的多段。
+  differentiatedNoteRe: /\n\n(?:（差异注记：|\(differences: )[\s\S]*?[）)]\s*$/,
 
   // --- service.js：三方合并冲突批注（写入记忆内容） -----------------------------
   serviceConflictMarker: {

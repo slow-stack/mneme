@@ -1,8 +1,10 @@
 import { STR, langOf } from "../lang.js";
+import { contentHashOf } from "../content-hash.js";
 
 // Issue #126：sleepActionSet="full" 时新增两个动作——supersede（演进：新版取代
-// 旧版）与 differentiate（互补：两条都留、各追加差异注记）。两者的校验与执行都
-// 复用既有 merge/conflict 的机制（winner/loser、casGuard、transaction、receipt）。
+// 旧版）与 differentiate（互补：两条都留，各自保留原本的正文）。两者的校验与执行
+// 都复用既有 merge/conflict 的机制（winner/loser、casGuard、transaction、receipt）。
+// Issue #533 起 differentiate 不再改写正文，只落裁决账本——见 applyDifferentiate。
 // 调用方（sleep）按档位派生「本档允许的动作集合」时需要读它，故导出。
 export const ACTIONS = new Set(["keep", "merge", "archive", "conflict", "update", "create", "supersede", "differentiate"]);
 
@@ -179,9 +181,10 @@ export function validateDecisions(decisions, snapshot, options = {}) {
         local.push(`${at}: ${d.action} needs distinct winner and loser`);
       }
     } else if (d.action === "differentiate") {
-      // Issue #126：互补型——两条都留下、各追加差异注记。ids 必须 ≥2（随后走下方
-      // 通用 id 校验：unknown / archived / summary / 重复 claim），distinctions 必须
-      // 非空，否则会写出空注记（写了等于没写，还会污染正文）。
+      // Issue #126：互补型——两条都留下。ids 必须 ≥2（随后走下方通用 id 校验：
+      // unknown / archived / summary / 重复 claim）。distinctions 仍然必填：#533 之后
+      // 它不再写进正文，但仍是「模型确实做过分类」的唯一凭据，落进裁决账本供审计
+      // （空数组意味着模型只是偷懒输出了一条动作名，不该被记成已裁决）。
       if (!Array.isArray(d.ids) || d.ids.length < 2) {
         local.push(`${at}: differentiate needs at least two ids`);
       } else if (!Array.isArray(d.distinctions) || !d.distinctions.some((s) => typeof s === "string" && s.trim())) {
@@ -731,35 +734,62 @@ function applySupersede(d, service, snapshot, config = {}) {
 
 /**
  * differentiate（Issue #126，sleepActionSet="full"）：互补型重复——两条各自成立、
- * 覆盖不同侧面，不该判输赢。双方都保留（不归档），各追加同一段差异注记；注记进
- * 正文 → 进注入与 embedding → 下一轮不会再被判成重复（这是本动作存在的意义）。
+ * 覆盖不同侧面，不该判输赢。双方都保留（不归档），**正文一个字节都不动**。
  *
- * 注记由插件按 distinctions 渲染，**不让模型整段重写 content**（重写有篡改/丢失
- * 风险）。幂等：注记已在正文里就不重复追加，否则同一决策重放会不断堆叠。
+ * 为什么不动正文（Issue #533）：#126 的原设计是「双方各追加同一段差异注记，注记
+ * 进正文 → 进注入与 embedding → 下一轮就不会再被判成重复」。离线复现证伪了这个
+ * 假设——两侧共享同一段后缀会让两条向量**同向靠拢**，余弦一轮比一轮高（0.876 →
+ * 0.960 只用了 5 轮，把注记截到 0 字照样往上爬，因为推高相似度的是共享前缀本身而
+ * 不是注记长短），于是同一对下一轮又被判成重复、又追加一段，实测单条堆到 19 段。
+ * 现在的裁决落在 differentiated_pairs 账本（src/store.js）里：候选构造阶段读它，
+ * 已裁决且两侧正文都没改过就不再送模型，正文保持干净。
+ *
+ * 幂等三层，从便宜到贵：
+ *   1. 一侧已归档 → skipped（缺一条就没什么可区分的）；
+ *   2. 存量兼容：两侧正文都还带着旧版注记块 → skipped（升级不清账）；
+ *   3. 账本命中且两侧 content hash 与记账时一致 → skipped（真正的幂等重放）。
+ * 任一侧后来被改写 → hash 对不上 → 重新裁决，宁可再判一次也不静音真的演化。
  */
 function applyDifferentiate(d, service, snapshot, config = {}) {
-  const language = langOf(config);
   const ids = Array.isArray(d.ids) ? d.ids : [];
-  const notes = (Array.isArray(d.distinctions) ? d.distinctions : [])
-    .filter((s) => typeof s === "string" && s.trim())
-    .map((s) => s.trim());
-  const marker = STR.differentiatedMarker[language](notes);
   const alive = ids.filter((id) => {
     const m = service.getById(id);
     return m && !m.archived;
   });
   if (alive.length < 2) return "skipped"; // 缺一条即已处理/不可用（幂等）
-  if (alive.every((id) => String(service.getById(id)?.content ?? "").includes(marker))) {
-    return "skipped"; // 同一条决策重放：注记已存在
+  const hashes = new Map(alive.map((id) => [id, contentHashOf(service.getById(id))]));
+  const [a, b] = alive.slice(0, 2);
+  const record = typeof service.findDifferentiatedPair === "function"
+    ? service.findDifferentiatedPair(a, b)
+    : undefined;
+  if (record) {
+    // 记账时 a/b 是按 id 排序存的，hash 也跟着换位，这里同样按排序取值比对。
+    const [ha, hb] = a <= b ? [hashes.get(a), hashes.get(b)] : [hashes.get(b), hashes.get(a)];
+    if (record.hash_a === ha && record.hash_b === hb) return "skipped";
+  } else {
+    // 存量库兼容：旧版本把注记写进了正文，那些行没有账本行。两侧都还带着注记块
+    // 才认定「已裁决过」——只有一侧有，说明另一侧后来被改写，应当重判。
+    const noted = alive.filter((id) => STR.differentiatedNoteRe.test(String(service.getById(id)?.content ?? "")));
+    if (noted.length >= 2) return "skipped";
   }
+  // 账本缺席（人工确认路径的裸 service）就什么都不写：正文一字不动本来就是本动作
+  // 的全部副作用，没有账本就只剩「这条决策无处落地」，不是错误，也不是 applied。
+  if (typeof service.saveDifferentiatedPair !== "function") return "skipped";
   service.transaction(() => {
     casGuard(service, snapshot, ids);
-    for (const id of ids) {
-      const m = service.getById(id);
-      if (!m || m.archived) continue;
-      if (String(m.content).includes(marker)) continue; // 单条已注记过
-      service.update(id, { content: `${m.content}${marker}` });
-    }
+    const [ia, ib] = alive.slice(0, 2);
+    service.saveDifferentiatedPair({
+      run_id: config.runId,
+      memory_a: ia,
+      memory_b: ib,
+      // hash 取**执行时**的正文（不是送审时），与账本里下一次比对的口径同源。
+      hash_a: hashes.get(ia),
+      hash_b: hashes.get(ib),
+      // 模型给的差异点也落账：正文不再写注记，这些就是「当初为什么判互补」的唯一凭据。
+      distinctions: (Array.isArray(d.distinctions) ? d.distinctions : [])
+        .filter((x) => typeof x === "string" && x.trim())
+        .map((x) => x.trim())
+    });
   });
   return {
     applied: 1,

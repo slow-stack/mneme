@@ -186,6 +186,29 @@ CREATE TABLE IF NOT EXISTS conflict_pending (
 );
 CREATE INDEX IF NOT EXISTS idx_conflict_pending_unresolved ON conflict_pending(resolved_at);
 
+-- differentiated_pairs: 「这一对已经判过 differentiate」的裁决账本（issue #533）。
+-- 起因：#126 的 differentiate 把同一段差异注记同时追加到两侧正文，指望「注记进
+-- embedding 后下一轮就不再判重复」；离线复现证伪了这个假设——两侧共享同一段
+-- 后缀时向量同向靠拢（0.876→0.960/5 轮，注记截到 0 字也一样），而字面 includes
+-- 幂等在措辞漂移下失效，于是同一对每轮都被追加一段，单条堆到 19 段。
+-- 这里记的是「(a,b) 已裁决」这件事本身，正文一个字节都不动；hash_a/hash_b 是
+-- 裁决当时两侧正文的 content_hash，任一侧后来被改写就让该对重新进入候选（宁可
+-- 再判一次，不静音真的演化）。与 conflict_pending 同款的 bookkeeping 表：只做
+-- 裁决记账，不触发 write hooks。
+CREATE TABLE IF NOT EXISTS differentiated_pairs (
+  id           TEXT PRIMARY KEY,
+  memory_a     TEXT NOT NULL,
+  memory_b     TEXT NOT NULL,
+  hash_a       TEXT,
+  hash_b       TEXT,
+  -- 模型给出的差异点（JSON 数组）。不再写进正文，留在这里只为了让「当初为什么
+  -- 判它们互补」事后查得到——裁决本身必须可审计，否则和静音丢弃没有区别。
+  distinctions TEXT,
+  run_id       TEXT,
+  created_at   TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_differentiated_pairs_pair ON differentiated_pairs(memory_a, memory_b);
+
 -- scope_changes: v0.8.1 底座（issue #170）scope 归属的人工修正审计。显式声明
 -- （memory_save/memory_update 的 scope 参数、面板编辑）每次改变某条记忆的
 -- agent/workspace 归属都落一行：改动前后值 + 来源 + actor（tool=模型侧 /
@@ -633,6 +656,20 @@ function toConflictPending(row) {
     created_at: row.created_at,
     resolved_at: row.resolved_at ?? undefined,
     resolved_winner: row.resolved_winner ?? undefined
+  };
+}
+
+function toDifferentiatedPair(row) {
+  if (!row) return undefined;
+  return {
+    id: row.id,
+    memory_a: row.memory_a,
+    memory_b: row.memory_b,
+    hash_a: row.hash_a ?? undefined,
+    hash_b: row.hash_b ?? undefined,
+    distinctions: row.distinctions ? JSON.parse(row.distinctions) : undefined,
+    run_id: row.run_id ?? undefined,
+    created_at: row.created_at
   };
 }
 
@@ -2935,6 +2972,60 @@ export function createStore(path) {
     ).get().c;
   }
 
+  // --- differentiate adjudication ledger (issue #533) ----------------------
+
+  /**
+   * Record that the pair (a, b) has already been adjudicated as "different
+   * enough to both stay" — the differentiate decision itself. Nothing is
+   * written to either memory: #533 的复现证明「把同一段注记追加到两侧」会
+   * 把两条向量越推越近（共享后缀同向拉高余弦），所以裁决只记账、不动正文。
+   *
+   * hash_a/hash_b are the content hashes captured at adjudication time; the
+   * sleep candidate builder uses them to decide whether the verdict still
+   * stands (any later edit to either side re-opens the pair). Sorting the pair
+   * keeps one row per unordered pair, same normalization as saveConflictPending.
+   */
+  function saveDifferentiatedPair({ run_id, memory_a, memory_b, hash_a, hash_b, distinctions }) {
+    const [a, b] = [memory_a, memory_b].sort();
+    // hashes travel with their side; sort the (id, hash) tuples so hash_a
+    // always belongs to memory_a after normalization.
+    const [ha, hb] = memory_a <= memory_b ? [hash_a, hash_b] : [hash_b, hash_a];
+    db.prepare(
+      `INSERT INTO differentiated_pairs (id, memory_a, memory_b, hash_a, hash_b, distinctions, run_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(memory_a, memory_b) DO UPDATE SET
+         hash_a = excluded.hash_a,
+         hash_b = excluded.hash_b,
+         distinctions = excluded.distinctions,
+         run_id = excluded.run_id,
+         created_at = excluded.created_at`
+    ).run(
+      randomUUID(), a, b, ha ?? null, hb ?? null,
+      // 没有 distinctions 就落 NULL 而不是 "[]"——空数组会被读成「判过、理由是空」，
+      // NULL 才是「这条账本行没记理由」的诚实写法（与 dream_runs.skipped 同口径）。
+      Array.isArray(distinctions) && distinctions.length ? JSON.stringify(distinctions) : null,
+      run_id ?? null, nowIso()
+    );
+    return findDifferentiatedPair(a, b);
+  }
+
+  /** The adjudication row for an unordered pair, or undefined. */
+  function findDifferentiatedPair(memory_a, memory_b) {
+    const [a, b] = [memory_a, memory_b].sort();
+    return toDifferentiatedPair(
+      db.prepare("SELECT * FROM differentiated_pairs WHERE memory_a = ? AND memory_b = ?").get(a, b)
+    );
+  }
+
+  /** Adjudicated pairs, newest first (audit view / tests). */
+  function listDifferentiatedPairs({ limit = 50, offset = 0 } = {}) {
+    const { limit: lim, offset: off } = sanitizePage(limit, offset, 50);
+    const rows = db.prepare(
+      "SELECT * FROM differentiated_pairs ORDER BY created_at DESC, id LIMIT ? OFFSET ?"
+    ).all(lim, off);
+    return rows.map(toDifferentiatedPair);
+  }
+
   /**
    * v0.8.1 底座（issue #170）：scope 归属人工修正的审计行。record 描述「一次
    * 决策后的完整状态」（prev_* 为改前、next_* 为改后，NULL=global/未标注），
@@ -3722,6 +3813,9 @@ export function createStore(path) {
     listConflictPending,
     resolveConflictPending,
     countConflictPending,
+    saveDifferentiatedPair,
+    findDifferentiatedPair,
+    listDifferentiatedPairs,
     saveScopeChange,
     listScopeChanges,
     // 政策轴（issue #471）：按下/松开一个作用域。纯 bookkeeping，不调
