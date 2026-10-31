@@ -65,13 +65,14 @@ flowchart TD
 - **算法**：
   1. 向量检索 `findPotentialConflicts` 获取高相似度对；`sleepActionSet: "full"` 时再补一遍跨类型对。
   2. **已裁决对先压掉**：`differentiated_pairs` 账本里记着「这一对判过"互补、两条都留"」，两侧正文的 `content_hash` 与记账时一致就不再送模型（任一侧被改写则重新进候选）。这一轮被压掉几对记在 `phase.suppressed`，与「一对都没检测到」（`no conflicts found`）分开报。
-  3. **台账预筛**（#529）：查 `conflict_reviewed`，把「已经判过、且两侧 `updated_at` 都不晚于 `judged_at`」的对从候选池里剔掉——它们上一轮已有结论，两侧都没动就没必要再问一遍。任一字段更新即重新入池（与 `conflict_pending` 复核项 4 同一条宽松代理）。
-  4. **每轮总量上限**（`sleepConflictMaxPairsPerRun`，默认 60）：没进这一轮的对留在下一轮，既不丢也不记账。
-  5. **分批**（`sleepConflictMaxPairs`，默认 12）：每批单独一次 LLM 往返、单独 `validateDecisions` + `applyDecisions`。某批撞上下文或输出坏掉只让**这一批**失败并计入 `degraded`，其余批照常落地；只有一批都没成功才整轮 `failed`。
-  6. LLM 仲裁：基于严格度阈值生成决策（默认档 `keep/merge/conflict/create/archive/update`，full 档另开 `supersede/differentiate`）。
-  7. `validateDecisions`：严格校验决策合法性，缺省策略为 `keep`。
-  8. `applyDecisions`：批量执行状态变更。
-  9. **台账记账**：本批**全部送审对**都写一行 `conflict_reviewed`（不只记被裁决成冲突的那几对，判 `keep` 的正是下一轮重复送审的元凶），`outcome` 取两端里非 `keep` 的那一侧。记账是幂等 upsert，按 `(memory_a, memory_b)` 排序归一化。
+  3. **台账预筛**（#529）：查 `conflict_reviewed`，把「已经判过、且两侧 `updated_at` 都不晚于 `judged_at`」的对从候选池里剔掉——它们上一轮已有结论，两侧都没动就没必要再问一遍。任一字段更新即重新入池（与 `conflict_pending` 复核项 4 同一条宽松代理）。两条边界：跨 scope 对**不筛**（它们本来就要停车进人工队列，不能被机器台账吞掉），`conflictFreezeEnabled` 档**不筛**（那一档只停车不送 LLM）。
+  4. **去重**：每条记忆至多参与一对，相似度高者优先。**必须排在 3 之后**——先占位再去掉，一个已审的对会把它那一端记忆的配对名额占住，而它真正的对手（另一条没审过的记忆）因此进不了这一轮。被台账挡下的对数记在 `phase.ledgerSkipped`。
+  5. **每轮总量上限**（`sleepConflictMaxPairsPerRun`，默认 60）：没进这一轮的对留在下一轮，既不丢也不记账。
+  6. **分批**（`sleepConflictMaxPairs`，默认 12）：每批单独一次 LLM 往返、单独 `validateDecisions` + `applyDecisions`。某批撞上下文或输出坏掉只让**这一批**失败并计入 `degraded`，其余批照常落地；只有一批都没成功才整轮 `failed`。
+  7. LLM 仲裁：基于严格度阈值生成决策（默认档 `keep/merge/conflict/create/archive/update`，full 档另开 `supersede/differentiate`）。
+  8. `validateDecisions`：严格校验决策合法性，缺省策略为 `keep`。**`reflectionUpdateMaxPerRun` 是整轮上限，不是每批上限**——额度由分批循环持有，每批只领剩余额度，校验通过后按本批通过校验的 `update` 数扣减；额度耗尽的那批若还含 `update` 会被校验器整单拒绝（记 `failed`），其余批照常继续。
+  9. `applyDecisions`：批量执行状态变更。
+  10. **台账记账**：本批**全部送审对**都写一行 `conflict_reviewed`（不只记被裁决成冲突的那几对，判 `keep` 的正是下一轮重复送审的元凶），`outcome` 取两端里非 `keep` 的那一侧。记账是幂等 upsert，按 `(memory_a, memory_b)` 排序归一化。两个防"假已审"的细节：`judged_at` 取**发送本批之前**的时刻（不是落地之后——LLM 往返期间若一侧被外部改动，它的 `updated_at` 会晚于 `judged_at`，下一轮自然重新入池；按落地时刻封盘等于用陈旧结论锁死这一对）；本批 `failures` / `conflicts`（CAS 冲突）/ `skipped` 里出现过的 id，其所在对**不记账**——没落地的裁决记成已审，会让这一对从此不再送审，沉默地永久压制一个真实冲突。
 - **`differentiate` 不改正文**（#533）：`#126` 曾把同一段差异注记**同时**追加到两侧，指望注记进 embedding 后下一轮不再判重复。离线复现证伪了这个假设——两侧共享同一段后缀会让两条向量**同向靠拢**（余弦 0.876 → 0.960 只用 5 轮，注记截到 0 字照样往上爬），于是同一对每轮又被判成重复、又追加一段（实测单条堆到 19 段，正文 150 字膨胀到 2200+）。现在只落 `differentiated_pairs` 账本（配对 + 两侧当时的 `content_hash` + 模型给的 `distinctions`），正文一个字节都不动。存量库里仍带旧注记块的行按「已裁决」处理，升级不清账。
 - **输出**：冲突消解报告（决策明细 + `pairs` / `batches` / `ledgerSkipped` / `perRunSkipped`）。**失败轮同样带 `pairs` 与 `batches`**——此前只有成功路径带，85 条失败审计行连"送了多少对"都查不到。批间被用户活动打断时报 `aborted`（不是 `noop`：`noop` 的语义是"看过、没冲突"，而没送出去的批根本没看过），整轮 `deriveStatus` 也沿用同一个词，不再折回 `noop`。
 - **验收**：无合法记忆被误删；仲裁结果符合配置的严格度阈值；决策可回滚。

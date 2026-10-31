@@ -331,9 +331,41 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     return { status: "noop", reason: "all candidate pairs already differentiated", suppressed };
   }
 
+  // Issue #529：输入侧预算。此前 samePairs 是**全部**同 scope 相似对，一次拼成一个
+  // prompt——实测单请求 163,054 输入 token（服务端 --ctx-size 163,840），撞墙后按冷却
+  // 重排，下一轮送进去的还是同一份输入，于是 23 轮连续失败。
+  //
+  // 预筛掉「已经判过且两侧都没动过」的对：判 keep 曾经是彻底的 no-op，既不留痕也不
+  // 影响下一轮的候选池，同一对每个冷却周期都被重新送审一遍。台账（conflict_reviewed）
+  // 记的是"这段输入被看过"，两侧任一 updated_at 晚于 judged_at 就重新入池——与
+  // conflict_pending 复核项 4 同一条宽松代理：任何字段更新都算值得再看一眼。
+  //
+  // Issue #536 review（CodeRabbit ①）：预筛必须发生在下面的 used 去重**之前**，理由与
+  // #533 那条一模一样——先占位再去掉，一条已审的记忆会把自己的配对名额占住，而它真正
+  // 的对手（另一条没审过的记忆）因此进不了这一轮。三条边界：
+  //   · 只筛同 scope 对：跨 scope 对本来就要停车进人工队列，不能被台账吞掉；
+  //   · freeze 模式不筛：那一档只停车不送 LLM，台账与它无关（ledgerSkipped 记 0）；
+  //   · ledgerSkipped 在这里一次数清，后面 candidates 直接取 samePairs，不再二次过滤。
+  const isCrossScopePair = (p) =>
+    scopeKeyOf(p.a.agent_scope) !== scopeKeyOf(p.b.agent_scope)
+    || scopeKeyOf(p.a.workspace_scope) !== scopeKeyOf(p.b.workspace_scope);
+  const ledger = typeof service.loadConflictReviewed === "function"
+    ? (service.loadConflictReviewed() ?? new Map())
+    : new Map();
+  const pairKey = (p) => (p.a.id < p.b.id ? `${p.a.id}\u0000${p.b.id}` : `${p.b.id}\u0000${p.a.id}`);
+  const alreadyJudged = (p) => {
+    const rec = ledger.get(pairKey(p));
+    if (!rec?.judged_at) return false;
+    return (p.a.updated_at ?? "") <= rec.judged_at && (p.b.updated_at ?? "") <= rec.judged_at;
+  };
+  const selectionPairs = config.conflictFreezeEnabled === true
+    ? fresh
+    : fresh.filter((p) => isCrossScopePair(p) || !alreadyJudged(p));
+  const ledgerSkipped = fresh.length - selectionPairs.length;
+
   const used = new Set();
   const selected = [];
-  for (const p of fresh) {
+  for (const p of selectionPairs) {
     if (used.has(p.a.id) || used.has(p.b.id)) continue;
     used.add(p.a.id);
     used.add(p.b.id);
@@ -345,9 +377,6 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // 并存」正是收窄/提升裁决的典型候选）不能自动裁决：归档败者可能销毁该内容在
   // 某个归属下的唯一副本，LLM 也无从替用户决定归属。一律停车到冲突待确认队列
   // （专属 reason），同 scope 对维持既有路径（freeze 停车 / LLM 裁决）。
-  const isCrossScopePair = (p) =>
-    scopeKeyOf(p.a.agent_scope) !== scopeKeyOf(p.b.agent_scope)
-    || scopeKeyOf(p.a.workspace_scope) !== scopeKeyOf(p.b.workspace_scope);
   const crossPairs = selected.filter(isCrossScopePair);
   const samePairs = selected.filter((p) => !isCrossScopePair(p));
   const parkPair = (p, reason) => {
@@ -379,48 +408,26 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     if (parkPair(p, scopeReason(p))) scopeParked++;
   }
   if (samePairs.length === 0) {
-    return { status: scopeParked > 0 ? "ok" : "noop", frozen: 0, scopeCandidates: scopeParked, pairs: selected.length };
-  }
-
-  // LLM adjudication（仅同 scope 对）。
-  const route = resolveSleepRoute(ctx, config, logger);
-  if (!route) return { status: "skipped", reason: "no llm route", scopeCandidates: scopeParked, pairs: selected.length };
-  // Issue #529：输入侧预算。此前 samePairs 是**全部**同 scope 相似对，一次拼成一个
-  // prompt——实测单请求 163,054 输入 token（服务端 --ctx-size 163,840），撞墙后按冷却
-  // 重排，下一轮送进去的还是同一份输入，于是 23 轮连续失败。
-  //
-  // 预筛掉「已经判过且两侧都没动过」的对：判 keep 曾经是彻底的 no-op，既不留痕也不
-  // 影响下一轮的候选池，同一对每个冷却周期都被重新送审一遍。台账（conflict_reviewed）
-  // 记的是"这段输入被看过"，两侧任一 updated_at 晚于 judged_at 就重新入池——与
-  // conflict_pending 复核项 4 同一条宽松代理：任何字段更新都算值得再看一眼。
-  const ledger = typeof service.loadConflictReviewed === "function"
-    ? (service.loadConflictReviewed() ?? new Map())
-    : new Map();
-  const pairKey = (p) => (p.a.id < p.b.id ? `${p.a.id}\u0000${p.b.id}` : `${p.b.id}\u0000${p.a.id}`);
-  const alreadyJudged = (p) => {
-    const rec = ledger.get(pairKey(p));
-    if (!rec?.judged_at) return false;
-    return (p.a.updated_at ?? "") <= rec.judged_at && (p.b.updated_at ?? "") <= rec.judged_at;
-  };
-  const candidates = samePairs.filter((p) => !alreadyJudged(p));
-  const ledgerSkipped = samePairs.length - candidates.length;
-  if (candidates.length === 0) {
+    // 没有可送 LLM 的同 scope 对：可能一对都没检测到，也可能全被台账挡下了
+    // （ledgerSkipped）。两种都要如实报，否则「sleep 怎么什么都不干」读不出来。
     return {
       status: scopeParked > 0 ? "ok" : "noop",
       frozen: 0,
       scopeCandidates: scopeParked,
       pairs: selected.length,
       batches: 0,
-      // 台账把所有候选对都挡下来时，这一轮的结构产出是"没有新事可做"，
-      // 不是失败——如实把它记进审计，否则运维只看到 pairs 对不上个数。
       ledgerSkipped
     };
   }
+
+  // LLM adjudication（仅同 scope 对）。
+  const route = resolveSleepRoute(ctx, config, logger);
+  if (!route) return { status: "skipped", reason: "no llm route", scopeCandidates: scopeParked, pairs: selected.length, batches: 0, ledgerSkipped };
   // 每轮总上限：分批解决的是单请求撞墙，不是"一个 449 对的池子该在一轮里跑完"。
   // 没进这一轮的对留在下一轮（它们既没被丢弃，也不在台账里）。
   const perRunCap = config.sleepConflictMaxPairsPerRun ?? 60;
-  const pool = perRunCap > 0 ? candidates.slice(0, perRunCap) : candidates;
-  const perRunSkipped = candidates.length - pool.length;
+  const pool = perRunCap > 0 ? samePairs.slice(0, perRunCap) : samePairs;
+  const perRunSkipped = samePairs.length - pool.length;
   const sleepEffort = await resolveDreamEffort(ctx, route, config.sleepReasoningEffort, logger);
   let conflictStreamFailure = "";
   // actionSet 已在候选构造前解析（跨类型候选需要它），这里只按档位选 prompt：
@@ -460,7 +467,9 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   };
   // 单批的完整往返：送 → 解析 → 校验 → 应用 → 记账。抽成函数是为了让失败只影响
   // 自己这一批（下面的循环），而不是把整轮判死。
-  const adjudicateBatch = async (batch) => {
+  const adjudicateBatch = async (batch, updateBudget) => {
+    // Issue #536 review（CodeRabbit ③）：judged_at 是**发送时刻**，不是落地时刻。
+    const judgedAt = new Date().toISOString();
     const text = await withMaxTokensFallback(ctx, config.sleepMaxTokens ?? 2048, (tokens) => withEffortFallback(ctx, sleepEffort, () => runConflict(batch, true, tokens), () => runConflict(batch, false, tokens), () => conflictStreamFailure), () => conflictStreamFailure);
     if (text === undefined) {
       if (conflictStreamFailure) ctx.logger?.warn?.(`dsh-mneme sleep: conflict stream aborted or errored (${conflictStreamFailure})`);
@@ -498,7 +507,9 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     // 应用，run 记 degraded。update 上限与保护期同样取 dream 的同一组配置，保证两个
     // 模块对"什么算合法"的判据一致。
     const { ok, errors, skipped } = validateDecisions(decisions, batchSnapshot, {
-      maxUpdatePerRun: config.reflectionUpdateMaxPerRun,
+      // Issue #536 review（CodeRabbit ②）：reflectionUpdateMaxPerRun 是**整轮**上限，
+      // 分批后不能每批都拿整份额度——那样 N 批就是 N 倍上限。这里用的是本轮的剩余额度。
+      maxUpdatePerRun: updateBudget,
       minAgeHours: config.reflectionUpdateMinAgeHours,
       skipInvalid: config.dreamSkipInvalid !== false,
       allowCrossTypeMerge: config.allowCrossTypeMerge === true,
@@ -516,6 +527,11 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       // runId 让 differentiate 的账本行能追到是哪一轮 sleep 判的（issue #533）。
       decisions, service, logger, batchSnapshot, { ...config, mintSource: "sleep", runId }
     );
+    // Issue #536 review（CodeRabbit ②）：本轮剩余的 update 额度按本批**通过校验的**
+    // update 数扣减——validateDecisions 已把非法条目从 decisions 就地 splice 掉，
+    // 所以数到的都是真的会落地的那些。落地时被 CAS 挡下的也算：额度宁可少发一次，
+    // 也不能让"多批各扣一次满额"把整轮上限架空。
+    const updateUsed = decisions.filter((d) => d?.action === "update").length;
     // Issue #126 review（Copilot）：事务内 service.update 会跳过 scheduleEmbed（txDepth>0），
     // 而 sleep 路径此前没有 dream 那样的 post-apply 索引维护——differentiate 的差异注记与
     // supersede 的归档都反映不到缓存向量，"注记进 embedding 防再判重复"就是空承诺。
@@ -529,7 +545,9 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     // 台账：本批**全部送审对**都记一行，不只记被判成冲突的那几对。判 keep 的那一对
     // 正是 #529 里"下一轮原样再送"的元凶，只记有动作的对等于没记。
     if (typeof service.saveConflictReviewed === "function") {
-      const judgedAt = new Date().toISOString();
+      // judged_at 取的是**发送之前**的时刻（见函数开头），不是落地之后：LLM 往返
+      // 期间若一侧被外部改动，它的 updated_at 会晚于 judged_at，下一轮自然重新入池；
+      // 模型看到的本来就是旧快照，按"已审"封盘等于用陈旧结论锁死这一对。
       const outcomeOf = new Map();
       for (const d of decisions) {
         const action = d?.action ?? "keep";
@@ -540,7 +558,16 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
           for (const id of d.ids) outcomeOf.set(id, action);
         }
       }
+      // Issue #536 review（CodeRabbit ③）：未落地的对不记账。skipped（非法被跳）、
+      // failures（写入失败）、conflicts（CAS 冲突）里出现过的 id，说明那条决策没生效；
+      // 把它记成"已审"会让下一轮的 alreadyJudged 为真，这一对从此不再送审——
+      // 沉默地永久压制一个真实冲突，比多送一轮贵得多。
+      const unsettled = new Set();
+      for (const f of [...(failures ?? []), ...(conflicts ?? []), ...(skipped ?? [])]) {
+        for (const id of f?.ids ?? []) unsettled.add(id);
+      }
       for (const p of batch) {
+        if (unsettled.has(p.a.id) || unsettled.has(p.b.id)) continue;
         try {
           service.saveConflictReviewed({
             run_id: runId,
@@ -559,7 +586,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     }
     // Issue #126 review（Copilot）：有决策被跳过时不能报 ok——与 dream 的 degraded 契约
     // 对齐（"合法子集已应用"是 degraded 而非 ok），否则消费方分不清整轮与残轮。
-    return { status: applied > 0 ? (skipped.length > 0 ? "degraded" : "ok") : failures.length ? "failed" : "noop", applied, failures, conflicts, skipped };
+    return { status: applied > 0 ? (skipped.length > 0 ? "degraded" : "ok") : failures.length ? "failed" : "noop", applied, failures, conflicts, skipped, updateUsed };
   };
   // 分批：每批独立往返，坏批只记 degraded 不中断。此前一次全送，任何一处理由
   // （撞上下文、输出截断、JSON 坏掉）都是整轮 failed——而整轮 failed 又不带 pairs，
@@ -577,9 +604,15 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // 的那几批根本没送出去。用与入口处（signal 一开始就是 aborted）同一个词汇，避免
   // 同一件事两个状态名。
   let interrupted = false;
+  // Issue #536 review（CodeRabbit ②）：reflectionUpdateMaxPerRun 是**整轮**上限。
+  // 校验器本身不跨批记忆，每批各拿一份满额就等于 N 倍上限，所以额度由这里持有：
+  // 每批只领剩余额度，校验通过后按**本批通过校验的** update 数扣减。额度用尽的
+  // 那几批若还含 update，会被校验器整单拒绝（记 failed），其余批照常继续——
+  // 与"一批坏掉不判死整轮"的既有契约一致。
+  let updateLeft = config.reflectionUpdateMaxPerRun ?? 2;
   for (let i = 0; i < batches.length; i++) {
     if (signal?.aborted) { interrupted = true; break; }
-    const res = await adjudicateBatch(batches[i]);
+    const res = await adjudicateBatch(batches[i], updateLeft);
     if (res.status === "failed") {
       failedBatches++;
       failures.push(...(res.failures ?? []));
@@ -590,6 +623,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       continue;
     }
     applied += res.applied;
+    updateLeft = Math.max(0, updateLeft - (res.updateUsed ?? 0));
     failures.push(...(res.failures ?? []));
     conflicts.push(...(res.conflicts ?? []));
     skipped.push(...(res.skipped ?? []));

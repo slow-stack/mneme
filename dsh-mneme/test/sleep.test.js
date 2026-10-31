@@ -669,3 +669,86 @@ test("issue#529 failed batches still report pairs/batches (audit used to lose th
   store.close();
 });
 
+
+// ------------------------------------------- issue #536 review: CodeRabbit 三条
+
+// 把一条记忆的 created_at / updated_at 一起回拨。update 决策有 24h 保护期，
+// 台账判据比的是 updated_at——两处都要动，只改一个会让用例互相干扰。
+function backdate(store, id, hours) {
+  const ts = new Date(Date.now() - hours * 3600000).toISOString();
+  store.db.prepare("UPDATE memories SET created_at = ?, updated_at = ? WHERE id = ?").run(ts, ts, id);
+}
+
+// 造一对向量完全相同的记忆（similarity = 1）。
+function seedIdenticalPair(service, vectorIndex, dir, tag) {
+  const a = makeMemory(service, `${tag}A`, `${tag} 内容A`, "project");
+  const b = makeMemory(service, `${tag}B`, `${tag} 内容B`, "project");
+  vectorIndex.saveEmbedding(a.id, dir);
+  vectorIndex.saveEmbedding(b.id, dir);
+  return { a, b };
+}
+
+test("issue#536 review ①: an already-judged pair must not eat a memory's pairing slot", async () => {
+  const { service, store, vectorIndex } = setup();
+  // a-b 相似度 1.0，a-c 与 b-c 都是 0.9：按相似度排序先去重的旧写法会先选中 a-b，
+  // 再把 a-b 当"已审"丢掉，于是 a 的名额被一个注定被过滤的对占住，a-c 进不来。
+  const a = makeMemory(service, "主题X", "内容A 关于主题X", "project");
+  const b = makeMemory(service, "主题X副本", "内容B 关于主题X", "project");
+  const c = makeMemory(service, "主题X变体", "内容C 关于主题X", "project");
+  vectorIndex.saveEmbedding(a.id, [1, 0, 0]);
+  vectorIndex.saveEmbedding(b.id, [1, 0, 0]);
+  vectorIndex.saveEmbedding(c.id, [0.9, Math.sqrt(1 - 0.81), 0]);
+  // a-b 已经判过（keep），且两侧此后都没动过 ⇒ 本轮不该再送。
+  service.saveConflictReviewed({
+    run_id: "seed",
+    memory_a: a.id,
+    memory_b: b.id,
+    outcome: "keep",
+    judged_at: new Date(Date.now() + 60000).toISOString()
+  });
+
+  const { ctx, calls } = countingCtx(() => "[]");
+  const result = await runSleep(ctx, service, baseConfig(), ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(calls(), 1, "台账预筛必须发生在去重之前，a 要能和 c 配对送出去");
+  assert.equal(result.phases.conflicts.ledgerSkipped, 1, "被台账挡下的对数照实记");
+  store.close();
+});
+
+test("issue#536 review ②: reflectionUpdateMaxPerRun stays a whole-run cap across batches", async () => {
+  const { service, store, vectorIndex } = setup();
+  // 两对向量正交，互不干扰 ⇒ 去重后正好两对，每批一对。
+  const p1 = seedIdenticalPair(service, vectorIndex, [1, 0, 0], "甲");
+  const p2 = seedIdenticalPair(service, vectorIndex, [0, 1, 0], "乙");
+  for (const m of [p1.a, p1.b, p2.a, p2.b]) backdate(store, m.id, 48);
+
+  // 每批都提一条 update：整轮上限 1，所以只有先跑的那批能落地。
+  const { ctx, calls } = countingCtx((text) => {
+    const id = text.includes(p1.a.id) ? p1.a.id : p2.a.id;
+    const next = text.includes(p1.a.id) ? "甲 内容A（更新）" : "乙 内容A（更新）";
+    return JSON.stringify([{ action: "update", ids: [id], content: next, reason: "内容有误" }]);
+  });
+  const config = baseConfig({ sleepConflictMaxPairs: 1, sleepConflictMaxPairsPerRun: 2, reflectionUpdateMaxPerRun: 1 });
+  const result = await runSleep(ctx, service, config, ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(calls(), 2, "两对各自成批，都要送");
+  const updated = [p1.a, p2.a].filter((m) => service.getById(m.id).content.endsWith("（更新）"));
+  assert.equal(updated.length, 1, "update 是整轮上限，不是每批上限——只能落地一条");
+  assert.equal(result.phases.conflicts.batches, 2);
+  store.close();
+});
+
+test("issue#536 review ③: a decision that never landed must not be recorded as judged", async () => {
+  const { service, store, vectorIndex } = setup();
+  const { a } = seedConflictPair(service, vectorIndex, 1.0);
+  // 提一条"不改任何字段"的 update：validateDecisions 会把它跳过（skipInvalid），
+  // 该条决策没有落地。若照旧把整批送审对都写进台账，这一对就会被判成"已审"
+  // 而永远不再送——沉默地永久压制一个真实冲突。
+  const { ctx, calls } = countingCtx(() =>
+    JSON.stringify([{ action: "update", ids: [a.id], content: "内容A 关于主题X" }])
+  );
+  const config = baseConfig({ reflectionUpdateMinAgeHours: 0 });
+  const result = await runSleep(ctx, service, config, ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(calls(), 1, "这一对确实被送出去判过");
+  assert.equal(service.listConflictReviewed().length, 0, "没落地的决策不能记成已审");
+  assert.ok(result.phases.conflicts.skipped.length > 0, "跳过明细照常进审计");
+  store.close();
+});
