@@ -10,7 +10,7 @@ import { MEMORY_GUIDE_SECTION } from "../src/guide.js";
 import { createTools } from "../src/tools.js";
 import { createSummarizer } from "../src/summarize.js";
 
-test("session gate defaults off and recognizes current and compatibility header shapes", () => {
+test("session gate defaults off and gates subagents by the host's delegation marks", () => {
   const defaults = Config({});
   assert.equal(defaults.sessionGateEnabled, false);
   assert.equal(defaults.sessionGateSubagents, true);
@@ -18,12 +18,9 @@ test("session gate defaults off and recognizes current and compatibility header 
 
   const gate = createSessionGate({ sessionGateEnabled: true, sessionGateSubagents: true });
   const sessions = [
-    { id: "header-parent", header: { parentSession: "captain", origin: "subagent", delegationDepth: 1 } },
     { id: "header-origin", header: { origin: "subagent" } },
     { id: "header-depth", header: { delegationDepth: 2 } },
-    { id: "session-parent", parentSession: "captain" },
-    { id: "alias-parent", parentSessionId: "captain" },
-    { id: "request-parent", requestHeader: () => ({ config: { parentSession: "captain" } }) },
+    { id: "header-both", header: { parentSession: "captain", origin: "subagent", delegationDepth: 1 } },
     { id: "request-origin", requestHeader: () => ({ config: { origin: "subagent", delegationDepth: 1 } }) }
   ];
   for (const session of sessions) {
@@ -36,11 +33,28 @@ test("session gate defaults off and recognizes current and compatibility header 
   assert.equal(gate.isOff("first-event"), true, "observed child ids remain recognizable in log scans");
 });
 
+// 形状锁：`parentSession` 是「有父会话」，不是「是子代理」。dsh-session 的
+// sessions.fork() 给**主会话分支**也写 parentSession（且不写 origin / 不带
+// delegationDepth），把它当判据就会让用户 fork 出来的普通会话整体失忆。
+// 本机 641 个真实会话头实测：origin/delegationDepth 命中 455 个子代理、零漏检，
+// parentSession 对子代理识别零贡献、只多判出 3 个 fork 主会话（各有 74–136 条
+// 用户消息、694 次工具调用）。这条用例锁的就是那次误判不许回来。
+test("parentSession alone never gates: forked captain sessions stay fully enabled", () => {
+  const gate = createSessionGate({ sessionGateEnabled: true, sessionGateSubagents: true });
+  const forked = { id: "forked-captain", header: { parentSession: "captain", isSeeded: true, delegationDepth: 0 } };
+  assert.equal(gate.isOff(forked), false, "a fork of a captain session is still a captain session");
+  assert.equal(gate.isOff({ id: "flat-parent", parentSession: "captain" }), false);
+  assert.equal(gate.isOff({ id: "alias-parent", parentSessionId: "captain" }), false);
+  assert.equal(gate.isOff({ id: "request-parent", requestHeader: () => ({ config: { parentSession: "captain" } }) }), false);
+  gate.observe(forked);
+  assert.equal(gate.isOff("forked-captain"), false, "observing a non-child must not record it as one");
+});
+
 test("manual ids survive the subagent switch, master-off is inert, and config is read live", () => {
   const cfg = { sessionGateEnabled: false, sessionGateSubagents: false, sessionGateSessions: ["manual"] };
   const gate = createSessionGate(cfg);
   const manual = { id: "manual" };
-  const child = { id: "child", header: { parentSession: "captain" } };
+  const child = { id: "child", header: { origin: "subagent" } };
 
   assert.equal(gate.isOff(manual), false, "the master is the only opt-in");
   cfg.sessionGateEnabled = true;
@@ -54,6 +68,34 @@ test("manual ids survive the subagent switch, master-off is inert, and config is
   const inaccessible = {};
   Object.defineProperty(inaccessible, "id", { get() { throw new Error("host getter"); } });
   assert.doesNotThrow(() => gate.isOff(inaccessible));
+});
+
+// #539 原文：「子会话在首次 session/event 之前就可能组装上下文，故必须直接检查
+// 传入 session，不能只靠事件后记录 ID」。所以「拿不到 id」不能当作「不是无痕
+// 会话」——那一行早退正是这条要求最容易失守的地方（注入面在上下文组装期跑的
+// 就是这条路径）。手动名单仍然依赖 id，那是名单本身的形状，不是缺陷。
+test("a subagent session without a usable id is still gated", () => {
+  const gate = createSessionGate({ sessionGateEnabled: true, sessionGateSubagents: true });
+  assert.equal(gate.isOff({ header: { origin: "subagent" } }), true, "id-less subagent header");
+  assert.equal(gate.isOff({ header: { delegationDepth: 1 } }), true, "id-less delegation depth");
+  assert.equal(gate.isOff({ id: "", header: { origin: "subagent" } }), true, "empty id is the same as missing");
+  assert.equal(gate.isOff({}), false, "no id and no child mark is an ordinary session");
+  assert.equal(gate.isOff(null), false);
+  assert.equal(gate.isOff(undefined), false);
+  const offSwitch = createSessionGate({ sessionGateEnabled: true, sessionGateSubagents: false });
+  assert.equal(offSwitch.isOff({ header: { origin: "subagent" } }), false, "the subagent switch still wins");
+});
+
+// 记账表只服务「日志扫描拿得到 id、却解析不出头」这一条退路，所以它必须有界：
+// 长驻宿主跑上几百个子代理后只涨不落会把每个 id 永久留在内存里，而淘汰最旧的
+// 代价只是那一次日志过滤少认一个会话，活路径永远直接用会话对象判定。
+test("tracked child ids stay bounded and eviction only costs the log-scan fallback", () => {
+  const gate = createSessionGate({ sessionGateEnabled: true, sessionGateSubagents: true });
+  for (let i = 0; i < 600; i += 1) gate.observe({ id: `child-${i}`, header: { origin: "subagent" } });
+  assert.equal(gate.isOff("child-599"), true, "the newest child is still tracked");
+  assert.equal(gate.isOff("child-0"), false, "the oldest id was evicted instead of kept forever");
+  gate.observe({ id: "child-599", header: { origin: "subagent" } });
+  assert.equal(gate.isOff("child-599"), true, "re-observing the same id stays stable");
 });
 
 function injectionSetup() {

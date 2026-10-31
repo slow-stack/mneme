@@ -23,7 +23,9 @@
 
 ## 逐会话无痕（issue #539）
 
-命中会话后，Mneme 不向该会话注入记忆、用户设置或工具指引，不接受其 `memory_*` / `set_scope_state` 工具调用，不对它蒸馏，也不由压缩抢救、M.O. 记账或自动提议路径保存该会话的内容。匹配以宿主会话头为准：`parentSession`、`origin: "subagent"` 或正数 `delegationDepth` 任一命中子代理；兼容别名 `parentSessionId` 与旧形状 `requestHeader().config`。captain 会话不会因其有子代理而自动命中，队长侧对交付物的蒸馏仍由队长会话本身决定（#211 的边界）。
+命中会话后，Mneme 不向该会话注入记忆、用户设置或工具指引，不接受其 `memory_*` / `set_scope_state` 工具调用，不对它蒸馏，也不由压缩抢救、M.O. 记账或自动提议路径保存该会话的内容。
+
+自动匹配**只认宿主自己的委派标记**：会话头里 `origin === "subagent"`，或 `delegationDepth` 是正数。**`parentSession` 不是判据**——`sessions.fork()` 造出来的主会话分支同样写这个字段（fork 只写 cwd / parentSession / isSeeded，不写 origin、不带 delegationDepth），把它当判据就是「fork 一下就整体失忆」。兼容别名 `parentSessionId` 同理不读；旧形状 `requestHeader().config` 仍作为取头的第二条路。captain 会话不会因其有子代理而自动命中，队长侧对交付物的蒸馏仍由队长会话本身决定（#211 的边界）。
 
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |
 |---|---|---|---|
@@ -31,7 +33,7 @@
 | `sessionGateSubagents` | `true` | 总开关开启时，自动命中子代理会话；可通过 bundle 配置或 `/api/dsh-mneme/features` 设置 | 关闭后仍保留手动名单匹配；单独打开本键不生效 |
 | `sessionGateSessions` | `[]` | 手动指定精确 session id 的数组，只能写在 bundle 配置 | 手动匹配与子代理识别互相独立；改完配置后由宿主重新装载插件生效 |
 
-逐会话消费点会直接检查当前 `Session`，因此首个 `session/event` 到达前也能识别完整会话头；事件订阅另外缓存已观察到的子会话 id，供会话日志扫描过滤。面板的 `/features` 只支持标量开关，不持久化 `sessionGateSessions` 数组。
+逐会话消费点会直接检查当前 `Session`，因此首个 `session/event` 到达前也能识别完整会话头；**拿不到 id 也照判**（注入面在上下文组装期就跑在这条路径上，那时未必有可用 id）。事件订阅另外缓存已观察到的子会话 id，供会话日志扫描过滤——那张表只服务「拿得到 id、却解析不出头」的退路，有界淘汰，淘汰只影响那一次日志过滤。面板的 `/features` 只支持标量开关，不持久化 `sessionGateSessions` 数组。
 
 边界：不带调用会话上下文的管理 API（如手动 `/nudge`）仍按管理操作处理，不继承某一个会话的闸门。
 

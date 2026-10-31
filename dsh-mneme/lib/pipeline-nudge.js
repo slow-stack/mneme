@@ -591,7 +591,16 @@ export function readSessionObservations({ sessionDir = resolveSessionDir(), limi
           if (filterSessions) {
             try {
               const row = JSON.parse(line);
-              const header = row?.header ?? row?.config ?? row?.data?.header ?? row?.data?.config ?? row?.data ?? row;
+              // 会话日志首行是 {"type":"session", version, id, createdAt, cwd,
+              // isSeeded, delegationDepth, origin?, parentSession?}——**头字段就在
+              // 这一行的顶层**，没有 header/config 包一层（本机 641 个真实会话首行
+              // 全部如此）。所以先认 type，再退到 header/config 两种带壳形状。
+              // 旧写法末尾还有 `?? row?.data ?? row` 两级兜底，等于把**任何**首行
+              // 都当作头：一条 {"type":"permission/preset", data:{preset}} 会被读成
+              // 「没有 origin、没有 delegationDepth 的主会话」而放行，闸门静默失效；
+              // 认不出来时宁可返回 null（isOff 收到 null 只会按 id 判），也不假装
+              // 那是一条头。
+              const header = row?.type === "session" ? row : (row?.header ?? row?.config ?? null);
               if (sessionGate.isOff({ id: sessionId, header })) {
                 excluded = true;
                 break;

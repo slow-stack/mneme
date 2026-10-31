@@ -1056,6 +1056,15 @@ export function createTools(ctx, service, config, embedder, sessionGate = null) 
         ctx.logger?.warn?.(`[dsh-mneme] tool "${tool.name}" already registered, skipping duplicate`);
         continue;
       }
+      // #539：闸门包在**注册期**，而不是在 execute 内部各写一遍。已注册的执行器
+      // 不会被宿主反注册（同上面 disableMemorySearch 那段 v0.8.5 的定性），所以
+      // 包一层的意义在于：热重载后 registration.sessionGate 换成新实例，旧的执行器
+      // 也跟着读新的闸门，不会拿着过期 config 继续放行。
+      //
+      // 取会话走 sessionOf(exec) = exec.agent.session。ToolExecutionInput.agent 在
+      // 宿主类型里是**可选**的，PTC 内层派发可能压根不带 agent；这种调用会拿到
+      // null → isOff(null) 为 false → 放行。这是有意的：不认识调用者的工具调用
+      // 不能一律拒绝（那会把正常会话也打死），闸门只对「能证明自己是谁」的调用生效。
       if (typeof tool.execute === "function") {
         const execute = tool.execute.bind(tool);
         tool.execute = async (args, exec) => {
