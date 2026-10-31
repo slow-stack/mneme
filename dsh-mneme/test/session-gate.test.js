@@ -65,9 +65,16 @@ test("manual ids survive the subagent switch, master-off is inert, and config is
   cfg.sessionGateEnabled = false;
   assert.equal(gate.isOff(manual), false, "turning the master off restores normal behavior immediately");
 
+  // 复现 comment 6541389（#541）：上面刚把总开关关掉，若在这里直接断言
+  // doesNotThrow，isEnabled() 就先把调用挡回去了，id getter 那条保护路径
+  // 一次都不会执行——测的是「关掉时不出事」，不是「读不到 id 时不出事」。
+  // 所以先开总开关，再断言两件事：不抛，且被当成普通会话（false），
+  // 而不是被当成「id 为空所以放行」的巧合。
+  cfg.sessionGateEnabled = true;
   const inaccessible = {};
   Object.defineProperty(inaccessible, "id", { get() { throw new Error("host getter"); } });
   assert.doesNotThrow(() => gate.isOff(inaccessible));
+  assert.equal(gate.isOff(inaccessible), false, "an unreadable id is an ordinary session, not a gated one");
 });
 
 // #539 原文：「子会话在首次 session/event 之前就可能组装上下文，故必须直接检查
