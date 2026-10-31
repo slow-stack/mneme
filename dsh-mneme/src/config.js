@@ -588,7 +588,9 @@ export const Config = z.object({
   sleepMinIntervalHours: z.natural().min(1).max(168).default(8),
   // Issue #529（C 项的替代实现）：sleep 连续失败退避（默认关 = 行为逐字节不变）。
   // 基数是 sleepMinIntervalHours，有效间隔 = 基数 × 2^连续失败数（成功清零），
-  // 封顶 24 小时。为什么不按 issue 原案用 snapshot_hash 判据：sleep 的
+  // 封顶 max(基数, 24 小时)——不是硬 24 小时：这个键允许配到 168，用户配 48 就是
+  // 明说「两天跑一次」，退避只能放宽间隔、不该把用户自己的基数压小。
+  // 为什么不按 issue 原案用 snapshot_hash 判据：sleep 的
   // snapshot_hash 是**跑完之后**对 phases 结果算的哈希（dream/sleep.js 的
   // createHash(JSON.stringify(phases))），不是输入快照；同一批输入跑两次结果不同
   // 就会得到不同哈希，用它当「同一输入又在失败」的判据不成立。退避与 #292 的

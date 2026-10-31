@@ -46,6 +46,10 @@ const CONFLICT_THRESHOLDS = { gentle: 0.92, normal: 0.85, aggressive: 0.75 };
 // 2^3 就到 64 小时——不封顶的话模型持续失败会让 sleep 事实上停摆好几天，而
 // 用户完全看不出来。24 小时 = 「最多一天试一次」，与 #292 给 autoDream 的
 // 30 分钟封顶同一意图（封顶值不同是因为两个调度的基数差一个数量级）。
+//
+// 实际封顶取 max(基数, 24h)，不是硬 24h：`sleepMinIntervalHours` 允许 1–168，
+// 用户配 48 小时就是明说"两天跑一次"，退避不该把它压回 24 小时（封顶只能放宽
+// 间隔、不能收紧用户自己设的）。
 const FAILURE_BACKOFF_CAP_MS = 24 * 3600000;
 
 function parseJsonArray(text) {
@@ -621,7 +625,18 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   let updateLeft = config.reflectionUpdateMaxPerRun ?? 2;
   for (let i = 0; i < batches.length; i++) {
     if (signal?.aborted) { interrupted = true; break; }
-    const res = await adjudicateBatch(batches[i], updateLeft);
+    // Issue #536 review（CodeRabbit）：单批抛错不能带走整轮。`adjudicateBatch` 里不只有
+    // "把失败变成返回值"的 LLM 通路，还有 `applyDecisions` 与台账写入——它们抛出的异常
+    // 此前会直接跳出循环，后面所有批都不跑、已汇总的 applied/failures 也一起丢掉。
+    // 只放行 AbortError（取消意图绝不能被降级重试吞掉，与 dream.js 的 withEffort 守卫同款），
+    // 其余一律折成这一批的 failed 结果，循环继续。
+    let res;
+    try {
+      res = await adjudicateBatch(batches[i], updateLeft);
+    } catch (error) {
+      if (error?.name === "AbortError") { interrupted = true; break; }
+      res = { status: "failed", error: String(error?.message ?? error), failures: [], skipped: [] };
+    }
     if (res.status === "failed") {
       failedBatches++;
       failures.push(...(res.failures ?? []));
@@ -1024,9 +1039,9 @@ export function createSleepScheduler({
   // 冷却本来就由 lastRunAtSeed（#89/#291）负责，两者不重叠。
   let consecutiveFailures = 0;
 
-  // Issue #529：有效最小间隔 = 基数 × 2^连续失败数，封顶 24 小时。关闭或尚无
-  // 失败时逐字节返回基数（默认关 = 行为与现状一致）。封顶取 max(基数, cap)，
-  // 指数再大也不会把用户配的大基数压小。
+  // Issue #529：有效最小间隔 = 基数 × 2^连续失败数。关闭或尚无失败时逐字节
+  // 返回基数（默认关 = 行为与现状一致）。封顶取 max(基数, 24h) 而不是硬 24h：
+  // 指数再大也不会把用户自己配的大基数（允许到 168h）压小。
   function effectiveMinIntervalMs() {
     const base = (config.sleepMinIntervalHours ?? 8) * 3600000;
     if (config.sleepFailureBackoff !== true || consecutiveFailures <= 0) return base;

@@ -781,3 +781,40 @@ test("issue#536 review ④: judged_at lives in the store's clock domain, not the
   assert.equal(second.calls(), 0, "时钟领先墙钟时，已审的对仍然不许重送");
   store.close();
 });
+
+test("issue#536 review ⑤: a batch that throws does not take the rest of the run with it", async () => {
+  const { service, store, vectorIndex } = setup();
+  // 两对正交向量 ⇒ 两批。让**第一批**的 LLM 往返直接抛（不是返回错误：返回错误那条
+  // 通路本来就有失败返回，早被前面的用例覆盖了）。要验的是：adjudicateBatch 内部
+  // 任何未被兜住的异常，都只折损它自己那一批，后面的批次照跑、之前的汇总不丢。
+  // applyDecisions 把 service.update 的异常吞进 failures（decisions.js:532-540），
+  // 所以打桩 service 的方法测不到这条守卫，必须在 LLM 这一层抛。
+  const p1 = seedIdenticalPair(service, vectorIndex, [1, 0, 0], "甲");
+  const p2 = seedIdenticalPair(service, vectorIndex, [0, 1, 0], "乙");
+  for (const m of [p1.a, p1.b, p2.a, p2.b]) backdate(store, m.id, 48);
+  const { ctx, calls } = countingCtx((text) => {
+    const id = text.includes(p1.a.id) ? p1.a.id : p2.a.id;
+    const next = text.includes(p1.a.id) ? "甲 内容A（更新）" : "乙 内容A（更新）";
+    return JSON.stringify([{ action: "update", ids: [id], content: next, reason: "内容有误" }]);
+  });
+  const realStream = ctx.llm.stream;
+  let thrown = false;
+  ctx.llm.stream = async function* (options) {
+    if (!thrown && options.purpose === "sleep-conflict") {
+      thrown = true;
+      throw new Error("boom inside adjudicateBatch");
+    }
+    yield* realStream.call(this, options);
+  };
+  const config = baseConfig({ sleepConflictMaxPairs: 1, sleepConflictMaxPairsPerRun: 2, reflectionUpdateMaxPerRun: 2 });
+  const result = await runSleep(ctx, service, config, ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(thrown, true, "第一批确实抛了，否则这条用例什么也没验");
+  assert.equal(calls(), 1, "第一批抛错后第二批仍然要跑");
+  assert.notEqual(result.phases.conflicts.status, "failed", "只要有一批活下来，就不是整轮 failed");
+  // 抛的是第一批（哪个 pair 先送取决于排序，所以两条都问，只要求"恰好一条活下来"）：
+  // 断言落在结果上，不落在顺序上，免得排序一变这条用例就假红。
+  const landed = [p1.a, p2.a].filter((m) => service.getById(m.id).content.endsWith("（更新）"));
+  assert.equal(landed.length, 1, "第二批照常落地，且只落地一批");
+  assert.equal(result.phases.conflicts.batches, 2, "抛错的批次不吞掉轮次的形状");
+  store.close();
+});

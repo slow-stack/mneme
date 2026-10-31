@@ -42,7 +42,7 @@ flowchart TD
 | `sleepModeEnabled` | `false` | 全局开关（Opt-in），开启后激活调度器 |
 | `sleepIdleMinutes` | `5` | 连续无操作触发睡眠的阈值（分钟） |
 | `sleepMinIntervalHours` | `8` | 两次 Sleep Run 的最小时间间隔（小时） |
-| `sleepFailureBackoff` | `false` | 连续失败退避（#529，opt-in）：有效间隔 = `sleepMinIntervalHours` × 2^连败数，成功清零，封顶 24h。判据看整轮 `status === "failed"`——`noop`（通路正常、只是没活干）不算失败，否则在自己工作良好的库里也会越退越长 |
+| `sleepFailureBackoff` | `false` | 连续失败退避（#529，opt-in）：有效间隔 = `sleepMinIntervalHours` × 2^连败数，成功清零，封顶 `max(sleepMinIntervalHours, 24h)`（配得比 24h 大就按配的算——退避只放大间隔，不压缩用户自己设的基数）。判据看整轮 `status === "failed"`——`noop`（通路正常、只是没活干）不算失败，否则在自己工作良好的库里也会越退越长 |
 | `sleepConflictMaxPairs` | `12` | **单批**送审的冲突对上限（0 = 不限，回退旧行为） |
 | `sleepConflictMaxPairsPerRun` | `60` | **单轮**最多送审多少对（0 = 不限）。与上一条分工：一个管批次大小、一个管整轮总量 |
 | `sleepConflictStrictness` | `'normal'` | 冲突消解严格度：`'gentle'`(0.92) / `'normal'`(0.85) / `'aggressive'`(0.75) |
@@ -123,7 +123,7 @@ flowchart TD
 ## 调度器与可中断机制
 - **`noteWrite()` 心跳重置**：每次用户写入/读取记忆时触发。必须先 `clearTimeout` 清除旧计时器，再重新设置 Idle Timer，彻底杜绝 Stale Timer 导致的误触发。
 - **`maybeSchedule()` 准入控制**：串行检查 `sleepModeEnabled` → 空闲时长 `>= sleepIdleMinutes` → 距上次运行 `>= 有效最小间隔` → 状态非 `running/disposed`。任一不满足则放弃调度。
-  - **有效最小间隔**（#529）：`sleepFailureBackoff` 关（默认）时逐字节等于 `sleepMinIntervalHours`；开启时按连续失败次数指数推迟，封顶 24h。`armNextWindow()` 排下一次闹钟用的是同一个函数——两处口径必须一致，否则退避期闹钟会在基数到点响、被 `shouldRun` 否掉、再重排一次，白转一轮。
+  - **有效最小间隔**（#529）：`sleepFailureBackoff` 关（默认）时逐字节等于 `sleepMinIntervalHours`；开启时按连续失败次数指数推迟，封顶 `max(sleepMinIntervalHours, 24h)`——不是硬 24h：基数允许配到 168 小时，那时封顶跟着基数走，退避只能放宽间隔、不会把用户设的基数压小。`armNextWindow()` 排下一次闹钟用的是同一个函数——两处口径必须一致，否则退避期闹钟会在基数到点响、被 `shouldRun` 否掉、再重排一次，白转一轮。
   - 退避**不是**按"同一份输入又失败"判的：`runSleep` 里那个 `snapshotHash` 是跑完之后对 `phases` 结果算的摘要哈希，不是输入快照，拿它当判据会把"同样的输入"认成"不同的结果"。改用连续失败计数，与 `autoDream` 的失败退避（#292）同构。
 - **`service.enqueue` 串行队列**：所有 Sleep Run 必须进入全局串行队列执行，与 `autoDream` 严格互斥，避免并发写入冲突与资源争抢。
 - **`AbortController` 可中断**：调度器持有 AbortController 实例。一旦检测到用户活动（`noteWrite` 或显式交互），立即调用 `abort()` 中断当前 `runSleep` 的执行上下文，保证实时性优先。

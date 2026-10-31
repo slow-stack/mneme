@@ -144,7 +144,7 @@ const FEATURE_FLAG_BOOLEANS = [
   "autoDreamFailureBackoff",
   "sleepModeEnabled",
   // Issue #529：sleep 连续失败退避（默认关）。基数是 sleepMinIntervalHours，
-  // 有效间隔 = 基数 × 2^连续失败数（成功清零），封顶 24 小时；面板可启停。
+  // 有效间隔 = 基数 × 2^连续失败数（成功清零），封顶 max(基数, 24h)；面板可启停。
   "sleepFailureBackoff",
   "heatEnabled",
   // issue #218 / E5：注入侧 heat 独立开关（默认关，老用户 injectHeatEnabled=true 回滚）。
