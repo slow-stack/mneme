@@ -60,10 +60,12 @@ flowchart TD
 - **目标**：清理向量空间中的重复、矛盾或过时记忆。
 - **输入**：全量/增量记忆向量索引、`sleepConflictStrictness` 阈值。
 - **算法**：
-  1. 向量检索 `findPotentialConflicts` 获取高相似度对。
-  2. LLM 仲裁：基于严格度阈值生成 `keep/merge/discard` 决策。
-  3. `validateDecisions`：严格校验决策合法性，缺省策略为 `keep`。
-  4. `applyDecisions`：批量执行状态变更。
+  1. 向量检索 `findPotentialConflicts` 获取高相似度对；`sleepActionSet: "full"` 时再补一遍跨类型对。
+  2. **已裁决对先压掉**：`differentiated_pairs` 账本里记着「这一对判过"互补、两条都留"」，两侧正文的 `content_hash` 与记账时一致就不再送模型（任一侧被改写则重新进候选）。这一轮被压掉几对记在 `phase.suppressed`，与「一对都没检测到」（`no conflicts found`）分开报。
+  3. LLM 仲裁：基于严格度阈值生成决策（默认档 `keep/merge/conflict/create/archive/update`，full 档另开 `supersede/differentiate`）。
+  4. `validateDecisions`：严格校验决策合法性，缺省策略为 `keep`。
+  5. `applyDecisions`：批量执行状态变更。
+- **`differentiate` 不改正文**（#533）：`#126` 曾把同一段差异注记**同时**追加到两侧，指望注记进 embedding 后下一轮不再判重复。离线复现证伪了这个假设——两侧共享同一段后缀会让两条向量**同向靠拢**（余弦 0.876 → 0.960 只用 5 轮，注记截到 0 字照样往上爬），于是同一对每轮又被判成重复、又追加一段（实测单条堆到 19 段，正文 150 字膨胀到 2200+）。现在只落 `differentiated_pairs` 账本（配对 + 两侧当时的 `content_hash` + 模型给的 `distinctions`），正文一个字节都不动。存量库里仍带旧注记块的行按「已裁决」处理，升级不清账。
 - **输出**：冲突消解报告（决策明细）。
 - **验收**：无合法记忆被误删；仲裁结果符合配置的严格度阈值；决策可回滚。
 

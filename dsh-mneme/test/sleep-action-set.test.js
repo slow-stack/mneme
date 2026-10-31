@@ -74,10 +74,12 @@ test("issue#126 supersede: replay is idempotent (archived loser, single note)", 
   store.close();
 });
 
-test("issue#126 differentiate: both entries survive and each carries the distinctions note", () => {
+test("issue#533 differentiate: both entries survive, bodies untouched, the pair lands in the ledger", () => {
   const { service, store } = setup();
   const a = makeMemory(service, "内网 SSH 端口", "内网走 22");
   const b = makeMemory(service, "外网 SSH 端口", "外网映射 2222");
+  // 两侧各自追加注记会让共享后缀把向量拉近——先记下原始正文，事后逐字节比对。
+  const before = { [a.id]: service.getById(a.id).content, [b.id]: service.getById(b.id).content };
   const snapshot = snapshotOf(store, a, b);
   const { applied } = applyDecisions(
     [{ action: "differentiate", ids: [a.id, b.id], distinctions: ["内网直连", "外网映射"] }],
@@ -87,10 +89,12 @@ test("issue#126 differentiate: both entries survive and each carries the distinc
   for (const m of [a, b]) {
     const after = service.getById(m.id);
     assert.equal(after.archived, false, "differentiate never archives");
-    assert.ok(after.content.includes("差异注记"), "each side gets the note");
+    assert.equal(after.content, before[m.id], "the body is left byte-identical");
+    assert.ok(!after.content.includes("差异注记"), "no note is written into the body");
   }
-  assert.ok(service.getById(a.id).content.includes("内网直连"), "note carries the distinctions");
-  assert.ok(service.getById(b.id).content.includes("外网映射"));
+  const record = service.findDifferentiatedPair(a.id, b.id);
+  assert.ok(record, "the verdict is recorded as a pair, not as body text");
+  assert.deepEqual(record.distinctions, ["内网直连", "外网映射"], "the model's distinctions survive for audit");
   store.close();
 });
 
@@ -369,20 +373,20 @@ test("issue#126r: buildOutcome records a disposition for the new actions", () =>
   assert.equal(outcome.byId.d2, "differentiated");
 });
 
-test("issue#126r: differentiate refreshes the cached vectors so the note reaches the index", async () => {
+test("issue#533r: differentiate leaves the cached vectors alone (nothing changed to re-embed)", async () => {
   const { service, store, vectorIndex } = setup();
   const { a, b } = seedPair(service, vectorIndex, "向量甲", "向量乙");
-  const before = vectorIndex.getEmbedding(a.id);
-  // 让嵌入器产出与旧向量不同的结果，便于确认"确实重嵌了"。
+  const beforeA = vectorIndex.getEmbedding(a.id);
+  const beforeB = vectorIndex.getEmbedding(b.id);
+  // 让嵌入器产出与旧向量不同的结果：若源码又悄悄重嵌，这里立刻会变。
   const fresh = { ...embedder, embedSingle: async () => [0, 1, 0] };
   service.setEmbedder(fresh);
   const ctx = captureCtx(JSON.stringify([
     { action: "differentiate", ids: [a.id, b.id], distinctions: ["甲面", "乙面"] }
   ]));
   await runSleep(ctx, service, baseConfig({ sleepActionSet: "full" }), ctx.logger, { embedder: fresh, vectorIndex }, null);
-  const after = vectorIndex.getEmbedding(a.id);
-  assert.notDeepEqual(after, before, "the cached vector was recomputed after the content note");
-  assert.deepEqual(after, [0, 1, 0], "it carries the fresh embedding");
+  assert.deepEqual(vectorIndex.getEmbedding(a.id), beforeA, "side A keeps its vector");
+  assert.deepEqual(vectorIndex.getEmbedding(b.id), beforeB, "side B keeps its vector");
   store.close();
 });
 
@@ -397,7 +401,8 @@ test("issue#126r: the full tier discovers cross-type pairs (differentiate would 
   ]));
   const result = await runSleep(ctx, service, baseConfig({ sleepActionSet: "full" }), ctx.logger, { embedder, vectorIndex }, null);
   assert.equal(result.phases.conflicts.applied, 1, "the cross-type pair was adjudicated");
-  assert.ok(service.getById(proj.id).content.includes("差异注记"), "differentiate reached the cross-type pair");
+  assert.ok(service.findDifferentiatedPair(proj.id, pref.id), "differentiate reached the cross-type pair");
+  assert.equal(service.getById(proj.id).content, "项目用 8080", "the project body is untouched");
   store.close();
 });
 

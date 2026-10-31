@@ -247,7 +247,8 @@ function buildRecordReceipts({ runId, committed, snapshot, policyEpoch }) {
       });
     } else if (c.action === "differentiate") {
       // Issue #126：互补型裁决——两条都保留，各记一条 receipt。数量没有变化，
-      // count_before/after 固定 1/1（该记录只是被追加了差异注记）。
+      // count_before/after 固定 1/1。Issue #533 起正文不再追加差异注记、一个字节
+      // 都不动，这里记的是「这一对被裁定为互补」，配对关系另见 differentiated_pairs。
       for (const id of c.ids ?? []) {
         receipts.push({
           ...base,
@@ -923,13 +924,9 @@ export async function maintainIndexAfterDream(decisions, service, semantic) {
       // loser 同等处置）。winner 正文未变化，向量保持有效。
       vectorIndex.deleteEmbedding(d.loser);
     } else if (d.action === "differentiate") {
-      // Issue #126 review（Copilot）：双方正文都被追加了差异注记，而 update 在事务内
-      // 会因 txDepth>0 跳过 scheduleEmbed —— 不在这里重嵌，注记就进不了 embedding，
-      // 注释里承诺的"下一轮不再判成重复"就不成立。
-      for (const id of d.ids ?? []) {
-        const mem = service.getById(id);
-        if (mem) rebuild.set(id, [mem.title, mem.content].filter(Boolean).join("\n"));
-      }
+      // Issue #533：differentiate 现在一个字节都不改正文（只落裁决账本），两侧向量
+      // 因此保持有效，不需要重嵌。旧版在这里为「注记进 embedding 防再判重复」兜底
+      // ——那个假设已被复现证伪，重嵌反而是替它续命。
     } else if (d.action === "update") {
       const id = d.ids[0];
       const mem = service.getById(id);
@@ -1532,7 +1529,8 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     // mint 来源：主链路的 create 落 source=dream。来源从管道给而非从决策对象取——
     // 见 applyDecisions 的 @param config。
     const { applied, conflicts, failures, committed } = applyDecisions(
-      applyList, service, logger, snapshot, { ...config, mintSource: "dream" }
+      // runId 让 differentiate 的账本行能追到是哪一轮 dream 判的（issue #533）。
+      applyList, service, logger, snapshot, { ...config, mintSource: "dream", runId }
     );
     // Per-record receipt chain: one row per actually-committed merge/conflict/
     // update verdict, stamped with the decision-basis digest + idempotency

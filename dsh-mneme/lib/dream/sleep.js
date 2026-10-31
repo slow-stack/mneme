@@ -27,6 +27,8 @@ import { computeHeat } from "../heat.js";
 // demoteToSummary，phasePatterns 还会 mint 出新行，所以这条契约要在每处各挡一遍
 // （清单与静态锁见 test/share-imported-guard.test.js）。
 import { isImportedRow } from "../memory-source.js";
+// Issue #533：查账本时要拿两侧当前的正文哈希，与 applyDifferentiate 记账时的口径同源。
+import { contentHashOf } from "../content-hash.js";
 
 // Issue #126 review（Copilot）：默认档（sleepActionSet="conflict"）允许的动作 = 全局
 // ACTIONS 去掉 #126 新增的两个。从 ACTIONS 派生而非硬编码，将来再扩动作集时自动跟随。
@@ -281,9 +283,51 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // Dedupe: each memory participates in at most one pair, highest similarity
   // first — overlapping pairs would violate validateDecisions' "one claim".
   pairs.sort((a, b) => b.similarity - a.similarity);
+
+  // Issue #533：已经裁决过「互补、两条都留」的对不再重判。
+  //
+  // 过滤必须发生在 used 去重**之前**：若先占位再丢弃，一条已裁决的记忆会把
+  // 名额占住，而它真正的对手又是自己人，这一轮就白跑——抑制一对不该顺带压掉
+  // 另一对候选。判据与 applyDifferentiate 的幂等同源：账本里有这对、且两侧正文
+  // 的 content_hash 与记账时一致（任一侧改过 = 结论可能不再成立，重判）。
+  // 存量兼容走同一格：旧版本把注记写进正文却没账本行，两侧都还带着注记块也算
+  // 已裁决，免得升级后第一轮把所有老对重判一遍。
+  const alreadyDifferentiated = (p) => {
+    const a = service.getById(p.a.id);
+    const b = service.getById(p.b.id);
+    if (!a || !b) return false;
+    if (typeof service.findDifferentiatedPair === "function") {
+      const record = service.findDifferentiatedPair(a.id, b.id);
+      if (record) {
+        const [ha, hb] = a.id <= b.id
+          ? [contentHashOf(a), contentHashOf(b)]
+          : [contentHashOf(b), contentHashOf(a)];
+        // 账本行没记 hash（存量/异常写入）时不下结论，宁可多判一次。
+        return record.hash_a != null && record.hash_b != null
+          && record.hash_a === ha && record.hash_b === hb;
+      }
+    }
+    return STR.differentiatedNoteRe.test(String(a.content ?? ""))
+      && STR.differentiatedNoteRe.test(String(b.content ?? ""));
+  };
+  const fresh = [];
+  let suppressed = 0;
+  for (const p of pairs) {
+    if (alreadyDifferentiated(p)) {
+      suppressed += 1;
+      continue;
+    }
+    fresh.push(p);
+  }
+  if (fresh.length === 0) {
+    // 与 "no conflicts found" 分开报：一对都没检测到 vs 检测到但全都裁决过，
+    // 是完全不同的两件事，混成一句会让「sleep 是不是没在干活」读不出来。
+    return { status: "noop", reason: "all candidate pairs already differentiated", suppressed };
+  }
+
   const used = new Set();
   const selected = [];
-  for (const p of pairs) {
+  for (const p of fresh) {
     if (used.has(p.a.id) || used.has(p.b.id)) continue;
     used.add(p.a.id);
     used.add(p.b.id);
@@ -424,11 +468,12 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // 同 phasePatterns——本相位的 create 也落 source=sleep（默认档的
   // LEGACY_ACTIONS 含 create，理论上可 mint）。
   const { applied, failures, conflicts } = applyDecisions(
-    decisions, service, logger, snapshot, { ...config, mintSource: "sleep" }
+    // runId 让 differentiate 的账本行能追到是哪一轮 sleep 判的（issue #533）。
+    decisions, service, logger, snapshot, { ...config, mintSource: "sleep", runId }
   );
   // Issue #126 review（Copilot）：事务内 service.update 会跳过 scheduleEmbed（txDepth>0），
-  // 而 sleep 路径此前没有 dream 那样的 post-apply 索引维护——differentiate 的差异注记与
-  // supersede 的归档都反映不到缓存向量，"注记进 embedding 防再判重复"就是空承诺。
+  // 而 sleep 路径此前没有 dream 那样的 post-apply 索引维护。Issue #533 之后
+  // differentiate 不改正文、不需要重嵌，这里只剩 supersede 的归档一条。
   if (applied > 0 && semantic?.embedder && semantic?.vectorIndex) {
     try {
       await maintainIndexAfterDream(decisions, service, semantic);
@@ -442,6 +487,9 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   return {
     status: applied > 0 ? (degraded ? "degraded" : "ok") : failures.length ? "failed" : "noop",
     pairs: selected.length,
+    // #533：这一轮被账本压掉、没送 LLM 的候选对数——不记的话「pairs 变小了」
+    // 分不清是没检测到还是已经裁决过。
+    suppressed,
     applied,
     failures,
     conflicts,
