@@ -966,7 +966,13 @@ export const Config = z.object({
   // 显式保存，画像正文必须是用户手写的原文，不给模型改写权。
   // 进 LIGHT_MODE_OFF：一次调用要读上百行记忆 + 一轮模型生成，与低资源档互斥（同
   // preInjectGate.enabled 的定性）；是预设不是强制，用户显式勾选仍然赢。
-  profileExtractEnabled: z.boolean().default(false)
+  profileExtractEnabled: z.boolean().default(false),
+
+  // #539 逐会话无痕：总开关默认关，保持旧用户行为；子代理选择器默认开，但总开关
+  // 未开时不生效。手动名单是精确的 session id 匹配。
+  sessionGateEnabled: z.boolean().default(false),
+  sessionGateSubagents: z.boolean().default(true),
+  sessionGateSessions: z.array(z.string()).default([])
 });
 
 // Fields forced to false by the light-mode preset. Everything not listed here

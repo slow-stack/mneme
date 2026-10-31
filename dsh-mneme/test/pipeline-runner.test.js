@@ -5,6 +5,7 @@ import { writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { createExecutionRecorder, projectRootOf, MAX_BUFFERED_EVENTS } from "../src/pipeline-runner.js";
 import { validatePipeline } from "../src/pipeline.js";
+import { createSessionGate } from "../src/session-gate.js";
 
 // 这组测试守的是串联层：把「事件 → 观察 → 归属 → 窗口 → 落盘」串起来的那一层。
 // 它最要紧的两条性质：
@@ -59,6 +60,31 @@ test("没开窗时一个字都不记：事件到了也不缓冲（这是整个�
   for (const e of callAndResult("npm test")) f.emit(session, e);
   assert.deepEqual(rec.status({ session }), { open: false }, "没开窗就该没有窗口");
   assert.equal(rec.stop({ session }).reason, "no-open-window");
+});
+
+test("#539：无痕会话不开始、缓冲或结算执行记录", () => {
+  const f = fakeCtx();
+  const config = { sessionGateEnabled: false, sessionGateSessions: ["s-private"] };
+  const gate = createSessionGate(config);
+  let writes = 0;
+  const rec = createExecutionRecorder({
+    ctx: f.ctx,
+    sessionGate: gate,
+    resolvePipeline: () => PIPE,
+    persistRun: () => { writes += 1; }
+  });
+  const session = { id: "s-private", header: { cwd: "C:\\proj" } };
+
+  assert.equal(rec.start({ session, pipelineId: "demo" }).ok, true);
+  for (const event of callAndResult("npm test")) f.emit(session, event);
+  assert.equal(rec.stop({ session }).state, "awaiting-confirmation");
+
+  config.sessionGateEnabled = true;
+  assert.equal(rec.status({ session }).incognito, true);
+  assert.equal(rec.confirm({ session, answers: { P6: "done" } }).reason, "session-incognito");
+  config.sessionGateEnabled = false;
+  assert.deepEqual(rec.status({ session }), { open: false }, "gating discards both buffered and pending session data");
+  assert.equal(writes, 0, "incognito observation never reaches persistent run storage");
 });
 
 test("开窗 → 走一遍 → 结账：产出并落盘一条账", () => {

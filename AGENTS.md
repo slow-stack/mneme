@@ -43,6 +43,7 @@ dsh-mneme 是 DSH 宿主的记忆插件（蒸馏 / 注入 / 检索 / 巩固 / sc
 | 服务层 | `src/service.js` | saveWithDedupe（去重键 type+title+scope 三元组）、fuseRecall 检索融合（keyword/vector/bm25/entity）、注入候选、镜像同步、冲突队列 |
 | 写入准入 | `src/write-admission.js` | 写入前的会话写入预算与同话题冷却（#254）。第 1 级确定性判据（空白 / 噪声 / 密钥 PII）只在三个条件同时成立时才跑：有 `sessionKey`、`llmAudit.enabled` 未被显式关、`writeAdmission.enabled === true`；都成立且**命中**时，再由 `writeAdmission.enforce` 决定是否真拒绝（`ADMISSION_DECISION_DENY`）。只开 `enforce` 不跑判据、也不拦写入。默认只计量，测量点落 `llm_audit_logs` |
 | 注入 | `src/inject.js` + `src/user-settings.js` | 注入位构造、内容截断、跨轮轮换；「用户设置」块（人格 → 画像 → 规则）的渲染与寻址住在 user-settings.js，**面板预览共用这一份**（前端不自己拼第二份） |
+| 逐会话无痕 | `src/session-gate.js` | #539：总开关默认关；命中 session id 后注入、设置、蒸馏、工具与会话派生写入都按该会话静默 |
 | 整理与画像草稿 | `src/organize.js` + `src/profile-extract.js` | agent 主动整理（dryRun 比对报告 → agent 判断 → apply）与从记忆提取画像草稿（只回草稿，绝不写 `user_settings`）。整理里有两种「不要它」，别混：**`discard`** = 这条候选不写，任何东西都不动（只进回执）；**`archive`** = 把报告标为被取代的那条既有行归档——可恢复，绝不物理删除。两个入口都 opt-in 默认关（`organizeEnabled` / `profileExtractEnabled`） |
 | 蒸馏 | `src/summarize.js` + `src/quality-filter.js` | 会话 → 记忆；质量打分与处置（归档/降权） |
 | 巩固与睡眠 | `src/dream.js` + `src/dream/{decisions,clustering,sleep}.js` | LLM 巩固决策、dream_runs 审计回执 |

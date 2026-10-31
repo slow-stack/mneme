@@ -536,7 +536,8 @@ export function toolCallsInLine(line) {
  * 取不到就落 null——落 null 的观察只会让支持度算不出来，不会假装成「同一个会话」
  * 或「同一个项目」。
  */
-export function readSessionObservations({ sessionDir = resolveSessionDir(), limit = MAX_SESSION_FILES, deadline = null } = {}) {
+export function readSessionObservations({ sessionDir = resolveSessionDir(), limit = MAX_SESSION_FILES, deadline = null, sessionGate = null } = {}) {
+  const filterSessions = sessionGate?.isEnabled?.() === true;
   const found = findSessionFiles(sessionDir, { limit });
   const files = found.files.slice(0, limit);
   const totalFiles = Number.isFinite(found.totalFiles) ? found.totalFiles : found.files.length;
@@ -568,6 +569,10 @@ export function readSessionObservations({ sessionDir = resolveSessionDir(), limi
       result.truncated = true;
       break;
     }
+    const parts = file.split(/[\\/]/);
+    const sessionId = parts.slice(-2, -1)[0] || null;
+    const bucket = parts.slice(-3, -2)[0] || null;
+    if (filterSessions && sessionGate.isOff(sessionId)) continue;
     let buf;
     try {
       buf = readFileSync(file);
@@ -576,11 +581,26 @@ export function readSessionObservations({ sessionDir = resolveSessionDir(), limi
       continue;
     }
     result.scannedFiles += 1;
-    const parts = file.split(/[\\/]/);
-    const sessionId = parts.slice(-2, -1)[0] || null;
-    const bucket = parts.slice(-3, -2)[0] || null;
+    let headerChecked = false;
+    let excluded = false;
     const stat = forEachZstdFrame(buf, (text) => {
       for (const line of text.split("\n")) {
+        if (excluded) break;
+        if (!headerChecked && line.trim()) {
+          headerChecked = true;
+          if (filterSessions) {
+            try {
+              const row = JSON.parse(line);
+              const header = row?.header ?? row?.config ?? row?.data?.header ?? row?.data?.config ?? row?.data ?? row;
+              if (sessionGate.isOff({ id: sessionId, header })) {
+                excluded = true;
+                break;
+              }
+            } catch {
+              // 坏头无法可靠判定会话归属；后续坏行仍由既有解析路径跳过。
+            }
+          }
+        }
         if (!line.trim() || !line.includes('"tool-call"')) continue;
         result.lines += 1;
         const calls = toolCallsInLine(line);
@@ -592,6 +612,7 @@ export function readSessionObservations({ sessionDir = resolveSessionDir(), limi
     result.frames += stat.frames;
     result.failedFrames += stat.failed;
     buf.fill(0);
+    if (excluded) continue;
   }
 
   return result;
@@ -1429,7 +1450,8 @@ export function nudgeForProject({
   persistProposals = true,
   maxFiles = MAX_SESSION_FILES,
   kinds = DEFAULT_NUDGE_KINDS,
-  attribution = null
+  attribution = null,
+  sessionGate = null
 } = {}) {
   // 归属解析自己也可能很贵（同步扫桶 500 个），所以它也要吃同一个预算。调用方给了现成的
   // attribution 就不再解析（`/nudge` 路由就是这么做的：它先解析一次才能决定要不要回 400）。
@@ -1466,7 +1488,8 @@ export function nudgeForProject({
     kinds,
     materialize,
     persistProposals,
-    budgetMs
+    budgetMs,
+    sessionGate
   });
   return { ...doc, attribution: where, skipped: false };
 }
@@ -1501,7 +1524,8 @@ export function nudgeFromSessions({
   budgetMs = 0,
   // 提议落盘是**写**。预览（面板刷新一次就调一次）不能顺手往 memoryDir 里塞文件：
   // 落盘要从这里显式关掉，不能靠调用方「记得别调」。默认 true 保持既有语义。
-  persistProposals = true
+  persistProposals = true,
+  sessionGate = null
 } = {}) {
   const scoped = typeof sessionDir === "string" && sessionDir.trim() !== "";
   const dir = scoped ? sessionDir : resolveSessionDir({ dshHome });
@@ -1511,7 +1535,7 @@ export function nudgeFromSessions({
   const allowedProjectRoot = attributionRefused ? null : projectRoot;
   // budgetMs > 0 才设截止点：测试与离线批处理要完整结果，面板要「不卡」。
   const deadline = Number.isFinite(budgetMs) && budgetMs > 0 ? now + budgetMs : null;
-  const read = readSessionObservations({ sessionDir: dir, limit: maxFiles, deadline });
+  const read = readSessionObservations({ sessionDir: dir, limit: maxFiles, deadline, sessionGate });
   const segments = segmentObservations(read.observations);
   const candidates = mineRepeatedPatterns(segments, { minSupport, minLength, maxLength, maxResults, kinds });
   const projectName = attributionRefused ? "" : project || (allowedProjectRoot ? projectLabel(allowedProjectRoot) : "");

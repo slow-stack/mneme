@@ -1,4 +1,4 @@
-import { createScopeResolver } from "./scope.js";
+import { createScopeResolver, sessionOf } from "./scope.js";
 import { createHotMemory, roundsFromEvents } from "./hot-memory.js";
 import { STR, langOf } from "./lang.js";
 import { escapePromptVars as escapePromptVarsWithConfig, renderUserSettingsBlock } from "./user-settings.js";
@@ -93,7 +93,7 @@ function extractRounds(ctx, maxRounds) {
   }
 }
 
-export function createInjector(ctx, service, settings, config, gate = null) {
+export function createInjector(ctx, service, settings, config, gate = null, sessionGate = null) {
   const language = langOf(config);
   const baseMaxItems = config.maxInjectedItems ?? 5;
   const threshold = config.importanceThreshold ?? 3;
@@ -343,7 +343,11 @@ export function createInjector(ctx, service, settings, config, gate = null) {
   // 第二道、也是同一个判据的显式落点——两处消费点共用 injectChildEnabled，
   // 不在各自的地方重写「父关则子不生效」。
   const guideSection = injectChildEnabled(config, "injectGuidanceEnabled") && typeof ctx.systemPrompt?.section === "function"
-    ? ctx.systemPrompt.section({ name: "memory-guide", order: 150, text: MEMORY_GUIDE_SECTION })
+    ? ctx.systemPrompt.section({
+      name: "memory-guide",
+      order: 150,
+      text: (promptCtx) => (sessionGate?.isOff(sessionOf(promptCtx)) ? "" : MEMORY_GUIDE_SECTION)
+    })
     : null;
 
   const disposers = [
@@ -352,6 +356,7 @@ export function createInjector(ctx, service, settings, config, gate = null) {
       name: "memory",
       order: 90,
       text: (ctx) => {
+        if (sessionGate?.isOff(sessionOf(ctx))) return "";
         // Bug4: pass the latest user query so injection prefers semantically
         // relevant memories; lastUserQuery is best-effort (empty → legacy).
         // The query vector is prefetched asynchronously (cached) because the
@@ -434,7 +439,7 @@ export function createInjector(ctx, service, settings, config, gate = null) {
     ctx.systemPrompt.context({
       name: "user-settings",
       order: 85,
-      text: (ctx) => renderUserSettings(ctx)
+      text: (ctx) => (sessionGate?.isOff(sessionOf(ctx)) ? "" : renderUserSettings(ctx))
     })
   ];
 

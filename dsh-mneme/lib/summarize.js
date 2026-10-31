@@ -572,7 +572,7 @@ function enqueueDistill(task, intervalMs = 0) {
 // import + re-export 两行都要。
 import { parsePeakSpec, isInPeakWindow, nextOffPeakAt } from "./peak-hours.js";
 export { parsePeakSpec, isInPeakWindow, nextOffPeakAt };
-export function createSummarizer(ctx, service, config, deps = {}) {
+export function createSummarizer(ctx, service, config, deps = {}, sessionGate = null) {
   if (!config.autoSummarize) return { dispose: () => {} };
 
   // Issue #239（第 4 项）：时钟与定时器可注入——排程不绑死真实时钟，测试才能确定性
@@ -670,6 +670,7 @@ export function createSummarizer(ctx, service, config, deps = {}) {
 
   async function summarize(session, triggerEvent, opts = {}) {
     if (disposed || inFlight.has(session.id)) return;
+    if (sessionGate?.isOff(session)) return;
 
     const header = session.requestHeader?.()?.config;
     // Config override takes priority, then session header, then nothing.

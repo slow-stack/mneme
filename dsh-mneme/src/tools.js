@@ -1,5 +1,5 @@
 import { defineTool } from "@deepseek-ai/dsh-tools";
-import { createScopeResolver, normalizeExplicitScope, sessionKeyOf } from "./scope.js";
+import { createScopeResolver, normalizeExplicitScope, sessionKeyOf, sessionOf } from "./scope.js";
 import { describeLocalRuntime, resolveRuntimeEntry } from "./runtime/loader.js";
 import { defaultRuntimeDir } from "./runtime/layout.js";
 import { hostModulesDir, loadRuntimeManifest, provisionRuntime } from "./runtime/provision.js";
@@ -76,13 +76,15 @@ const MEMORY_PROVENANCE = (m) => {
   return parts.length ? ` | ${parts.join(" | ")}` : "";
 };
 
-export function createTools(ctx, service, config, embedder) {
+export function createTools(ctx, service, config, embedder, sessionGate = null) {
   const toolsRegistry = ctx.tools;
-  let registeredTools = REGISTERED_TOOLS.get(toolsRegistry);
-  if (!registeredTools) {
-    registeredTools = new Set();
-    REGISTERED_TOOLS.set(toolsRegistry, registeredTools);
+  let registration = REGISTERED_TOOLS.get(toolsRegistry);
+  if (!registration) {
+    registration = { names: new Set(), sessionGate: null };
+    REGISTERED_TOOLS.set(toolsRegistry, registration);
   }
+  registration.sessionGate = sessionGate;
+  const registeredTools = registration.names;
   // v0.8.0 A1/A2（issue #17）：会话 scope 解析（agentPreset + workspace 反查）。
   // flag 关闭时恒返回 null——写入不标注，检索不加权，行为与 A1 前完全一致。
   // logger 透传：registry 反查失败时 warnOnce 才有出口（否则静默降级无观测）。
@@ -1053,6 +1055,15 @@ export function createTools(ctx, service, config, embedder) {
     if (registeredTools.has(tool.name)) {
         ctx.logger?.warn?.(`[dsh-mneme] tool "${tool.name}" already registered, skipping duplicate`);
         continue;
+      }
+      if (typeof tool.execute === "function") {
+        const execute = tool.execute.bind(tool);
+        tool.execute = async (args, exec) => {
+          if (registration.sessionGate?.isOff(sessionOf(exec))) {
+            throw new Error("dsh-mneme: memory tools are disabled for this incognito session");
+          }
+          return execute(args, exec);
+        };
       }
       registeredTools.add(tool.name);
       ctx.tools.register(tool);

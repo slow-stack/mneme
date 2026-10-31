@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createNudgeAutoRun } from "../src/pipeline-nudge-auto.js";
+import { createSessionGate } from "../src/session-gate.js";
 
 // 这组守的是**触发侧**（v0.9.3）：什么时候跑、跑几次、跑挂了怎么办。
 // 挖掘算法本身在 pipeline-nudge.test.js 里守，这里只守接线，所以 runNudge 全部用假的。
@@ -25,8 +26,8 @@ function fakeCtx() {
   };
 }
 
-function sessionAt(cwd) {
-  return { header: { cwd } };
+function sessionAt(cwd, id = undefined) {
+  return { ...(id ? { id } : {}), header: { cwd } };
 }
 
 /** 把 setTimeout(0) 排的活跑完：本模块刻意不用同步跑（见文件头）。 */
@@ -63,6 +64,29 @@ test("自动沉淀只认 turn/end：中途事件不排队、不预跑", async ()
   ctx.emit(sessionAt("D:/proj"), { type: "turn/end" });
   await tick();
   assert.equal(calls.length, 1);
+  auto();
+});
+
+test("#539：无痕 turn/end 不触发全项目扫描，正常会话仍可触发", async () => {
+  const ctx = fakeCtx();
+  const calls = [];
+  const gate = createSessionGate({ sessionGateEnabled: true, sessionGateSessions: ["private"] });
+  const auto = createNudgeAutoRun({
+    ctx,
+    sessionGate: gate,
+    runNudge: (args) => { calls.push(args); return { counts: { savedProposals: 0 } }; },
+    now: () => 1_000_000
+  });
+
+  ctx.emit(sessionAt("D:/proj", "private"), { type: "turn/end" });
+  await tick();
+  assert.deepEqual(calls, [], "the incognito session itself cannot schedule a scan");
+  assert.equal(auto.pendingCount(), 0);
+
+  ctx.emit(sessionAt("D:/proj", "captain"), { type: "turn/end" });
+  await tick();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].sessionGate, gate, "later project scans still exclude incognito session files");
   auto();
 });
 

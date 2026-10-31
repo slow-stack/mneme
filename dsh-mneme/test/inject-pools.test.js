@@ -135,7 +135,8 @@ test("#249: capability guide registers exactly once, and stays off when the key 
   assert.equal(on.sections.length, 1, "exactly one guide section");
   assert.equal(on.sections[0].name, "memory-guide");
   assert.equal(on.sections[0].order, 150, "插件指引段的既有 order 惯例");
-  assert.equal(on.sections[0].text, MEMORY_GUIDE_SECTION, "常量文本 → 同会话内稳定");
+  assert.equal(typeof on.sections[0].text, "function", "guide text resolves per prompt context so session gating can apply");
+  assert.equal(on.sections[0].text({}), MEMORY_GUIDE_SECTION, "normal sessions receive the same guide text");
   // 不可逆工具（memory_delete）的克制指引必须在场：这是全 guide 里唯一有数据
   // 损失后果的一句，被误删掉的回归要能立刻转红。
   assert.ok(MEMORY_GUIDE_SECTION.includes("memory_delete"), "guide keeps the irreversible-tool warning");

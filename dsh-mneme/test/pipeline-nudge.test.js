@@ -37,6 +37,7 @@ import {
   nudgeForProject,
   resolveProjectSessionDir
 } from "../src/pipeline-nudge.js";
+import { createSessionGate } from "../src/session-gate.js";
 
 // 这组测试守的是 M.O. 的**沉淀链**：一条工作流能不能从真实数据里自己长出来。
 // 三条不许越的分界线（见 src/pipeline-nudge.js 文件头），测试逐条守：
@@ -100,6 +101,44 @@ test("多帧 zstd 要逐帧解：只解第一帧会静默丢掉后面的回合",
     assert.equal(read.observations.length, 3, "三处调用（两帧）都要被扫到");
     const turns = new Set(segmentObservations(read.observations).map((s) => s.turn));
     assert.deepEqual([...turns].sort(), [1, 2], "第二帧的那个回合不能被丢");
+  });
+});
+
+test("#539：nudge 日志扫描按精确 id 与真实子代理头过滤会话", () => {
+  withDir((dir) => {
+    const sessions = join(dir, "sessions");
+    const manualDir = join(sessions, "ws", "manual");
+    const childDir = join(sessions, "ws", "child");
+    const captainDir = join(sessions, "ws", "captain");
+    mkdirSync(manualDir, { recursive: true });
+    mkdirSync(childDir, { recursive: true });
+    mkdirSync(captainDir, { recursive: true });
+    const privateCall = sessionLine({ turn: 1, calls: [skill("private-skill"), skill("private-next")] });
+    writeFileSync(join(manualDir, "session.v4.jsonl.zstd"), zlib.zstdCompressSync(Buffer.from(privateCall)));
+    const childHeader = JSON.stringify({
+      type: "session",
+      cwd: "C:\\proj",
+      parentSession: "captain",
+      origin: "subagent",
+      delegationDepth: 1
+    });
+    writeFileSync(join(childDir, "session.v4.jsonl.zstd"), zlib.zstdCompressSync(Buffer.from(`${childHeader}\n${privateCall}`)));
+    const publicCall = sessionLine({ turn: 1, calls: [skill("public-skill"), skill("public-next")] });
+    const captainHeader = JSON.stringify({ type: "session", cwd: "C:\\proj", origin: "main", delegationDepth: 0 });
+    writeFileSync(join(captainDir, "session.v4.jsonl.zstd"), zlib.zstdCompressSync(Buffer.from(`${captainHeader}\n${publicCall}`)));
+
+    const gate = createSessionGate({
+      sessionGateEnabled: true,
+      sessionGateSubagents: true,
+      sessionGateSessions: ["manual"]
+    });
+    const read = readSessionObservations({ sessionDir: sessions, sessionGate: gate });
+    assert.deepEqual([...new Set(read.observations.map((item) => item.sessionId))], ["captain"]);
+    assert.ok(!read.observations.some((item) => item.name.startsWith("private")));
+
+    const disabled = createSessionGate({ sessionGateEnabled: false, sessionGateSessions: ["manual"] });
+    const unchanged = readSessionObservations({ sessionDir: sessions, sessionGate: disabled });
+    assert.ok(unchanged.observations.some((item) => item.sessionId === "manual"), "master-off keeps existing scan behavior");
   });
 });
 
