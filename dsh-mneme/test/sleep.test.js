@@ -752,3 +752,32 @@ test("issue#536 review ③: a decision that never landed must not be recorded as
   assert.ok(result.phases.conflicts.skipped.length > 0, "跳过明细照常进审计");
   store.close();
 });
+
+test("issue#536 review ④: judged_at lives in the store's clock domain, not the wall clock", async () => {
+  const { service, store, vectorIndex } = setup();
+  const { a, b } = seedConflictPair(service, vectorIndex, 1.0);
+  // 造一次「库里的单调时钟比墙钟快」——src/store.js 的 nowIso 在同一毫秒内的连续
+  // 写入上逐次 +1ms，高频写入的库完全可能领先墙钟几毫秒（CI 的 test-host-legacy
+  // 腿抓到过这次真 flake）。这里直接把两侧推到墙钟之后，等价于那个状态。
+  const ahead = new Date(Date.now() + 5000).toISOString();
+  for (const id of [a.id, b.id]) {
+    store.db.prepare("UPDATE memories SET created_at = ?, updated_at = ? WHERE id = ?").run(ahead, ahead, id);
+  }
+
+  // 第一轮判 keep ⇒ 记台账。
+  const first = await runSleep(mockCtx(() => "[]"), service, baseConfig(), { warn: () => {} }, { embedder, vectorIndex }, null);
+  assert.equal(first.phases.conflicts.status, "noop");
+  const ledger = service.listConflictReviewed();
+  assert.equal(ledger.length, 1, "判 keep 要留一行");
+  assert.ok(
+    ledger[0].judged_at >= ahead,
+    "judged_at 不能早于被测行自己的 updated_at（" + ledger[0].judged_at + " vs " + ahead + "）"
+  );
+
+  // 第二轮：两侧确实没动过 ⇒ 不许重送。若 judged_at 取了墙钟，这里会读成
+  // 「判过之后又被改过」，判 keep 的死循环原样复活。
+  const second = countingCtx(() => "[]");
+  await runSleep(second.ctx, service, baseConfig(), second.ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(second.calls(), 0, "时钟领先墙钟时，已审的对仍然不许重送");
+  store.close();
+});

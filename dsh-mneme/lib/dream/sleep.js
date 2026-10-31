@@ -469,7 +469,16 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // 自己这一批（下面的循环），而不是把整轮判死。
   const adjudicateBatch = async (batch, updateBudget) => {
     // Issue #536 review（CodeRabbit ③）：judged_at 是**发送时刻**，不是落地时刻。
-    const judgedAt = new Date().toISOString();
+    //
+    // 取 max(墙钟, 本批两侧里最新的 updated_at)：`updated_at` 用的是 store 的
+    // **单调时钟**（src/store.js 的 nowIso：同一毫秒内的连续写入逐次 +1ms），它可能
+    // 比墙钟快几毫秒；直接用墙钟会记出一个早于被测行自身版本的 `judged_at`，于是
+    // 「这一对刚判过」在下一轮的 `alreadyJudged` 里读成「判过之后又被改过」，判 keep
+    // 的死循环原样复活（CI 的 test-host-legacy 腿抓到过一次真 flake）。两列同源才可比。
+    const judgedAt = batch.reduce(
+      (acc, p) => (p.a.updated_at > acc ? p.a.updated_at : (p.b.updated_at > acc ? p.b.updated_at : acc)),
+      new Date().toISOString()
+    );
     const text = await withMaxTokensFallback(ctx, config.sleepMaxTokens ?? 2048, (tokens) => withEffortFallback(ctx, sleepEffort, () => runConflict(batch, true, tokens), () => runConflict(batch, false, tokens), () => conflictStreamFailure), () => conflictStreamFailure);
     if (text === undefined) {
       if (conflictStreamFailure) ctx.logger?.warn?.(`dsh-mneme sleep: conflict stream aborted or errored (${conflictStreamFailure})`);
