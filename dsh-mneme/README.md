@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/@modusensus/dsh-mneme?color=blue&label=npm)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Awesome](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
-[![tests](https://img.shields.io/badge/tests-2547%20passed-success)](https://github.com/slow-stack/mneme)
+[![tests](https://img.shields.io/badge/tests-2558%20passed-success)](https://github.com/slow-stack/mneme)
 [![CI](https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml)](https://github.com/slow-stack/mneme/actions)
 [![node](https://img.shields.io/badge/node-22%2B-blue)](https://nodejs.org)
 [![npm downloads](https://img.shields.io/npm/d18m/@modusensus/dsh-mneme.svg?color=blue&label=downloads)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
@@ -213,6 +213,8 @@ v0.3.0 起新增**记忆基因**层：从记忆里抽取**命名实体**、**带
 ### LLM 消耗审计 📊（v0.4.6，默认开）
 
 每次**后台 LLM 调用**都会写入 `llm_audit_logs` 表：`tokens` / `duration` / `status` / `source`（由哪个触发产生）。失败调用记为 `status=error`，绝不阻塞功能本体；`retentionDays`（默认 90）在启动时清理超期行。
+
+巩固那一轮还有一层**事后判决**：调用成功不等于决策可用，而校验发生在调用之后。判决以 `metadata.decision_validation`（`verdict` / `error_count` / `skipped_count` / `survivor_count` / `invalid_actions`）浅合并回同一行——`status`、tokens、时间戳一律不改，它们是调用层的事实。`verdict` 四档：`unparsed`（没解析出 JSON 数组）/ `rejected`（整单拒绝）/ `degraded`（只应用了合法子集）/ `ok`。有了这一层，「调用成功率」与「整轮有效率」才对得上账。
 
 覆盖的后台调用（`source` 即触发源，`operation_type` 区分同一源下的不同调用）：
 
@@ -717,7 +719,7 @@ src/
 ├── api.js            # HTTP 路由（Web 面板数据通道，含 /conflicts 冲突队列）
 └── index.js          # 插件接线
 lib/                  # src 的同步分发产物（npm run sync，prepack 钩子在发布时自动跑；一致性由 scripts/check-sync.js 在 CI 与 release.yml 校验——它只查不同步；唯一手写例外 lib/client.js——Web 面板 bundle，sync 不覆盖）
-test/                 # 2547 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
+test/                 # 2558 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
 scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压测 · sync-lib.js 同步 · check-sync.js 发布闸门 · benchmark-recall.js / benchmark-embed.js / benchmark-rerank.js 基准 · sync-test-badge.mjs 测试徽章 · build-runtime-manifest.mjs 运行时清单
 ```
 
@@ -726,7 +728,7 @@ scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压
 ```bash
 cd dsh-mneme
 npm install        # 安装 peer 依赖（以 devDependencies 形式，用于本地测试）
-npm test           # 运行 2547 个测试
+npm test           # 运行 2558 个测试
 npm run stress     # 三轴线压测：长会话检索 / 冲突仲裁 / 多 Agent 并发（离线 mock LLM）
 npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动执行）
 ```

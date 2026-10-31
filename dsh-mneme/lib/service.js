@@ -2831,6 +2831,8 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // LLM audit trail (Bug8): bookkeeping semantics like the recall/dream
     // passthroughs — a saveLlmAudit write never triggers write hooks.
     saveLlmAudit: (entry) => store.saveLlmAudit(entry),
+    // #534：校验层的判决要补回到调用层已经写死的审计行上（两套账分账，见 store 侧注释）。
+    annotateLlmAudit: (id, patch) => store.annotateLlmAudit(id, patch),
     listLlmAudits: (opts) => store.listLlmAudits(opts),
     countLlmAudits: (opts) => store.countLlmAudits(opts),
     getLlmAuditStats: (opts) => store.getLlmAuditStats(opts),
