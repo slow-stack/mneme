@@ -2627,6 +2627,40 @@ window.__ModuleLoader__.load({
       // 而「为什么禁用」本来就由 title 说明（读不到会话工作目录）。
       ".mneme-pipe-distillBtn:disabled{cursor:not-allowed;border-style:dashed;color:var(--mneme-fg-dim)}",
       ".mneme-pipe-distillNote{color:var(--mneme-fg-dim);line-height:17px;min-width:0}",
+      // ===== 移动端适配（mobile-adapt 车道）=====
+      // 为什么主通道是 @container 而不是 @media：面板有两种形态（overlay 弹层与
+      // better-sidebar 工作台 tab），容器宽度与视口宽度并不相等；`.mneme-x` 是
+      // container-type:inline-size 的容器根（1950 行），两种形态下容器查询都成立。
+      // @media 只负责 `.mneme-overlay` 自己的外框——它不在 `.mneme-x` 之内，
+      // 容器查询够不到它，这一条只能走视口。
+      // 纪律：以下几块内一律不写 color/fill/stroke/background。contrast.test.js 的
+      // 规则提取器按「单层花括号」匹配（/^([^{]+)\{([^}]*)\}$/），双花括号的
+      // @container / @media 整串不匹配而被跳过——在这样的块里写颜色等于绕过 #178
+      // 的 AA 主锁，属于静默失效，不是优化。布局属性不受影响。
+      "@media (max-width: 640px){.mneme-overlay{width:calc(100vw - 16px);height:calc(100dvh - 16px);border-radius:12px}}",
+      // 触屏没有 hover：设置页的删除钮 base 是 opacity:0、只靠 :hover/:focus-within
+      // 恢复（2088-2089），手机上等于永久不可见。#457 与 #459 两次回滚都是因为把
+      // hover 配色一起改了，所以这里只加「常显」，不碰颜色。min-height:24px 是
+      // WCAG 2.5.8 AA 的触控目标下限，顺手补到常显按钮上。
+      "@media (hover:none){.mneme-set-del{opacity:1;padding:0 8px;min-height:24px}.mneme-footbtn{min-height:24px}}",
+      // 主断点 480：骨架换向，不是继续收窄数值。临界宽度实算——卡片要 252+48=300、
+      // 左栏 216+1，面板得 ≥517px；实体属性网格要 248、rail 224+1，得 ≥473px。
+      // 目标区间上沿只有 430px，靠收窄永远追不上，只能改骨架。
+      // 左右分栏在窄容器里改上下：左栏/rail 限高可滚，不允许自然撑开把主区挤掉；
+      // 不做折叠按钮（要 JS 状态 + 新 i18n 键，成本高于收益）。
+      // 抽屉改满宽不丢关闭入口：抽屉自带 ✕（.mneme-drawerbar）；锚点是
+      // .mneme-xmain 自己的 position:relative（2252），换向后仍然成立。
+      // 实体页换向的前提：rail 侧本就 .mneme-entrailbody{overflow-y:auto} +
+      // .mneme-enttype{sticky}（2046/2047），叠放后天然可滚、零 JS、不加文案键。
+      // 图谱只在 CSS 层止血（高度 + touch-action + 标签字号）：它能拖能缩依赖
+      // onMouseDown/onMouseMove/wheel，全仓 onPointerDown/onTouchStart 命中 0，
+      // 那是能力缺失不是样式问题，归后续车道。
+      "@container (max-width: 480px){.mneme-xbar{justify-content:flex-start;padding:0 52px 0 10px}.mneme-vtab{padding:0 10px}.mneme-xmain{flex-direction:column}.mneme-xside{width:100%;flex:none;max-height:min(42vh,300px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2);overscroll-behavior:contain}.mneme-xbrowsebar{padding:8px 12px}.mneme-filterbar{padding:8px 12px}.mneme-drawer{width:100%}.mneme-drawerbody{padding:16px 14px 24px}.mneme-cards{grid-template-columns:repeat(auto-fill,minmax(min(252px,100%),1fr));padding:14px 12px 24px;overscroll-behavior:contain}.mneme-ent{flex-direction:column}.mneme-entrail{width:100%;flex:none;max-height:min(40vh,280px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2);overscroll-behavior:contain}.mneme-entdetail{padding:16px 14px 24px}.mneme-attrgrid{grid-template-columns:repeat(auto-fill,minmax(min(200px,100%),1fr))}.mneme-set{padding:8px 14px 40px}.mneme-status{padding:16px 14px 32px}.mneme-menu{min-width:0;width:min(200px,calc(100cqw - 32px))}.mneme-impdialog{width:min(300px,calc(100cqw - 32px))}.mneme-sharedialog{width:min(340px,calc(100cqw - 32px))}.mneme-graph{padding:10px 12px 12px}.mneme-graphsvg{max-height:min(320px,52vh);touch-action:pan-y}.mneme-glabel{font-size:14px}.mneme-graphside{position:static;width:auto;max-width:100%;max-height:min(200px,30vh);margin-top:8px}}",
+      // 360 档只做两件事：隐掉 14px 的 tab 图标（.mneme-vtab 带图标时约 109px/个、
+      // 4 个约 436px，320px 容器原地就横向溢出），再把正文 padding 收到 12–14px。
+      // .mneme-vtabs 的 overflow-x:auto 是兜底——英文标签比中文宽，压到 320 仍可能
+      // 顶边；横向滚动时不要给 ⋯ 让位以外的额外留白。
+      "@container (max-width: 360px){.mneme-vtabico{display:none}.mneme-vtab{padding:0 8px;font-size:13px}.mneme-xbar{padding:0 46px 0 8px}.mneme-vtabs{min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.mneme-vtabs::-webkit-scrollbar{height:0}.mneme-cards{grid-template-columns:1fr;padding:12px 10px 20px}.mneme-xside{max-height:min(46vh,260px)}.mneme-entrail{max-height:min(44vh,240px)}.mneme-entdetail{padding:14px 12px 22px}.mneme-set{padding:8px 12px 36px}.mneme-status{padding:14px 12px 30px}}",
     ].join("\n");
     if (typeof document !== "undefined" && document.querySelector(`style[data-plugin-css="${CSS_TAG}"]`) === null) {
       const tag = document.createElement("style");
