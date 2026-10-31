@@ -525,3 +525,230 @@ test("issue#250 sleep still adjudicates normally when llmAudit.enabled === false
   assert.equal(service.listLlmAudits().length, 0, "no audit rows when disabled");
   store.close();
 });
+// ------------------------------------------------------------ issue #529: input budget
+
+// seedSimilarPairs：造 n 条同类型、两两相似度都不低于阈值的记忆，且每条只可能与
+// 一条配成对（相似度按 i 递减）。用来验证「池子大于单批上限」时分批是否真的分开了。
+// 这些向量不是正交的——cosine 只在 [1,0,0] 与 [s, sin, 0] 之间算，因此给每对单独
+// 一个角度，与 seedConflictPair 同一套构造。
+function seedSimilarPairs(service, vectorIndex, n) {
+  const mems = [];
+  for (let i = 0; i < n; i++) {
+    const m = makeMemory(service, `主题${i}`, `内容${i}`, "project");
+    mems.push(m);
+  }
+  // 全部推到同一个方向附近：任意两条的 cosine 都 ≈ 1（> 0.85），findPotentialConflicts
+  // 会生成 C(n,2) 对，去重阶段按相似度留下 n/2 对（每记忆至多一对）。
+  for (const m of mems) vectorIndex.saveEmbedding(m.id, [1, 0, 0]);
+  return mems;
+}
+
+// 记录**冲突相位**每次往返送进去的候选对数（user 消息里每个候选行以 "id=" 开头）。
+// 必须按 purpose 过滤：同一轮里 pattern 相位也会调 LLM，把它的往返算进来会让
+// 「送了几批」这个断言凭空多一批。
+function countingCtx(responder, batchSizes = []) {
+  let call = 0;
+  const ctx = {
+    logger: { warn: () => {}, info: () => {} },
+    agentDefaultModel: { currentSelection: () => ({ provider: "mock", model: "sleep-model" }) },
+    llm: {
+      async *stream(options) {
+        const userText = options.messages.find((m) => m.role === "user")?.content?.[0]?.text ?? "";
+        let reply = "[]";
+        if (options.purpose === "sleep-conflict") {
+          batchSizes.push((userText.match(/id=/g) ?? []).length);
+          reply = responder(userText, ++call);
+        }
+        yield { type: "text-delta", index: 0, text: reply };
+        yield { type: "finish", reason: { kind: "stop" } };
+      }
+    }
+  };
+  return { ctx, batchSizes, calls: () => call };
+}
+
+test("issue#529 conflict pairs are sent in bounded batches, not one giant prompt", async () => {
+  const { service, store, vectorIndex } = setup();
+  seedSimilarPairs(service, vectorIndex, 8);
+  const { ctx, batchSizes } = countingCtx(() => "[]");
+  const config = baseConfig({ sleepConflictMaxPairs: 2, sleepConflictMaxPairsPerRun: 8 });
+  const result = await runSleep(ctx, service, config, ctx.logger, { embedder, vectorIndex }, null);
+  assert.ok(batchSizes.length > 1, `expected several batches, got ${batchSizes.length}`);
+  assert.ok(batchSizes.every((n) => n > 0 && n <= 4), `每批不超过 2 对（每对 2 个 id）: ${JSON.stringify(batchSizes)}`);
+  assert.deepEqual(batchSizes.slice(-2), [4, 4], "每对 2 个 id ⇒ 2 对 = 4 个 id 行");
+  assert.equal(result.phases.conflicts.batches, batchSizes.length, "审计里的批次数与真实往返次数一致");
+  store.close();
+});
+
+test("issue#529 a failing batch does not kill the whole run (degraded, not failed)", async () => {
+  const { service, store, vectorIndex } = setup();
+  seedSimilarPairs(service, vectorIndex, 8);
+  const { ctx } = countingCtx((_text, n) => {
+    // 第一批吐空（stream 正常结束但无文本 ⇒ llm failed），后面的批正常。
+    return n === 1 ? "" : "[]";
+  });
+  const config = baseConfig({ sleepConflictMaxPairs: 2, sleepConflictMaxPairsPerRun: 8 });
+  const result = await runSleep(ctx, service, config, ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(result.phases.conflicts.status, "degraded", "坏批只记 degraded，不判死整轮");
+  assert.ok(result.phases.conflicts.batches > 1, "后面的批照样跑完了");
+  store.close();
+});
+
+test("issue#529 a judged pair is not re-sent while neither side changed (keep leaves a trace)", async () => {
+  const { service, store, vectorIndex } = setup();
+  const { a, b } = seedConflictPair(service, vectorIndex, 1.0);
+  const config = baseConfig();
+  // 第一轮：判 keep（= 模型说这两条不冲突）。这曾经是彻底的 no-op。
+  const first = await runSleep(mockCtx(() => "[]"), service, config, { warn: () => {} }, { embedder, vectorIndex }, null);
+  assert.equal(first.phases.conflicts.status, "noop", "没有动作 ⇒ noop");
+  const ledger = service.listConflictReviewed();
+  assert.equal(ledger.length, 1, "判 keep 也要在台账里留一行");
+  assert.equal(ledger[0].outcome, "keep");
+  assert.deepEqual([ledger[0].memory_a, ledger[0].memory_b].sort(), [a.id, b.id].sort());
+
+  // 第二轮：两侧都没动 ⇒ 这对已经在台账里，不该再送 LLM。
+  const secondCtx = countingCtx(() => "[]");
+  const second = await runSleep(secondCtx.ctx, service, config, secondCtx.ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(secondCtx.calls(), 0, "同一对、两侧都没更新 ⇒ 不再送审");
+  assert.equal(second.phases.conflicts.ledgerSkipped, 1);
+
+  // 第三轮：动一下其中一侧（内容更新 ⇒ updated_at 前进），它就该重新入池。
+  // service.update 会把该行的向量作废并异步重算；测试里的 mock embedder 只支持
+  // 「一条一条 embed」的形式（embedSingle），批量 embed 的返回形状不是它覆盖的范围，
+  // 所以这里按既有夹具的做法手工补一次向量——被测的是台账判据，不是回填路径。
+  service.update(b.id, { content: "内容B 关于主题X（改）" });
+  vectorIndex.saveEmbedding(b.id, [1, 0, 0]);
+  const thirdCtx = countingCtx(() => "[]");
+  const third = await runSleep(thirdCtx.ctx, service, config, thirdCtx.ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(thirdCtx.calls(), 1, "任一侧更新过 ⇒ 重新送审");
+  assert.equal(third.phases.conflicts.ledgerSkipped, 0);
+  store.close();
+});
+
+test("issue#529 per-run cap bounds the pairs adjudicated in one run", async () => {
+  const { service, store, vectorIndex } = setup();
+  seedSimilarPairs(service, vectorIndex, 12);
+  const { ctx, calls } = countingCtx(() => "[]");
+  const config = baseConfig({ sleepConflictMaxPairs: 2, sleepConflictMaxPairsPerRun: 4 });
+  const result = await runSleep(ctx, service, config, ctx.logger, { embedder, vectorIndex }, null);
+  assert.ok(calls() <= 2, `每轮最多 4 对 ÷ 每批 2 对 = 2 次往返，实际 ${calls()}`);
+  assert.ok(result.phases.conflicts.perRunSkipped > 0, "超出本轮预算的对要被记下来");
+  store.close();
+});
+
+test("issue#529 user activity between batches aborts instead of reporting noop", async () => {
+  const { service, store, vectorIndex } = setup();
+  seedSimilarPairs(service, vectorIndex, 12);
+  const controller = new AbortController();
+  // 第一批返回之后用户恢复活动（noteWrite → abort）。此时第二、三批根本没送出去，
+  // 把它们算成「看过、没冲突」（noop）是这一相位最容易犯的谎。
+  const { ctx } = countingCtx(() => {
+    controller.abort();
+    return "[]";
+  });
+  const config = baseConfig({ sleepConflictMaxPairs: 1, sleepConflictMaxPairsPerRun: 12 });
+  const result = await runSleep(ctx, service, config, ctx.logger, { embedder, vectorIndex }, controller.signal);
+  assert.equal(result.phases.conflicts.status, "aborted", "中途被打断不是 noop");
+  assert.equal(result.phases.conflicts.batches, 6, "计划批次数照实记（不是实际送出的批次数）");
+  // 整轮层也要如实：deriveStatus 此前只认 failed/error，aborted 相位会被静默折成
+  // noop，审计行于是把「没跑完」记成「跑过、没什么事」——与相位层同一个谎。
+  assert.equal(result.status, "aborted", "整轮状态沿用相位的 aborted，不折回 noop");
+  store.close();
+});
+
+test("issue#529 failed batches still report pairs/batches (audit used to lose them)", async () => {
+  const { service, store, vectorIndex } = setup();
+  seedSimilarPairs(service, vectorIndex, 4);
+  const { ctx } = countingCtx(() => "");
+  const config = baseConfig({ sleepConflictMaxPairs: 2, sleepConflictMaxPairsPerRun: 4 });
+  const result = await runSleep(ctx, service, config, ctx.logger, { embedder, vectorIndex }, null);
+  const phase = result.phases.conflicts;
+  assert.equal(phase.status, "failed", "全部批次失败 ⇒ 整轮 failed");
+  assert.ok(Number.isInteger(phase.pairs) && phase.pairs > 0, "失败轮也带 pairs");
+  assert.ok(Number.isInteger(phase.batches) && phase.batches > 0, "失败轮也带 batches");
+  store.close();
+});
+
+
+// ------------------------------------------- issue #536 review: CodeRabbit 三条
+
+// 把一条记忆的 created_at / updated_at 一起回拨。update 决策有 24h 保护期，
+// 台账判据比的是 updated_at——两处都要动，只改一个会让用例互相干扰。
+function backdate(store, id, hours) {
+  const ts = new Date(Date.now() - hours * 3600000).toISOString();
+  store.db.prepare("UPDATE memories SET created_at = ?, updated_at = ? WHERE id = ?").run(ts, ts, id);
+}
+
+// 造一对向量完全相同的记忆（similarity = 1）。
+function seedIdenticalPair(service, vectorIndex, dir, tag) {
+  const a = makeMemory(service, `${tag}A`, `${tag} 内容A`, "project");
+  const b = makeMemory(service, `${tag}B`, `${tag} 内容B`, "project");
+  vectorIndex.saveEmbedding(a.id, dir);
+  vectorIndex.saveEmbedding(b.id, dir);
+  return { a, b };
+}
+
+test("issue#536 review ①: an already-judged pair must not eat a memory's pairing slot", async () => {
+  const { service, store, vectorIndex } = setup();
+  // a-b 相似度 1.0，a-c 与 b-c 都是 0.9：按相似度排序先去重的旧写法会先选中 a-b，
+  // 再把 a-b 当"已审"丢掉，于是 a 的名额被一个注定被过滤的对占住，a-c 进不来。
+  const a = makeMemory(service, "主题X", "内容A 关于主题X", "project");
+  const b = makeMemory(service, "主题X副本", "内容B 关于主题X", "project");
+  const c = makeMemory(service, "主题X变体", "内容C 关于主题X", "project");
+  vectorIndex.saveEmbedding(a.id, [1, 0, 0]);
+  vectorIndex.saveEmbedding(b.id, [1, 0, 0]);
+  vectorIndex.saveEmbedding(c.id, [0.9, Math.sqrt(1 - 0.81), 0]);
+  // a-b 已经判过（keep），且两侧此后都没动过 ⇒ 本轮不该再送。
+  service.saveConflictReviewed({
+    run_id: "seed",
+    memory_a: a.id,
+    memory_b: b.id,
+    outcome: "keep",
+    judged_at: new Date(Date.now() + 60000).toISOString()
+  });
+
+  const { ctx, calls } = countingCtx(() => "[]");
+  const result = await runSleep(ctx, service, baseConfig(), ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(calls(), 1, "台账预筛必须发生在去重之前，a 要能和 c 配对送出去");
+  assert.equal(result.phases.conflicts.ledgerSkipped, 1, "被台账挡下的对数照实记");
+  store.close();
+});
+
+test("issue#536 review ②: reflectionUpdateMaxPerRun stays a whole-run cap across batches", async () => {
+  const { service, store, vectorIndex } = setup();
+  // 两对向量正交，互不干扰 ⇒ 去重后正好两对，每批一对。
+  const p1 = seedIdenticalPair(service, vectorIndex, [1, 0, 0], "甲");
+  const p2 = seedIdenticalPair(service, vectorIndex, [0, 1, 0], "乙");
+  for (const m of [p1.a, p1.b, p2.a, p2.b]) backdate(store, m.id, 48);
+
+  // 每批都提一条 update：整轮上限 1，所以只有先跑的那批能落地。
+  const { ctx, calls } = countingCtx((text) => {
+    const id = text.includes(p1.a.id) ? p1.a.id : p2.a.id;
+    const next = text.includes(p1.a.id) ? "甲 内容A（更新）" : "乙 内容A（更新）";
+    return JSON.stringify([{ action: "update", ids: [id], content: next, reason: "内容有误" }]);
+  });
+  const config = baseConfig({ sleepConflictMaxPairs: 1, sleepConflictMaxPairsPerRun: 2, reflectionUpdateMaxPerRun: 1 });
+  const result = await runSleep(ctx, service, config, ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(calls(), 2, "两对各自成批，都要送");
+  const updated = [p1.a, p2.a].filter((m) => service.getById(m.id).content.endsWith("（更新）"));
+  assert.equal(updated.length, 1, "update 是整轮上限，不是每批上限——只能落地一条");
+  assert.equal(result.phases.conflicts.batches, 2);
+  store.close();
+});
+
+test("issue#536 review ③: a decision that never landed must not be recorded as judged", async () => {
+  const { service, store, vectorIndex } = setup();
+  const { a } = seedConflictPair(service, vectorIndex, 1.0);
+  // 提一条"不改任何字段"的 update：validateDecisions 会把它跳过（skipInvalid），
+  // 该条决策没有落地。若照旧把整批送审对都写进台账，这一对就会被判成"已审"
+  // 而永远不再送——沉默地永久压制一个真实冲突。
+  const { ctx, calls } = countingCtx(() =>
+    JSON.stringify([{ action: "update", ids: [a.id], content: "内容A 关于主题X" }])
+  );
+  const config = baseConfig({ reflectionUpdateMinAgeHours: 0 });
+  const result = await runSleep(ctx, service, config, ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(calls(), 1, "这一对确实被送出去判过");
+  assert.equal(service.listConflictReviewed().length, 0, "没落地的决策不能记成已审");
+  assert.ok(result.phases.conflicts.skipped.length > 0, "跳过明细照常进审计");
+  store.close();
+});

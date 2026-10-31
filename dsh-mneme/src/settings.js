@@ -143,6 +143,9 @@ const FEATURE_FLAG_BOOLEANS = [
   // 有效间隔 = 基数 × 2^连续失败数（成功清零），封顶 30 分钟；面板可启停。
   "autoDreamFailureBackoff",
   "sleepModeEnabled",
+  // Issue #529：sleep 连续失败退避（默认关）。基数是 sleepMinIntervalHours，
+  // 有效间隔 = 基数 × 2^连续失败数（成功清零），封顶 24 小时；面板可启停。
+  "sleepFailureBackoff",
   "heatEnabled",
   // issue #218 / E5：注入侧 heat 独立开关（默认关，老用户 injectHeatEnabled=true 回滚）。
   "injectHeatEnabled",
@@ -283,6 +286,11 @@ const FEATURE_FLAG_INT_RANGES = {
   pinnedInjectBudget: [0, 5],
   // Issue #257：sleep 冲突/模式阶段的 LLM 输出预算（原硬编码 2048，实测不足）。
   sleepMaxTokens: [256, 131072],
+  // Issue #529：sleep 冲突阶段的输入侧预算（此前完全没有——全部候选对一次进一个
+  // prompt，实测 163,054 token 撞服务端 163,840 上限）。两个键都是 0 = 不设上限，
+  // 与 config.js 的 z.natural().min(0).max() 成对。
+  sleepConflictMaxPairs: [0, 500],
+  sleepConflictMaxPairsPerRun: [0, 5000],
   // Issue #258：总览（dream_summarize）输入条数硬上限（0 = 不设上限）。
   dreamSummaryMaxInputs: [0, 100000],
   // Issue #24 块1：锚定种子上限与级联深度（闭区间与 config.js 的 z.natural() 对齐）。
