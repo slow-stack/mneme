@@ -1415,17 +1415,6 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       });
     }
     const skippedInvalid = skipped.length > 0;
-    // 校验通过（可能带若干跳过 → degraded）。判决同样补回审计行：这一步之前
-    // 没有任何地方能回答「调用成功的那一轮，决策层到底认不认」。
-    annotateAudit(decisionValidationMeta({
-      verdict: skippedInvalid ? "degraded" : "ok",
-      errors,
-      skipped,
-      // 校验器已就地 splice：这个长度就是下游 apply/audit 真正会消费的条目数
-      // （含隐式补齐的 keep）。不能再减 skipped.length——被跳过的那些早被剪掉了，
-      // 再减一次会把「跳 1 条、存活 1 条」算成 0（本分支自测当场抓到过）。
-      survivorCount: decisions.length
-    }));
     if (skippedInvalid) {
       logger?.warn?.(`dsh-mneme dream: ${skipped.length} invalid decision(s) skipped (run degrades): ${skipped.map((s) => s.error).join("; ")}`);
     }
@@ -1435,6 +1424,22 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     if (coverageDegraded) {
       logger?.warn?.(`dsh-mneme dream: ${coverageShortfall} (run degrades: valid subset applied, unclaimed ids kept implicitly)`);
     }
+    // 校验通过（可能带若干跳过、也可能只是覆盖率不足 → degraded）。判决补回审计行：
+    // 这一步之前没有任何地方能回答「调用成功的那一轮，决策层到底认不认」。
+    //
+    // verdict 必须与下方状态判定同源（CodeRabbit on #535）：coverageShortfall 同样是
+    // 校验层的降级，若这里只认 skippedInvalid，覆盖率不足的轮会被 dream_runs 记成
+    // degraded、审计 metadata 却写 ok——两套账在最该对齐的一格上又对不上，正是本
+    // PR 要消灭的病。
+    annotateAudit(decisionValidationMeta({
+      verdict: skippedInvalid || coverageDegraded ? "degraded" : "ok",
+      errors,
+      skipped,
+      // 校验器已就地 splice：这个长度就是下游 apply/audit 真正会消费的条目数
+      // （含隐式补齐的 keep）。不能再减 skipped.length——被跳过的那些早被剪掉了，
+      // 再减一次会把「跳 1 条、存活 1 条」算成 0（本分支自测当场抓到过）。
+      survivorCount: decisions.length
+    }));
 
     // Capture pre-update snapshots so the audit records what each update changed.
     const updateSnapshots = {};

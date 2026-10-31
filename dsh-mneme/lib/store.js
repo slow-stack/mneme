@@ -2471,7 +2471,7 @@ export function createStore(path) {
     const now = nowIso();
     const inTokens = Number.isFinite(entry.input_tokens) ? entry.input_tokens : 0;
     const outTokens = Number.isFinite(entry.output_tokens) ? entry.output_tokens : 0;
-    db.prepare(
+    const info = db.prepare(
       `INSERT INTO llm_audit_logs (timestamp, trigger_source, operation_type, model_id,
         input_tokens, output_tokens, total_tokens, cost_usd, duration_ms, status,
         error_message, related_memory_ids, metadata, session_key)
@@ -2494,7 +2494,12 @@ export function createStore(path) {
         : null,
       entry.session_key ?? null
     );
-    return toLlmAudit(db.prepare("SELECT * FROM llm_audit_logs ORDER BY id DESC LIMIT 1").get());
+    // #534 / CodeRabbit on #535：回读必须用**这一次插入**的 rowid，不能用
+    // `ORDER BY id DESC LIMIT 1`。库支持多进程共用（见 AGENTS.md 的
+    // busy_timeout + WAL 约定），另一个写者在这两条语句之间插入就会把这行
+    // 读成别人的调用——调用方拿它去 annotate 校验判决时，会把本轮结论写到
+    // 另一轮头上。lastInsertRowid 是连接内的事实，不受并发写影响。
+    return toLlmAudit(db.prepare("SELECT * FROM llm_audit_logs WHERE id = ?").get(info.lastInsertRowid));
   }
 
   /**

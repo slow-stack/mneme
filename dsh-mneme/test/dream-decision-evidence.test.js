@@ -240,6 +240,69 @@ test("#534: 全部合法的轮次 verdict=ok，metadata 不因补注长出多余
   store.close();
 });
 
+test("#534: 覆盖率不足（没有逐条跳过）也判 degraded，与 dream_runs.status 同源", async () => {
+  // CodeRabbit on #535：coverageShortfall 同样是校验层降级。此前 verdict 只认
+  // skippedInvalid，于是「模型给了合法子集、但覆盖不到半数」的轮次会落成
+  // dream_runs.status="degraded" 而 metadata 写 verdict="ok"——两套账在最该
+  // 对齐的一格上又对不上。这条锁把它们绑死在同一个判据上。
+  const { store, service, dream } = setup();
+  const ids = [];
+  for (let i = 0; i < 5; i += 1) {
+    ids.push(service.saveWithDedupe({ type: "project", title: `覆盖-${i}`, content: `覆盖正文-${i}`, importance: 3 }).memory.id);
+  }
+  const result = await dream.runDream(mockCtx({
+    // 2/5 = 40% 覆盖 < 下限 50%，且没有一条被逐条跳过——降级理由只能是 coverage。
+    // 必须让一条真落地（archive 掉一条）：全 keep 轮会先被 noChange 分支截走
+    // （那里 status 只由 summaryStored 决定），走不到 coverage 这一格。
+    onConsolidation: () => JSON.stringify([
+      { action: "keep", ids: [ids[0]] },
+      { action: "archive", ids: [ids[1]], reason: "重复条目" }
+    ])
+  }), service, { dreamImplicitKeep: true, dreamMinExplicitCoverage: 0.5 });
+  const run = store.getDreamRun(result.runId);
+  assert.equal(run.applied, 1, "先确认这条路径真的落地了改动（否则测的还是 noChange 分支）");
+  assert.equal(run.status, "degraded", "覆盖率不足在 run 行上一直是 degraded（#104 方向 1）");
+  const meta = metaOf(consolidateAudits(service)[0]);
+  assert.equal(meta.decision_validation.verdict, "degraded", "审计 metadata 必须跟 run 行说同一件事");
+  assert.equal(meta.decision_validation.skipped_count, 0, "这条路径没有逐条跳过，判据只能是 coverage");
+  assert.equal(meta.decision_validation.survivor_count, 5, "未 claim 的 4 条被隐式 keep 补齐，全部存活");
+  store.close();
+});
+
+test("#534: 审计行的 id 来自本次插入，不是「当前最大 id」", async () => {
+  // CodeRabbit on #535（Major）：saveLlmAudit 原来先 INSERT 再
+  // `SELECT * ORDER BY id DESC LIMIT 1`。库支持多进程共用，另一个写者插在
+  // 中间就会把这行读成别人的调用，随后 annotate 把本轮判决写到别人头上。
+  // 这里用「连续两次写入各自拿回自己那行」锁住回读口径。
+  const { store, service } = setup();
+  const first = service.saveLlmAudit({ trigger_source: "t", operation_type: "o1", model_id: "m", status: "success" });
+  service.saveLlmAudit({ trigger_source: "t", operation_type: "o2", model_id: "m", status: "success" });
+  const second = service.saveLlmAudit({ trigger_source: "t", operation_type: "o3", model_id: "m", status: "success" });
+  assert.equal(first.operation_type, "o1", "回读的必须是自己插入的那一行");
+  assert.equal(second.operation_type, "o3");
+  assert.ok(second.id > first.id, "id 单调，但取值只认本次插入");
+
+  // 判决补注同样按 id 定位：插一行噪声在后面，也不能改变目标行。
+  service.saveLlmAudit({ trigger_source: "t", operation_type: "noise", model_id: "m", status: "success" });
+  const updated = service.annotateLlmAudit(first.id, { decision_validation: { verdict: "rejected" } });
+  assert.equal(updated.operation_type, "o1", "补注不许漂到别的行");
+  const rows = service.listLlmAudits({ limit: 20 });
+  assert.equal(rows.find((r) => r.operation_type === "noise").metadata, undefined, "噪声行不许被写上本轮判决");
+  store.close();
+});
+
+test("#534: saveLlmAudit 不再用「取最大 id」回读（源码锁）", () => {
+  const src = readFileSync(new URL("../src/store.js", import.meta.url), "utf8");
+  const body = src.slice(src.indexOf("function saveLlmAudit(entry)"));
+  const head = body.slice(0, body.indexOf("\n  }\n"));
+  // 先去注释再判：解释这条坑的注释本身会引述旧写法，不剥掉就永远命中自己。
+  const code = head.replace(/^\s*\/\/.*$/gm, "");
+  assert.equal(code.includes("ORDER BY id DESC LIMIT 1"), false,
+    "多进程共用同一库时「取最大 id」会读成别人的行——必须用 lastInsertRowid");
+  assert.match(code, /lastInsertRowid/, "回读口径锁在本次插入返回的 rowid 上");
+  assert.match(code, /SELECT \* FROM llm_audit_logs WHERE id = \?/, "回读用主键定位，不用排序取首行");
+});
+
 // ---------------------------------------------------------------- 改动面守卫
 
 test("#534: decisions 列之外没有别的写入口往那一列塞非决策对象", () => {
