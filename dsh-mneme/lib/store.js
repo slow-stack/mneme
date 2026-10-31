@@ -76,7 +76,13 @@ CREATE TABLE IF NOT EXISTS dream_runs (
   -- 写入就绕过阈值开跑整轮（#291 只持久化了 lastRunAt 那半边）。成功轮才落这两列，
   -- 失败/降级不推进基线的既有语义不变；两列同时有值或同时为 NULL。
   store_count    INTEGER,
-  store_chars    INTEGER
+  store_chars    INTEGER,
+  -- #534：失败轮（拿得到模型输出，但解析或校验没过）的原始输出截断副本。
+  -- 此前失败轮只留一行 logger.warn，进程一退现场就没了——#534 实测 19 轮里
+  -- 17 轮整轮无效，事后一条模型原文都查不到。做成独立列而不是塞进 decisions：
+  -- 那一列的语义是「可重放的决策数组」，失败轮已被 _validationFailed 哨兵占着，
+  -- 塞原文进去会污染按决策数组消费的下游（重放、面板）。
+  raw_output     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_dream_runs_created ON dream_runs(created_at);
 
@@ -590,7 +596,9 @@ function toDreamRun(row) {
     skipped: row.skipped ? JSON.parse(row.skipped) : undefined,
     // Issue #89（基线半边）：成功轮落下的阈值基线（NULL = 该轮没有推进基线）。
     store_count: row.store_count ?? undefined,
-    store_chars: row.store_chars ?? undefined
+    store_chars: row.store_chars ?? undefined,
+    // #534：失败轮的模型原始输出截断副本（NULL = 该轮没留下，或该轮是历史行）。
+    raw_output: row.raw_output ? JSON.parse(row.raw_output) : undefined
   };
 }
 
@@ -962,6 +970,9 @@ export function createStore(path) {
   // 成功轮之前播种端拿不到基线，行为与升级前一致；跑过一轮之后闸门即跨重启生效。
   addColumn("dream_runs", "store_count", "ALTER TABLE dream_runs ADD COLUMN store_count INTEGER");
   addColumn("dream_runs", "store_chars", "ALTER TABLE dream_runs ADD COLUMN store_chars INTEGER");
+  // #534：失败轮的模型原始输出。存量行两列皆 NULL——历史失败轮反推不出原文
+  // （那正是这条要补的口子），升级后新失败轮才有值。
+  addColumn("dream_runs", "raw_output", "ALTER TABLE dream_runs ADD COLUMN raw_output TEXT");
 
   // Legacy mirror_state without v0.3.6 generation columns → add each missing
   // column idempotently (old DBs open cleanly, no data loss).
@@ -2130,18 +2141,22 @@ export function createStore(path) {
       Number.isInteger(run.store_chars) && run.store_chars >= 0;
     const storeCount = baselineKnown ? run.store_count : null;
     const storeChars = baselineKnown ? run.store_chars : null;
+    // #534：失败轮的模型原始输出（对象：kind/raw_len/raw_head/raw_tail?/parsed?）。
+    // 未提供落 NULL 而不是 "{}"——读侧靠「有没有值」区分「这轮没留」与「留了个空」。
+    const rawOutput = run.raw_output !== undefined ? JSON.stringify(run.raw_output) : null;
     db.prepare(
       `INSERT INTO dream_runs (id, created_at, status, error, provider, model, snapshot_hash,
         input_count, input, decisions, outcome, applied, summary_stored, receipt, policy_epoch, run_type, skipped,
-        store_count, store_chars)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        store_count, store_chars, raw_output)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          created_at=excluded.created_at, status=excluded.status, error=excluded.error,
          provider=excluded.provider, model=excluded.model, snapshot_hash=excluded.snapshot_hash,
          input_count=excluded.input_count, input=excluded.input, decisions=excluded.decisions,
          outcome=excluded.outcome, applied=excluded.applied, summary_stored=excluded.summary_stored,
          receipt=excluded.receipt, policy_epoch=excluded.policy_epoch, run_type=excluded.run_type,
-         skipped=excluded.skipped, store_count=excluded.store_count, store_chars=excluded.store_chars`
+         skipped=excluded.skipped, store_count=excluded.store_count, store_chars=excluded.store_chars,
+         raw_output=excluded.raw_output`
     ).run(
       id,
       run.created_at ?? now,
@@ -2161,7 +2176,8 @@ export function createStore(path) {
       runType,
       skipped,
       storeCount,
-      storeChars
+      storeChars,
+      rawOutput
     );
     return getDreamRun(id);
   }
@@ -2479,6 +2495,32 @@ export function createStore(path) {
       entry.session_key ?? null
     );
     return toLlmAudit(db.prepare("SELECT * FROM llm_audit_logs ORDER BY id DESC LIMIT 1").get());
+  }
+
+  /**
+   * #534 建议 3：给已落库的审计行补一层「事后才知道」的读数。
+   *
+   * 两套账的根源是时序：审计行在 LLM 调用返回的那一刻就写死了（状态、token、
+   * 耗时都是调用层事实），而决策校验发生在调用之后——一轮「调用成功、输出却被
+   * 校验整单拒绝」在审计表里永远是 success，于是聚合出来的成功率与 dream_runs
+   * 的真实成功率对不上（作者实测 95% vs 10.5%）。
+   *
+   * 只合并 metadata（表里写明是 free-form extras），绝不改 status / token /
+   * timestamp：那些是调用层的事实，改写它们等于伪造账本。metadata 是「这一轮还
+   * 有什么值得记的」的垃圾桶，把校验判决放进去既补上了分账，又不制造第二张表。
+   *
+   * patch 是浅合并：已有键保留，同名键覆盖。行不存在（被清理/删除）静默返回
+   * undefined——补注失败不该把一轮巩固变成异常。
+   */
+  function annotateLlmAudit(id, patch) {
+    if (id == null || !patch || typeof patch !== "object") return undefined;
+    const row = db.prepare("SELECT * FROM llm_audit_logs WHERE id = ?").get(id);
+    if (!row) return undefined;
+    const current = toLlmAudit(row)?.metadata;
+    const base = current && typeof current === "object" && !Array.isArray(current) ? current : {};
+    const merged = { ...base, ...patch };
+    db.prepare("UPDATE llm_audit_logs SET metadata = ? WHERE id = ?").run(JSON.stringify(merged), id);
+    return toLlmAudit(db.prepare("SELECT * FROM llm_audit_logs WHERE id = ?").get(id));
   }
 
   function listLlmAudits({ limit = 50, offset = 0, source, sessionKey } = {}) {
@@ -3646,6 +3688,7 @@ export function createStore(path) {
     getRecallEval,
     listRecallEvals,
     saveLlmAudit,
+    annotateLlmAudit,
     getDistillCursor,
     setDistillCursor,
     listLlmAudits,

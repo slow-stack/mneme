@@ -318,7 +318,22 @@ export function validateDecisions(decisions, snapshot, options = {}) {
         // 单条非法 → 跳过该决策，不 claim id（其目标记忆留给其它合法决策/隐式
         // keep），并记录到 skipped 供调用方日志/审计。信息性跳过绝不写入全局
         // errors，否则会误触发下方的整单拒绝。
-        skipped.push({ index, action: d?.action, ids, error: local.join("; ") });
+        //
+        // #534：除四键骨架外补三个「模型到底给没给」的布尔，把 skipped 从
+        // 「error 字符串」变成可计数的形状。作者实测 19 轮 17 轮整轮无效，但
+        // skipped 里只有一句错误串，事后无法判断模型是漏字段（merge 缺
+        // title/content）、还是字段给了但值不合规（has_* 为 true 仍报错）。
+        // 只加布尔不加原文：原文进 llm_audit_logs.metadata 与 dream_runs.raw_output，
+        // 这里保持每条记录足够小（skipped 会按轮累积进一行 JSON）。
+        skipped.push({
+          index,
+          action: d?.action,
+          ids,
+          error: local.join("; "),
+          has_keepSource: d?.keepSource !== undefined && d?.keepSource !== null,
+          has_title: typeof d?.title === "string" && d.title.trim().length > 0,
+          has_content: typeof d?.content === "string" && d.content.trim().length > 0
+        });
       } else {
         errors.push(...local);
       }

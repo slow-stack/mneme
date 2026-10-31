@@ -352,6 +352,55 @@ export function parseFailureMeta(text) {
   };
 }
 
+/**
+ * #534 建议 3（分账读数）：一轮巩固在「校验层」判了什么。
+ *
+ * 调用层的审计行在 LLM 返回时就写死了 status=success，而这一轮可能整单被校验
+ * 拒绝、也可能只跳过几条（degraded）。把这三个数字补进那一行的 metadata，
+ * 「调用成功率」与「整轮有效率」就有了同一份可对齐的分母，不必再拿两张表硬拼。
+ *
+ * 只记计数与动作名，不记原文——原文已经在 raw_output 列（失败轮）与 skipped
+ * （逐条 error）里了，这里再抄一遍等于同一份数据存三处。
+ */
+export function decisionValidationMeta({ verdict, errors, skipped, survivorCount } = {}) {
+  const skips = Array.isArray(skipped) ? skipped : [];
+  const actions = [...new Set(skips.map((s) => s?.action).filter((a) => typeof a === "string" && a.length > 0))];
+  // verdict 由调用方给：它知道这一轮是「没解析出数组」「整单拒绝」还是「合法子集」，
+  // 判据复用校验器的返回值而不是在这里再推一遍布尔组合。
+  return {
+    decision_validation: {
+      verdict: typeof verdict === "string" ? verdict : "unknown",
+      error_count: Array.isArray(errors) ? errors.length : 0,
+      skipped_count: skips.length,
+      survivor_count: Number.isFinite(survivorCount) ? survivorCount : 0,
+      invalid_actions: actions
+    }
+  };
+}
+
+/**
+ * #534 建议 2：失败轮把模型原文留在行上。此前失败只有一条 warn，日志一滚现场
+ * 就没了——作者实测 19 轮里 17 轮整轮无效，事后连模型是怎么坏的都复不了盘。
+ *
+ * 截断口径沿用 #502/#504（summarize.js 的 summarizeParseFailureAudit）：头部
+ * 300 字，仅当原文 >500 字时补末 200 字。只留头尾是刻意的——模型跑飞时中段是
+ * 重复噪声，头尾才分别在「它怎么起手」「它怎么收尾」上给线索；整段原文既不必要
+ * 也不该进库（一轮可有数十 KB）。
+ *
+ * 空文本返回 undefined，调用方据此整键不写（与 saveDreamRun 的 undefined→NULL
+ * 约定一致，不落一个空壳对象冒充「有原文」）。
+ */
+export function rawOutputPayload(text) {
+  if (typeof text !== "string" || text.length === 0) return undefined;
+  const tail = text.length > 500 ? text.slice(-200) : "";
+  return {
+    raw_len: text.length,
+    raw_head: text.slice(0, 300),
+    ...(tail ? { raw_tail: tail } : {}),
+    raw_has_bracket: text.includes("[")
+  };
+}
+
 async function runAuditedLlm(ctx, service, config, spec, body) {
   const audit = config?.llmAudit;
   if (audit?.enabled === false || typeof service?.saveLlmAudit !== "function") return body(() => {});
@@ -406,7 +455,7 @@ async function runAuditedLlm(ctx, service, config, spec, body) {
       }
     }
     try {
-      service.saveLlmAudit({
+      const row = service.saveLlmAudit({
         timestamp,
         trigger_source: spec.triggerSource,
         operation_type: spec.operationType,
@@ -421,6 +470,10 @@ async function runAuditedLlm(ctx, service, config, spec, body) {
         related_memory_ids: spec.relatedMemoryIds ?? [],
         ...(metadata ? { metadata } : {})
       });
+      // #534 建议 3：把刚落库这一行的 id 交回调用方。校验判决发生在调用**之后**，
+      // 只有拿到 id 才补得回去（见 store 的 annotateLlmAudit）。这里只做交接，
+      // 不改写任何调用层事实——status/token/耗时仍然是调用那一刻的真相。
+      if (spec.auditRef && typeof spec.auditRef === "object") spec.auditRef.id = row?.id;
     } catch (auditError) {
       ctx.logger?.warn?.(`dsh-mneme: llm audit write failed: ${String(auditError)}`);
     }
@@ -1187,6 +1240,12 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
           // 数组」消费，内联标记会污染其它读者（失败轮的 _validationFailed 是整单
           // 拒绝哨兵，语义与「部分应用」不同，也不复用）。
           skipped: result.skipped,
+          // #534 建议 2：拿到文本却解析/校验失败的轮，把模型原文的头尾留在行上。
+          // 单独一列而不是内联进 decisions——decisions 的语义是「可重放决策数组」
+          // （applyDecisions 直接吃它），塞非决策对象会污染重放者与所有按决策数组
+          // 消费的下游；失败轮哨兵 _validationFailed 也只表达「整单拒绝」这一件事。
+          // 流错误（result===undefined）没有文本可留，落 NULL。
+          raw_output: result.raw_output,
           // Issue #89（基线半边）：成功的 run 才带这两个值（见上方 baselineSnapshot
           // 的注释）。两列要么同时有值、要么同时为 NULL，读侧以「同时有值」认账。
           store_count: baselineSnapshot?.count,
@@ -1250,14 +1309,20 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     const effort = await resolveDreamEffort(ctx, route, config.dreamReasoningEffort, logger);
     let decisions = null;
     let streamFailure = "";
+    // #534 建议 3：这一轮巩固的审计行 id（runAuditedLlm 落库后回填）。校验判决
+    // 出来时用它把 result 补回调用层那一行，两套账才对得上。每次重试重置，只认
+    // 最终生效的那一次调用。
+    let auditRef = {};
     const runConsolidation = (withEffort, tokens) => {
       streamFailure = "";
+      auditRef = {};
       return runAuditedLlm(ctx, service, config, {
       triggerSource: "autoDream",
       operationType: "dream_consolidate",
       modelId: `${route.provider}:${route.model}`,
       relatedMemoryIds: [...snapshot.keys()],
       streamError: () => streamFailure,
+      auditRef,
       auditError: (text) => {
         decisions = extractJsonArray(text);
         return Array.isArray(decisions) ? null : "no json array in llm output";
@@ -1288,10 +1353,21 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       logger?.warn?.(`dsh-mneme dream: consolidation llm stream aborted or errored${streamFailure ? ` (${streamFailure})` : ""}`);
       return finish({ ok: false, error: "llm failed", summary: false });
     }
+    // #534 建议 3 的接线点：审计行已由 runAuditedLlm 落库（status=error 也只说明
+    // 「调用层这轮不算成功」），把校验层的判决补回去，两张表才说同一件事。
+    const annotateAudit = (patch) => {
+      if (!auditRef.id || typeof service?.annotateLlmAudit !== "function") return;
+      try {
+        service.annotateLlmAudit(auditRef.id, patch);
+      } catch (error) {
+        logger?.warn?.(`dsh-mneme dream: failed to annotate llm audit row: ${String(error)}`);
+      }
+    };
     if (!Array.isArray(decisions)) {
       const head = (decisionText ?? "").slice(0, 300).replace(/\s+/g, " ").trim();
       logger?.warn?.(`dsh-mneme dream: no json array in llm output (raw length ${decisionText?.length ?? 0}; head: ${head})`);
-      return finish({ ok: false, error: "no json array in llm output", summary: false });
+      annotateAudit(decisionValidationMeta({ verdict: "unparsed", errors: [], skipped: [], survivorCount: 0 }));
+      return finish({ ok: false, error: "no json array in llm output", summary: false, raw_output: rawOutputPayload(decisionText) });
     }
     const { ok, errors, skipped, resolvedShortIds, coverageShortfall } = validateDecisions(decisions, snapshot, {
       maxUpdatePerRun: config.reflectionUpdateMaxPerRun,
@@ -1327,14 +1403,29 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       if (skipped.length > 0) {
         logger?.warn?.(`dsh-mneme dream: ${skipped.length} invalid decision(s) skipped: ${skipped.map((s) => `decision[${s.index}]: ${s.error}`).join("; ")}`);
       }
+      annotateAudit(decisionValidationMeta({ verdict: "rejected", errors, skipped, survivorCount: 0 }));
       return finish({
         ok: false,
         error: `invalid decisions: ${errors.length} errors`,
         summary: false,
-        decisions: [{ _validationFailed: true, errors, skipped }]
+        decisions: [{ _validationFailed: true, errors, skipped }],
+        // #534 建议 2：整轮被拒时最该留的就是模型原文——否则事后只能看到
+        // 「N errors」这个结论，看不到它到底吐了什么。
+        raw_output: rawOutputPayload(decisionText)
       });
     }
     const skippedInvalid = skipped.length > 0;
+    // 校验通过（可能带若干跳过 → degraded）。判决同样补回审计行：这一步之前
+    // 没有任何地方能回答「调用成功的那一轮，决策层到底认不认」。
+    annotateAudit(decisionValidationMeta({
+      verdict: skippedInvalid ? "degraded" : "ok",
+      errors,
+      skipped,
+      // 校验器已就地 splice：这个长度就是下游 apply/audit 真正会消费的条目数
+      // （含隐式补齐的 keep）。不能再减 skipped.length——被跳过的那些早被剪掉了，
+      // 再减一次会把「跳 1 条、存活 1 条」算成 0（本分支自测当场抓到过）。
+      survivorCount: decisions.length
+    }));
     if (skippedInvalid) {
       logger?.warn?.(`dsh-mneme dream: ${skipped.length} invalid decision(s) skipped (run degrades): ${skipped.map((s) => s.error).join("; ")}`);
     }
