@@ -186,6 +186,10 @@ We follow a 5-step process for handling third-party dependency vulnerabilities:
 | CVE | Package | Version (Before) | Version (After) | Severity | Fixed In |
 |---|---|---|---|---|---|
 | CVE-2026-39244 | `adm-zip` | 0.5.18 | 0.6.0 | High | v0.3.4 |
+| CVE-2026-118773 | `glob` | 13.0.6 | 14.0.3 | Medium | Unreleased |
+| CVE-2026-118764 | `minimatch` | 10.2.6 | 11.0.3 | Medium | Unreleased |
+
+The last two arrive through the devDependency chain `c8` → `test-exclude`; they never enter the published package and are not imported at runtime. Pinned via `overrides` because both upstream packages still resolve the vulnerable versions.
 
 ---
 
@@ -567,6 +571,10 @@ Token 是**写**面上的锁，不是把整个 API 围起来的墙。
 | CVE | 包 | 修复前版本 | 修复后版本 | 严重程度 | 修复版本 |
 |---|---|---|---|---|---|
 | CVE-2026-39244 | `adm-zip` | 0.5.18 | 0.6.0 | 高 | v0.3.4 |
+| CVE-2026-118773 | `glob` | 13.0.6 | 14.0.3 | 中 | 未发布 |
+| CVE-2026-118764 | `minimatch` | 10.2.6 | 11.0.3 | 中 | 未发布 |
+
+后两条来自 devDependency 链（`c8` → `test-exclude`），不进发布包、运行时不 import；因为两个上游包自己还没跟上，只能在本仓库用 `overrides` 钉版本。
 
 ---
 
