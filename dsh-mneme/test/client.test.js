@@ -2442,6 +2442,19 @@ test("mobile: the narrow-container breakpoints reflow the two-column skeletons i
   // 固定宽弹层在 320px 会顶边：340px 的分享弹层比视口还宽。
   assert.ok(/\.mneme-sharedialog\{[^}]*calc\(100cqw - 32px\)/.test(body), "分享弹层宽度必须跟着容器收");
   assert.ok(/\.mneme-impdialog\{[^}]*calc\(100cqw - 32px\)/.test(body), "导入弹层宽度必须跟着容器收");
+  // 页签的横向滚动必须住在 480 主断点，而不是 360 兜底档：4 个带图标的 tab 约 436px，
+  // 而 480 档给 .mneme-xbar 的可用宽度是容器宽减 62px（左 10 + 右 52 让位给绝对定位
+  // 的 ⋯），480px 时只剩 418px——整段 361–480px 都会把页签顶到 ⋯ 底下。写错档位的
+  // 失败形态最难查：窄屏照样溢出，而只锁「360 档有这条规则」的测试全绿。
+  assert.ok(/\.mneme-vtabs\{[^}]*min-width:0[^}]*overflow-x:auto/.test(body),
+    "页签横向滚动属于 480 档：只在 360 档兜底等于把溢出留在主断点的整个区间");
+  // 三处窄屏宽度都得带 box-sizing:border-box：全文件没有 *{box-sizing} 兜底，声明的
+  // 那个数是内容宽，外宽还要再加 padding+border——impdialog +30px、menu +12px，320px
+  // 视口下比屏幕还宽，会被 overlay 裁掉。CodeRabbit 只点了 sharedialog，另两处同病。
+  for (const sel of ["menu", "impdialog", "sharedialog"]) {
+    assert.ok(new RegExp("\\.mneme-" + sel + "\\{[^}]*box-sizing:border-box").test(body),
+      ".mneme-" + sel + " 的窄屏宽度必须按外宽算（box-sizing:border-box），否则声明值加完 padding+border 就溢出容器");
+  }
 
   // .mneme-overlay 不在 .mneme-x 之内，容器查询够不到它——它只能走 @media，
   // 且必须保留基线声明（client.test.js 上有 width:min(1240px,calc(100vw - 88px)) 的锁）。
