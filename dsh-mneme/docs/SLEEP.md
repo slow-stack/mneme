@@ -42,6 +42,9 @@ flowchart TD
 | `sleepModeEnabled` | `false` | 全局开关（Opt-in），开启后激活调度器 |
 | `sleepIdleMinutes` | `5` | 连续无操作触发睡眠的阈值（分钟） |
 | `sleepMinIntervalHours` | `8` | 两次 Sleep Run 的最小时间间隔（小时） |
+| `sleepFailureBackoff` | `false` | 连续失败退避（#529，opt-in）：有效间隔 = `sleepMinIntervalHours` × 2^连败数，成功清零，封顶 24h。判据看整轮 `status === "failed"`——`noop`（通路正常、只是没活干）不算失败，否则在自己工作良好的库里也会越退越长 |
+| `sleepConflictMaxPairs` | `12` | **单批**送审的冲突对上限（0 = 不限，回退旧行为） |
+| `sleepConflictMaxPairsPerRun` | `60` | **单轮**最多送审多少对（0 = 不限）。与上一条分工：一个管批次大小、一个管整轮总量 |
 | `sleepConflictStrictness` | `'normal'` | 冲突消解严格度：`'gentle'`(0.92) / `'normal'`(0.85) / `'aggressive'`(0.75) |
 | `sleepArchiveDays` | `30` | 进入冷存储/摘要降级的天数阈值 |
 | `sleepCompressDays` | `90` | 进入完全归档（Archive）的天数阈值 |
@@ -62,12 +65,18 @@ flowchart TD
 - **算法**：
   1. 向量检索 `findPotentialConflicts` 获取高相似度对；`sleepActionSet: "full"` 时再补一遍跨类型对。
   2. **已裁决对先压掉**：`differentiated_pairs` 账本里记着「这一对判过"互补、两条都留"」，两侧正文的 `content_hash` 与记账时一致就不再送模型（任一侧被改写则重新进候选）。这一轮被压掉几对记在 `phase.suppressed`，与「一对都没检测到」（`no conflicts found`）分开报。
-  3. LLM 仲裁：基于严格度阈值生成决策（默认档 `keep/merge/conflict/create/archive/update`，full 档另开 `supersede/differentiate`）。
-  4. `validateDecisions`：严格校验决策合法性，缺省策略为 `keep`。
-  5. `applyDecisions`：批量执行状态变更。
+  3. **台账预筛**（#529）：查 `conflict_reviewed`，把「已经判过、且两侧 `updated_at` 都不晚于 `judged_at`」的对从候选池里剔掉——它们上一轮已有结论，两侧都没动就没必要再问一遍。任一字段更新即重新入池（与 `conflict_pending` 复核项 4 同一条宽松代理）。
+  4. **每轮总量上限**（`sleepConflictMaxPairsPerRun`，默认 60）：没进这一轮的对留在下一轮，既不丢也不记账。
+  5. **分批**（`sleepConflictMaxPairs`，默认 12）：每批单独一次 LLM 往返、单独 `validateDecisions` + `applyDecisions`。某批撞上下文或输出坏掉只让**这一批**失败并计入 `degraded`，其余批照常落地；只有一批都没成功才整轮 `failed`。
+  6. LLM 仲裁：基于严格度阈值生成决策（默认档 `keep/merge/conflict/create/archive/update`，full 档另开 `supersede/differentiate`）。
+  7. `validateDecisions`：严格校验决策合法性，缺省策略为 `keep`。
+  8. `applyDecisions`：批量执行状态变更。
+  9. **台账记账**：本批**全部送审对**都写一行 `conflict_reviewed`（不只记被裁决成冲突的那几对，判 `keep` 的正是下一轮重复送审的元凶），`outcome` 取两端里非 `keep` 的那一侧。记账是幂等 upsert，按 `(memory_a, memory_b)` 排序归一化。
 - **`differentiate` 不改正文**（#533）：`#126` 曾把同一段差异注记**同时**追加到两侧，指望注记进 embedding 后下一轮不再判重复。离线复现证伪了这个假设——两侧共享同一段后缀会让两条向量**同向靠拢**（余弦 0.876 → 0.960 只用 5 轮，注记截到 0 字照样往上爬），于是同一对每轮又被判成重复、又追加一段（实测单条堆到 19 段，正文 150 字膨胀到 2200+）。现在只落 `differentiated_pairs` 账本（配对 + 两侧当时的 `content_hash` + 模型给的 `distinctions`），正文一个字节都不动。存量库里仍带旧注记块的行按「已裁决」处理，升级不清账。
-- **输出**：冲突消解报告（决策明细）。
+- **输出**：冲突消解报告（决策明细 + `pairs` / `batches` / `ledgerSkipped` / `perRunSkipped`）。**失败轮同样带 `pairs` 与 `batches`**——此前只有成功路径带，85 条失败审计行连"送了多少对"都查不到。批间被用户活动打断时报 `aborted`（不是 `noop`：`noop` 的语义是"看过、没冲突"，而没送出去的批根本没看过），整轮 `deriveStatus` 也沿用同一个词，不再折回 `noop`。
 - **验收**：无合法记忆被误删；仲裁结果符合配置的严格度阈值；决策可回滚。
+- **为什么要有预算（#529 的现场）**：整池相似对一次拼进一个 prompt，实测单请求 **163,054** 输入 token（服务端 `--ctx-size` 163,840，占 99.5%），撞墙后按冷却重排，送进去的还是同一份输入，于是连续 **23 轮** `llm failed`；而 `keep` 当时是彻底的 no-op（不留痕），同一对每个冷却周期都被重新问一遍。三处一起改之后单请求降到 806–2,011 token、连续失败 23 轮 → 0 轮。
+- **台账为什么不复用 `conflict_pending`**：那张表是**人工**待裁决队列，面板徽标数就是 `countConflictPending()`（`resolved_at IS NULL` 的行数）。机器每判一对写一行会把这个数字淹掉，人就再也看不出"有哪些待我裁决"。两张表分工：`conflict_pending` = 人要看，`conflict_reviewed` = 机器记账，零界面。
 
 ### 2. `archival_demotion`（归档降级）
 - **目标**：按时间衰减对记忆进行分层压缩，释放热存储压力。
@@ -112,7 +121,9 @@ flowchart TD
 
 ## 调度器与可中断机制
 - **`noteWrite()` 心跳重置**：每次用户写入/读取记忆时触发。必须先 `clearTimeout` 清除旧计时器，再重新设置 Idle Timer，彻底杜绝 Stale Timer 导致的误触发。
-- **`maybeSchedule()` 准入控制**：串行检查 `sleepModeEnabled` → 空闲时长 `>= sleepIdleMinutes` → 距上次运行 `>= sleepMinIntervalHours` → 状态非 `running/disposed`。任一不满足则放弃调度。
+- **`maybeSchedule()` 准入控制**：串行检查 `sleepModeEnabled` → 空闲时长 `>= sleepIdleMinutes` → 距上次运行 `>= 有效最小间隔` → 状态非 `running/disposed`。任一不满足则放弃调度。
+  - **有效最小间隔**（#529）：`sleepFailureBackoff` 关（默认）时逐字节等于 `sleepMinIntervalHours`；开启时按连续失败次数指数推迟，封顶 24h。`armNextWindow()` 排下一次闹钟用的是同一个函数——两处口径必须一致，否则退避期闹钟会在基数到点响、被 `shouldRun` 否掉、再重排一次，白转一轮。
+  - 退避**不是**按"同一份输入又失败"判的：`runSleep` 里那个 `snapshotHash` 是跑完之后对 `phases` 结果算的摘要哈希，不是输入快照，拿它当判据会把"同样的输入"认成"不同的结果"。改用连续失败计数，与 `autoDream` 的失败退避（#292）同构。
 - **`service.enqueue` 串行队列**：所有 Sleep Run 必须进入全局串行队列执行，与 `autoDream` 严格互斥，避免并发写入冲突与资源争抢。
 - **`AbortController` 可中断**：调度器持有 AbortController 实例。一旦检测到用户活动（`noteWrite` 或显式交互），立即调用 `abort()` 中断当前 `runSleep` 的执行上下文，保证实时性优先。
 

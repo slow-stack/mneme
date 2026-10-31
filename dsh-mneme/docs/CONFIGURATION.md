@@ -212,6 +212,9 @@
 | `sleepProvider` / `sleepModel` | 空 | sleep 专用路由 | 空 = 用巩固路由 / 当前模型 |
 | `sleepReasoningEffort` | 未配置 | 同 `dreamReasoningEffort` | — |
 | `sleepMaxTokens` | `8192` | 冲突/模式阶段输出预算（#257） | 原硬编码 2048 对 `full` 档必然截断 |
+| `sleepConflictMaxPairs` | `12` | **单批**送审的冲突对上限（0–500，0 = 不设上限回退旧行为） | 输入侧预算（#529）：整池一次塞进一个 prompt 实测 163,054 token（占 `--ctx-size` 99.5%） |
+| `sleepConflictMaxPairsPerRun` | `60` | **单轮**最多送审多少对（0–5000，0 = 不设上限） | 与上一条分工：一个管批次大小、一个管整轮总量；剩下的一轮留给下一轮 |
+| `sleepFailureBackoff` | `false` | sleep 连续失败退避（#529） | 有效间隔 = `sleepMinIntervalHours` × 2^连败数（成功清零，封顶 24h）；opt-in |
 | `sleepHeatThreshold` | `0.05` | 降级联合判定的热度下限（heat < 值且 importance<5 才降） | `heatEnabled` 关时退回纯时间分层 |
 
 ## 反思与冲突（dream 配套）

@@ -756,7 +756,11 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // issue #497 新增 profileExtractEnabled（画像提取草稿；顶层扁平键，同上）= 106。
   // issue #539 新增 sessionGateEnabled / sessionGateSubagents（逐会话无痕闸门，总开关
   // 与子代理选择器；manual id 名单是数组配置，不进 feature_flags）= 108。
-  assert.equal(Object.keys(data.effective).length, 108);
+  // issue #529 新增 sleepConflictMaxPairs / sleepConflictMaxPairsPerRun（冲突阶段的
+  // 输入侧预算，两个 int 键都走 INT_RANGES 表）= 110。
+  // issue #529 再新增 sleepFailureBackoff（sleep 连续失败退避；顶层布尔键，
+  // 不需要 NESTED_FLAG_PATHS 条目）= 111。
+  assert.equal(Object.keys(data.effective).length, 111);
   assert.equal(data.effective.dreamSkipInvalid, true);
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, true);

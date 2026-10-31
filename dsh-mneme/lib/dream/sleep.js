@@ -42,6 +42,12 @@ const SUMMARY_MAX = 120;
 //   aggressive low-confidence pairs too (0.75) — bloated stores
 const CONFLICT_THRESHOLDS = { gentle: 0.92, normal: 0.85, aggressive: 0.75 };
 
+// Issue #529（C 项的替代实现）：连续失败时最小间隔的封顶。基数默认 8 小时，
+// 2^3 就到 64 小时——不封顶的话模型持续失败会让 sleep 事实上停摆好几天，而
+// 用户完全看不出来。24 小时 = 「最多一天试一次」，与 #292 给 autoDream 的
+// 30 分钟封顶同一意图（封顶值不同是因为两个调度的基数差一个数量级）。
+const FAILURE_BACKOFF_CAP_MS = 24 * 3600000;
+
 function parseJsonArray(text) {
   if (typeof text !== "string") return undefined;
   const start = text.indexOf("[");
@@ -379,27 +385,58 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // LLM adjudication（仅同 scope 对）。
   const route = resolveSleepRoute(ctx, config, logger);
   if (!route) return { status: "skipped", reason: "no llm route", scopeCandidates: scopeParked, pairs: selected.length };
-  const snapshot = new Map();
-  for (const p of samePairs) {
-    snapshot.set(p.a.id, p.a);
-    snapshot.set(p.b.id, p.b);
+  // Issue #529：输入侧预算。此前 samePairs 是**全部**同 scope 相似对，一次拼成一个
+  // prompt——实测单请求 163,054 输入 token（服务端 --ctx-size 163,840），撞墙后按冷却
+  // 重排，下一轮送进去的还是同一份输入，于是 23 轮连续失败。
+  //
+  // 预筛掉「已经判过且两侧都没动过」的对：判 keep 曾经是彻底的 no-op，既不留痕也不
+  // 影响下一轮的候选池，同一对每个冷却周期都被重新送审一遍。台账（conflict_reviewed）
+  // 记的是"这段输入被看过"，两侧任一 updated_at 晚于 judged_at 就重新入池——与
+  // conflict_pending 复核项 4 同一条宽松代理：任何字段更新都算值得再看一眼。
+  const ledger = typeof service.loadConflictReviewed === "function"
+    ? (service.loadConflictReviewed() ?? new Map())
+    : new Map();
+  const pairKey = (p) => (p.a.id < p.b.id ? `${p.a.id}\u0000${p.b.id}` : `${p.b.id}\u0000${p.a.id}`);
+  const alreadyJudged = (p) => {
+    const rec = ledger.get(pairKey(p));
+    if (!rec?.judged_at) return false;
+    return (p.a.updated_at ?? "") <= rec.judged_at && (p.b.updated_at ?? "") <= rec.judged_at;
+  };
+  const candidates = samePairs.filter((p) => !alreadyJudged(p));
+  const ledgerSkipped = samePairs.length - candidates.length;
+  if (candidates.length === 0) {
+    return {
+      status: scopeParked > 0 ? "ok" : "noop",
+      frozen: 0,
+      scopeCandidates: scopeParked,
+      pairs: selected.length,
+      batches: 0,
+      // 台账把所有候选对都挡下来时，这一轮的结构产出是"没有新事可做"，
+      // 不是失败——如实把它记进审计，否则运维只看到 pairs 对不上个数。
+      ledgerSkipped
+    };
   }
-  const listText = samePairs.map((p) =>
-    STR.candidateConflicts[language](p)
-  ).join("\n\n");
+  // 每轮总上限：分批解决的是单请求撞墙，不是"一个 449 对的池子该在一轮里跑完"。
+  // 没进这一轮的对留在下一轮（它们既没被丢弃，也不在台账里）。
+  const perRunCap = config.sleepConflictMaxPairsPerRun ?? 60;
+  const pool = perRunCap > 0 ? candidates.slice(0, perRunCap) : candidates;
+  const perRunSkipped = candidates.length - pool.length;
   const sleepEffort = await resolveDreamEffort(ctx, route, config.sleepReasoningEffort, logger);
   let conflictStreamFailure = "";
   // actionSet 已在候选构造前解析（跨类型候选需要它），这里只按档位选 prompt：
   // 默认档保持只有 conflict/keep 的窄 prompt，"full" 才开放六分支。
   const conflictPrompt = actionSet === "full" ? STR.prompts.conflictFull[language] : STR.prompts.conflict[language];
-  const runConflict = (withEffort, tokens) => {
+  const runConflict = (batch, withEffort, tokens) => {
     conflictStreamFailure = "";
+    const listText = batch.map((p) => STR.candidateConflicts[language](p)).join("\n\n");
     return auditedSleepLlm(ctx, service, config, logger, {
       triggerSource: "sleep",
       operationType: "sleep_conflict",
       modelId: `${route.provider}:${route.model}`,
       // 候选对的双方 id：面板的活动流用 related_memory_ids 解析「沉淀条数」。
-      relatedMemoryIds: samePairs.flatMap((p) => [p.a.id, p.b.id]),
+      // 分批后必须取**这一批**的 id：整轮的 60 对一次写进每一批的审计行，面板会把
+      // 同一个「沉淀条数」重复累加五遍。
+      relatedMemoryIds: batch.flatMap((p) => [p.a.id, p.b.id]),
       streamError: () => conflictStreamFailure,
       // 纯判据：输出里没有 JSON 数组 ⇒ 这轮是失败的调用，审计记 error。**不要**把
       // 解析结果存进闭包给下面的控制流用——审计关闭时 auditedSleepLlm 整段早退、
@@ -421,75 +458,171 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     ]
   }, reportUsage, (reason) => { conflictStreamFailure = describeStreamFailure(reason); }));
   };
-  // Issue #478：睡眠侧同样接 max_tokens 降级——面板 hint 已承诺「超上限同样自动降级」，
-  // 只挂 dream 三个点会让 sleepMaxTokens 的 131072 上限继续原样发。
-  const text = await withMaxTokensFallback(ctx, config.sleepMaxTokens ?? 2048, (tokens) => withEffortFallback(ctx, sleepEffort, () => runConflict(true, tokens), () => runConflict(false, tokens), () => conflictStreamFailure), () => conflictStreamFailure);
-  if (text === undefined) {
-    if (conflictStreamFailure) ctx.logger?.warn?.(`dsh-mneme sleep: conflict stream aborted or errored (${conflictStreamFailure})`);
-    return { status: "failed", error: "llm failed" };
-  }
-  const decisions = parseJsonArray(text);
-  if (!decisions) return { status: "failed", error: "invalid decisions json" };
-  // validateDecisions 要求每个 snapshot id 恰好被 claim 一次。v0.4.4 起它本身
-  // 就会为未覆盖的 id 自动补 keep（dreamImplicitKeep 默认开启），这里保留显式
-  // 预填作为防御性双保险——漏判读作"未裁决冲突"而非"冲突阶段整体失败"。
-  const covered = new Set();
-  for (const d of decisions) {
-    // Issue #126 review（Copilot）：supersede 同样用 winner/loser 定位（没有 ids），
-    // 此前只认 conflict → 它的两个目标都没进 covered → 被补成 implicit keep → 与
-    // supersede 的 claim 冲突：严格模式整单拒绝，宽容模式把合成的 keep 记成 skipped。
-    if (d?.action === "conflict" || d?.action === "supersede") {
-      if (typeof d?.winner === "string") covered.add(d.winner);
-      if (typeof d?.loser === "string") covered.add(d.loser);
-    } else if (Array.isArray(d?.ids)) {
-      for (const id of d.ids) covered.add(id);
+  // 单批的完整往返：送 → 解析 → 校验 → 应用 → 记账。抽成函数是为了让失败只影响
+  // 自己这一批（下面的循环），而不是把整轮判死。
+  const adjudicateBatch = async (batch) => {
+    const text = await withMaxTokensFallback(ctx, config.sleepMaxTokens ?? 2048, (tokens) => withEffortFallback(ctx, sleepEffort, () => runConflict(batch, true, tokens), () => runConflict(batch, false, tokens), () => conflictStreamFailure), () => conflictStreamFailure);
+    if (text === undefined) {
+      if (conflictStreamFailure) ctx.logger?.warn?.(`dsh-mneme sleep: conflict stream aborted or errored (${conflictStreamFailure})`);
+      return { status: "failed", error: "llm failed", failure: conflictStreamFailure || undefined };
     }
-  }
-  for (const id of snapshot.keys()) {
-    if (!covered.has(id)) decisions.push({ action: "keep", ids: [id] });
-  }
-  // Issue #126：sleep 是多对批量裁决，严格模式"一票否决"太脆（一对非法就丢掉整轮
-  // 成果）→ 与 dream 对齐透传 skipInvalid：非法的那一对只跳过自己，合法子集照常
-  // 应用，run 记 degraded。update 上限与保护期同样取 dream 的同一组配置，保证两个
-  // 模块对"什么算合法"的判据一致。
-  const { ok, errors, skipped } = validateDecisions(decisions, snapshot, {
-    maxUpdatePerRun: config.reflectionUpdateMaxPerRun,
-    minAgeHours: config.reflectionUpdateMinAgeHours,
-    skipInvalid: config.dreamSkipInvalid !== false,
-    allowCrossTypeMerge: config.allowCrossTypeMerge === true,
-    // issue #339 / E8：guarded 类型 merge 护栏（默认开，dreamMergeGuard），
-    // 与 dream 主链路同一判据。
-    mergeGuard: config.dreamMergeGuard === true,
-    // Issue #126 review（Copilot）：默认档必须真的只放行旧动作集——只换 prompt 挡不住
-    // 模型自发输出 supersede / differentiate，那样"opt-in 零行为变化"就不成立。
-    allowedActions: actionSet === "full" ? null : LEGACY_ACTIONS
-  });
-  if (!ok) return { status: "failed", error: `invalid decisions: ${errors.join("; ")}`, skipped };
-  // 同 phasePatterns——本相位的 create 也落 source=sleep（默认档的
-  // LEGACY_ACTIONS 含 create，理论上可 mint）。
-  const { applied, failures, conflicts } = applyDecisions(
-    // runId 让 differentiate 的账本行能追到是哪一轮 sleep 判的（issue #533）。
-    decisions, service, logger, snapshot, { ...config, mintSource: "sleep", runId }
-  );
-  // Issue #126 review（Copilot）：事务内 service.update 会跳过 scheduleEmbed（txDepth>0），
-  // 而 sleep 路径此前没有 dream 那样的 post-apply 索引维护。Issue #533 之后
-  // differentiate 不改正文、不需要重嵌，这里只剩 supersede 的归档一条。
-  if (applied > 0 && semantic?.embedder && semantic?.vectorIndex) {
-    try {
-      await maintainIndexAfterDream(decisions, service, semantic);
-    } catch (error) {
-      logger?.warn?.(`dsh-mneme sleep: index maintenance failed: ${String(error)}`);
+    const decisions = parseJsonArray(text);
+    if (!decisions) return { status: "failed", error: "invalid decisions json" };
+    // 本批的 snapshot 只含本批的 id。validateDecisions 要求每个 snapshot id 恰好被
+    // claim 一次，拿整轮的 snapshot 校验单批输出会把其余 48 对判成"未裁决"。
+    const batchSnapshot = new Map();
+    for (const p of batch) {
+      batchSnapshot.set(p.a.id, p.a);
+      batchSnapshot.set(p.b.id, p.b);
     }
+    // v0.4.4 起 validateDecisions 本身就会为未覆盖的 id 自动补 keep（dreamImplicitKeep
+    // 默认开启），这里保留显式预填作为防御性双保险——漏判读作"未裁决冲突"而非
+    // "冲突阶段整体失败"。
+    const covered = new Set();
+    for (const d of decisions) {
+      // Issue #126 review（Copilot）：supersede 同样用 winner/loser 定位（没有 ids），
+      // 此前只认 conflict → 它的两个目标都没进 covered → 被补成 implicit keep → 与
+      // supersede 的 claim 冲突：严格模式整单拒绝，宽容模式把合成的 keep 记成 skipped。
+      if (d?.action === "conflict" || d?.action === "supersede") {
+        if (typeof d?.winner === "string") covered.add(d.winner);
+        if (typeof d?.loser === "string") covered.add(d.loser);
+      } else if (Array.isArray(d?.ids)) {
+        for (const id of d.ids) covered.add(id);
+      }
+    }
+    for (const id of batchSnapshot.keys()) {
+      if (!covered.has(id)) decisions.push({ action: "keep", ids: [id] });
+    }
+    // Issue #126：sleep 是多对批量裁决，严格模式"一票否决"太脆（一对非法就丢掉整轮
+    // 成果）→ 与 dream 对齐透传 skipInvalid：非法的那一对只跳过自己，合法子集照常
+    // 应用，run 记 degraded。update 上限与保护期同样取 dream 的同一组配置，保证两个
+    // 模块对"什么算合法"的判据一致。
+    const { ok, errors, skipped } = validateDecisions(decisions, batchSnapshot, {
+      maxUpdatePerRun: config.reflectionUpdateMaxPerRun,
+      minAgeHours: config.reflectionUpdateMinAgeHours,
+      skipInvalid: config.dreamSkipInvalid !== false,
+      allowCrossTypeMerge: config.allowCrossTypeMerge === true,
+      // issue #339 / E8：guarded 类型 merge 护栏（默认开，dreamMergeGuard），
+      // 与 dream 主链路同一判据。
+      mergeGuard: config.dreamMergeGuard === true,
+      // Issue #126 review（Copilot）：默认档必须真的只放行旧动作集——只换 prompt 挡不住
+      // 模型自发输出 supersede / differentiate，那样"opt-in 零行为变化"就不成立。
+      allowedActions: actionSet === "full" ? null : LEGACY_ACTIONS
+    });
+    if (!ok) return { status: "failed", error: `invalid decisions: ${errors.join("; ")}`, skipped };
+    // 同 phasePatterns——本相位的 create 也落 source=sleep（默认档的
+    // LEGACY_ACTIONS 含 create，理论上可 mint）。
+    const { applied, failures, conflicts } = applyDecisions(
+      // runId 让 differentiate 的账本行能追到是哪一轮 sleep 判的（issue #533）。
+      decisions, service, logger, batchSnapshot, { ...config, mintSource: "sleep", runId }
+    );
+    // Issue #126 review（Copilot）：事务内 service.update 会跳过 scheduleEmbed（txDepth>0），
+    // 而 sleep 路径此前没有 dream 那样的 post-apply 索引维护——differentiate 的差异注记与
+    // supersede 的归档都反映不到缓存向量，"注记进 embedding 防再判重复"就是空承诺。
+    if (applied > 0 && semantic?.embedder && semantic?.vectorIndex) {
+      try {
+        await maintainIndexAfterDream(decisions, service, semantic);
+      } catch (error) {
+        logger?.warn?.(`dsh-mneme sleep: index maintenance failed: ${String(error)}`);
+      }
+    }
+    // 台账：本批**全部送审对**都记一行，不只记被判成冲突的那几对。判 keep 的那一对
+    // 正是 #529 里"下一轮原样再送"的元凶，只记有动作的对等于没记。
+    if (typeof service.saveConflictReviewed === "function") {
+      const judgedAt = new Date().toISOString();
+      const outcomeOf = new Map();
+      for (const d of decisions) {
+        const action = d?.action ?? "keep";
+        if (action === "conflict" || action === "supersede") {
+          if (typeof d?.winner === "string") outcomeOf.set(d.winner, action);
+          if (typeof d?.loser === "string") outcomeOf.set(d.loser, action);
+        } else if (Array.isArray(d?.ids)) {
+          for (const id of d.ids) outcomeOf.set(id, action);
+        }
+      }
+      for (const p of batch) {
+        try {
+          service.saveConflictReviewed({
+            run_id: runId,
+            memory_a: p.a.id,
+            memory_b: p.b.id,
+            // 一对两端的动作可能不同（conflict 的胜/败、merge 的两端），取**非 keep
+            // 的那一侧**：keep/keep 才代表"看过、不冲突"，这正是我们要留痕的结论。
+            outcome: [outcomeOf.get(p.a.id), outcomeOf.get(p.b.id)]
+              .find((x) => x && x !== "keep") ?? "keep",
+            judged_at: judgedAt
+          });
+        } catch (error) {
+          logger?.warn?.(`dsh-mneme sleep: failed to record reviewed conflict ${p.a.id}/${p.b.id}: ${String(error)}`);
+        }
+      }
+    }
+    // Issue #126 review（Copilot）：有决策被跳过时不能报 ok——与 dream 的 degraded 契约
+    // 对齐（"合法子集已应用"是 degraded 而非 ok），否则消费方分不清整轮与残轮。
+    return { status: applied > 0 ? (skipped.length > 0 ? "degraded" : "ok") : failures.length ? "failed" : "noop", applied, failures, conflicts, skipped };
+  };
+  // 分批：每批独立往返，坏批只记 degraded 不中断。此前一次全送，任何一处理由
+  // （撞上下文、输出截断、JSON 坏掉）都是整轮 failed——而整轮 failed 又不带 pairs，
+  // 事后看不出它到底送了什么。
+  const batchSize = config.sleepConflictMaxPairs ?? 12;
+  const batches = batchSize > 0
+    ? Array.from({ length: Math.ceil(pool.length / batchSize) }, (_, i) => pool.slice(i * batchSize, (i + 1) * batchSize))
+    : [pool];
+  let applied = 0;
+  const failures = [];
+  const conflicts = [];
+  const skipped = [];
+  let failedBatches = 0;
+  // 用户活动打断时**不能**落进下面那条 noop：noop 的语义是「看过，没冲突」，而被打断
+  // 的那几批根本没送出去。用与入口处（signal 一开始就是 aborted）同一个词汇，避免
+  // 同一件事两个状态名。
+  let interrupted = false;
+  for (let i = 0; i < batches.length; i++) {
+    if (signal?.aborted) { interrupted = true; break; }
+    const res = await adjudicateBatch(batches[i]);
+    if (res.status === "failed") {
+      failedBatches++;
+      failures.push(...(res.failures ?? []));
+      skipped.push(...(res.skipped ?? []));
+      // 失败批的原始理由（stream 层的 abort/error 原文）要进审计：只写 "llm failed"
+      // 的话，运维分不清是上下文超限、模型拒收还是用户活动打断。
+      logger?.warn?.(`dsh-mneme sleep: conflict batch ${i + 1}/${batches.length} failed: ${res.error}${res.failure ? ` (${res.failure})` : ""}`);
+      continue;
+    }
+    applied += res.applied;
+    failures.push(...(res.failures ?? []));
+    conflicts.push(...(res.conflicts ?? []));
+    skipped.push(...(res.skipped ?? []));
   }
-  // Issue #126 review（Copilot）：有决策被跳过时不能报 ok——与 dream 的 degraded 契约
-  // 对齐（"合法子集已应用"是 degraded 而非 ok），否则消费方分不清整轮与残轮。
-  const degraded = skipped.length > 0;
+  const degraded = skipped.length > 0 || failedBatches > 0;
+  // 一批都没成功才算整轮失败；只要有一批落地，如实记 degraded——这跟 deriveStatus
+  // 的契约一致（degraded 也算有产出）。
+  const allFailed = failedBatches === batches.length;
+  // 有一批没走通时整轮**绝不能报 noop**：noop 的语义是「看过，没冲突」，而踩了
+  // llm failed 的那批其实没看过。这是 #529 里最误导人的一处——23 轮失败期间
+  // applied 恒为 0，若再叠上 noop，运维只会以为库里没冲突。
+  const status = interrupted
+    ? "aborted"
+    : allFailed
+    ? "failed"
+    : applied > 0
+      ? (degraded ? "degraded" : "ok")
+      : failures.length
+        ? "failed"
+        : failedBatches > 0
+          ? "degraded"
+          : "noop";
   return {
-    status: applied > 0 ? (degraded ? "degraded" : "ok") : failures.length ? "failed" : "noop",
+    status,
+    // Issue #529 D：失败轮也要带 pairs/batches——此前只有成功路径带 pairs，85 条
+    // 失败审计行全是"送了个寂寞"，连送了多少对都查不到。
     pairs: selected.length,
     // #533：这一轮被账本压掉、没送 LLM 的候选对数——不记的话「pairs 变小了」
     // 分不清是没检测到还是已经裁决过。
     suppressed,
+    batches: batches.length,
+    ledgerSkipped,
+    perRunSkipped,
     applied,
     failures,
     conflicts,
@@ -729,10 +862,16 @@ function deriveStatus(phases) {
   // 跳过），它同样算"有产出"——否则整轮会被误判成 noop，把真实变更报成空轮。
   const anyWork = list.some((p) => p.status === "ok" || p.status === "degraded");
   const anyDegraded = list.some((p) => p.status === "degraded");
+  // Issue #529：被打断（用户恢复活动）既不是失败也不是"没活干"。相位层已经用
+  // aborted 区分了这两种，整轮层若回落到 noop，审计行就又把"没跑完"记成"跑过、
+  // 没什么事"——所以这里也给它一个自己的名字。只在没有任何产出时生效：真的落了
+  // 东西就是 ok/degraded，真的报错就是 failed，二者都比 aborted 值得优先播报。
+  const anyAborted = list.some((p) => p.status === "aborted");
   if (anyDegraded) return "degraded";
   if (anyWork && anyError) return "degraded";
   if (anyError) return "failed";
   if (anyWork) return "ok";
+  if (anyAborted) return "aborted";
   return "noop";
 }
 
@@ -836,6 +975,21 @@ export function createSleepScheduler({
   let disposed = false;
   let idleTimer = null;
   let sleepAbort = null;
+  // Issue #529（C 项）：同一进程内的连续失败计数。失败（run 报 status="failed"
+  // 或抛错）+1，其余一律清零（ok/degraded/noop——noop 说明 LLM 通路是好的，
+  // 只是没活干，不该被当成失败拖着退避）。纯内存变量、宿主重启归零：跨重启的
+  // 冷却本来就由 lastRunAtSeed（#89/#291）负责，两者不重叠。
+  let consecutiveFailures = 0;
+
+  // Issue #529：有效最小间隔 = 基数 × 2^连续失败数，封顶 24 小时。关闭或尚无
+  // 失败时逐字节返回基数（默认关 = 行为与现状一致）。封顶取 max(基数, cap)，
+  // 指数再大也不会把用户配的大基数压小。
+  function effectiveMinIntervalMs() {
+    const base = (config.sleepMinIntervalHours ?? 8) * 3600000;
+    if (config.sleepFailureBackoff !== true || consecutiveFailures <= 0) return base;
+    const cap = Math.max(base, FAILURE_BACKOFF_CAP_MS);
+    return Math.min(base * 2 ** consecutiveFailures, cap);
+  }
 
   function armIdleTimer() {
     if (disposed || idleTimer) return;
@@ -861,7 +1015,9 @@ export function createSleepScheduler({
     // lastRunAt === 0 表示从未跑过（此路径不该出现，防御性返回）。
     if (lastRunAt <= 0) return;
     const idleMs = (config.sleepIdleMinutes ?? 5) * 60000;
-    const cdMs = (config.sleepMinIntervalHours ?? 8) * 3600000;
+    // Issue #529：这里必须和 shouldRun 用同一个有效间隔，否则退避期里重排的闹钟
+    // 会在基数到点就响、然后被 shouldRun 否掉再重排——空转一串没有意义的定时器。
+    const cdMs = effectiveMinIntervalMs();
     const delay = Math.max(
       lastRunAt + cdMs - now(),
       lastWriteAt + idleMs - now(),
@@ -881,7 +1037,9 @@ export function createSleepScheduler({
     if (at - lastWriteAt < (config.sleepIdleMinutes ?? 5) * 60000) return false;
     // lastRunAt === 0 means never ran — the min-interval check must not block
     // the very first cycle (a real run stamps a nonzero timestamp).
-    if (lastRunAt > 0 && at - lastRunAt < (config.sleepMinIntervalHours ?? 8) * 3600000) return false;
+    // Issue #529：连败退避开启时改用指数放大的有效间隔——恒定失败的模型不再按
+    // 固定节奏连发（#529 实测连续 23 轮 llm failed），只会越打越稀。
+    if (lastRunAt > 0 && at - lastRunAt < effectiveMinIntervalMs()) return false;
     return true;
   }
 
@@ -917,9 +1075,19 @@ export function createSleepScheduler({
       const result = await service.enqueue(() =>
         onRun ? onRun(abort.signal) : Promise.resolve({ ok: true, skipped: true })
       );
+      // Issue #529：连败计数只在这里加减。判据优先看 result.status——runSleep 的
+      // ok 只在 ok/degraded 时为真，noop（LLM 通路正常、只是没活干）和用户活动
+      // 打断都会给出 ok:false，把它当失败会让退避在自己工作良好的库里越退越长。
+      // 回落到 !result.ok 只是为了兼容注入的 no-op 桩（没有 status 字段）。
+      // result 为空（最小测试替身）＝完成且无失败，不动计数，与 #292 口径一致。
+      if (result) {
+        const failed = typeof result.status === "string" ? result.status === "failed" : !result.ok;
+        consecutiveFailures = failed ? consecutiveFailures + 1 : 0;
+      }
       return !!(result && result.ok);
     } catch (error) {
       logger?.warn?.(`dsh-mneme sleep: run failed: ${error?.message ?? error}`);
+      consecutiveFailures += 1; // Issue #529：抛错同样计入连败
       return false;
     } finally {
       sleepAbort = null;

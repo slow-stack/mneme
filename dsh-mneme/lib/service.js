@@ -2827,6 +2827,12 @@ export function createService({ store, mirror, config, onWrite, logger, document
     saveDifferentiatedPair: (r) => store.saveDifferentiatedPair(r),
     findDifferentiatedPair: (a, b) => store.findDifferentiatedPair(a, b),
     listDifferentiatedPairs: (opts) => store.listDifferentiatedPairs(opts),
+    // #529：机器侧冲突裁决台账。同样只有 bookkeeping 语义——一行台账既不是记忆
+    // 内容也不是人工裁决，写它不该触发 syncMirror / notifyWrite / 实体抽取，否则
+    // 记账本身会反过来把睡眠调度器叫醒（与上面 saveDreamRun 同一个理由）。
+    saveConflictReviewed: (r) => store.saveConflictReviewed(r),
+    loadConflictReviewed: () => store.loadConflictReviewed(),
+    listConflictReviewed: (opts) => store.listConflictReviewed(opts),
     // Recall evaluation trail (方案 B): audit-bookkeeping semantics like the
     // dream/recall passthroughs above — a recall_evals write is a snapshot, not
     // a memory mutation, so it never triggers write hooks.

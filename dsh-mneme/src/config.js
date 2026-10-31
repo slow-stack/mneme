@@ -586,6 +586,14 @@ export const Config = z.object({
   // Minimum gap between two sleep runs (hours) — a second idle window within
   // this interval does not retrigger.
   sleepMinIntervalHours: z.natural().min(1).max(168).default(8),
+  // Issue #529（C 项的替代实现）：sleep 连续失败退避（默认关 = 行为逐字节不变）。
+  // 基数是 sleepMinIntervalHours，有效间隔 = 基数 × 2^连续失败数（成功清零），
+  // 封顶 24 小时。为什么不按 issue 原案用 snapshot_hash 判据：sleep 的
+  // snapshot_hash 是**跑完之后**对 phases 结果算的哈希（dream/sleep.js 的
+  // createHash(JSON.stringify(phases))），不是输入快照；同一批输入跑两次结果不同
+  // 就会得到不同哈希，用它当「同一输入又在失败」的判据不成立。退避与 #292 的
+  // autoDreamFailureBackoff 同构：只放大既有的最小间隔闸，不新增状态面。
+  sleepFailureBackoff: z.boolean().default(false),
   // Conflict adjudication strictness:
   //   gentle    only high-confidence conflicts (threshold 0.92) are resolved
   //   normal    standard dream-level (threshold 0.85)
@@ -652,6 +660,22 @@ export const Config = z.object({
   // 覆盖实测峰值（候选对按「每记忆至多一对」去重，饱和在 ~25 对、不随库无限
   // 增长）；流式计费按实际用量，不按上限。
   sleepMaxTokens: z.natural().min(256).max(131072).default(8192).description("sleep 冲突消解与模式发现阶段的 LLM 输出预算上限（token）。原为硬编码 2048，sleepActionSet=full 实测需约 7000 导致裁决被截断而整轮失败；流式计费按实际用量，调大不增加成本。"),
+
+  // Issue #529：冲突阶段此前没有任何输入侧预算——同 scope 的全部相似对被一次性
+  // 拼进一个 prompt，实测单请求 163,054 输入 token（服务端 --ctx-size 163,840，
+  // 占 99.5%），449 对的池子必然撞墙；而失败的轮次不落 pairs、判 keep 又是
+  // no-op，下一轮冷却结束再送**完全相同的输入**，于是 23 轮连续 llm failed。
+  // 输出侧早有 sleepMaxTokens（#257），输入侧这一半一直是空的。
+  //
+  // 每批上限：0 = 不设上限（严格回退到旧的一次性全送，用于排查"是不是分批
+  // 引入的差异"）。取 12 是因为实测单对约 112~168 输入 token、12 对落在
+  // 1.5K~2K 区间，远低于任何服务商的上下文窗口，也不至于让 LLM 在长清单里
+  // 走神。
+  sleepConflictMaxPairs: z.natural().min(0).max(500).default(12).description("sleep 冲突阶段每批送给 LLM 的候选对上限（0 = 不设上限，回退旧的一次性全送）。实测单对约 112~168 输入 token，默认 12 对约 1.5K~2K。"),
+  // 每轮总上限：分批之后仍要有个总闸，否则一个 449 对的池子会拆成 38 批、
+  // 每批一次 LLM 往返，单轮跑上几小时（本身也没比撞墙好）。0 = 不设上限。
+  // 未入选的对不是"被丢弃"——它们留在 conflict_pending 与下一轮的候选池里。
+  sleepConflictMaxPairsPerRun: z.natural().min(0).max(5000).default(60).description("sleep 冲突阶段单轮累计裁定的候选对上限（0 = 不设上限）。默认 60 对 ≈ 5 批，约 10K 输入 token。"),
 
   // --- epistemic trust: memory source credibility (v0.4.5) -----------------
   // Distinguish memories by source: observation (measured / witnessed),
