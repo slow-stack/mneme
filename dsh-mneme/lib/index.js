@@ -14,6 +14,7 @@ import { createInjector } from "./inject.js";
 import { createPreInjectGate } from "./pre-inject-gate.js";
 import { createContinuityRescue } from "./continuity.js";
 import { createSummarizer } from "./summarize.js";
+import { createSessionGate } from "./session-gate.js";
 import { createDreamScheduler, describeStreamFailure } from "./dream.js";
 import { createSleepScheduler, runSleep } from "./dream/sleep.js";
 import { createApi } from "./api.js";
@@ -231,6 +232,7 @@ export const apply = (ctx, config) => {
   for (const [objKey, sub] of Object.entries(nestedFlags)) {
     cfg[objKey] = { ...(cfg[objKey] ?? {}), ...sub };
   }
+  const sessionGate = createSessionGate(cfg);
 
   // 失败表的启动期清理也放在装配之后（此前它在 createStore 之后、装配之前，写死
   // 90 天）。保留期现在是显式配置键 reflectionFailureRetentionDays；等它进面板
@@ -411,7 +413,7 @@ export const apply = (ctx, config) => {
   //
   // 门控：默认关（actionRunEnabled），并且它挂热路径，轻量档也关。
   if (cfg.actionRunEnabled === true) {
-    recorder = createExecutionRecorder({ ctx, logger: ctx.logger });
+    recorder = createExecutionRecorder({ ctx, logger: ctx.logger, sessionGate });
     const disposeMoRun = registerMoRunCommand({
       ctx,
       recorder,
@@ -535,6 +537,13 @@ export const apply = (ctx, config) => {
 
   const disposers = [];
 
+  try {
+    const disposeSessionGate = ctx.on?.("session/event", (session) => sessionGate.observe(session));
+    if (typeof disposeSessionGate === "function") disposers.push(disposeSessionGate);
+  } catch {
+    // 宿主没有该事件钩子时，注入、工具与蒸馏消费点仍直接检查当前 Session。
+  }
+
   // Issue #380：注入前判定闸门。判定 LLM 走 entity adapter 同款装配（ctx.llm +
   // agentDefaultModel 回退），gate 自持 enabled/usable 判定（未启用/llm 缺席/
   // llmAudit 关闭时内部恒 off，注入行为与现状逐字节一致）。
@@ -552,21 +561,21 @@ export const apply = (ctx, config) => {
   disposers.push(() => semantic.dispose());   // #118 重试计时器 + boot 回填计时器(搬入 semantic.js 后由它自持)
 
   ctx.inject(["systemPrompt"], (promptCtx) => {
-    if (cfg.autoInject) disposers.push(createInjector(promptCtx, service, settings, cfg, preInjectGate));
+    if (cfg.autoInject) disposers.push(createInjector(promptCtx, service, settings, cfg, preInjectGate, sessionGate));
   });
 
   // #249 N3：压缩边缘双落点。触发靠宿主自己落的压缩事件（订阅 + pre-step 追加），
   // 不需要 systemPrompt / tools 的任何能力，所以不塞进上面的 inject 回调；父／子
   // 闸门在挂载点判一次，与 inject.js 共用同一个 injectChildEnabled 判据。
   if (cfg.autoInject && injectChildEnabled(cfg, "continuityRescueEnabled")) {
-    disposers.push(createContinuityRescue(ctx, store));
+    disposers.push(createContinuityRescue(ctx, store, sessionGate));
   }
 
   ctx.inject(["tools"], (toolsCtx) => {
-    disposers.push(createTools(toolsCtx, service, cfg, embedder));
+    disposers.push(createTools(toolsCtx, service, cfg, embedder, sessionGate));
   });
 
-  const summarizer = createSummarizer(ctx, service, cfg);
+  const summarizer = createSummarizer(ctx, service, cfg, {}, sessionGate);
   disposers.push(summarizer.dispose);
 
   // #275 存储生命周期第一批：无损回收的手动入口。刻意不挂启动路径、不接定时器——
@@ -607,7 +616,7 @@ export const apply = (ctx, config) => {
   // 为什么挂 session/event 却又要进轻量档黑名单：它读的是 zstd 会话日志（同步解压），
   // 是本插件里最重的一条后台路径；且它只产「提议」，关掉不影响记忆本身的正确性。
   if (cfg.actionNudgeEnabled === true) {
-    disposers.push(createNudgeAutoRun({ ctx, memoryDir, logger: ctx.logger }));
+    disposers.push(createNudgeAutoRun({ ctx, memoryDir, logger: ctx.logger, sessionGate }));
   }
 
   // Standalone external API (v0.7.12): plain node:http server for ecosystem

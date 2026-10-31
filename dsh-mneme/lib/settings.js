@@ -239,7 +239,11 @@ const FEATURE_FLAG_BOOLEANS = [
   "personaStrictAddressing",
   // Issue #497：画像提取草稿（POST /profile/extract）。默认关——每次调用一次 LLM 且
   // 读上百行记忆；产物只回草稿，绝不写 user_settings。进 LIGHT_MODE_OFF（预设关）。
-  "profileExtractEnabled"
+  "profileExtractEnabled",
+  // #539：逐会话无痕默认关闭；子代理开关受总开关约束。手动 session id 名单留在配置，
+  // 不进入只支持标量的 feature_flags 白名单。
+  "sessionGateEnabled",
+  "sessionGateSubagents"
 ];
 // 整数开关的闭区间，与 config.js 里 z.natural().min().max() 对齐。
 const FEATURE_FLAG_INT_RANGES = {

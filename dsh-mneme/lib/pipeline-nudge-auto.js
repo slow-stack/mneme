@@ -24,6 +24,7 @@ export function createNudgeAutoRun({
   ctx = null,
   memoryDir = null,
   logger = null,
+  sessionGate = null,
   now = () => Date.now(),
   runNudge = nudgeForProject,
   minIntervalMs = NUDGE_AUTO_MIN_INTERVAL_MS,
@@ -55,6 +56,7 @@ export function createNudgeAutoRun({
         // 自动跑：永不落草稿。它只在记忆库的 proposals 分桶里留提议。
         materialize: false,
         persistProposals: true,
+        sessionGate,
         budgetMs,
         ...(maxFiles ? { maxFiles } : {})
       });
@@ -100,6 +102,7 @@ export function createNudgeAutoRun({
 
   const onSessionEvent = (session, event) => {
     if (disposed) return;
+    if (sessionGate?.isOff(session)) return;
     // 只认 turn/end：一轮结束才算一个观测窗口，中途记的是半截。
     if (!event || event.type !== "turn/end") return;
     const projectRoot = projectRootOf(session);

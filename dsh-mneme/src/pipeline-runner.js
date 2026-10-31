@@ -98,6 +98,7 @@ export function listPipelineIds(projectRoot) {
 export function createExecutionRecorder({
   ctx,
   logger = null,
+  sessionGate = null,
   resolvePipeline = defaultResolvePipeline,
   persistRun = appendRun,
   now = () => new Date(),
@@ -109,9 +110,19 @@ export function createExecutionRecorder({
   const windows = new Map(); // sessionId → { pipeline, projectRoot, run, events, truncated }
   // 已结账、等人确认的会话：sessionId → { pipeline, projectRoot, proposal, stats }
   const pending = new Map();
+  const gated = (session) => {
+    if (!sessionGate?.isOff(session)) return false;
+    const id = session?.id;
+    if (id) {
+      windows.delete(id);
+      pending.delete(id);
+    }
+    return true;
+  };
 
   const unsubscribe = ctx?.on?.("session/event", (session, event) => {
     try {
+      if (gated(session)) return;
       const id = session?.id;
       if (!id) return;
       const w = windows.get(id);
@@ -135,6 +146,7 @@ export function createExecutionRecorder({
      * 开始走某条流程」。猜错会把一条从没跑过的流程记成跑过。
      */
     start({ session, pipelineId } = {}) {
+      if (gated(session)) return { ok: false, reason: "session-incognito" };
       const id = session?.id;
       if (!id) return { ok: false, reason: "no-session" };
       const open = windows.get(id);
@@ -169,6 +181,7 @@ export function createExecutionRecorder({
      * 同时给出 P1 那份「观察到的业务动作清单」，让人对照着勾。
      */
     stop({ session } = {}) {
+      if (gated(session)) return { ok: false, reason: "session-incognito" };
       const id = session?.id;
       if (!id) return { ok: false, reason: "no-session" };
       const w = windows.get(id);
@@ -233,6 +246,7 @@ export function createExecutionRecorder({
      * （"没确认"不等于"没发生"，见 pipeline-confirm 的注释）。
      */
     confirm({ session, answers } = {}) {
+      if (gated(session)) return { ok: false, reason: "session-incognito" };
       const id = session?.id;
       if (!id) return { ok: false, reason: "no-session" };
       const p = pending.get(id);
@@ -323,6 +337,7 @@ export function createExecutionRecorder({
 
     /** 只看状态，不结账。要能分辨「窗口开着」与「等你确认」两种状态。 */
     status({ session } = {}) {
+      if (gated(session)) return { open: false, incognito: true };
       const id = session?.id;
       if (pending.has(id)) {
         const p = pending.get(id);

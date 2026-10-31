@@ -173,10 +173,10 @@ function noticeAlreadyInSurface(session, text) {
  * 挂两条监听（#249 §7 的 `agent/pre-step` 触发位 + 压缩事件面），返回 { dispose }。
  *
  * `store` 直接注入：本模块只写提案表、不碰检索/嵌入，没有用到 service 的任何能力。
- * 调用方负责父／子闸门（`autoInject` + `continuityRescueEnabled`）；本函数不做开关判定，
- * 保持"挂上就是开"的单一口径。
+ * 调用方负责父／子开关（`autoInject` + `continuityRescueEnabled`），本函数另检查逐会话
+ * 无痕闸门；保持"挂上就是开、命中会话就不处理"的单一口径。
  */
-export function createContinuityRescue(ctx, store) {
+export function createContinuityRescue(ctx, store, sessionGate = null) {
   // 待处理的边缘：sessionId → 压缩事件序号。**真落地**的压缩事件到达时置位，下一次 pre-step 消费后
   // 删除（同一个边缘绝不注入第二次）。只留序号、不留 Session：插件在宿主进程里只 apply
   // 一次、服务所有会话，握着 Session 就是握着它的全量日志不放——压缩完就收工、不再有
@@ -184,6 +184,10 @@ export function createContinuityRescue(ctx, store) {
   const edge = new Map();
 
   const unsubscribe = ctx.on("session/event", (session, event) => {
+    if (sessionGate?.isOff(session)) {
+      if (session?.id) edge.delete(session.id);
+      return;
+    }
     if (!isCompactionEdge(event)) return;
     if (!session?.id) return;
     if (!edge.has(session.id) && edge.size >= MAX_TRACKED_EDGES) {
@@ -200,6 +204,10 @@ export function createContinuityRescue(ctx, store) {
     // reject 是"这一步不该发生"，往里面塞消息没有意义；未知形状原样放行。
     if (decision?.kind !== "enter") return decision;
     const session = payload?.agent?.session;
+    if (sessionGate?.isOff(session)) {
+      if (session?.id) edge.delete(session.id);
+      return decision;
+    }
     const sessionId = session?.id;
     if (!sessionId) return decision;
     if (!edge.has(sessionId)) return decision;

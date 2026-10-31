@@ -4,6 +4,14 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Config } from "../src/config.js";
 
+test("session incognito is opt-in, with a default-on subordinate selector", () => {
+  const cfg = Config({});
+  assert.equal(cfg.sessionGateEnabled, false);
+  assert.equal(cfg.sessionGateSubagents, true);
+  assert.deepEqual(cfg.sessionGateSessions, []);
+  assert.deepEqual(Config({ sessionGateSessions: ["s1", "s2"] }).sessionGateSessions, ["s1", "s2"]);
+});
+
 // ---------------------------------------------------------------- rerank opt-in (item ⑥)
 
 test("rerank is opt-in: default config does not enable the local reranker", () => {

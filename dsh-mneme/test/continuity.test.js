@@ -7,6 +7,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createTools } from "../src/tools.js";
 import { Config, applyLightModePreset, injectChildEnabled } from "../src/config.js";
+import { createSessionGate } from "../src/session-gate.js";
 import {
   CONTINUITY_KIND,
   CONTINUITY_NOTICE_PREFIX,
@@ -272,7 +273,7 @@ test("#249 N3：门控不调模型（静态锁）与挂载点的父开关在前"
   // 只剩 Config 里的默认值撑着，接线漏一次没人发现。
   const index = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
   assert.match(index, /if \(cfg\.autoInject && injectChildEnabled\(cfg, "continuityRescueEnabled"\)\) \{/);
-  assert.match(index, /disposers\.push\(createContinuityRescue\(ctx, store\)\)/);
+  assert.match(index, /disposers\.push\(createContinuityRescue\(ctx, store, sessionGate\)\)/);
 });
 
 test("#249 N3：reject 放行且不消费边缘；缺 session 不抛", async () => {
@@ -292,6 +293,33 @@ test("#249 N3：reject 放行且不消费边缘；缺 session 不抛", async () 
   ctx.fire("session/event", fakeSession("s2", []), { type: "compaction/end", seq: 4 });
   const noAgent = await ctx.fire("agent/pre-step", {}, async () => ({ kind: "enter", messages: [] }));
   assert.deepEqual(noAgent.messages, [], "拿不到 session 就什么都不做");
+  rescue.dispose();
+});
+
+test("#539：等待 pre-step 期间切到无痕会清除先前边缘，不落提案也不注入", async () => {
+  const store = createStore(":memory:");
+  const ctx = mockCtx();
+  const config = { sessionGateEnabled: false, sessionGateSessions: ["s1"] };
+  const gate = createSessionGate(config);
+  const rescue = createContinuityRescue(ctx, store, gate);
+  const session = fakeSession("s1", [userEvent(1, "私有指令")]);
+
+  ctx.fire("session/event", session, { type: "compaction/end", seq: 7 });
+  const decision = await ctx.fire(
+    "agent/pre-step",
+    { agent: { session } },
+    async () => {
+      config.sessionGateEnabled = true;
+      await Promise.resolve();
+      return { kind: "enter", messages: [] };
+    }
+  );
+  assert.deepEqual(decision.messages, []);
+  assert.equal(store.getContinuityProposal("s1", KIND), null);
+
+  config.sessionGateEnabled = false;
+  const next = await ctx.fire("agent/pre-step", { agent: { session } }, async () => ({ kind: "enter", messages: [] }));
+  assert.deepEqual(next.messages, [], "a stale edge from before the toggle is not consumed later");
   rescue.dispose();
 });
 

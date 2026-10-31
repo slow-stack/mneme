@@ -754,7 +754,9 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 不需要 NESTED_FLAG_PATHS 条目）= 104。
   // 人格寻址口径新增 personaStrictAddressing（顶层扁平键，同上）= 105。
   // issue #497 新增 profileExtractEnabled（画像提取草稿；顶层扁平键，同上）= 106。
-  assert.equal(Object.keys(data.effective).length, 106);
+  // issue #539 新增 sessionGateEnabled / sessionGateSubagents（逐会话无痕闸门，总开关
+  // 与子代理选择器；manual id 名单是数组配置，不进 feature_flags）= 108。
+  assert.equal(Object.keys(data.effective).length, 108);
   assert.equal(data.effective.dreamSkipInvalid, true);
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, true);
@@ -803,6 +805,8 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   assert.equal(data.effective.personaStrictAddressing, false);
   // 画像提取默认关：面板按钮在用户没开启前不该偷偷花一次 LLM 调用。
   assert.equal(data.effective.profileExtractEnabled, false);
+  assert.equal(data.effective.sessionGateEnabled, false);
+  assert.equal(data.effective.sessionGateSubagents, true);
   // v0.9.3：M.O. 自动沉淀的第三个键。与 actionPipelineEnabled（看图）、
   // actionRunEnabled（记账）都不是一件事——它挂 session/event 并解压会话日志，
   // 是三者里最重的一条，所以独立开关、默认关、且进 LIGHT_MODE_OFF。
@@ -883,16 +887,36 @@ test("PUT /api/dsh-mneme/features round-trips, overrides effective and persists"
   const { routes, settings } = setup(undefined, "", FLAGS_CFG);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/features");
   const res = new FakeRes();
-  await route.handler(req("/api/dsh-mneme/features", "PUT", { autoDream: false, distillMaxChars: 48000, actionPipelineEnabled: true }), res);
+  await route.handler(req("/api/dsh-mneme/features", "PUT", {
+    autoDream: false,
+    distillMaxChars: 48000,
+    actionPipelineEnabled: true,
+    sessionGateEnabled: true,
+    sessionGateSubagents: false
+  }), res);
   assert.equal(res.statusCode, 200);
   const data = JSON.parse(res.body);
-  assert.deepEqual(data.overrides, { autoDream: false, distillMaxChars: 48000, actionPipelineEnabled: true });
+  assert.deepEqual(data.overrides, {
+    autoDream: false,
+    distillMaxChars: 48000,
+    actionPipelineEnabled: true,
+    sessionGateEnabled: true,
+    sessionGateSubagents: false
+  });
   assert.equal(data.effective.autoDream, false, "override wins over config default");
   assert.equal(data.effective.distillMaxChars, 48000);
   // v0.9.0：默认关的键也能被 PUT 打开并读回（beta 功能的启用路径）。
   assert.equal(data.effective.actionPipelineEnabled, true, "override flips the beta gate on");
+  assert.equal(data.effective.sessionGateEnabled, true);
+  assert.equal(data.effective.sessionGateSubagents, false);
   assert.equal(data.effective.autoInject, true, "keys not in the patch still report config");
-  assert.deepEqual(settings.getFeatureFlags(), { autoDream: false, distillMaxChars: 48000, actionPipelineEnabled: true });
+  assert.deepEqual(settings.getFeatureFlags(), {
+    autoDream: false,
+    distillMaxChars: 48000,
+    actionPipelineEnabled: true,
+    sessionGateEnabled: true,
+    sessionGateSubagents: false
+  });
 });
 
 test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys", async () => {

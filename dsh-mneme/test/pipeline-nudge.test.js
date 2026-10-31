@@ -37,6 +37,7 @@ import {
   nudgeForProject,
   resolveProjectSessionDir
 } from "../src/pipeline-nudge.js";
+import { createSessionGate } from "../src/session-gate.js";
 
 // 这组测试守的是 M.O. 的**沉淀链**：一条工作流能不能从真实数据里自己长出来。
 // 三条不许越的分界线（见 src/pipeline-nudge.js 文件头），测试逐条守：
@@ -100,6 +101,92 @@ test("多帧 zstd 要逐帧解：只解第一帧会静默丢掉后面的回合",
     assert.equal(read.observations.length, 3, "三处调用（两帧）都要被扫到");
     const turns = new Set(segmentObservations(read.observations).map((s) => s.turn));
     assert.deepEqual([...turns].sort(), [1, 2], "第二帧的那个回合不能被丢");
+  });
+});
+
+test("#539：nudge 日志扫描按精确 id 与真实子代理头过滤会话", () => {
+  withDir((dir) => {
+    const sessions = join(dir, "sessions");
+    const manualDir = join(sessions, "ws", "manual");
+    const childDir = join(sessions, "ws", "child");
+    const captainDir = join(sessions, "ws", "captain");
+    mkdirSync(manualDir, { recursive: true });
+    mkdirSync(childDir, { recursive: true });
+    mkdirSync(captainDir, { recursive: true });
+    const privateCall = sessionLine({ turn: 1, calls: [skill("private-skill"), skill("private-next")] });
+    writeFileSync(join(manualDir, "session.v4.jsonl.zstd"), zlib.zstdCompressSync(Buffer.from(privateCall)));
+    const childHeader = JSON.stringify({
+      type: "session",
+      cwd: "C:\\proj",
+      parentSession: "captain",
+      origin: "subagent",
+      delegationDepth: 1
+    });
+    writeFileSync(join(childDir, "session.v4.jsonl.zstd"), zlib.zstdCompressSync(Buffer.from(`${childHeader}\n${privateCall}`)));
+    const publicCall = sessionLine({ turn: 1, calls: [skill("public-skill"), skill("public-next")] });
+    const captainHeader = JSON.stringify({ type: "session", cwd: "C:\\proj", origin: "main", delegationDepth: 0 });
+    writeFileSync(join(captainDir, "session.v4.jsonl.zstd"), zlib.zstdCompressSync(Buffer.from(`${captainHeader}\n${publicCall}`)));
+    // 只带 parentSession 的会话 = sessions.fork() 出来的主会话分支，不是子代理。
+    // 本机 641 个真实会话头里这样的有 3 个（各 74–136 条用户消息），把它们当子代理
+    // 过滤掉就是「fork 一下就失忆」。
+    const forkedDir = join(sessions, "ws", "forked");
+    mkdirSync(forkedDir, { recursive: true });
+    const forkedHeader = JSON.stringify({
+      type: "session",
+      version: 4,
+      cwd: "C:\\proj",
+      parentSession: "captain",
+      isSeeded: true,
+      delegationDepth: 0
+    });
+    const forkedCall = sessionLine({ turn: 1, calls: [skill("forked-skill"), skill("forked-next")] });
+    writeFileSync(join(forkedDir, "session.v4.jsonl.zstd"), zlib.zstdCompressSync(Buffer.from(`${forkedHeader}\n${forkedCall}`)));
+
+    const gate = createSessionGate({
+      sessionGateEnabled: true,
+      sessionGateSubagents: true,
+      sessionGateSessions: ["manual"]
+    });
+    const read = readSessionObservations({ sessionDir: sessions, sessionGate: gate });
+    assert.deepEqual([...new Set(read.observations.map((item) => item.sessionId))], ["captain", "forked"]);
+    assert.ok(!read.observations.some((item) => item.name.startsWith("private")));
+    assert.ok(read.observations.some((item) => item.name === "forked-skill"), "a forked captain session keeps its observations");
+
+    const disabled = createSessionGate({ sessionGateEnabled: false, sessionGateSessions: ["manual"] });
+    const unchanged = readSessionObservations({ sessionDir: sessions, sessionGate: disabled });
+    assert.ok(unchanged.observations.some((item) => item.sessionId === "manual"), "master-off keeps existing scan behavior");
+  });
+});
+
+// 形状锁：只有首行是 {"type":"session",...} 时才把整行当作会话头。
+// 旧实现的兜底链末尾是 `?? row?.data?.header ?? row?.data?.config ?? row?.data ?? row`，
+// 等于**任何**首行都能被当成 header。这不只是「会不会漏」的问题：一条非会话记录
+// 里只要出现 `origin` / `delegationDepth`，就会被读成一条子代理头，把这个**正常
+// 会话**的观测从扫描结果里整批划掉——M.O. 的提议因此静默少掉一块数据，而现场
+// 回头看日志时那条会话明明在。本机 641 个真实会话首行的 `type` 全部是
+// "session"（v3/v4 都是头字段直接躺在首行顶层），先认 `type` 不漏任何真实会话；
+// 认不出来时返回 null、退回只按 id 判——**宁可少认一条头，也不要凭空造一个头**。
+test("#539：非 session 首行不许把委派标记带进闸门", () => {
+  withDir((dir) => {
+    const sessions = join(dir, "sessions");
+    const captainDir = join(sessions, "ws", "captain");
+    mkdirSync(captainDir, { recursive: true });
+    const call = sessionLine({ turn: 1, calls: [skill("captain-skill")] });
+    // 首行是一条 permission/preset 记录，且 data 里带着委派标记——这一帧里
+    // 根本没有会话头，那两个字只是某条普通记录的字段。
+    const preset = JSON.stringify({ type: "permission/preset", seq: 0, time: 1, data: { origin: "subagent", delegationDepth: 1 } });
+    writeFileSync(join(captainDir, "session.v4.jsonl.zstd"), zlib.zstdCompressSync(Buffer.from(`${preset}\n${call}`)));
+
+    const automatic = createSessionGate({ sessionGateEnabled: true, sessionGateSubagents: true });
+    const read = readSessionObservations({ sessionDir: sessions, sessionGate: automatic });
+    assert.ok(
+      read.observations.some((item) => item.name === "captain-skill"),
+      "首行认不出头时不许凭它的字段判子代理——按 id 判、放行"
+    );
+
+    const manual = createSessionGate({ sessionGateEnabled: true, sessionGateSessions: ["captain"] });
+    const filtered = readSessionObservations({ sessionDir: sessions, sessionGate: manual });
+    assert.equal(filtered.observations.length, 0, "手动名单仍然按目录名里的精确 id 生效");
   });
 });
 

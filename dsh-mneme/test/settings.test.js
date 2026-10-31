@@ -186,6 +186,8 @@ test("feature flags accept the new boolean, string, url and enum keys", () => {
     "distillRecords.retentionDays": 30,
     bm25SearchEnabled: false,
     conflictFreezeEnabled: true,
+    sessionGateEnabled: true,
+    sessionGateSubagents: false,
     trustEpistemicWeighting: true,
     reflectionFailureTracking: false,
     dreamProvider: "  siliconflow  ",
@@ -205,6 +207,8 @@ test("feature flags accept the new boolean, string, url and enum keys", () => {
   assert.equal(flags.conflictFreezeEnabled, true);
   assert.equal(flags.trustEpistemicWeighting, true);
   assert.equal(flags.reflectionFailureTracking, false);
+  assert.equal(flags.sessionGateEnabled, true);
+  assert.equal(flags.sessionGateSubagents, false);
   assert.equal(flags.dreamProvider, "siliconflow", "string values are trimmed");
   assert.equal(flags.dreamModel, "deepseek-chat");
   assert.equal(flags.ollamaBaseUrl, "http://127.0.0.1:11434/");
