@@ -2502,9 +2502,9 @@ test("mobile: the narrow-container breakpoints reflow the two-column skeletons i
   assert.match(cssBlock, /@media \(hover:none\)\{\.mneme-set-del\{opacity:1/,
     "触屏设备上 .mneme-set-del 必须常显——它的 base 是 opacity:0，只靠 :hover 恢复，手机上等于永久不可见");
   // 断点之外还有一段中间带：481–519px 容器宽（480 主断点之上、两栏又排不下）。
-  // 这一段落回基础规则，所以 min(…,100%) 的轨道下限与图谱的 touch-action 必须写在
-  // 基础规则上，只在断点里写等于给中间带留缺口。本组锁都作用在「剥掉嵌套块之后的
-  // 顶层规则」上——否则 480 档里的同名声明会让断言假绿。
+  // 这一段落回基础规则，所以 min(…,100%) 的轨道下限必须写在基础规则上，只在断点里
+  // 写等于给中间带留缺口。本组锁都作用在「剥掉嵌套块之后的顶层规则」上——否则
+  // 480 档里的同名声明会让断言假绿。
   const topLevel = (() => {
     let out = "";
     let i = 0;
