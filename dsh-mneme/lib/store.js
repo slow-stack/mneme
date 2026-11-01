@@ -209,6 +209,28 @@ CREATE TABLE IF NOT EXISTS differentiated_pairs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_differentiated_pairs_pair ON differentiated_pairs(memory_a, memory_b);
 
+-- conflict_reviewed: 机器侧裁决台账（issue #529）。冲突相位真正送给 LLM 的每一对
+-- 都在这里留一行，连同最后拿到的结果——判 keep 的对因此不会在下一轮被原样再送。
+--
+-- 为什么不复用 conflict_pending：那张表是**人工**待审队列，countConflictPending()
+-- 与 listConflictPending() 的口径直接喂面板的待确认徽标。机器记账混进去，用户打开
+-- 面板看到的就是几百条自己从没要求审的条目，人工裁决会被淹掉。两者的生命周期也相反：
+-- pending 是「等人来」，reviewed 是「人不用来了」。
+--
+-- 主键就是归一化后的对（sort 过，与 saveConflictPending 同一口径），同一对只留最新
+-- 一次判决，INSERT OR REPLACE 天然幂等。「是否还需重判」不靠本表自身判定，而是比
+-- 两侧 updated_at 与 judged_at（宽松代理，与 conflict_pending 复核项 4 同一条约定：
+-- 任何字段更新都算「值得再看一眼」，宁可多看一眼，不静音真冲突）。
+CREATE TABLE IF NOT EXISTS conflict_reviewed (
+  memory_a  TEXT NOT NULL,
+  memory_b  TEXT NOT NULL,
+  judged_at TEXT NOT NULL,
+  outcome   TEXT,
+  run_id    TEXT,
+  PRIMARY KEY (memory_a, memory_b)
+);
+CREATE INDEX IF NOT EXISTS idx_conflict_reviewed_judged ON conflict_reviewed(judged_at);
+
 -- scope_changes: v0.8.1 底座（issue #170）scope 归属的人工修正审计。显式声明
 -- （memory_save/memory_update 的 scope 参数、面板编辑）每次改变某条记忆的
 -- agent/workspace 归属都落一行：改动前后值 + 来源 + actor（tool=模型侧 /
@@ -3026,6 +3048,54 @@ export function createStore(path) {
     return rows.map(toDifferentiatedPair);
   }
 
+  // --- conflict adjudication ledger (issue #529) ---------------------------
+
+  /**
+   * Record that the conflict phase adjudicated a pair, whatever the verdict was
+   * — including a bare "keep". This is the machine-side ledger that stops a
+   * no-op verdict from being re-sent forever; it is deliberately NOT
+   * conflict_pending (see the schema comment: that one is the human queue).
+   *
+   * 幂等靠主键：同一对（sort 归一化后）只留最新一次判决。多次写是常态——
+   * 一对被重判说明它确实值得重判，旧判决没有留存价值。
+   */
+  function saveConflictReviewed({ run_id, memory_a, memory_b, outcome, judged_at }) {
+    const [a, b] = [memory_a, memory_b].sort();
+    db.prepare(
+      `INSERT INTO conflict_reviewed (memory_a, memory_b, judged_at, outcome, run_id)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(memory_a, memory_b) DO UPDATE SET
+         judged_at = excluded.judged_at,
+         outcome   = excluded.outcome,
+         run_id    = excluded.run_id`
+    ).run(a, b, judged_at ?? nowIso(), outcome ?? null, run_id ?? null);
+  }
+
+  /**
+   * Load the ledger as a Map keyed by the normalized pair, for the conflict
+   * phase's pre-filter. Bounded by the number of distinct pairs ever judged,
+   * which is at most the number of pairs the phase can form — the same ceiling
+   * the candidate list itself has.
+   */
+  function loadConflictReviewed() {
+    const map = new Map();
+    for (const row of db.prepare("SELECT * FROM conflict_reviewed").all()) {
+      map.set(`${row.memory_a}\u0000${row.memory_b}`, {
+        judged_at: row.judged_at,
+        outcome: row.outcome ?? undefined,
+        run_id: row.run_id ?? undefined
+      });
+    }
+    return map;
+  }
+
+  /** Test/ops visibility: the raw ledger rows, newest first. */
+  function listConflictReviewed({ limit = 200 } = {}) {
+    return db.prepare(
+      "SELECT * FROM conflict_reviewed ORDER BY judged_at DESC, rowid DESC LIMIT ?"
+    ).all(Math.max(1, Math.min(5000, limit | 0)));
+  }
+
   /**
    * v0.8.1 底座（issue #170）：scope 归属人工修正的审计行。record 描述「一次
    * 决策后的完整状态」（prev_* 为改前、next_* 为改后，NULL=global/未标注），
@@ -3816,6 +3886,10 @@ export function createStore(path) {
     saveDifferentiatedPair,
     findDifferentiatedPair,
     listDifferentiatedPairs,
+    // #529：机器侧裁决台账（与上面四条人工队列的函数刻意分开，见 schema 注释）。
+    saveConflictReviewed,
+    loadConflictReviewed,
+    listConflictReviewed,
     saveScopeChange,
     listScopeChanges,
     // 政策轴（issue #471）：按下/松开一个作用域。纯 bookkeeping，不调
