@@ -2530,9 +2530,15 @@ test("mobile: the narrow-container breakpoints reflow the two-column skeletons i
     "只在断点里兜底等于让这一段横向溢出 2–11px（外层 overflow:hidden 直接切掉）");
   assert.match(topLevel, /\.mneme-attrgrid\{[^}]*minmax\(min\(200px,100%\),1fr\)/,
     "属性网格同理：481–519px 时实体页 detail 只剩 257–276px，裸 200px 下限会溢出");
-  assert.match(topLevel, /\.mneme-graphsvg\{[^}]*touch-action:pan-y/,
-    "图谱的 touch-action 必须写在基础规则上：图谱没有触屏手势实现（全仓 onPointerDown/" +
-    "onTouchStart 命中 0），留 none 会让手指在图上竖划时页面滚不动");
-  assert.doesNotMatch(topLevel, /\.mneme-graphsvg\{[^}]*touch-action:none/,
-    ".mneme-graphsvg 不得回到 touch-action:none —— 那会把图谱变成触屏滚动的死区");
+  // 图谱的 touch-action 保持 none（这里是从 pan-y 回退后补的锁）。pan-y 那一版想解决
+  // 「手指在图上竖划时页面滚不动」，但它同时把纵向手势交给浏览器做页面平移，而图谱的
+  // 拖拽只挂了 mousedown/mousemove（全仓 onPointerDown/onTouchStart 命中 0）——触屏上
+  // 纵向拖拽到底走哪条路，浏览器是否派发兼容鼠标事件，没有真机无法定论。宁可保留现状
+  // 也不做无法复验的行为变更；真要两步都能用，得改成 Pointer Events，另开车道。
+  assert.match(topLevel, /\.mneme-graphsvg\{[^}]*touch-action:none/,
+    "图谱的 touch-action 必须写在基础规则上：481–519px 这段中间带落回基础规则，" +
+    "只在断点里声明等于给中间带留缺口");
+  assert.doesNotMatch(topLevel, /\.mneme-graphsvg\{[^}]*touch-action:pan-y/,
+    ".mneme-graphsvg 不得改回 touch-action:pan-y —— 纵向手势会被浏览器拿去滚页面，" +
+    "而图谱的拖拽只有鼠标事件实现，触屏拖拽行为无真机无法验证（见上方注释）");
 });
