@@ -2395,4 +2395,110 @@ test("minimal preset notice reaches the settings page, not just the status tab (
   assert.ok(!/minimalWarn\s*=\s*true/.test(clientSource), "the notice must never be hard-wired on");
 });
 
+// --- 移动端适配（mobile-adapt 车道）---
+// 面板在 320–430px 容器里原本是「骨架级失衡」而不是「略挤」：记忆页左栏固定
+// 216px、卡片最小轨道 252+48=300px，要 ≥517px 才排得下；实体页 rail 224px +
+// 属性网格 200+48=248px，要 ≥473px。目标区间上沿只有 430，靠收窄数值永远追
+// 不上，所以适配必须换骨架（row → column）而不是继续动宽度。
+// 下面这组锁防三类回归：
+// ① 有人把新规则写成 @media——面板有两种形态（overlay 弹层与 better-sidebar
+//    工作台 tab），容器宽度与视口宽度并不相等，@media 只在 overlay 形态对，
+//    tab 形态会整块失效；
+// ② 有人在双花括号块里写 color —— contrast.test.js 的规则提取器按单层花括号
+//    匹配，\`@container{...{...}}\` 整串不匹配会被跳过，等于绕过 #178 的 AA 主锁
+//    （静默失效，比写错颜色更糟）；\`background\` 同理，它是合成对比度的基底；
+// ③ 有人删掉 \`min(...,100%)\` 的最小轨道下限——只要容器比轨道窄，网格就会横向
+//    溢出，而外层 .mneme-xcontent 是 overflow:hidden，溢出部分直接被切掉。
+test("mobile: the narrow-container breakpoints reflow the two-column skeletons instead of shrinking numbers", () => {
+  const cssStart = clientSource.indexOf("const css = [");
+  const cssEnd = clientSource.indexOf('].join("\\n");', cssStart);
+  assert.ok(cssStart > 0 && cssEnd > cssStart, "lib/client.js 里找不到 CSS 数组（切片锚点变了？）");
+  const cssBlock = clientSource.slice(cssStart, cssEnd);
 
+  // 断点表只许三档：640（原收窄档，数值不动）、480（本轮主断点）、360（图标/内边距）。
+  for (const max of ["480px", "360px"]) {
+    assert.ok(
+      cssBlock.includes("@container (max-width: " + max + "){"),
+      "@container (max-width: " + max + ") 必须存在——" + max + " 是移动端骨架换向档，删了就等于整套适配没生效"
+    );
+  }
+  // 480 是主断点：记忆页与实体页都要换向，且 rail/xside 满宽、限高、可滚。
+  const c480 = /@container \(max-width: 480px\)\{([\s\S]*?)\}\*?\*?\s*",/.exec(cssBlock);
+  assert.ok(c480, "480 档规则必须是一条完整的 CSS 字符串（单行，便于本测试切片）");
+  const body = c480[1];
+  for (const sel of [".mneme-xmain{flex-direction:column}", ".mneme-ent{flex-direction:column}"]) {
+    assert.ok(body.includes(sel), "480 档必须让 " + sel + " —— 左右分栏在窄容器里只能改上下");
+  }
+  assert.ok(/\.mneme-xside\{[^}]*width:100%/.test(body), "记忆页左栏在窄容器里必须满宽");
+  assert.ok(/\.mneme-xside\{[^}]*max-height:min\(/.test(body),
+    "记忆页左栏必须限高可滚：6 段筛选集群在 320px 下自然高 260–320px，不限高会把主区挤成 0");
+  assert.ok(/\.mneme-entrail\{[^}]*width:100%/.test(body), "实体页 rail 在窄容器里必须满宽");
+  assert.ok(/\.mneme-entrail\{[^}]*max-height:min\(/.test(body), "实体页 rail 必须限高可滚");
+  // 换向之后这两条 rail 是「限高」的，限高必须能真收缩：flex:none 在矮工作区里
+  // 不肯让位——42vh 只是上限、不是需求，可 flex:none 让它按内容撑满，主区被
+  // .mneme-xmain 的 overflow:hidden 直接裁成 0 高（CodeRabbit #542）。改成可收缩
+  // 的 flex:0 1 auto 后，min-height:0 才允许它压到上限以下。
+  for (const sel of [".mneme-xside", ".mneme-entrail"]) {
+    assert.ok(new RegExp("\\" + sel + "\\{[^}]*flex:0 1 auto").test(body),
+      sel + " 在窄容器里必须可收缩（flex:0 1 auto），flex:none 会在矮视口里把主区挤没");
+    assert.ok(new RegExp("\\" + sel + "\\{[^}]*min-height:0").test(body),
+      sel + " 必须带 min-height:0，否则 flex 项的内容高度下限会让收缩失效");
+  }
+  // overscroll-behavior 不继承，只能写在真正的滚动容器上：.mneme-entrail 的 base 规则
+  // 是 overflow:hidden（lib/client.js:2042），滚动的是内层 .mneme-entrailbody
+  // （lib/client.js:2046 的 overflow-y:auto）。写在 rail 上等于没写，触屏滚到底会
+  // 串到外层（Copilot #542）。.mneme-xside 的 base 本身是滚动容器，写在它身上对。
+  assert.ok(/\.mneme-entrailbody\{[^}]*overscroll-behavior:contain/.test(body),
+    "滚动链的 overscroll-behavior 必须写在 .mneme-entrailbody（真滚动容器）上，写在 .mneme-entrail 上无效");
+  assert.ok(!/\.mneme-entrail\{[^}]*overscroll-behavior/.test(body),
+    ".mneme-entrail 是 overflow:hidden 的非滚动容器，overscroll-behavior 写在它身上是死代码");
+  // 抽屉是覆盖层，窄容器里 52% 只剩 166px；满宽不丢关闭入口（✕ 在 .mneme-drawerbar）。
+  assert.ok(body.includes(".mneme-drawer{width:100%}"), "详情抽屉在窄容器里必须满宽");
+  // 网格轨道必须有 100% 下限，否则容器比轨道窄时横向溢出被外层 overflow:hidden 切掉。
+  assert.ok(body.includes("minmax(min(252px,100%),1fr)"), "卡片网格的最小轨道必须夹到 100%");
+  assert.ok(body.includes("minmax(min(200px,100%),1fr)"), "属性网格的最小轨道必须夹到 100%");
+  // 固定宽弹层在 320px 会顶边：340px 的分享弹层比视口还宽。
+  assert.ok(/\.mneme-sharedialog\{[^}]*calc\(100cqw - 32px\)/.test(body), "分享弹层宽度必须跟着容器收");
+  assert.ok(/\.mneme-impdialog\{[^}]*calc\(100cqw - 32px\)/.test(body), "导入弹层宽度必须跟着容器收");
+  // 页签的横向滚动必须住在 480 主断点，而不是 360 兜底档：4 个带图标的 tab 约 436px，
+  // 而 480 档给 .mneme-xbar 的可用宽度是容器宽减 62px（左 10 + 右 52 让位给绝对定位
+  // 的 ⋯），480px 时只剩 418px——整段 361–480px 都会把页签顶到 ⋯ 底下。写错档位的
+  // 失败形态最难查：窄屏照样溢出，而只锁「360 档有这条规则」的测试全绿。
+  assert.ok(/\.mneme-vtabs\{[^}]*min-width:0[^}]*overflow-x:auto/.test(body),
+    "页签横向滚动属于 480 档：只在 360 档兜底等于把溢出留在主断点的整个区间");
+  // 三处窄屏宽度都得带 box-sizing:border-box：全文件没有 *{box-sizing} 兜底，声明的
+  // 那个数是内容宽，外宽还要再加 padding+border——impdialog +30px、menu +12px，320px
+  // 视口下比屏幕还宽，会被 overlay 裁掉。CodeRabbit 只点了 sharedialog，另两处同病。
+  for (const sel of ["menu", "impdialog", "sharedialog"]) {
+    assert.ok(new RegExp("\\.mneme-" + sel + "\\{[^}]*box-sizing:border-box").test(body),
+      ".mneme-" + sel + " 的窄屏宽度必须按外宽算（box-sizing:border-box），否则声明值加完 padding+border 就溢出容器");
+  }
+
+  // .mneme-overlay 不在 .mneme-x 之内，容器查询够不到它——它只能走 @media，
+  // 且必须保留基线声明（client.test.js 上有 width:min(1240px,calc(100vw - 88px)) 的锁）。
+  assert.match(cssBlock, /@media \(max-width: 640px\)\{\.mneme-overlay\{/,
+    ".mneme-overlay 是容器查询够不到的祖先，它的移动端外框必须用 @media 覆盖");
+
+  // ② 双花括号块内不得出现颜色声明（见文件头注释的失效机制）。
+  const nested = [...cssBlock.matchAll(/@(?:container|media)[^{]*\{/g)];
+  assert.ok(nested.length >= 4, "移动端适配应当新增 ≥4 条 @container/@media 规则（当前 " + nested.length + "）");
+  for (const m of nested) {
+    const at = m.index + m[0].length;
+    let depth = 1, i = at;
+    while (i < cssBlock.length && depth > 0) {
+      if (cssBlock[i] === "{") depth++;
+      else if (cssBlock[i] === "}") depth--;
+      i++;
+    }
+    const inner = cssBlock.slice(at, i - 1);
+    const hit = /(?:^|[;{])\s*(color|fill|stroke|background(?:-color)?)\s*:/.exec(inner);
+    assert.equal(hit, null,
+      "@container/@media 块内不得写颜色（" + (hit && hit[1]) + "）：contrast.test.js 的单层花括号提取器会整串跳过该块，" +
+      "写进去的色值不会被 AA 主锁审计——这是静默绕过 #178，不是优化");
+  }
+
+  // 触屏没有 hover：设置页删除钮必须常显（#457/#459 两次回滚都是因为连带改了 hover 配色，
+  // 这里只许加 opacity:1，不许在同一条里再动 color）。
+  assert.match(cssBlock, /@media \(hover:none\)\{\.mneme-set-del\{opacity:1/,
+    "触屏设备上 .mneme-set-del 必须常显——它的 base 是 opacity:0，只靠 :hover 恢复，手机上等于永久不可见");
+});

@@ -32,7 +32,7 @@ dsh-mneme-repo/           # repo root (docs + private shell manifest, not publis
 **Key convention: `src/` is the single source of truth; `lib/` is build output.**
 
 - Write code only in `src/`, then run `npm run sync` to mirror changes into `lib/`.
-- **Never edit `lib/` by hand** — the next sync overwrites it.
+- **Never edit `lib/` by hand** — the next sync overwrites it. The **one exception is `lib/client.js`** (the Web panel bundle): it is authored under `lib/` only, has no `src/` counterpart, is never pruned by `sync-lib.js`, and is not part of the `check-sync` file set (`dsh-mneme/scripts/sync-lib.js:1-5`, `dsh-mneme/test/client.test.js:24`). Edit it in place — and do **not** create `src/client.js` for it.
 - Publish from inside `dsh-mneme/` — the **package directory** (per AGENTS.md red line: the repo root historically shipped broken packages and its package.json is now a private 0.0.0 shell that must never be published). `prepack` runs `npm run sync`, so a published tarball always ships a fresh `lib/`; the **drift gate is separate** — `node scripts/check-sync.js` runs in CI on every PR and in `release.yml` before publishing, and fails when `src/` ↔ `lib/` differ file-for-file (issue #65). Because `prepack` syncs rather than checks, a local `npm publish` will **silently overwrite** an out-of-sync `lib/` instead of stopping — so still run `npm run sync` (in `dsh-mneme/`) and commit the `lib/` changes **before** publishing.
 
 ---
@@ -250,7 +250,7 @@ dsh-mneme-repo/           # 仓库根（文档 + 不发布的私有壳清单）
 **关键约定：`src/` 是唯一的事实来源，`lib/` 是构建产物。**
 
 - 所有代码改动只写 `src/`，改完必须运行 `npm run sync` 同步到 `lib/`。
-- **不要手工编辑 `lib/`**——下次 sync 会覆盖你的改动。
+- **不要手工编辑 `lib/`**——下次 sync 会覆盖你的改动。**唯一例外是手写的 `lib/client.js`**（面板 bundle）：它只在 `lib/` 下维护、没有 `src/` 对应物，`sync-lib.js` 不 prune 它，也不在 `check-sync` 的逐文件比对范围内（`dsh-mneme/scripts/sync-lib.js:1-5`、`dsh-mneme/test/client.test.js:24`）。它就地改——并且**不要**为它在 `src/` 里造对应物。
 - 发布在 **`dsh-mneme/` 包目录内**执行（AGENTS.md 红线：仓库根历史上发出过坏包，根目录的 package.json 现在是 private 的 0.0.0 壳、绝不发布）：`prepack` 跑的是 `npm run sync`，保证发出去的 tarball 里 `lib/` 永远是新的；**校验是另一道**——`node scripts/check-sync.js` 在 CI 每个 PR、以及 `release.yml` 发布前逐文件断言 `src/` ↔ `lib/` 一致，有漂移直接失败（issue #65 教训）。注意 `prepack` 只同步不校验，所以本地直接 `npm publish` 会**静默改写**不一致的 `lib/` 而不是报错——发布前仍务必先在 `dsh-mneme/` 里跑 `npm run sync` 并把 `lib/` 改动一起提交。
 
 ---
