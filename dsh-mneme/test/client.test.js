@@ -2434,6 +2434,24 @@ test("mobile: the narrow-container breakpoints reflow the two-column skeletons i
     "记忆页左栏必须限高可滚：6 段筛选集群在 320px 下自然高 260–320px，不限高会把主区挤成 0");
   assert.ok(/\.mneme-entrail\{[^}]*width:100%/.test(body), "实体页 rail 在窄容器里必须满宽");
   assert.ok(/\.mneme-entrail\{[^}]*max-height:min\(/.test(body), "实体页 rail 必须限高可滚");
+  // 换向之后这两条 rail 是「限高」的，限高必须能真收缩：flex:none 在矮工作区里
+  // 不肯让位——42vh 只是上限、不是需求，可 flex:none 让它按内容撑满，主区被
+  // .mneme-xmain 的 overflow:hidden 直接裁成 0 高（CodeRabbit #542）。改成可收缩
+  // 的 flex:0 1 auto 后，min-height:0 才允许它压到上限以下。
+  for (const sel of [".mneme-xside", ".mneme-entrail"]) {
+    assert.ok(new RegExp("\\" + sel + "\\{[^}]*flex:0 1 auto").test(body),
+      sel + " 在窄容器里必须可收缩（flex:0 1 auto），flex:none 会在矮视口里把主区挤没");
+    assert.ok(new RegExp("\\" + sel + "\\{[^}]*min-height:0").test(body),
+      sel + " 必须带 min-height:0，否则 flex 项的内容高度下限会让收缩失效");
+  }
+  // overscroll-behavior 不继承，只能写在真正的滚动容器上：.mneme-entrail 的 base 规则
+  // 是 overflow:hidden（lib/client.js:2042），滚动的是内层 .mneme-entrailbody
+  // （lib/client.js:2046 的 overflow-y:auto）。写在 rail 上等于没写，触屏滚到底会
+  // 串到外层（Copilot #542）。.mneme-xside 的 base 本身是滚动容器，写在它身上对。
+  assert.ok(/\.mneme-entrailbody\{[^}]*overscroll-behavior:contain/.test(body),
+    "滚动链的 overscroll-behavior 必须写在 .mneme-entrailbody（真滚动容器）上，写在 .mneme-entrail 上无效");
+  assert.ok(!/\.mneme-entrail\{[^}]*overscroll-behavior/.test(body),
+    ".mneme-entrail 是 overflow:hidden 的非滚动容器，overscroll-behavior 写在它身上是死代码");
   // 抽屉是覆盖层，窄容器里 52% 只剩 166px；满宽不丢关闭入口（✕ 在 .mneme-drawerbar）。
   assert.ok(body.includes(".mneme-drawer{width:100%}"), "详情抽屉在窄容器里必须满宽");
   // 网格轨道必须有 100% 下限，否则容器比轨道窄时横向溢出被外层 overflow:hidden 切掉。
