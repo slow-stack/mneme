@@ -8,7 +8,8 @@ dsh-mneme 是 DSH 宿主的记忆插件（蒸馏 / 注入 / 检索 / 巩固 / sc
 
 - `dsh-mneme/` — 包本体
   - `src/` — 源码（唯一手写处）
-  - `lib/` — **同步产物，禁止手改**：`npm run sync` 从 src 生成，`scripts/check-sync.js` 锁平价
+  - `lib/` — **同步产物，禁止手改**：`npm run sync` 从 src 生成，`scripts/check-sync.js` 锁平价。
+    **唯一例外是手写的 `lib/client.js`**（面板 bundle，无 `src/` 对应物、sync 不 prune、check-sync 不收录，见 `dsh-mneme/scripts/sync-lib.js:1-5` 与 `dsh-mneme/test/client.test.js:24`）——它只能在 `lib/` 里改，也**不许**为它在 `src/` 里造对应物
   - `test/` — `node --test`（`npm test`）
   - `scripts/` — 同步、徽章、基准与压测脚本
 - 仓库根 — README（双语）、CHANGELOG、CONTRIBUTING、docs/、
