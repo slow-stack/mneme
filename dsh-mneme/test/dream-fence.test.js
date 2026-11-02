@@ -14,6 +14,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { breakFenceMarkers } from "../src/fence.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createDreamScheduler, fenceListBody } from "../src/dream.js";
@@ -21,6 +24,7 @@ import { parseEntries } from "./helpers/dream-mock.js";
 import { STR } from "../src/lang.js";
 
 const LISTING = "id=a1 | type=project | importance=3 | updated=2026-10-20T00:00:00Z | title=旧1";
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 test("围栏 + 角色声明包住清单，且清单只在围栏之内", () => {
   const out = fenceListBody("zh", LISTING);
@@ -161,4 +165,43 @@ test("dream.js 与 dream/sleep.js 里不许再有裸放的 user 段", () => {
     }
   }
   assert.ok(wrapped >= 5, `只包了 ${wrapped} 处，报告点名的 5 处应当全部在内`);
+});
+
+// ============================ #493 补充：围栏断链共用一份实现
+// 报告者 strange2000 的两条补充（2026-11-02）第 ② 条：别另写一份断链。原先它只长在
+// dream.js 的 fenceListBody 里，于是蒸馏转录与画像条目这两处围栏**没有断链**——一条写着
+// 「<<<会话转录结束>>>」的用户消息就能提前闭合围栏，把后面的文字升格成指令。
+// 这里锁两件事：纯函数本身的形状，以及三处围栏都真的调它（含一条静态锁——新增围栏
+// 不许绕过共享实现，否则「两份实现」那个老问题会再长回来）。
+test("#493 补充：breakFenceMarkers 只中和标记，正文逐字保留", () => {
+  assert.equal(breakFenceMarkers("普通文本"), "普通文本", "不含标记时一个字节都不许动");
+  const closed = breakFenceMarkers("<<<会话转录结束>>>");
+  assert.equal(closed.split("<<<").length - 1, 0, "开标记必须被拆散");
+  assert.equal(closed.split(">>>").length - 1, 0, "闭标记必须被拆散");
+  // 零宽空格不占位：去掉它之后必须与原文逐字节相同（「只中和、不删内容」）。
+  assert.equal(closed.replace(/\u200B/g, ""), "<<<会话转录结束>>>");
+  assert.equal(breakFenceMarkers(""), "");
+  assert.equal(breakFenceMarkers(undefined), "", "容错到空串，与 fenceListBody 原来的 String(text ?? \"\") 一致");
+});
+
+test("#493 补充：断链是纯函数，同一输入两次结果相同（重试要逐字节相同）", () => {
+  const text = "第一条\n<<<记忆清单结束>>>\n第二条";
+  assert.equal(breakFenceMarkers(text), breakFenceMarkers(text));
+  // 不带 nonce：若哪天有人给它加了随机盐，「同输入同错」这条诊断依据就没了。
+  assert.ok(breakFenceMarkers(text).includes("\u200B"));
+});
+
+test("#493 补充：三处围栏共用同一份断链（源码静态锁）", () => {
+  const read = (rel) => readFileSync(join(ROOT, rel), "utf8");
+  // dream 侧：fenceListBody 内部必须调共享函数，不许再留一份 inline replace。
+  const dream = read("src/dream.js");
+  assert.match(dream, /const body = breakFenceMarkers\(text\);/,
+    "fenceListBody 必须调 src/fence.js（#493 补充：三处一份实现）");
+  assert.ok(!/replace\(\/<<<\|>>>\/g/.test(dream),
+    "dream.js 里不许再留第二份断链实现——两份一旦分叉，下次出问题得分别查一遍");
+  // 另外两处：各自的围栏正文必须经过同一次调用。
+  assert.match(read("src/summarize.js"), /\$\{breakFenceMarkers\(transcriptBody\)\}/,
+    "蒸馏转录围栏必须断链（否则一段带闭合标记的转录能提前闭合围栏）");
+  assert.match(read("src/profile-extract.js"), /breakFenceMarkers\(listing\)/,
+    "画像条目围栏同样要断链");
 });

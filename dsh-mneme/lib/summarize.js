@@ -6,6 +6,9 @@ import { STR, langOf } from "./lang.js";
 import { withEffortFallback, describeStreamFailure, EFFORT_REJECT_RE } from "./dream.js";
 // v0.9.0（M.O. 项目记忆）：蒸馏写入复用工具路径那把作用域解析器，见 createSummarizer。
 import { createScopeResolver } from "./scope.js";
+// #493 补充 §③：断链与巩固侧同一份实现（src/fence.js）。转录里出现闭合标记时
+// 原先能提前闭合围栏——那是把用户消息升格成指令最短的一条路。
+import { breakFenceMarkers } from "./fence.js";
 // #512：每轮蒸馏一个 run id（归因主体）。store 侧也能铸造，但这里必须知道它——
 // 写记忆时要把它一路带到 saveMemoryProvenance / 落 run 行，拿回来再写就是两次往返。
 import { randomUUID } from "node:crypto";
@@ -21,6 +24,12 @@ import { randomUUID } from "node:crypto";
 // occurred_from 过滤。未知/无法换算的相对时间必须整条省略字段，不能落 null。
 // 纯函数：唯一外部输入是显式入参 nowMs（测试注入假时钟即可确定性复现）。
 const OCCURRED_AT_FUTURE_TOLERANCE_MS = 24 * 60 * 60 * 1000;
+// #493 补充 §②：持久化的解析失败计数超过这么久没更新就按 0 算（读侧失效，见
+// store.getDistillParseFailureStreak）。7 天：够长，能跨一次长假/一次停机；够短，
+// 不至于让「停了很久的会话」拿几周前的 streak 直接熔断一个其实健康的窗口。
+// 刻意不做成配置键：护栏本身默认关（summarizeParseFailureMaxRetries=0），一个只为
+// 护栏服务的失效窗口不该再占一档用户可见配置（AGENTS.md 旗标计数锁也要跟着动）。
+const PARSE_FAILURE_STREAK_STALE_MS = 7 * 24 * 60 * 60 * 1000;
 function normalizeDistilledOccurredAt(raw, nowMs = Date.now()) {
   if (typeof raw !== "string") return undefined;
   const text = raw.trim();
@@ -469,7 +478,7 @@ function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, th
           // 角色重申把「这段文本是被提炼的素材」写进**它所在的那条消息**，而不是
           // 只写在 system 里——实测同段转录只加 system 约束仍 0/2 出 JSON。
           // 围栏是确定性的：重试收到的转录与首次逐字节相同（既有回归用例依赖）。
-          text: `${STR.distillRoleReminder[language]}\n\n${STR.transcriptFenceOpen[language]}\n${transcriptBody}\n${STR.transcriptFenceClose[language]}`
+          text: `${STR.distillRoleReminder[language]}\n\n${STR.transcriptFenceOpen[language]}\n${breakFenceMarkers(transcriptBody)}\n${STR.transcriptFenceClose[language]}`
         }],
         source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" }
       })]
@@ -606,9 +615,54 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
   // Issue #210：只在一次蒸馏完整成功后记录已消费的最后事件 seq。
   const lastDistilledSeq = new Map();
   // Issue #493：per-session 连续解析失败计数（失败护栏用）。同一窗口在确定性
-  // 失败下会被每个 turn/end 重试一次、且窗口只会越攒越大——没有出口。成功即
-  // 清零；dispose 一并清理（与 runsUsed / lastRunAt 同生命周期）。
-  const parseFailureStreak = new Map();
+  // 失败下会被每个 turn/end 重试一次、且窗口只会越攒越大——没有出口。成功即清零。
+  //
+  // #493 补充 §②：**落库**，不再是进程内 Map。原先的 Map 有两个洞：重启即清零
+  // （护栏可被重启绕过，而它防的正是「确定性失败反复重试」），以及进程内无法跨
+  // 两个宿主共享同一个库时保持一致。库里读出来的值带读侧失效窗口（见
+  // PARSE_FAILURE_STREAK_STALE_MS），停了很久的会话不会被旧 streak 误伤。
+  // service 没这一步（旧装配 / 测试替身）时退回进程内 Map，行为与历史版本一致。
+  const parseFailureStreakFallback = new Map();
+  const persistentStreak = () => typeof service?.getDistillParseFailureStreak === "function"
+    && typeof service?.bumpDistillParseFailureStreak === "function"
+    && typeof service?.clearDistillParseFailureStreak === "function";
+  function readParseFailureStreak(sessionId) {
+    if (!persistentStreak()) return parseFailureStreakFallback.get(sessionId) ?? 0;
+    try {
+      return Number(service.getDistillParseFailureStreak(sessionId, { staleAfterMs: PARSE_FAILURE_STREAK_STALE_MS })) || 0;
+    } catch (error) {
+      // 读数坏了不许把蒸馏本身拖下水：退回进程内计数（最坏是多试一次）。
+      ctx.logger?.warn?.(`dsh-mneme: parse failure streak read failed: ${String(error)}`);
+      return parseFailureStreakFallback.get(sessionId) ?? 0;
+    }
+  }
+  function bumpParseFailureStreak(sessionId) {
+    if (!persistentStreak()) {
+      const next = (parseFailureStreakFallback.get(sessionId) ?? 0) + 1;
+      parseFailureStreakFallback.set(sessionId, next);
+      return next;
+    }
+    try {
+      // 失效判断由 store 那一侧负责（同一个 staleAfterMs），这里不再自己算一遍——
+      // 算两遍就等于有两份失效口径，迟早分叉。
+      const written = Number(service.bumpDistillParseFailureStreak(sessionId, { staleAfterMs: PARSE_FAILURE_STREAK_STALE_MS }));
+      if (Number.isFinite(written) && written > 0) return written;
+    } catch (error) {
+      ctx.logger?.warn?.(`dsh-mneme: parse failure streak write failed: ${String(error)}`);
+    }
+    const next = readParseFailureStreak(sessionId) + 1;
+    parseFailureStreakFallback.set(sessionId, next);
+    return next;
+  }
+  function clearParseFailureStreak(sessionId) {
+    parseFailureStreakFallback.delete(sessionId);
+    if (!persistentStreak()) return;
+    try {
+      service.clearDistillParseFailureStreak(sessionId);
+    } catch (error) {
+      ctx.logger?.warn?.(`dsh-mneme: parse failure streak clear failed: ${String(error)}`);
+    }
+  }
   let disposed = false;
 
   /** 写一条 autoSummarize 的 LLM 审计行（审计失败绝不阻塞蒸馏本身）。 */
@@ -982,8 +1036,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         // null —— 事后无法回答「模型到底吐了什么形状」。这里只加计量、不做任何
         // 跳过决策（raw_head 截断到 300 字符，避免把审计表撑大）。
         const raw = text || assembledText || "";
-        const streak = (parseFailureStreak.get(session.id) ?? 0) + 1;
-        parseFailureStreak.set(session.id, streak);
+        const streak = bumpParseFailureStreak(session.id);
         // Issue #493 失败护栏：同一窗口连续失败到阈值后强制消费游标跳过它。
         // 确定性失败（finish_reason=stop、同文同温）重试收益为 0，而窗口只会随
         // 新事件继续变大——没有出口时它会一直失败下去。默认 0 = 关闭，行为与
@@ -997,7 +1050,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         if (skipWindow) {
           // 先提交游标再复位计数：窗口已放弃，下一窗从全新状态起算。
           commitCursor(session.id, nextSeq);
-          parseFailureStreak.delete(session.id);
+          clearParseFailureStreak(session.id);
         }
         // 读数与错误文案由同一个纯函数产出（#502）：三种失败形态各有各的说法，
         // 「模型在说话」与「分类词不在枚举内」不能都写成 invalid summary JSON。
@@ -1019,7 +1072,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         }
         return;
       }
-      parseFailureStreak.delete(session.id);
+      clearParseFailureStreak(session.id);
       const parsed = parsedResult.entries;
       // Issue #127 条数上限：0 = 不限（现状）。被截断的条数与去重命中数一并进
       // 审计 metadata——此前产出条数完全由模型输出决定，用户无从自查。
@@ -1257,7 +1310,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       inFlight.clear();
       lastRunAt.clear();
       lastDistilledSeq.clear();
-      parseFailureStreak.clear();
+      parseFailureStreakFallback.clear();
     }
   };
 }

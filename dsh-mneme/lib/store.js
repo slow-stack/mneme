@@ -406,6 +406,22 @@ CREATE TABLE IF NOT EXISTS memory_mints (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_mints_run ON memory_mints(run_id);
 
+-- #493 补充 §②：连续解析失败的**跨进程**计数（失败护栏 summarizeParseFailureMaxRetries
+-- 的判据）。原先只活在 summarize.js 的进程内 Map 里，于是重启即清零——而这条护栏要
+-- 防的恰恰是「确定性失败反复重试」，重启一次就绕过去了。
+-- 独立成表、不并进 distill_cursors 的三条理由：
+-- 1) 写 streak 不必先有游标行（窗口可能还没成功消费过任何一个 seq）；
+-- 2) 成功即归零是 DELETE，而游标那句 UPSERT 是 last_seq = MAX(...)（单调），
+--    两种语义塞进同一句会把「归零」写成「保留最大值」，护栏永远不解除；
+-- 3) 失效判据要读时间戳，就地一行更省事。
+-- 失效由读侧判（streakStaleAfterMs）：超过窗口没更新就当作 0，**不在写侧定时清**——
+-- 停了几周的会话再开跑时，若拿旧 streak 直接触发熔断，护栏本身就成了新的误伤路径。
+CREATE TABLE IF NOT EXISTS distill_parse_failures (
+  session_id TEXT PRIMARY KEY,
+  streak     INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 -- entity gene (v0.3.0): named entities mentioned across memories, with
 -- time-boxed attributes (valid_from → valid_until) and typed relations.
 -- Attributes follow the snapshot style: saveAttr invalidates the previous
@@ -1235,6 +1251,59 @@ export function createStore(path) {
         updated_at = excluded.updated_at
     `).run(sessionId, lastSeq, nowIso());
     return getDistillCursor(sessionId);
+  }
+
+  /**
+   * 读指定会话的连续解析失败计数。
+   *
+   * `staleAfterMs` 是**读侧**失效窗口（#493 补充 §②）：超过这么久没更新就把计数
+   * 当作 0，而不是拿几周前攒下的值去触发熔断。劣化方向选得很明确——宁可多试一次
+   * （多花一次 LLM 调用），也不要因为「会话停了很久」而误判一个其实健康的窗口。
+   * 传 0 或负数表示不判失效（照原样返回），测试用它构造边界。
+   * @returns {number} 0 表示没有在途失败（含「已失效」与「从未记录」两种）
+   */
+  function getDistillParseFailureStreak(sessionId, { staleAfterMs = 0, nowMs = Date.now() } = {}) {
+    if (typeof sessionId !== "string" || sessionId.length === 0) return 0;
+    const row = db.prepare(
+      "SELECT streak, updated_at FROM distill_parse_failures WHERE session_id = ?"
+    ).get(sessionId);
+    if (!row) return 0;
+    if (staleAfterMs > 0) {
+      const stamp = Date.parse(row.updated_at);
+      // 时间戳读不出来时按「已失效」处理：一个解析不了的 updated_at 不能当作「刚刚
+      // 失败过」，否则坏数据会永久钉住一道护栏（fail-open，与整条护栏的默认关一致）。
+      if (!Number.isFinite(stamp) || nowMs - stamp > staleAfterMs) return 0;
+    }
+    return Number(row.streak) || 0;
+  }
+
+  /**
+   * 记一次解析失败（+1 并刷新时间戳）。返回写后的计数。
+   *
+   * 先按 staleAfterMs 读一遍再**覆写**，而不是在 SQL 里做 streak + 1——失效判断只
+   * 许有一份（就是上面那个读函数）。写成 + 1 的话，一条几周前的旧行会把「新的第一
+   * 次失败」直接加成 2，等于失效窗口在这条路径上完全不生效（本块实现的首版就是
+   * 这么写的，被回归用例抓出来）。
+   */
+  function bumpDistillParseFailureStreak(sessionId, { staleAfterMs = 0, nowMs = Date.now() } = {}) {
+    if (typeof sessionId !== "string" || sessionId.length === 0) {
+      throw new TypeError("bumpDistillParseFailureStreak: sessionId must be a non-empty string");
+    }
+    const next = getDistillParseFailureStreak(sessionId, { staleAfterMs, nowMs }) + 1;
+    db.prepare(`
+      INSERT INTO distill_parse_failures (session_id, streak, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        streak = excluded.streak,
+        updated_at = excluded.updated_at
+    `).run(sessionId, next, nowIso());
+    return next;
+  }
+
+  /** 清零（不是写 0）：没有在途失败时不该留一行，否则「有没有失败过」变得不可区分。 */
+  function clearDistillParseFailureStreak(sessionId) {
+    if (typeof sessionId !== "string" || sessionId.length === 0) return 0;
+    return db.prepare("DELETE FROM distill_parse_failures WHERE session_id = ?").run(sessionId).changes;
   }
 
   function count(type, { minImportance = null, source = null, includeForgotten = false, includeArchived = false, onlyArchived = false, depositedOnly = false, updatedFrom = null, updatedTo = null, occurredFrom = null, occurredTo = null, visibility = null } = {}) {
@@ -4066,6 +4135,11 @@ export function createStore(path) {
     annotateLlmAudit,
     getDistillCursor,
     setDistillCursor,
+    // #493 补充 §②：解析失败计数跨进程持久化（读侧带失效窗口）。单独成表，
+    // 不并进 distill_cursors——那句 UPSERT 是单调的，归零语义会打架。
+    getDistillParseFailureStreak,
+    bumpDistillParseFailureStreak,
+    clearDistillParseFailureStreak,
     listLlmAudits,
     countLlmAudits,
     getLlmAuditStats,

@@ -14,6 +14,9 @@ import { STR, langOf } from "./lang.js";
 // service.setArchived（dream/decisions.js），所以「不许改写外来行」这条契约要在
 // 每个池子各挡一遍。清单与静态锁见 share-imported-guard.test.js。
 import { isImportedRow } from "./memory-source.js";
+// 断链是围栏的共同底子：三处围栏（巩固/睡眠清单、蒸馏转录、画像条目）共用这一份，
+// 不许各写一条（#493 补充 §③）。
+import { breakFenceMarkers } from "./fence.js";
 export { validateDecisions, applyDecisions, withEffortFallback, withMaxTokensFallback, parseMaxTokensCap, describeStreamFailure, resolveDreamEffort, resolveRoute, streamText, runAuditedLlm };
 
 // Extract the first JSON array from LLM output, tolerating markdown fences,
@@ -333,7 +336,7 @@ export function fenceListBody(language, text, shape = "json") {
   const close = STR.memoryFenceClose[language] ?? STR.memoryFenceClose.en;
   const table = shape === "text" ? STR.dreamTextRoleReminder : STR.dreamRoleReminder;
   const reminder = table[language] ?? table.en;
-  const body = String(text ?? "").replace(/<<<|>>>/g, (run) => `${run[0]}\u200B${run.slice(1)}`);
+  const body = breakFenceMarkers(text);
   return `${reminder}\n\n${open}\n${body}\n${close}`;
 }
 

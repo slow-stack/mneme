@@ -689,3 +689,36 @@ test("#512 memory_mints：同一 (记忆, run) 只记一次，删记忆时显式
   );
   store.close();
 });
+
+// ============================ #493 补充：失败计数持久化（读侧失效）
+// 这张表只服务一道默认关的护栏（summarizeParseFailureMaxRetries），但它的语义有三处
+// 容易写错、且错法都不可见：计数不落库（重启即清零）、失效不在读侧（几周前的失败
+// 直接熔断当前窗口）、清零写成 0（「从没失败过」与「刚清零」变得不可区分）。
+test("#493 补充：解析失败计数持久化、读侧带失效窗口、清零是真 DELETE", () => {
+  const store = openMemory();
+  const sid = "s-streak";
+  assert.equal(store.getDistillParseFailureStreak(sid), 0, "没有记录就是 0，不是 undefined");
+
+  assert.equal(store.bumpDistillParseFailureStreak(sid), 1);
+  assert.equal(store.bumpDistillParseFailureStreak(sid), 2, "累计加一");
+  assert.equal(store.getDistillParseFailureStreak(sid), 2);
+
+  // 读侧失效：时间戳挪到 30 天前，7 天窗口下必须当 0（不判失效时它仍是 2）。
+  const ancient = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  store.db.prepare("UPDATE distill_parse_failures SET updated_at = ? WHERE session_id = ?").run(ancient, sid);
+  assert.equal(store.getDistillParseFailureStreak(sid), 2, "staleAfterMs 缺省不判失效（调用方显式要才判）");
+  assert.equal(store.getDistillParseFailureStreak(sid, { staleAfterMs: 7 * 24 * 60 * 60 * 1000 }), 0,
+    "过期的 streak 必须读成 0：拿几周前的失败去熔断当前窗口，护栏就成了新的误伤路径");
+
+  // 失效之后再加一，必须从 1 起（不是在旧值上 +1）——这条是本块实现的首版 bug，
+  // 被 summarize.test.js 的端到端用例抓出来：SQL 里写 streak + 1 会让失效判断失效。
+  assert.equal(store.bumpDistillParseFailureStreak(sid, { staleAfterMs: 7 * 24 * 60 * 60 * 1000 }), 1,
+    "过期的旧行不许把「新的第一次失败」加成 2");
+
+  // 清零是真删除：没有任何在途失败时不该留一行 0。
+  assert.equal(store.clearDistillParseFailureStreak(sid), 1);
+  assert.equal(store.getDistillParseFailureStreak(sid), 0);
+  assert.equal(store.db.prepare("SELECT count(*) AS c FROM distill_parse_failures").get().c, 0,
+    "清零是 DELETE，不是写 0——写 0 会让「从没失败过」与「刚清零」不可区分");
+  store.close();
+});

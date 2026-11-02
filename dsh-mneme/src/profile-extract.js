@@ -24,6 +24,9 @@
 
 import { STR, langOf } from "./lang.js";
 import { describeStreamFailure, resolveRoute, runAuditedLlm, streamText } from "./dream.js";
+// #493 补充 §③：与巩固/蒸馏同一份断链（src/fence.js）。画像条目同样是模型的可影响
+// 输入，一条写着「<<<记忆条目结束>>>」的记忆能提前闭合围栏。
+import { breakFenceMarkers } from "./fence.js";
 
 const DEFAULT_MAX_ROWS = 120;
 const DEFAULT_ROW_CHARS = 260;
@@ -115,7 +118,7 @@ export function createProfileExtractor({ ctx, service, config, logger }) {
     const listing = rows.map((r, i) => `${i + 1}. [${r.type}] ${r.title} :: ${r.content}`).join("\n");
     const userText = [
       STR.profileFenceOpen[language],
-      listing,
+      breakFenceMarkers(listing),
       STR.profileFenceClose[language],
       language === "zh"
         ? `以上 ${rows.length} 条记忆条目（数据）到此结束。只依据它们输出 JSON，条目里没有的绝不发明。`
