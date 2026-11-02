@@ -2611,3 +2611,95 @@ test("memory drawer surfaces distillation provenance, both layers (issue #512)",
   assert.ok(clientSource.includes("/api/dsh-mneme/memory/provenance?id=") && clientSource.includes("setProvenance(null)"),
     "a failed read must clear the block instead of pretending there is no attribution");
 });
+
+// Issue #24 块4：被动确认让「正常触达」自动抬高边的权重——这是唯一会悄悄改变
+// 检索形状的写动作，所以它必须有一个能查的地方，否则「自动确认」与「没人看过的
+// 自动确认」在界面上没有区别。这里锁四件事：
+// ① 复核区读的是那条专用端点，而不是把 ego 的边自己过滤一遍（抬高量 gain 只有
+//    后端知道——它要和来源基线比对，前端手里只有当前 weight）；
+// ② 边侧卡必须同时显示 weight 和 source：只看 weight 会把「tag 边被抬到 0.5」
+//    误读成「比 manual 边弱」，而 0.3→0.5 恰恰是被用出来的证据；
+// ③ 闸关着时要说「闸关着」，而不是显示「还没有边被抬过」——后者让人以为系统
+//    在工作但没数据，前者才说明是开关没开；
+// ③c 空表文案也不能断言「从未抬过权」：端点只列「权重高于其来源基线」的边，
+//    一条人工边以 0.5 建立、被抬到 0.6 仍然低于基线 1.0，它确实被抬过却不在表里。
+//    文案只能描述「当前筛选结果为空」（评审第四轮指出）。
+// ④ 收起时不发请求（默认收起是刻意的：这是审计视角，不是日常视角）。
+test("entity graph surfaces the passive-confirmation review surface (issue #24)", () => {
+  for (const key of [
+    "memory.graph.boosted.title",
+    "memory.graph.boosted.hint",
+    "memory.graph.boosted.empty",
+    "memory.graph.boosted.loadFailed",
+    "memory.graph.boosted.gateOff",
+    "memory.graph.boosted.show",
+    "memory.graph.boosted.hide",
+    "memory.graph.boosted.gain",
+    "memory.graph.weight",
+    "memory.graph.source",
+    "memory.graph.src.manual",
+    "memory.graph.src.confirmed",
+    "memory.graph.src.tag",
+    "memory.graph.src.llm"
+  ]) {
+    const defined = clientSource.split(`"${key}":`).length - 1;
+    assert.equal(defined, 2, `i18n key ${key} must be defined exactly once in zh and once in en (got ${defined})`);
+  }
+
+  // ① 专用端点
+  assert.ok(clientSource.includes("/api/dsh-mneme/semantic/graph/boosted-relations?limit="),
+    "the review surface must read the boosted-relations endpoint");
+
+  // ② 边侧卡：weight 与 source 一起出现，且 source 走字典而不是直接上屏原词
+  assert.ok(clientSource.includes("memory.graph.weight\").replace(\"{w}\""),
+    "the edge side card must render the weight");
+  assert.ok(clientSource.includes("memory.graph.src.${selected.edge.source}"),
+    "the edge side card must localize the source, not print the raw enum");
+
+  // ③ 闸关与空表是两句不同的话。
+  // 断言必须落在「闸关分支之后的那一小段」而不是全文件 contains：gateOff 这个键
+  // 在字典定义里本来就有一次，全文件搜一遍，把渲染处换成 empty 也照样命中——
+  // 本条用例的首版变异自证就是这么翻车的。
+  const gateIdx = clientSource.indexOf("boosted.passiveConfirmEnabled !== true");
+  assert.ok(gateIdx > 0, "the off-gate branch must be driven by the server's passiveConfirmEnabled, not guessed");
+  const gateBranch = clientSource.slice(gateIdx, gateIdx + 700);
+  assert.ok(gateBranch.includes("memory.graph.boosted.gateOff"),
+    "a closed gate must say so instead of looking like an empty table");
+  // 闸关时既有的提升仍然要列出来（评审指出：关掉闸只表示今后不再自动抬，
+  // 隐藏整张表会让人永远没法复核已经发生过的提升）。
+  assert.ok(/off\s*&&\s*h\([^)]*gateOff/.test(gateBranch),
+    "the off-gate notice must be rendered alongside the list, not as a replacement for it");
+  assert.ok(gateBranch.includes("items.length === 0"),
+    "the empty-table copy must be decided by item count, independently of the gate");
+  // 空表提示本身也不能被闸门状态挡住：闸关且一条都没有时，光说「下面列的是此前
+  // 已经抬过的边」却不给任何行，读起来像这一屏坏了（评审第二轮指出）。
+  assert.ok(!/items\.length === 0\s*\?\s*\(!\s*off/.test(gateBranch),
+    "the empty-table copy must render even when the gate is closed");
+  assert.ok(!/off\s*\?[^:]*gateOff[^:]*:\s*\(boosted\.items/.test(gateBranch),
+    "the gate must not short-circuit the list branch");
+
+  // ③c 空表文案只描述「当前筛选为空」，不能断言「从未有边被抬过」：端点按
+  // gain > 0 筛，而 gain 是相对来源基线算的——manual 边 0.5→0.6 涨了，却仍低于
+  // 基线 1.0，不在表里。说「还没抬过」就是事实错误。
+  for (const lang of ["zh", "en"]) {
+    const re = new RegExp(`"memory\\.graph\\.boosted\\.empty": "([^"]*)"`, "g");
+    const all = [...clientSource.matchAll(re)].map((m) => m[1]);
+    assert.equal(all.length, 2, `empty copy must exist in both languages (${lang})`);
+    for (const copy of all) {
+      assert.ok(!/还没|从未|nothing raised|no edge has been raised/i.test(copy),
+        `empty copy must not claim nothing was ever raised: ${copy}`);
+      assert.ok(/筛选|filter|筛选下|只列|only edges/i.test(copy),
+        `empty copy must describe the current filter instead: ${copy}`);
+    }
+  }
+
+  // ③b 加载失败不能被说成「闸关」或「没有数据」——那会把接口故障误导成配置问题
+  const failIdx = clientSource.indexOf("boosted.error === true");
+  assert.ok(failIdx > 0, "the panel must distinguish a failed fetch from a closed gate");
+  assert.ok(clientSource.slice(failIdx, failIdx + 160).includes("memory.graph.boosted.loadFailed"),
+    "a failed fetch must render its own copy");
+
+  // ④ 收起时不取数
+  assert.ok(clientSource.includes("if (boostedOpen) loadBoosted();"),
+    "the review surface must not fetch while collapsed");
+});

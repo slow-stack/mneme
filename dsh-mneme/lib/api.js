@@ -1438,7 +1438,57 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             to: e.to_entity,
             relation_type: e.relation_type,
             memory_id: e.memory_id ?? null,
-            created_at: e.created_at
+            created_at: e.created_at,
+            // issue #24 块4：被动确认的复核要靠这两个字段——weight 是「用出来
+            // 的分」，source 决定它的起点（manual 1.0 / tag 0.3 / llm 0.4）。
+            // 少了它们，「这条边被抬过」在面板上根本看不出来。取不到时给
+            // 初值形状而不是 undefined，前端不必到处判空。
+            weight: e.weight ?? 1.0,
+            source: e.source ?? "manual"
+          }))
+        });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  // --- graph boosted relations: the review side of passive confirmation ---
+  // issue #24 块4（被动确认）的复核出口。正常触达即 bump 边权重是安静的设计，
+  // 但「抬过哪些边」必须能看见，否则「例外管理」只剩自动确认没有例外。
+  // 判据是 gain = 现权 − 该 source 初值 > 0（见 store.listBoostedRelations），
+  // 不另设记账表：抬升是唯一会改变检索形状的动作，它自己就是证据。
+  // 只读、挂在 /semantic/graph/ 前缀下（SECURITY.md 的开放读清单已含该通配）。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/semantic/graph/boosted-relations",
+    policy: "open",
+    handler(req, res) {
+      try {
+        const url = new URL(req.url, "http://localhost");
+        const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") ?? 100) || 100));
+        const rows = service.listBoostedRelations?.({ limit }) ?? [];
+        sendJson(res, 200, {
+          count: rows.length,
+          // 提示「这张表为什么可能为空」：被确认抬升的边只在图真的被用过之后
+          // 才出现，两个相关闸默认都关。面板据此说明而不是让人以为坏了。
+          // 必须两个闸同时开才算「会继续产生新提升」——touchRecalled 里
+          // passive = graphPassiveConfirm && graphWeightEnabled，只看前者会让面板
+          // 说「会自动提升」而实际上一条都不会抬（评审指出）。
+          passiveConfirmEnabled: config?.graphPassiveConfirm === true && config?.graphWeightEnabled === true,
+          items: rows.map((r) => ({
+            id: r.id,
+            from: r.from_entity,
+            to: r.to_entity,
+            from_name: r.from_name ?? null,
+            to_name: r.to_name ?? null,
+            relation_type: r.relation_type,
+            memory_id: r.memory_id ?? null,
+            created_at: r.created_at,
+            weight: r.weight,
+            base_weight: r.base_weight,
+            gain: r.gain,
+            source: r.source
           }))
         });
       } catch {

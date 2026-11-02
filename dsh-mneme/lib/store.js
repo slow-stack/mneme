@@ -1647,6 +1647,11 @@ export function createStore(path) {
   // 解析成本可以忽略、又永远够不到那格上限，块数只随包条数线性增长。
   const DELETE_ID_CHUNK = 500;
 
+  // Tag 锚点的 IN 列表分块。比 DELETE_ID_CHUNK 多一层顾虑：那条语句只有一处 IN，
+  // 这条有**三处**（attrs / relations.from / relations.to）共用同一个记忆 id 集合，
+  // 所以单块占用的参数是 3×chunk。取 500 后最坏 1500 个参数，离 32766 仍有二十倍余量。
+  const TAG_ID_CHUNK = 500;
+
   /**
    * 整包退出（车道 C）。删空一个不存在的包是幂等的 0，不是错误——对方点第二次「收起
    * 这个包」与「收起一个从来没导入过的包」都该是这个答案；早退也不 bump generation：
@@ -3712,6 +3717,152 @@ export function createStore(path) {
     return { migrated, invalidated };
   }
 
+  /**
+   * Tag 桥接（issue #24 · 块1 三路起点里的第二路）：查询词命中某些记忆的 tag
+   * 时，那些记忆挂联的实体本身就是「这个查询正在谈的东西」——即使查询里没有
+   * 出现它们的名字。Tag 是 LLM 打的标签，比精确名松，但比向量具体，正好填在
+   * 二者之间。
+   *
+   * 匹配口径与 findEntitiesMentionedIn 对齐（JS 侧 toLowerCase，不受 SQLite
+   * 只折 ASCII 的限制）：把查询按空白与常见中英标点切词，任一词与某个 tag
+   * 全等即算命中（不做子串——tag 通常是短词，子串匹配会让「ai」命中「mail」）。
+   * 只认未归档未遗忘的行：一条已归档记忆的 tag 不该再拉出种子。
+   * 返回 {id, name}，按命中记忆数降序、名称升序（稳定）。
+   */
+  function findEntitiesByTags(text, { limit = 5 } = {}) {
+    const words = String(text ?? "")
+      .toLowerCase()
+      .split(/[\s,，、;；:：!！?？.。()（）[\]【】"'“”‘’/|]+/u)
+      .map((w) => w.trim())
+      .filter((w) => w.length >= 2);
+    if (!words.length) return [];
+    const rows = db.prepare(
+      `SELECT id, tags FROM memories WHERE archived = 0 AND forgotten = 0`
+    ).all();
+    const memHits = new Set();
+    for (const row of rows) {
+      const tags = parseTags(row.tags).map((t) => String(t).toLowerCase());
+      if (!tags.length) continue;
+      if (words.some((w) => tags.includes(w))) memHits.add(row.id);
+    }
+    if (!memHits.size) return [];
+    // 计数必须在 SQL 里做：entityIdsForMemories 返回的是 DISTINCT entity_id，
+    // 拿它反推「命中几条记忆」永远是 1，排序就静默失效了（评审抓到的正是这个）。
+    //
+    // 两个来源都要算：只读 entity_attrs 会漏掉「记忆只通过关系挂到实体上」的情况
+    // ——phaseRelations 只写 entity_relations.memory_id、不建 attr 行，于是仅由关系
+    // 关联的记忆对关系两端一个种子都生不出来。这与 getLinkedMemoryIds 的口径一致
+    // （那边 attr 与 relation 两端同样并列）。UNION 去重的是 (实体, 记忆) 对，
+    // 所以同一条记忆的多条关联记录不会把 via 抬高。
+    //
+    // 分块理由同 DELETE_ID_CHUNK：一条语句一行一个 `?`，撞上 SQLITE_MAX_VARIABLE_NUMBER
+    // （32766）会整笔抛错，而调用方 try/catch 兜底 → 静默丢掉整条 Tag 锚点。
+    // 这里每块绑 3×TAG_ID_CHUNK 个参数（三处 IN 列表），500 仍有二十倍余量。
+    const rowsByEntity = new Map();
+    const memoryIds = [...memHits];
+    for (let offset = 0; offset < memoryIds.length; offset += TAG_ID_CHUNK) {
+      const batch = memoryIds.slice(offset, offset + TAG_ID_CHUNK);
+      const marks = batch.map(() => "?").join(",");
+      const batchRows = db.prepare(
+        `SELECT hits.id AS id, e.name AS name, COUNT(DISTINCT hits.memory_id) AS via
+         FROM (
+           SELECT entity_id AS id, memory_id FROM entity_attrs
+             WHERE memory_id IN (${marks}) AND entity_id IS NOT NULL
+           UNION
+           SELECT from_entity AS id, memory_id FROM entity_relations
+             WHERE memory_id IN (${marks}) AND from_entity IS NOT NULL
+           UNION
+           SELECT to_entity AS id, memory_id FROM entity_relations
+             WHERE memory_id IN (${marks}) AND to_entity IS NOT NULL
+         ) hits JOIN entities e ON e.id = hits.id
+         GROUP BY hits.id`
+      ).all(...batch, ...batch, ...batch);
+      for (const row of batchRows) {
+        const prev = rowsByEntity.get(row.id);
+        // 各块的记忆集合互不相交，所以 via 直接相加就是全集的 DISTINCT 计数。
+        rowsByEntity.set(row.id, { id: row.id, name: row.name, via: (prev?.via ?? 0) + Number(row.via) });
+      }
+    }
+    const rows2 = [...rowsByEntity.values()];
+    if (!rows2.length) return [];
+    return rows2
+      .map((r) => ({ id: r.id, name: r.name, via: r.via }))
+      .sort((a, b) => b.via - a.via || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+      .slice(0, limit)
+      .map(({ id, name }) => ({ id, name }));
+  }
+
+  /**
+   * 按记忆批量反查实体 id（Tag 桥接用）。与 entitiesForMemory 的区别是「批量 +
+   * 带 id」：那边是面板详情页的单条展示（只要 name/type），这边要的是能直接
+   * 喂给 normalizePath 的 id 列表。同一 (记忆, 实体) 只出一次。
+   *
+   * 与 findEntitiesByTags 同口径：attr 行与关系两端并列。只读 entity_attrs 时，
+   * 一条只通过关系挂到实体上的记忆在向量路里也生不出种子（phaseRelations 不建 attr）。
+   */
+  function entityIdsForMemories(memoryIds) {
+    const ids = Array.isArray(memoryIds) ? memoryIds.filter(Boolean) : [];
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = db.prepare(
+      `SELECT entity_id FROM entity_attrs
+         WHERE memory_id IN (${placeholders}) AND entity_id IS NOT NULL
+       UNION
+       SELECT from_entity AS entity_id FROM entity_relations
+         WHERE memory_id IN (${placeholders}) AND from_entity IS NOT NULL
+       UNION
+       SELECT to_entity AS entity_id FROM entity_relations
+         WHERE memory_id IN (${placeholders}) AND to_entity IS NOT NULL`
+    ).all(...ids, ...ids, ...ids);
+    return rows.map((r) => r.entity_id);
+  }
+
+  /**
+   * 被动确认的复核出口（issue #24 · 块4）：列出「权重已经被抬过」的边。
+   *
+   * 设计口径：被动确认本身是安静的——正常触达就 bump，不打扰人。要复核的恰恰
+   * 是「抬过的那些」，因为抬升是唯一会改变检索形状的动作。判据不看有没有被
+   * bump 过（那要额外记账），看权重是否高于该 source 的初值：RELATION_SOURCE_
+   * DEFAULTS 是建边时的起点，高出去的部分只能来自 bumpRelationWeight。
+   *
+   * 显式传过 weight 的边（manual 自带权重）会被算成「抬过」，这在语义上没错
+   * ——它确实不是初值——但它是人工意图，所以把 source 一起返回，面板自己决定
+   * 怎么标。整数比较用 gain > 0 而不是 >= 0，防浮点累加的 1e-17 噪声。
+   * 返回按 gain 降序、created_at 降序，附两侧实体名（面板不必再查一遍）。
+   */
+  function listBoostedRelations({ limit = 200, minGain = 0 } = {}) {
+    const { limit: lim } = sanitizePage(limit, 1, 200);
+    const rows = db.prepare(
+      `SELECT r.*, ef.name AS from_name, et.name AS to_name
+       FROM entity_relations r
+       LEFT JOIN entities ef ON ef.id = r.from_entity
+       LEFT JOIN entities et ON et.id = r.to_entity
+       ORDER BY r.weight DESC, r.created_at DESC`
+    ).all();
+    const out = [];
+    for (const row of rows) {
+      const src = row.source ?? "manual";
+      const base = Object.hasOwn(RELATION_SOURCE_DEFAULTS, src)
+        ? RELATION_SOURCE_DEFAULTS[src]
+        : 1.0;
+      const gain = (row.weight ?? 1.0) - base;
+      if (!(gain > minGain)) continue;
+      out.push({
+        ...toRelation(row),
+        from_name: row.from_name ?? null,
+        to_name: row.to_name ?? null,
+        base_weight: base,
+        gain
+      });
+    }
+    // 排序必须在算完 gain 之后做，不能交给 SQL 的 weight DESC：不同 source 的
+    // base 不同，weight 大不等于 gain 大（llm 边 0.95 / gain 0.55 会压过
+    // tag 边 0.90 / gain 0.60）。早先在循环里按 lim 提前 break 时，被截掉的
+    // 恰恰是 gain 更大的边——面板按 limit=100 取数，截断处正是最该看见的那几条。
+    out.sort((a, b) => b.gain - a.gain || String(b.created_at).localeCompare(String(a.created_at)));
+    return out.slice(0, lim);
+  }
+
   /** Relations where the entity appears on either side (from or to). */
   function getRelations(entityId) {
     return db.prepare(
@@ -4202,6 +4353,10 @@ export function createStore(path) {
     entitiesForMemory,
     findMemoriesByAttr,
     findEntitiesMentionedIn,
+    // #24 块1 第二路（Tag 桥接）与块4 复核出口。
+    findEntitiesByTags,
+    entityIdsForMemories,
+    listBoostedRelations,
     getLinkedMemoryIds,
     saveRelation,
     bumpRelationWeight,
