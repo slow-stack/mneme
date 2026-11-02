@@ -14,9 +14,11 @@ daemon 是**数据面**,不是第二个宿主:
 
 ## 2. 对外接口
 
-路由面 = `src/api-standalone.js` 全表(health/status/profile/rules/memories 读写/`/memory/provenance`(记忆级溯源读出口,#421)/search/context/share/receive(含 `/receive/undo`)/maintenance/bootstrap),鉴权同源(Bearer + timingSafeEqual,`GET /health` 免鉴权)。daemon 自身零新路由;#370 的 `/context` 落在 api-standalone 工厂里,宿主外部访问与 daemon 自动同享(参数、scope 语义与 recall_runs 注入分账见包 README 路由表)。daemon 侧唯一自有选项是 `strictPort`(见 §4)。
+路由面 = `src/api-standalone.js` 全表(health/status/profile/rules/memories 读写/`/memory/provenance`(记忆级 / 会话级溯源读出口,#421+#524)/search/context/share/receive(含 `/receive/undo`)/maintenance/bootstrap),鉴权同源(Bearer + timingSafeEqual,`GET /health` 免鉴权)。daemon 自身零新路由;#370 的 `/context` 落在 api-standalone 工厂里,宿主外部访问与 daemon 自动同享(参数、scope 语义与 recall_runs 注入分账见包 README 路由表)。daemon 侧唯一自有选项是 `strictPort`(见 §4)。
 
-`/memory/provenance` 的开关门(#509 评审整改):这个面返回蒸馏窗口的**逐条会话原文**,所以它吃 `distillRecords.enabled`——与写侧 `src/summarize.js:988` 同一枚开关、同一个判据表达式(读侧唯一一份在 `src/provenance-http.js` 的 `isDistillRecordsEnabled`)。关着时回 `409 {"error":"distill-records-disabled"}`,不是 404(本端点刻意不就「这条记忆是否存在」作断言:未知 id 是 200 + 空 windows),也不是 503(那是「装配没接线」,`src/index.js:589-591` 立的可区分性原则)。状态码阶梯:`401` 无 token → `400` 缺 id → `409` 功能关了 → `503` 装配没接线 → `200`。daemon 读的是**面板持久化的开关**(`serve.js` 把 `feature_flags` 里的 `distillRecords.enabled` 展开进 cfg,与宿主 `index.js:217-233` 同款),与宿主共用同一个 memory.db、同一份 kv——所以用户在面板里开着,daemon 这一面就读得到。
+`/memory/provenance` 的开关门(#509 评审整改):这个面返回蒸馏窗口的**逐条会话原文**,所以它吃 `distillRecords.enabled`——与写侧 `src/summarize.js:988` 同一枚开关、同一个判据表达式(读侧唯一一份在 `src/provenance-http.js` 的 `isDistillRecordsEnabled`)。关着时回 `409 {"error":"distill-records-disabled"}`,不是 404(本端点刻意不就「这条记忆是否存在」作断言:未知 id 是 200 + 空 windows),也不是 503(那是「装配没接线」,`src/index.js:589-591` 立的可区分性原则)。状态码阶梯:`401` 无 token → `400` 缺参(`missing-id` / `ambiguous-id` / `invalid-limit`) → `409` 功能关了 → `503` 装配没接线(按方向判) → `200`。
+
+两个读方向共用同一条路径(#524 补上方向 2):`?id=<memoryId>` 是「这条记忆派生自哪些窗口」,`?sessionId=<sid>` 是「这个会话蒸出了哪些窗口」;两个主键**互斥**,都缺与都给都回 400(择一等于让调用方发一个自己也不知道会读哪个主键的请求,而两边的结果形状不同)。方向 2 必须带 `limit`(默认 20、上限 100)——按会话读是这张脸里天然最容易放大的方向,一个会话几十个窗口、每个窗口都是整段逐字原文,不限量就是「按会话导出全量转录」,与 `/export` 同量级只是换了形状;撞上限时答复带 `truncated: true`,少了这个读数,被截断的答复与「本来就这么少」逐字节相同。方向 2 的窗口按 `(session_id, seq_start, seq_end)` 合并成一行 `GROUP BY`,带 `link_count`——一条蒸馏窗口通常产出多条记忆,逐链接返回会让「这个会话蒸了几次」被重复行淹没。daemon 读的是**面板持久化的开关**(`serve.js` 把 `feature_flags` 里的 `distillRecords.enabled` 展开进 cfg,与宿主 `index.js:217-233` 同款),与宿主共用同一个 memory.db、同一份 kv——所以用户在面板里开着,daemon 这一面就读得到。
 
 残留不对称要知道:daemon 结构上看不到宿主的 **bundle config**(第一期不吃宿主 config schema),所以「只写在部署侧 bundle 配置里打开、从没在面板点过」的用户,宿主认、daemon 不认——daemon 会对每个请求回 409。这不是故障,是 daemon 装配面的已知边界;要让 daemon 也认,去面板里把开关显式打开一次(面板的「待重启」提示同样适用:开关是启动快照,改完要重启才生效)。
 

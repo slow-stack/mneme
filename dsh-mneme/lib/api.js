@@ -14,7 +14,7 @@ import { EFFORT_REJECT_RE, describeStreamFailure, resolveRoute, withEffortFallba
 import { summarizeSkipped } from "./dream/decisions.js";
 import { getInjectionSnapshot } from "./inject.js";
 import { renderUserSettingsBlock } from "./user-settings.js";
-import { parseProvenanceQuery, provenanceReply } from "./provenance-http.js";
+import { parseProvenanceSelector, provenanceReply } from "./provenance-http.js";
 import { describeLocalRuntime, publicRuntimeStatus } from "./runtime/loader.js";
 import { hostModulesDir, provisionRuntime } from "./runtime/provision.js";
 import { classify, fetchLatestVersion, PACKAGE_VERSION } from "./version-check.js";
@@ -1314,6 +1314,12 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   // 能查，外部（面板 / standalone API / 脚本）拿不到，「这条记忆是从哪几句蒸出来
   // 的」只能开 sqlite 手写 JOIN。本端点补最后一段接线。
   //
+  // 两个读方向共一条路径（#524）：?id=<memoryId> 是「这条记忆从哪几句蒸出来的」，
+  // ?sessionId=<sid> 是「这个会话蒸出了哪几段」。两个主键互斥——都缺 400、都给
+  // 400（择一意味着调用方发一个自己也不知道会被读哪个主键的请求，而两边结果形状
+  // 不同）。共用路径是有意的：多一条路径就多一处要登记的地方（SECURITY.md 两张
+  // 表、README 路由表、security-doc 的清单锁），而两者读的是同一批数据。
+  //
   // 一个链接一个窗口：区间 + 区间里的原文行（按 seq 升序）。没有链接的记忆
   // （memory_save / 工具写入 / 冷启动）返回空 windows——「不是蒸馏来的」本身是
   // 有效答案，不是错误，所以不 404。
@@ -1341,12 +1347,16 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     handler(req, res) {
       try {
         const url = new URL(req.url, "http://localhost");
-        const parsed = parseProvenanceQuery(url.searchParams.get("id"));
+        const parsed = parseProvenanceSelector({
+          memoryId: url.searchParams.get("id"),
+          sessionId: url.searchParams.get("sessionId"),
+          limit: url.searchParams.get("limit")
+        });
         if (!parsed.ok) {
           sendJson(res, parsed.status, { error: parsed.error });
           return;
         }
-        const { status, body } = provenanceReply({ service, id: parsed.id, config, warn: (m) => ctx.logger?.warn?.(m) });
+        const { status, body } = provenanceReply({ service, selector: parsed.selector, config, warn: (m) => ctx.logger?.warn?.(m) });
         sendJson(res, status, body);
       } catch {
         sendJson(res, 500, { error: "internal" });

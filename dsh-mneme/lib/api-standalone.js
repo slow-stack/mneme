@@ -21,7 +21,7 @@ import { bootstrapFromDirectory } from "./bootstrap.js";
 import { PACKAGE_VERSION } from "./version-check.js";
 import { parseReclaimJson, readReclaimFields, reclaimReply, RECLAIM_UNAVAILABLE } from "./reclaim-http.js";
 import { parseShareBody, shareReply, parseReceiveBody, receiveReply, parseUndoBody, undoReply } from "./share-http.js";
-import { parseProvenanceQuery, provenanceReply } from "./provenance-http.js";
+import { parseProvenanceSelector, provenanceReply } from "./provenance-http.js";
 
 const DEFAULT_PORT = 8790;
 const DEFAULT_HOST = "127.0.0.1";
@@ -487,6 +487,10 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
       // 一个链接一个窗口（区间 + 区间内原文行，按 seq 升序）；没有链接的记忆返回
       // 空 windows——「不是蒸馏来的」是有效答案，不是错误。
       //
+      // 两个读方向共一条路径（#524）：?id=<memoryId> 走方向 1（记忆 → 窗口），
+      // ?sessionId=<sid> 走方向 2（会话 → 窗口）。互斥校验在共用模块里（都缺/都给
+      // 都是 400），本壳只把三个 query 参数原样递进去——拆分与择一的判断只准写一份。
+      //
       // 这张面本来就要 Bearer token（除 /health 外无例外），所以不涉及宿主侧那次
       // open → token 的归类调整；daemon 与宿主共用 service，口径天然一致。
       //
@@ -497,12 +501,16 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
       // 方向，别当成 bug 修掉。阶梯全貌（401 → 400 → 409 → 503 → 读）见
       // provenance-http.js 文件头。
       if (req.method === "GET" && pathname === "/memory/provenance") {
-        const parsed = parseProvenanceQuery(url.searchParams.get("id"));
+        const parsed = parseProvenanceSelector({
+          memoryId: url.searchParams.get("id"),
+          sessionId: url.searchParams.get("sessionId"),
+          limit: url.searchParams.get("limit")
+        });
         if (!parsed.ok) {
           sendJson(res, parsed.status, { error: parsed.error });
           return;
         }
-        const { status, body } = provenanceReply({ service, id: parsed.id, config, warn: (m) => logger?.warn?.(m) });
+        const { status, body } = provenanceReply({ service, selector: parsed.selector, config, warn: (m) => logger?.warn?.(m) });
         sendJson(res, status, body);
         return;
       }

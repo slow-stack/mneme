@@ -2779,6 +2779,40 @@ export function createStore(path) {
     ).all(sessionId, seqStart, seqEnd);
   }
 
+  /**
+   * 一个会话产出的蒸馏窗口（#524 方向 2 的存储侧）。
+   *
+   * #421 把溯源读出口拆成两个方向：方向 1（记忆 → 窗口）由 #509 落地，走
+   * provenanceFor；这是方向 2（会话 → 窗口）。两个方向读的是同一张表，只是索引不
+   * 同（idx_memory_provenance_session 就是为这一条建的，早已存在——所以这不是
+   * schema 变更）。
+   *
+   * **必须带 limit**：一个会话可能有几十个窗口，每个窗口接着就是整段逐字原文，
+   * 不限量等于「按会话导出全量转录」（#524 第 2 条前置）。上限的口径在协议层
+   * （provenance-http.js 的 PROVENANCE_MAX_WINDOWS），这一层只照参数取。
+   *
+   * 一行 = 一个窗口（同一 (session, seq_start, seq_end) 的多条链接 GROUP BY 成一行）
+   * ——一条蒸馏窗口通常产出多条记忆，逐链接返回会让「这个会话蒸了几次」这个唯一
+   * 有意义的计数被重复行淹没。link_count 说明该窗口派生出几条记忆，是按窗口看的
+   * 第二维；**刻意不回 memory_id 列表**：方向 1 已经是「记忆 → 窗口」，把 id 也塞进
+   * 这一侧会让两个方向不再正交（同一份映射有两条读法就得有两处维护），而真要逐条
+   * 查仍是按方向 1 走。
+   *
+   * ORDER BY seq_start：seq 是事件序号，就是会话内的先后；窗口按它排才是「这个会话
+   * 按时间蒸了哪几段」，按 created_at 排会把同一批重跑的行打散。
+   */
+  function distillWindowsFor(sessionId, limit) {
+    return db.prepare(
+      `SELECT session_id, seq_start, seq_end, MIN(created_at) AS created_at,
+              COUNT(*) AS link_count
+         FROM memory_provenance
+        WHERE session_id = ?
+        GROUP BY session_id, seq_start, seq_end
+        ORDER BY seq_start, seq_end
+        LIMIT ?`
+    ).all(sessionId, limit);
+  }
+
   // --- 存储生命周期：无损回收（#275 第一批）--------------------------------
   //
   // 两项都零价值判断、零条数变化：行数不变，只把不可重建/不可达的内容丢掉。
@@ -3868,6 +3902,7 @@ export function createStore(path) {
     saveMemoryProvenance,
     provenanceFor,
     distillRecordsFor,
+    distillWindowsFor,
     // 存储生命周期（#275 第一批）：无损回收的统计、清理与体积口径。
     dreamRunInputStats,
     clearDreamRunInputs,
