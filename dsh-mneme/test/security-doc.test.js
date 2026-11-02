@@ -104,10 +104,22 @@ function routesInBullet(line) {
   return out;
 }
 
-function bullet(prefix) {
-  const line = doc.split(/\r?\n/).find((l) => l.startsWith(prefix));
-  assert.ok(line, `SECURITY.md 里应有以「${prefix}」开头的清单行`);
-  return routesInBullet(line);
+// 清单行必须**恰好一条**。原先用 .find() 只读第一条命中，于是「同一条目出现两份」
+// 这件事守卫完全无感：#509 的 merge 把两份 Open reads / Gated routes 一起解进来，
+// 其中一份 stale（少 /memory/provenance），CI 却全绿——因为 .find() 读的是第一份。
+// 「文档与代码平价」的全部信心都来自这个文件，一旦它对重复条目零感知，第二份就是没有守卫的谎话。
+// 所以这里先收全部命中，再判唯一；多于一条时把行号报出来，避免变成「哪份算数」的新谜题。
+// source 参数只为可测：守卫本身是「唯一性」，喂一份合成的重复文档就能验，不必真去改 SECURITY.md。
+function bullet(prefix, source = doc) {
+  const hits = [];
+  source.split(/\r?\n/).forEach((line, i) => {
+    if (line.startsWith(prefix)) hits.push({ line, no: i + 1 });
+  });
+  assert.ok(hits.length > 0, `SECURITY.md 里应有以「${prefix}」开头的清单行`);
+  assert.equal(hits.length, 1,
+    `SECURITY.md 里以「${prefix}」开头的清单行必须恰好一条，实际 ${hits.length} 条（行号 ${hits.map((h) => h.no).join(", ")}）。` +
+    "清单只许有一份：多出来的那份不会被本文件校验，改它不会红，只能靠删掉来保持平价。");
+  return routesInBullet(hits[0].line);
 }
 
 // 文档里的 /semantic/graph/* 覆盖代码里的 /semantic/graph/ego 与 /semantic/graph/entity-attrs。
@@ -136,4 +148,31 @@ test("SECURITY.md 的受门控清单与代码里的 policy 声明一致", () => 
     const stale = listed.filter((e) => !gated.some((r) => covers(e, r.name)));
     assert.deepEqual(stale, [], `${prefix} 写了代码里并不受门控的路由：${stale.join(", ")}`);
   }
+});
+
+// 上面那条唯一性断言本身要有回归：把 SECURITY.md 的清单行复制成两份必须红。
+// 这条用例喂合成文档，不碰真文件——真文件的平价由上面两条双向比对负责。
+// 变异自证（人工做过一次，记录在 PR 里）：把 Gated routes 那一行原样复制一份 → 红；
+// 复制成两份且第二份把 /memory/provenance 换成别的 → 也红。两种都只在「恰好一条」上红。
+test("重复的清单行会被守卫抓住（#523）", () => {
+  const gated = doc.split(/\r?\n/).find((l) => l.startsWith("- **Gated routes"));
+  assert.ok(gated, "SECURITY.md 里应有 Gated routes 清单行");
+
+  const withDup = ["# synthetic", gated, gated].join("\n");
+  assert.throws(
+    () => bullet("- **Gated routes", withDup),
+    /必须恰好一条，实际 2 条（行号 2, 3）/,
+    "同一清单行出现两份时必须报出重复的行号——这正是 #509 merge 时守卫看不见的形状"
+  );
+
+  // 内容不同的两份同样要红：危险的不是写错了什么，而是那份副本对守卫隐形。
+  const staleDup = ["# synthetic", gated, gated.replace("/memory/provenance", "/memory/provenance-OLD")].join("\n");
+  assert.throws(
+    () => bullet("- **Gated routes", staleDup),
+    /必须恰好一条，实际 2 条/,
+    "两份内容不同的清单同样必须红，否则陈旧副本可以一直过期"
+  );
+
+  // 只有一份时不能误伤。
+  assert.ok(bullet("- **Gated routes", gated).length > 0);
 });
