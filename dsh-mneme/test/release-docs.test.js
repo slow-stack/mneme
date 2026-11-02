@@ -51,7 +51,13 @@ test("根 README 的两段式路线图能插进新 minor 占位行（旧实现�
 test("真实根 README 的中英两张路线图各插一行（同一版本号，不能只插一张）", () => {
   // 两张表版本行完全一样，旧实现把全文件版本行合成一个数组判断「已存在」，
   // 于是先插的中文表会让英文表被跳过——英文读者永远等不到那一行。
-  const { actions } = syncReadmeTables(rootReadme, "0.10.0", "2026-11-01");
+  //
+  // 目标版本**不能写死**：写死当次要发的版本，这条用例在 release-prep 分支上必红——那一行
+  // 恰好已经由发版准备脚本插进去了，「各插一行」于是退化成零插入。取比现存的最高 major 再高一档，
+  // 断言就与「这次发的是哪一版」彻底无关，也不会在下一个 minor 上重新长成定时炸弹。
+  const maxMajor = Math.max(...scanReleaseRows(rootReadme).two.map((r) => Number(r.ver.split(".")[0])));
+  const target = `${maxMajor + 1}.0`;
+  const { actions } = syncReadmeTables(rootReadme, target, "2026-11-01");
   const inserts = actions.filter((a) => a.kind === "insert");
   assert.equal(inserts.length, 2, "中英路线图各一行，实际：" + JSON.stringify(actions));
 });
