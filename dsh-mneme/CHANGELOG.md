@@ -4,15 +4,17 @@
 
 - **图谱的锚定层补上另外两路起点，被动确认有了能查的地方（#24 收尾）**：issue #24 的四块设计里，块 1 的「精确名 / Tag / 向量三路起点」当初只接了精确名一路——`anchoring.js` 本身早就支持多路（`anchorSeeds` 累加、`HOP_QUOTA` 分层都在），缺的是 `service.js` 的调用点只喂了 `normalizePath(..., { path: "exact" })` 一路，而通路身份在合并那一步就丢了（`normalizePath` 的返回值里没有 `path`，`anchorSeeds` 里 `p.path ?? "?"` 把每一路都记成 `"?"`）。块 4 的「例外管理」同样只有自动确认、没有可见面——面板里 `passiveConfirm` 一次都不出现。
 
-  **Tag 路走全等匹配，不走子串**：`store.findEntitiesByTags` 把查询按标点和空白切成词、滤掉单字（中文单字作 tag 没有区分度），再要求 `tags` 数组里**某个 tag 与词完全相等**。子串匹配会让 `ai` 命中 `mail`、让 `Java` 命中 `JavaScript`，而这条路的作用是「用户提到了某个主题词」，模糊命中的代价是把整类无关记忆拉进图轴。反查实体复用 `entityIdsForMemories`（`entity_attrs` 上的 `DISTINCT entity_id`），排序按命中记忆数降序、名称升序——同分时要有确定性顺序，否则同一查询两次跑出来的种子次序不同。
+  **Tag 路走全等匹配，不走子串**：`store.findEntitiesByTags` 把查询按标点和空白切成词、滤掉单字（中文单字作 tag 没有区分度），再要求 `tags` 数组里**某个 tag 与词完全相等**。子串匹配会让 `ai` 命中 `mail`、让 `Java` 命中 `JavaScript`，而这条路的作用是「用户提到了某个主题词」，模糊命中的代价是把整类无关记忆拉进图轴。排序按命中记忆数降序、名称升序——同分时要有确定性顺序，否则同一查询两次跑出来的种子次序不同。
+
+  **锚点反查要看关系两端，不能只看 attr 行**：`findEntitiesByTags` 与 `entityIdsForMemories` 首版都只读 `entity_attrs`，而 `dream/sleep.js` 的 `phaseRelations` 只写 `entity_relations.memory_id`、不建 attr 行——仅由关系关联的记忆，对关系两端一个种子都生不出来（实测：只建关系不建 attr 时两个反查都返回空，而走 `saveAttr` 的对照组正常）。两个函数改为 `UNION` 三源（attrs / from / to），与 `getLinkedMemoryIds` 早就有的 attr|relation 双 tier 口径一致。同一条语句有三处 IN 列表共用记忆 id 集合，命中一多就撞 SQLite 变量上限，而调用方 `try/catch` 兜着——越限的表现是**整条 Tag 锚点静默消失**，故按 500 一批分块，块间 `via` 直接相加（各块记忆集合互不相交）。
 
   **向量路复用同一份 query 向量**：`searchMemories` 里已经有 `qv`，把它以 `{ queryVector }` 传进 `entityRecall`，而不是在图轴内部再嵌一次——二次嵌入既多一次模型调用，也会因为本地模型的随机性让「检索用的向量」和「图轴用的向量」不是同一个，而这种偏差只在图轴结果上体现，排查时看不到。近邻记忆到实体仍是 MAX 语义（一条记忆挂多个实体时取最高分），最低分项**必须滤掉**：min-max 会把这路里最弱的那条压成 0，而 `anchorSeeds` 照收 0 分种子，下游给种子挂联记忆用的是**固定满权 tier**（attr 1.0 / relation 0.9），不滤就等于「0 分的种子按满权拉记忆」。
 
   **早退条件也得改**：原来 `if (!entities.length && !tagEntities.length) return []` 会把一个只有向量路能工作的查询直接掐死（比如查询里不含任何已知实体名，但语义上和若干记忆很近）——那恰恰是向量路存在的理由。
 
-  **被动确认的复核面**：新增 `GET /semantic/graph/boosted-relations`（`policy: "open"`，同 `/semantic/graph/*` 前缀，`SECURITY.md` 两张表不必新增行），返回「合法抬升量 > 0 的边」——`gain` 必须由后端算，因为要和**来源基线**比对（`RELATION_SOURCE_DEFAULTS`：manual 1.0 / confirmed 1.0 / tag 0.3 / llm 0.4），前端手里只有当前 `weight`。判据用 `gain > 0` 而不是 `>= 0`：`weight` 是 REAL，`1.0 - 1.0` 在浮点里可能是 `1e-17`，用 `>=` 会把每一条从未被抬过的边都列进来。ego 路由的 `edges` 同时补上 `weight` 与 `source`——只看 `weight` 会把「tag 边被抬到 0.5」误读成「比 manual 边弱」，而 `0.3 → 0.5` 恰恰是被用出来的证据。面板里这一面**默认收起、展开才取数**：它是审计视角而不是日常视角；闸关着时说「被动确认当前是关的」，不说「还没有边被抬过」——后者会让人以为系统在工作、只是没数据。
+  **被动确认的复核面**：新增 `GET /semantic/graph/boosted-relations`（`policy: "open"`，同 `/semantic/graph/*` 前缀，`SECURITY.md` 两张表不必新增行），返回「合法抬升量 > 0 的边」——`gain` 必须由后端算，因为要和**来源基线**比对（`RELATION_SOURCE_DEFAULTS`：manual 1.0 / confirmed 1.0 / tag 0.3 / llm 0.4），前端手里只有当前 `weight`。判据用 `gain > 0` 而不是 `>= 0`：`weight` 是 REAL，`1.0 - 1.0` 在浮点里可能是 `1e-17`，用 `>=` 会把每一条从未被抬过的边都列进来。**排序也必须在算完 `gain` 之后做**：SQL 按 `weight DESC` 排、循环里再按条数截断，会让 llm 边（0.95，gain 0.55）压掉 tag 边（0.90，gain 0.60），被 `limit` 砍掉的恰恰是抬得更多的那条——故收全后按 `gain` 降序再 `slice`。ego 路由的 `edges` 同时补上 `weight` 与 `source`——只看 `weight` 会把「tag 边被抬到 0.5」误读成「比 manual 边弱」，而 `0.3 → 0.5` 恰恰是被用出来的证据。面板里这一面**默认收起、展开才取数**：它是审计视角而不是日常视角；闸关时只说「今后不会再自动抬权；下面列的是此前已经抬过的边」，**不隐藏列表**（关闸之后正是复核既有提升的时候），且空表提示与闸关状态解耦——否则「闸关 + 一条都没有」会只剩一句提示、没有任何行，读起来像这一屏坏了；取数失败单独说，不冒充闸关。
 
-  验收：`test/graph-multipath.test.js`（5 条）与 `test/graph-boosted-relations.test.js`（6 条）新增，面板侧锁在 `test/client.test.js` 的 #24 用例；11 处变异自证全部被杀（含一处首版用例自身空转——0 分种子用例原本把两条记忆挂在同一个实体上，滤不滤 0 分都到不了，被变异自证当场抓住）。全量 2672 tests / 2671 pass / 0 fail / 1 skipped。
+  验收：`test/graph-multipath.test.js`（10 条）与 `test/graph-boosted-relations.test.js`（9 条）新增，面板侧锁在 `test/client.test.js` 的 #24 用例；每条新用例都做过变异自证（把被它锁住的那行改坏，看它是否真的变红），其中两处首版用例是**空转的**、被变异自证当场抓住后重写：0 分种子用例原本把两条记忆挂在同一个实体上，滤不滤 0 分都到不了；排序用例把宽实体命名成字母序靠前的名字，按名字排也能过。全量 2680 tests / 2679 pass / 0 fail / 1 skipped。
 
 ## [0.10.0] - 2026-11-02
 
