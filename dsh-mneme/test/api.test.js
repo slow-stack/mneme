@@ -1428,6 +1428,7 @@ test("GET /api/dsh-mneme/dream-status returns runs and pending conflict ids", as
   assert.equal(data.runs.length, 2);
   assert.equal(data.runs[0].created_at, "2026-01-02T00:00:00.000Z", "created_at DESC");
   assert.deepEqual(data.lastRun, data.runs[0]);
+  assert.deepEqual(data.lastConsolidation, data.runs[0], "no organize row => same as lastRun");
   // #521：skippedCount / skippedReasons 是本轮新增的两个字段（面板按归一化原因
   // 显示跳过明细）。这行锁的是 dream-status 的响应形状，加字段必须同步改这里。
   assert.deepEqual(Object.keys(data.lastRun).sort(), ["created_at", "demotion", "error", "model", "provider", "run_type", "skippedCount", "skippedReasons", "status"]);
@@ -1445,6 +1446,59 @@ test("GET /api/dsh-mneme/dream-status returns runs and pending conflict ids", as
   const afterData = JSON.parse(after.body);
   assert.equal(afterData.pendingConflicts, 0);
   assert.deepEqual(afterData.pendingMemoryIds, []);
+});
+
+// Issue #495：organize 与巩固共用 dream_runs，一次 agent 主动整理写两行（dryRun
+// 报告 + apply 回执）。面板那张卡的标题是「最近巩固」，若继续取 runs[0]，一次整理
+// 就会把它顶成整理回执——测的是「卡面数字取的是巩固轮」，不是「runs 里没有 organize」。
+test("GET /api/dsh-mneme/dream-status keeps organize rows out of lastConsolidation (issue #495)", async () => {
+  const { routes, service } = setup();
+  service.saveDreamRun({ created_at: "2026-01-01T00:00:00.000Z", status: "ok", snapshot_hash: "h1", input_count: 2, receipt: "r1" });
+  // 一次整理的两行：报告在前、回执在后，都晚于那次巩固。
+  service.saveDreamRun({
+    created_at: "2026-01-02T00:00:00.000Z", status: "ok", run_type: "organize",
+    snapshot_hash: "h2", input_count: 0, receipt: "r2",
+    outcome: { dryRun: true, byId: {} }
+  });
+  service.saveDreamRun({
+    created_at: "2026-01-02T00:00:01.000Z", status: "ok", run_type: "organize",
+    snapshot_hash: "h3", input_count: 0, receipt: "r3",
+    outcome: { dry_run_id: "dry-1", byId: {} }
+  });
+
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/dream-status");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/dream-status"), res);
+  const data = JSON.parse(res.body);
+
+  // 审计面不缩：runs 仍是全类型 5 条，organize 照旧排在最前。
+  assert.equal(data.runs.length, 3, "runs keeps every run type — the audit surface is not filtered");
+  assert.equal(data.runs[0].run_type, "organize");
+  assert.equal(data.lastRun.run_type, "organize", "lastRun still means the newest row of any type");
+  // 卡面取数：跳过 organize，回到那次真巩固。
+  assert.ok(data.lastConsolidation, "lastConsolidation must not be empty when a consolidation exists");
+  assert.equal(data.lastConsolidation.run_type, "auto");
+  assert.equal(data.lastConsolidation.created_at, "2026-01-01T00:00:00.000Z");
+  // 两条路径共用同一份投影，字段形状必须一致（否则面板得写两套渲染）。
+  assert.deepEqual(Object.keys(data.lastConsolidation).sort(), Object.keys(data.lastRun).sort());
+});
+
+// 只有 organize 跑过时：宁可留空让面板说「尚未运行」并加脚注，也不能拿整理回执
+// 冒充巩固——那是这条 issue 要治的那个错。
+test("dream-status: organize-only history leaves lastConsolidation null, never the organize row (issue #495)", async () => {
+  const { routes, service } = setup();
+  service.saveDreamRun({
+    created_at: "2026-01-02T00:00:00.000Z", status: "ok", run_type: "organize",
+    snapshot_hash: "h1", input_count: 0, receipt: "r1",
+    outcome: { dry_run_id: "dry-1", byId: {} }
+  });
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/dream-status");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/dream-status"), res);
+  const data = JSON.parse(res.body);
+  assert.equal(data.lastRun.run_type, "organize");
+  assert.equal(data.lastConsolidation, null, "an organize receipt must never be reported as the last consolidation");
+  assert.equal(data.runs.length, 1);
 });
 
 // v0.8.0 冲突集中处理：GET /conflicts 队列联表 + POST /conflicts/resolve 人工确认。

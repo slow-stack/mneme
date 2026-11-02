@@ -1769,7 +1769,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     policy: "open",
     handler(req, res) {
       try {
-        const runs = (service.listDreamRuns?.({ limit: 5 }) ?? []).map((r) => ({
+        const toRun = (r) => ({
           created_at: r.created_at,
           status: r.status,
           provider: r.provider ?? null,
@@ -1787,7 +1787,16 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           // 被发现。这里只回聚合（原因 + 动作 + 条数），明细仍留在库里。
           skippedCount: Array.isArray(r.skipped) ? r.skipped.length : 0,
           skippedReasons: summarizeSkipped(r.skipped)
-        }));
+        });
+        // Issue #495：organize 上线后 runs 会混进 run_type="organize"，而面板那张
+        // 卡的标题是「最近巩固」——一次 agent 主动整理就会把它顶成整理回执。
+        // 两条路里选了「标注」而不是过滤：runs 仍是全类型 5 条（审计面是证据，
+        // 不因显示面积省略），另给一个只含 auto/sleep 的 lastConsolidation 供那张
+        // 卡取数；面板再用 lastRun 是否为 organize 决定要不要标一句脚注。
+        // 这里不能只靠 runs[0] 的 run_type 过滤——一次整理写两行（dryRun 报告 +
+        // apply 回执），挤空 5 个名额时 runs 里可能一条巩固都没有。
+        const runs = (service.listDreamRuns?.({ limit: 5 }) ?? []).map(toRun);
+        const lastConsolidation = service.listDreamRuns?.({ limit: 1, excludeRunType: "organize" })?.[0];
         const pendingConflicts = service.countConflictPending?.() ?? 0;
         const ids = new Set();
         for (const row of service.listConflictPending?.({ limit: 200, includeResolved: false }) ?? []) {
@@ -1798,6 +1807,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         }
         sendJson(res, 200, {
           lastRun: runs[0] ?? null,
+          lastConsolidation: lastConsolidation ? toRun(lastConsolidation) : null,
           runs,
           pendingConflicts,
           pendingMemoryIds: [...ids].slice(0, 200)

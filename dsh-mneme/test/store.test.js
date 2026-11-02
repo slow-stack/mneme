@@ -527,3 +527,30 @@ test("Issue #128: needsEmbedding skips archived and forgotten rows", () => {
   assert.deepEqual(ids, [active.id], "only the active row is a backfill candidate");
   store.close();
 });
+
+// Issue #495：listDreamRuns 的 excludeRunType 是**下推**条件而不是调用方后置过滤——
+// 后置过滤在 limit 生效之后就晚了：5 个名额已经被 organize 占掉，再筛只能得到空。
+// 三条一起钉：默认不过滤（审计面要看全量）、指定值真的排除、白名单之外的值不生效
+// （这个参数拼进 SQL 的 != 条件，任意外来字符串不能改变查询形状）。
+test("Issue #495: listDreamRuns excludes a run type by pushdown, and only accepts known types", () => {
+  const store = openMemory();
+  store.saveDreamRun({ created_at: "2026-01-01T00:00:00.000Z", status: "ok", snapshot_hash: "h", input_count: 0, run_type: "auto", receipt: "r1" });
+  store.saveDreamRun({ created_at: "2026-01-02T00:00:00.000Z", status: "ok", snapshot_hash: "h", input_count: 0, run_type: "organize", receipt: "r2" });
+  store.saveDreamRun({ created_at: "2026-01-03T00:00:00.000Z", status: "ok", snapshot_hash: "h", input_count: 0, run_type: "organize", receipt: "r3" });
+
+  assert.equal(store.listDreamRuns().length, 3, "no filter by default — the audit surface keeps every run type");
+  assert.equal(store.listDreamRuns({ limit: 1 })[0].run_type, "organize", "limit applies to the full set");
+
+  const onlyConsolidation = store.listDreamRuns({ limit: 1, excludeRunType: "organize" });
+  assert.equal(onlyConsolidation.length, 1);
+  assert.equal(onlyConsolidation[0].run_type, "auto", "the pushdown must apply before LIMIT, not after");
+
+  // 白名单之外的值按「不过滤」处理，不静默返回空集。诚实说：这条断言钉得住
+  // 「未知值 ⇒ 不过滤」这个可观测契约，钉不住白名单本身——把 includes 判断换成裸绑定，
+  // 四条断言仍然全绿（不存在的 run_type 本来也筛不掉任何行）。白名单的价值是纵深：
+  // 值来自调用方时只允许已知的三个字面量进 SQL 的 != 条件，查询形状不随外部字符串改变。
+  assert.equal(store.listDreamRuns({ excludeRunType: "auto' OR 1=1 --" }).length, 3,
+    "a hostile value is bound as a parameter and filters nothing, never widens the query");
+  assert.equal(store.listDreamRuns({ excludeRunType: "nope" }).length, 3);
+  store.close();
+});

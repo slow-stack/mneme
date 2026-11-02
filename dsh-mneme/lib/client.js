@@ -899,6 +899,7 @@ window.__ModuleLoader__.load({
         "memory.explorer.detail.starLabel": "设为 {n} 星",
         "memory.status.dream": "最近巩固",
         "memory.status.dreamNever": "尚未运行",
+        "memory.status.dreamOrganizeOnly": "最近一次后台运行是 agent 主动整理（{time}），不计入巩固",
         "memory.status.conflicts": "待确认冲突",
         "memory.status.conflictsHint": "冻结的矛盾记忆，等待人工确认",
         "memory.status.skippedTitle": "本轮跳过 {n} 条决定",
@@ -1661,6 +1662,7 @@ window.__ModuleLoader__.load({
         "memory.explorer.detail.starLabel": "Set importance to {n} stars",
         "memory.status.dream": "Last consolidation",
         "memory.status.dreamNever": "Not yet run",
+        "memory.status.dreamOrganizeOnly": "The last background run was an agent-initiated organize ({time}), not a consolidation",
         "memory.status.conflicts": "Pending conflicts",
         "memory.status.conflictsHint": "Frozen contradictory memories awaiting confirmation",
         "memory.status.skippedTitle": "{n} decisions skipped this run",
@@ -5556,11 +5558,16 @@ window.__ModuleLoader__.load({
             .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
             .then((d) => {
               if (cancelled) return;
+              // #495：这块 KPI 说的是「上一轮巩固跳过了什么」，所以要的是**巩固轮**。
+              // organize 回执同样带 skipped，但它的跳过不是巩固决策（例如「与既有
+              // 记忆重复」），混进来会让人以为巩固那一整类动作被拦。后端 lastConsolidation
+              // 只含 auto/sleep；旧服务端没有该键时退回 lastRun，保持原行为。
+              const last = (d && (d.lastConsolidation || d.lastRun)) || null;
               setConf({
                 loading: false,
                 error: false,
                 pending: Number((d && d.pendingConflicts) ?? 0),
-                skipped: Array.isArray(d && d.lastRun && d.lastRun.skippedReasons) ? d.lastRun.skippedReasons : []
+                skipped: Array.isArray(last && last.skippedReasons) ? last.skippedReasons : []
               });
             })
             .catch(() => { if (!cancelled) setConf({ loading: false, error: true, pending: 0, skipped: [] }); });
@@ -5811,7 +5818,7 @@ window.__ModuleLoader__.load({
     // showConflicts=false 用于 2026-10 改造后的降级折叠区：待确认冲突已升入
     // KPI 带，这里不再重复渲染冲突卡，只留最近运行卡。
     function DreamStatusCards({ t, onGotoQueue, showConflicts = true }) {
-      const [state, setState] = useState({ loading: true, error: false, lastRun: null, pending: 0 });
+      const [state, setState] = useState({ loading: true, error: false, lastRun: null, lastConsolidation: null, pending: 0 });
       useEffect(() => {
         let cancelled = false;
         const loadOnce = () => {
@@ -5823,10 +5830,11 @@ window.__ModuleLoader__.load({
                 loading: false,
                 error: false,
                 lastRun: (d && d.lastRun) || null,
+                lastConsolidation: (d && d.lastConsolidation) || null,
                 pending: Number((d && d.pendingConflicts) ?? 0)
               });
             })
-            .catch(() => { if (!cancelled) setState({ loading: false, error: true, lastRun: null, pending: 0 }); });
+            .catch(() => { if (!cancelled) setState({ loading: false, error: true, lastRun: null, lastConsolidation: null, pending: 0 }); });
         };
         loadOnce();
         // #295 评审：裁决完成后队列会广播 mneme:conflicts-changed，这里重取
@@ -5834,11 +5842,26 @@ window.__ModuleLoader__.load({
         window.addEventListener("mneme:conflicts-changed", loadOnce);
         return () => { cancelled = true; window.removeEventListener("mneme:conflicts-changed", loadOnce); };
       }, []);
-      const run = state.lastRun;
+      // #495：这张卡的标题是「最近巩固」，取数就该是巩固轮，而不是 runs[0]。
+      // organize 与巩固共用 dream_runs，一次 agent 主动整理会写两行（dryRun 报告 +
+      // apply 回执），把它顶到首位后这张卡就变成「整理回执」了。
+      // 卡面数字只认巩固轮：lastConsolidation 由后端排除 organize 后取一条。旧服务端
+      // 没有这个键时退回 lastRun，但退回的那条若是 organize 就仍然不算「最近巩固」。
+      const organizedOnly = state.lastRun && state.lastRun.run_type === "organize" ? state.lastRun : null;
+      const run = state.lastConsolidation
+        || (state.lastRun && !organizedOnly ? state.lastRun : null);
       const num = run ? formatRelativeTime(run.created_at, t) : t("memory.status.dreamNever");
+      // issue 给的两条路里选「标注」：最近一次后台运行是 organize 时，用脚注点名它，
+      // 而不是把它从审计面抹掉。它没有挤掉巩固数（卡面仍是巩固轮），只是补一句说明
+      // ——否则读者会以为整理就是那次巩固。
+      const organizeFoot = organizedOnly && !run
+        ? t("memory.status.dreamOrganizeOnly").replace("{time}", formatRelativeTime(organizedOnly.created_at, t))
+        : null;
       const cap = run
         ? `${run.status || "—"}${run.model ? ` · ${run.model}` : ""}`
-        : t("memory.settings.mode.offList");
+        // 只有 organize 跑过时不能沿用 offList 那句「已关闭：巩固…」——autoDream 可能
+        // 开着，只是还没轮到。这时只留脚注说明最近那一条是什么。
+        : organizeFoot ? null : t("memory.settings.mode.offList");
       // #178：pending>0 时冲突卡可激活（role=button + 可聚焦 + 回车/空格），
       // 激活直达队列——StatusPanel 把 onGotoQueue 传进来（一步 prop，无线程）。
       const pending = state.pending > 0;
@@ -5846,7 +5869,7 @@ window.__ModuleLoader__.load({
       // #521 的跳过明细不在这里渲染：它已提到 TokenFlowSection 的 KPI 带下方，
       // 首屏可见。这张卡在折叠区里，展开后再重复一遍只会让人以为有两批跳过。
       return h(react.Fragment, null,
-        h(StatusCard, { t, title: t("memory.status.dream"), loading: state.loading, error: state.error, num, cap }),
+        h(StatusCard, { t, title: t("memory.status.dream"), loading: state.loading, error: state.error, num, cap, foot: organizeFoot }),
         showConflicts
           ? h("div", {
               role: pending ? "button" : undefined,
