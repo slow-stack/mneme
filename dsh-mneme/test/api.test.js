@@ -2486,3 +2486,70 @@ test("GET /api/dsh-mneme/memory/provenance：lightMode 预设把关掉 → 409�
   assert.equal(res.statusCode, 409);
   assert.equal(JSON.parse(res.body).error, "distill-records-disabled");
 });
+
+// #524 方向 2：按会话列窗口（store 侧 GROUP BY 成一行一窗口）。这条用例盯三件事：
+// 同一窗口派生的多条记忆不许变成多行、区间按 seq_start 排、答复用 sessionId 认领。
+test("GET /api/dsh-mneme/memory/provenance?sessionId= 列出该会话的蒸馏窗口（#524）", async () => {
+  const { routes, service, store } = setup(null, "secret-token", RECORDS_ON);
+  service.saveWithDedupe({ type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
+  service.saveWithDedupe({ type: "decision", title: "备选", content: "先用 JSON 文件顶着", importance: 3 });
+  const [m1, m2] = service.all();
+  // 两个窗口：后一个 seq 更小，用来验证答复按 seq_start 排而不是按写入序。
+  store.saveMemoryProvenance({ memoryId: m1.id, sessionId: "s1", seqStart: 10, seqEnd: 12, createdAt: "t2" });
+  store.saveMemoryProvenance({ memoryId: m2.id, sessionId: "s1", seqStart: 10, seqEnd: 12, createdAt: "t2" });
+  store.saveMemoryProvenance({ memoryId: m1.id, sessionId: "s1", seqStart: 1, seqEnd: 3, createdAt: "t1" });
+  // 另一个会话的窗口不该出现。
+  store.saveMemoryProvenance({ memoryId: m1.id, sessionId: "s2", seqStart: 50, seqEnd: 51, createdAt: "t3" });
+
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+  const res = new FakeRes();
+  const r = req("/api/dsh-mneme/memory/provenance?sessionId=s1");
+  r.headers = { authorization: "Bearer secret-token" };
+  await route.handler(r, res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.equal(data.sessionId, "s1", "方向 2 的答复用 sessionId 认领，不冒充 memoryId");
+  assert.equal(data.memoryId, undefined, "两个方向的认领键不许同时出现");
+  assert.equal(data.truncated, false);
+  assert.deepEqual(data.windows.map((w) => [w.seq_start, w.seq_end]), [[1, 3], [10, 12]],
+    "同一 (seq_start, seq_end) 的两条记忆必须并成一行，且按 seq_start 升序");
+  assert.deepEqual(data.windows.map((w) => w.link_count), [1, 2],
+    "link_count 说明该窗口派生出几条记忆——这是一行一窗口之后唯一还剩的「多」的信息");
+});
+
+test("GET /api/dsh-mneme/memory/provenance：两个主键都给 → 400，不静默择一（#524）", async () => {
+  const { routes } = setup(null, "secret-token", RECORDS_ON);
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+  const res = new FakeRes();
+  const r = req("/api/dsh-mneme/memory/provenance?id=m1&sessionId=s1");
+  r.headers = { authorization: "Bearer secret-token" };
+  await route.handler(r, res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(JSON.parse(res.body).error, "ambiguous-id");
+});
+
+test("GET /api/dsh-mneme/memory/provenance?sessionId=：limit 越界 → 400；撞上限时 truncated=true（#524）", async () => {
+  const { routes, service, store } = setup(null, "secret-token", RECORDS_ON);
+  service.saveWithDedupe({ type: "decision", title: "核心决策", content: "x", importance: 5 });
+  const memory = service.all()[0];
+  for (const n of [1, 2, 3]) {
+    store.saveMemoryProvenance({ memoryId: memory.id, sessionId: "s1", seqStart: n, seqEnd: n, createdAt: "t" });
+  }
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
+
+  const bad = new FakeRes();
+  const badReq = req("/api/dsh-mneme/memory/provenance?sessionId=s1&limit=0");
+  badReq.headers = { authorization: "Bearer secret-token" };
+  await route.handler(badReq, bad);
+  assert.equal(bad.statusCode, 400);
+  assert.equal(JSON.parse(bad.body).error, "invalid-limit");
+
+  const ok = new FakeRes();
+  const okReq = req("/api/dsh-mneme/memory/provenance?sessionId=s1&limit=2");
+  okReq.headers = { authorization: "Bearer secret-token" };
+  await route.handler(okReq, ok);
+  assert.equal(ok.statusCode, 200);
+  const data = JSON.parse(ok.body);
+  assert.equal(data.windows.length, 2);
+  assert.equal(data.truncated, true, "还有第三个窗口没回——必须说出来，否则半份转录会被当成全部");
+});

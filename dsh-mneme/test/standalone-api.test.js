@@ -1268,3 +1268,53 @@ test("GET /memory/provenance: 409 beats 503 — feature off is more specific tha
     close();
   }
 });
+
+// --- #524 方向 2：?sessionId=<sid> 列该会话的蒸馏窗口 -----------------------
+// 与宿主内 API 是同一份口径（共用 provenance-http.js），这里只钉两张皮的那条差
+// 异之外的部分真的走通了：一行一窗口、按 seq_start 排、truncated 说出来。
+test("GET /memory/provenance?sessionId= lists a session's distill windows", async () => {
+  const { base, auth, store, close } = await setup({ config: RECORDS_ON });
+  try {
+    const a = await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite", importance: 5 });
+    const b = await saveMemory(base, auth, { type: "decision", title: "备选", content: "JSON 文件", importance: 3 });
+    const idA = a.memory?.id ?? a.id;
+    const idB = b.memory?.id ?? b.id;
+    // 同一窗口派生两条记忆：答复里必须并成一行（link_count=2），不是两行。
+    store.saveMemoryProvenance({ memoryId: idA, sessionId: "s1", seqStart: 10, seqEnd: 12, createdAt: "t2" });
+    store.saveMemoryProvenance({ memoryId: idB, sessionId: "s1", seqStart: 10, seqEnd: 12, createdAt: "t2" });
+    store.saveMemoryProvenance({ memoryId: idA, sessionId: "s1", seqStart: 1, seqEnd: 3, createdAt: "t1" });
+    store.saveMemoryProvenance({ memoryId: idA, sessionId: "s2", seqStart: 50, seqEnd: 51, createdAt: "t3" });
+
+    const res = await fetch(`${base}/memory/provenance?sessionId=s1`, { headers: auth });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.sessionId, "s1");
+    assert.equal(body.memoryId, undefined, "两个方向的认领键不许同时出现");
+    assert.equal(body.truncated, false);
+    assert.deepEqual(body.windows.map((w) => [w.seq_start, w.seq_end]), [[1, 3], [10, 12]],
+      "同一 (seq_start, seq_end) 并成一行，按 seq_start 升序；别的会话的窗口不出现");
+    assert.deepEqual(body.windows.map((w) => w.link_count), [1, 2]);
+  } finally {
+    close();
+  }
+});
+
+test("GET /memory/provenance: both selectors at once is 400, and limit is bounded", async () => {
+  const { base, auth, close } = await setup({ config: RECORDS_ON });
+  try {
+    const both = await fetch(`${base}/memory/provenance?id=m1&sessionId=s1`, { headers: auth });
+    assert.equal(both.status, 400, "两个主键都给不许静默择一");
+    assert.equal((await both.json()).error, "ambiguous-id");
+
+    for (const bad of ["0", "-1", "1.5", "abc", "1e3", "101"]) {
+      const res = await fetch(`${base}/memory/provenance?sessionId=s1&limit=${bad}`, { headers: auth });
+      assert.equal(res.status, 400, `limit=${bad} 必须 400`);
+      assert.equal((await res.json()).error, "invalid-limit");
+    }
+
+    const missing = await fetch(`${base}/memory/provenance`, { headers: auth });
+    assert.equal(missing.status, 400, "两个主键都缺仍是 400 missing-id");
+  } finally {
+    close();
+  }
+});

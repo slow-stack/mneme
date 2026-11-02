@@ -166,24 +166,46 @@ cleared: { dream_run_inputs, archived_embeddings, distill_records }
 - **白名单与往返**：两个键过 `settings` 校验（含范围外整数被拒），PUT 往返后 effective 读得回；
 - **轻量模式**：预设关 `enabled`、保留用户显式设的 `retentionDays`、不污染用户对象。
 
-## 10. 读出口：`/memory/provenance` 与 `distillRecords.enabled` 门（#421 写、#509 整改）
+## 10. 读出口：`/memory/provenance` 与 `distillRecords.enabled` 门（#421 写、#509 整改、#524 补方向 2）
 
 两张表自 #399 起只有写入路径：库里有答案、`service.provenanceFor` 能查，外部拿不到——
 「这条记忆是从哪几句蒸出来的」只能开 sqlite 手写 JOIN。#421 补上读出口，两个入口共用
 一份实现：
 
 - 宿主内面板路由 `GET /api/dsh-mneme/memory/provenance`（`policy: token`）；
-- Bearer 数据面 `GET /memory/provenance?id=<memoryId>`（daemon 与宿主外部访问同享）。
+- Bearer 数据面 `GET /memory/provenance`（daemon 与宿主外部访问同享）。
+
+**两个读方向共用同一条路径**（#524）：`?id=<memoryId>` 是「这条记忆派生自哪些窗口」
+（方向 1，`store.provenanceFor`），`?sessionId=<sid>` 是「这个会话蒸出了哪些窗口」
+（方向 2，`store.distillWindowsFor`）。两个主键**互斥**：都缺 `400 missing-id`、都给
+`400 ambiguous-id`。**刻意不做「都给则择一」**——择一意味着调用方可以发一个自己也不
+知道会被读哪个主键的请求，而两个方向的答复形状不同（`memoryId` / `sessionId` 各认
+领自己那一侧），那种静默选择只会在出事之后才被发现。
+
+为什么不新开一条路径：多一条路径就多四处要登记的地方（`SECURITY.md` 两张表、包
+README 路由表、`test/security-doc.test.js` 的清单锁），而两个方向读的是**同一批数
+据**，只是入口不同。`SECURITY.md` 只登记路径、不登记 query 形状，所以方向 2 不需要
+在那两张表里再加一行。
 
 口径只写在 `src/provenance-http.js` 一处，两个壳都调它——#411 已经为 reclaim / share 各
 踩过一次「两张皮整段复制必然漂移」，`test/provenance-http.test.js` 的静态锁把「错误码字面
 量与开关判据只许出现在本模块、两个壳都真的把 `config` 转交进来、读侧判据与写侧
 `src/summarize.js:988` 逐字同源」写成断言。
 
-**形状**：一个链接一个窗口 `{session_id, seq_start, seq_end, created_at, records[]}`，
+**形状**：一个窗口 `{session_id, seq_start, seq_end, created_at, link_count, records[]}`，
 `records` 是区间内的逐条会话原文（按 `seq` 升序、不越界）。没有链接的记忆返回**空
 `windows`**——「不是蒸馏来的」是有效答案，不是错误；未知 id 同样回空 `windows`（读端点
 不替调用方判断记忆是否存在）。到期裁剪后链接保留、指向空区间，面板据此显示「原文已过期」。
+
+`link_count` 只有方向 2 会真的不等于 1（方向 1 的每一行本来就是「一条记忆 → 一个窗
+口」，用 `?? 1` 兜住，免得答复凭空多一个 null 键）。方向 2 的存储读法是
+`GROUP BY session_id, seq_start, seq_end`——`memory_provenance` 的粒度是「一条记忆 →
+一个窗口」，一次蒸馏窗口通常产出**多条**记忆，逐链接返回会让「这个会话蒸了几次」这
+个唯一有意义的计数被重复行淹没。`link_count` 是按窗口看的第二维；**刻意不回
+`memory_id` 列表**——方向 1 已经是「记忆 → 窗口」，把 id 也塞进这一侧会让两个方向不
+再正交（同一份映射有两条读法就得有两处维护），真要逐条查仍走方向 1。
+`ORDER BY seq_start` 而不是 `created_at`：seq 是事件序号、就是会话内的先后，按它排才
+是「这个会话按时间蒸了哪几段」，按 `created_at` 会把同一批重跑的行打散。
 
 **开关门（#509 评审整改）**：读出口吃 `distillRecords.enabled`——与写侧**同一枚开关、同一
 个判据表达式**（`config?.distillRecords?.enabled === true`，读侧唯一一份在
@@ -194,10 +216,26 @@ cleared: { dream_run_inputs, archived_embeddings, distill_records }
 | 状态码 | 含义 | 为什么不是别的 |
 |---|---|---|
 | `401` | 没带 token | 两个壳各自的门，在共用模块之前 |
-| `400 {"error":"missing-id"}` | 缺 `id` | 语法畸形，与服务端状态无关，所以排在功能开关之前（与 reclaim 的 `invalid-json` 同档） |
+| `400 {"error":"missing-id"}` | 两个主键一个都没给 | 语法畸形，与服务端状态无关，所以排在功能开关之前（与 reclaim 的 `invalid-json` 同档） |
+| `400 {"error":"ambiguous-id"}` | 两个主键都给了 | 不静默择一，理由见上；同为语法类，同样排在开关之前 |
+| `400 {"error":"invalid-limit"}` | `limit` 畸形或越界（只收十进制整数字面量，1–100） | **不用 `Number()`**：它把 `""` / `" "` / `0x10` / `1e3` 都化成数，于是 `?limit=` 会静默变成 0 个窗口——一个畸形输入拿到最坏解释。越界也给 400 而不是截到 100：调用方要 1000 个窗口，实际给 100 却不吭声比直接拒更糟 |
 | `409 {"error":"distill-records-disabled"}` | 用户关了 `distillRecords.enabled` | 与 `src/api.js:525` 的 `profileExtractEnabled` 同型：**用户关了 = 409，装配坏了 = 503**，两个答案必须可区分（`src/index.js:589-591`） |
-| `503 {"error":"provenance-unavailable"}` | service 上没这两个方法（headless / 旧装配） | 「没接线」不是「这条记忆没有来源」，两种空必须分开读数 |
-| `200` | `{memoryId, windows}` | 空 `windows` = 不是蒸馏来的 |
+| `503 {"error":"provenance-unavailable"}` | service 上缺**该方向**要用的方法（headless / 旧装配） | 「没接线」不是「这条记忆没有来源」，两种空必须分开读数。**按方向判**：只缺 session 那侧的方法时方向 1 仍然 200——把一个方向的问题报成整张脸坏了，会让人去查一个没坏的部署 |
+| `200` | `{memoryId\|sessionId, windows, truncated}` | 空 `windows` = 不是蒸馏来的；`truncated` 见下 |
+
+**limit 与 truncated（#524 的第 2 条前置）**：按会话读是这张脸里天然最容易放大
+的方向——一个会话几十个窗口，每个窗口都是整段逐字原文，不限量就是「按会话导出全量转
+录」，与 `/export`（一次拿全库）同量级，只是换了形状，而它同样受门控。所以 `limit`
+不是可选的礼貌参数：默认 20、上限 100，两个方向共用同一个读数。20 这个数的取法是本
+机实测一个蒸馏会话的窗口数在个位数，20 已覆盖正常排查；真要更多就显式往上要，**不
+许**靠缺省值默默给全量。100 的上界比列表类接口（`MAX_PAGE_LIMIT` 1000 / `MAX_SEARCH_TOP_K`
+200）小一档，因为每个窗口带的是一整段原文而不是一行元数据。
+
+撞上 limit 时答复带 `truncated: true`。**少了它，被截断的答复与「本来就只有这么多」
+逐字节相同**，调用方会把半份转录当成全部——那正是这张脸最容易骗人的地方。实现上
+session 侧向 store 要 `limit + 1` 行、多出来那条只当探针不出口；memory 侧
+`provenanceFor` 本来就全量返回，按长度判即可。store 侧只照 limit 取，**不替调用方判
+断「还有没有」**——那是协议层的事，判据只许有一份。
 
 **为什么不是 404**：本端点被明确设计成永远不就「这条记忆是否存在」作断言（缺 id 是 400、
 未知 id 是 200 + 空 windows），而 404 在本仓已有稳定含义——未知路由与资源不存在

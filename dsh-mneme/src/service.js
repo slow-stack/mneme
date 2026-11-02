@@ -2648,6 +2648,10 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // #421 读出口：按 (session, seq 区间) 取蒸馏原文。与 provenanceFor 成对——
     // 一个给区间、一个给区间里的原文，合起来才是「这条记忆从哪几句蒸出来的」。
     distillRecordsFor: (sessionId, seqStart, seqEnd) => store.distillRecordsFor(sessionId, seqStart, seqEnd),
+    // #524 方向 2：按会话列出它的蒸馏窗口。与 provenanceFor 同一张表、另一条索引
+    // （idx_memory_provenance_session），所以也是纯 passthrough——读的是 #399 早就
+    // 落好的事实，不产生任何写入。
+    distillWindowsFor: (sessionId, limit) => store.distillWindowsFor(sessionId, limit),
     enqueue,
     setDreamHook(fn) { dreamHook = fn; },
     setSleepHook(fn) { sleepHook = fn; },

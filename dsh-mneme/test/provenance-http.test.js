@@ -16,11 +16,18 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DISTILL_RECORDS_DISABLED,
+  PROVENANCE_DEFAULT_WINDOWS,
+  PROVENANCE_MAX_WINDOWS,
   PROVENANCE_UNAVAILABLE,
   isDistillRecordsEnabled,
-  parseProvenanceQuery,
+  parseProvenanceLimit,
+  parseProvenanceSelector,
   provenanceReply
 } from "../src/provenance-http.js";
+
+// 方向 1 的选择器：绝大多数用例只关心「读出去的那一侧」，方向本身用这个常量固定。
+const MEM = { mode: "memory", memoryId: "m1", limit: PROVENANCE_DEFAULT_WINDOWS };
+const SES = { mode: "session", sessionId: "s1", limit: PROVENANCE_DEFAULT_WINDOWS };
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -31,19 +38,73 @@ const RECORDS_ON = { distillRecords: { enabled: true } };
 function fakeService(over = {}) {
   return {
     provenanceFor: (id) => over.links ?? [],
+    // #524 方向 2 的存储读法：按会话列窗口（store 侧 GROUP BY 成一行一窗口）。
+    distillWindowsFor: (sessionId, limit) => over.windows ?? [],
     distillRecordsFor: (sessionId, from, to) => over.records ?? [],
     ...over.service
   };
 }
 
-test("parseProvenanceQuery：空/缺失 id 报 400，非空原样通过", () => {
-  for (const raw of [null, undefined, "", "   "]) {
-    const r = parseProvenanceQuery(raw);
-    assert.equal(r.ok, false, `${JSON.stringify(raw)} 不该通过`);
+// --- 入参：两个互斥主键 + limit（#524）---------------------------------------
+// 方向 2 复用同一条路径，于是「哪个主键说了算」必须是个**显式**判断：都缺是请求
+// 不成立（400 missing-id），都给也要 400——择一意味着调用方发一个自己也不知道会
+// 读哪个主键的请求，而两个方向的结果形状不同（memoryId / sessionId 各有自己的键）。
+
+test("parseProvenanceSelector：两个主键都缺 → 400 missing-id", () => {
+  for (const params of [
+    {}, { memoryId: null, sessionId: null }, { memoryId: "", sessionId: "" },
+    { memoryId: "   ", sessionId: "\t" }
+  ]) {
+    const r = parseProvenanceSelector(params);
+    assert.equal(r.ok, false, `${JSON.stringify(params)} 不该通过`);
     assert.equal(r.status, 400);
     assert.equal(r.error, "missing-id");
   }
-  assert.deepEqual(parseProvenanceQuery(" m1 "), { ok: true, id: "m1" }, "id 两端空白要裁掉");
+});
+
+test("parseProvenanceSelector：两个主键都给 → 400 ambiguous-id（不静默择一）", () => {
+  const r = parseProvenanceSelector({ memoryId: "m1", sessionId: "s1" });
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 400);
+  assert.equal(r.error, "ambiguous-id");
+});
+
+test("parseProvenanceSelector：两端空白裁掉，方向按哪个主键非空确定，limit 缺省 20", () => {
+  assert.deepEqual(parseProvenanceSelector({ memoryId: " m1 " }), {
+    ok: true,
+    selector: { mode: "memory", memoryId: "m1", limit: PROVENANCE_DEFAULT_WINDOWS }
+  });
+  assert.deepEqual(parseProvenanceSelector({ sessionId: " s1 ", memoryId: "  " }), {
+    ok: true,
+    selector: { mode: "session", sessionId: "s1", limit: PROVENANCE_DEFAULT_WINDOWS }
+  }, "另一侧是空白串时按缺省处理，不算「都给」");
+});
+
+test("parseProvenanceLimit：只收十进制整数字面量，畸形与越界都算 400", () => {
+  assert.equal(parseProvenanceLimit(null).limit, PROVENANCE_DEFAULT_WINDOWS, "不带就是缺省");
+  assert.equal(parseProvenanceLimit("1").limit, 1);
+  assert.equal(parseProvenanceLimit(String(PROVENANCE_MAX_WINDOWS)).limit, PROVENANCE_MAX_WINDOWS);
+  // 两端空白是**裁掉**而不是判畸形——与 id 的处理保持一致（"  12 " 就是 12）。
+  // 但裁完必须是纯十进制字面量。
+  assert.equal(parseProvenanceLimit(" 12 ").limit, 12, "两端空白裁掉，与 id 一致");
+  // 下面这些如果走 Number()，"" / " " 会化成 0 个窗口，十六进制与指数写法也会被
+  // 静默接受——一个畸形输入拿到最坏解释。所以这里逐个钉住。
+  for (const raw of [
+    "", "   ", "0", "-1", "1.5", "1e3", "0x10", "abc", "+1", "12abc",
+    String(PROVENANCE_MAX_WINDOWS + 1), "99999999999999999999"
+  ]) {
+    const r = parseProvenanceLimit(raw);
+    assert.equal(r.ok, false, `${JSON.stringify(raw)} 不该通过`);
+    assert.equal(r.status, 400);
+    assert.equal(r.error, "invalid-limit");
+  }
+});
+
+test("parseProvenanceSelector：limit 畸形时连着主键一起 400（入参形状先于功能开关）", () => {
+  const r = parseProvenanceSelector({ sessionId: "s1", limit: "abc" });
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 400);
+  assert.equal(r.error, "invalid-limit");
 });
 
 test("provenanceReply：一个链接一个窗口，原文按 seq 升序且不越界", () => {
@@ -55,7 +116,7 @@ test("provenanceReply：一个链接一个窗口，原文按 seq 升序且不越
       return [{ seq: 12 }, { seq: 10 }, { seq: 11 }];
     }
   };
-  const r = provenanceReply({ service, id: "m1", config: RECORDS_ON });
+  const r = provenanceReply({ service, selector: MEM, config: RECORDS_ON });
   assert.equal(r.status, 200);
   assert.equal(r.body.memoryId, "m1");
   assert.equal(r.body.windows.length, 1);
@@ -69,14 +130,14 @@ test("provenanceReply：一个链接一个窗口，原文按 seq 升序且不越
 });
 
 test("provenanceReply：没有链接是有效答案——空 windows，200 不是 404", () => {
-  const r = provenanceReply({ service: fakeService(), id: "m1", config: RECORDS_ON });
+  const r = provenanceReply({ service: fakeService(), selector: MEM, config: RECORDS_ON });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body, { memoryId: "m1", windows: [] });
+  assert.deepEqual(r.body, { memoryId: "m1", windows: [], truncated: false });
 });
 
 test("provenanceReply：方法没接线是装配坏了——503，不与「没有来源」混为一个读数", () => {
   // headless / 旧装配：service 上没有这两个方法。
-  const r = provenanceReply({ service: {}, id: "m1", config: RECORDS_ON });
+  const r = provenanceReply({ service: {}, selector: MEM, config: RECORDS_ON });
   assert.equal(r.status, 503);
   assert.equal(r.body.error, PROVENANCE_UNAVAILABLE);
 });
@@ -87,7 +148,7 @@ test("provenanceReply：读抛错只 warn 并回 500，不把异常漏给调用�
     provenanceFor: () => { throw new Error("db locked"); },
     distillRecordsFor: () => []
   };
-  const r = provenanceReply({ service, id: "m1", config: RECORDS_ON, warn: (m) => warnings.push(m) });
+  const r = provenanceReply({ service, selector: MEM, config: RECORDS_ON, warn: (m) => warnings.push(m) });
   assert.equal(r.status, 500);
   assert.equal(r.body.error, "internal");
   assert.equal(warnings.length, 1, "失败要留痕");
@@ -114,7 +175,7 @@ test("isDistillRecordsEnabled：只认严格的 true，其余一律算关（fail
 test("provenanceReply：开关没开 → 409 distill-records-disabled，一个键都不多带", () => {
   // config 整个缺失（旧调用方直连、daemon 最小 cfg）也走这一格：默认方向必须是关。
   for (const cfg of [null, undefined, {}, { distillRecords: { enabled: false } }]) {
-    const r = provenanceReply({ service: fakeService(), id: "m1", config: cfg });
+    const r = provenanceReply({ service: fakeService(), selector: MEM, config: cfg });
     assert.equal(r.status, 409, `${JSON.stringify(cfg)} → 409`);
     assert.deepEqual(r.body, { error: DISTILL_RECORDS_DISABLED },
       "body 只准有 error 一个键——不带 memoryId / windows，调用方不会把「功能关了」读成「这条记忆没有来源」");
@@ -123,7 +184,7 @@ test("provenanceReply：开关没开 → 409 distill-records-disabled，一个�
 
 test("provenanceReply：409 赢 503——「用户关了」比「装配坏了」更具体", () => {
   // 关着 + service 上连方法都没有：报 503 会让人去查一个没坏的部署。
-  const r = provenanceReply({ service: {}, id: "m1", config: { distillRecords: { enabled: false } } });
+  const r = provenanceReply({ service: {}, selector: MEM, config: { distillRecords: { enabled: false } } });
   assert.equal(r.status, 409);
   assert.equal(r.body.error, DISTILL_RECORDS_DISABLED);
 });
@@ -135,18 +196,98 @@ test("provenanceReply：开关关着时一次 SQL 都不发（不碰 service）"
     provenanceFor: () => { touched++; return []; },
     distillRecordsFor: () => { touched++; return []; }
   } });
-  provenanceReply({ service, id: "m1", config: null });
+  provenanceReply({ service, selector: MEM, config: null });
   assert.equal(touched, 0);
 });
 
 test("provenanceReply：开关开着才读得到——200 与 409 是同一把门的两个方向", () => {
   const service = fakeService({ links: [{ session_id: "s1", seq_start: 1, seq_end: 1, created_at: "t" }], records: [{ seq: 1 }] });
-  const on = provenanceReply({ service, id: "m1", config: RECORDS_ON });
+  const on = provenanceReply({ service, selector: MEM, config: RECORDS_ON });
   assert.equal(on.status, 200);
   assert.equal(on.body.windows.length, 1);
-  const off = provenanceReply({ service, id: "m1", config: { distillRecords: { enabled: false } } });
+  const off = provenanceReply({ service, selector: MEM, config: { distillRecords: { enabled: false } } });
   assert.equal(off.status, 409);
   assert.deepEqual(off.body, { error: DISTILL_RECORDS_DISABLED });
+});
+
+// --- 方向 2：会话 → 窗口（#524）--------------------------------------------
+
+test("provenanceReply（session 方向）：一行一窗口，原文按区间取，答复带 sessionId", () => {
+  const asked = [];
+  const service = {
+    distillWindowsFor: (sid, limit) => {
+      asked.push([sid, limit]);
+      return [
+        { session_id: "s1", seq_start: 5, seq_end: 9, created_at: "t2", link_count: 2 },
+        { session_id: "s1", seq_start: 1, seq_end: 4, created_at: "t1", link_count: 1 }
+      ];
+    },
+    distillRecordsFor: (sid, from, to) => [{ seq: from }, { seq: to }]
+  };
+  const r = provenanceReply({ service, selector: SES, config: RECORDS_ON });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.sessionId, "s1", "session 方向的答复用 sessionId 认领，不冒充 memoryId");
+  assert.equal(r.body.truncated, false);
+  assert.deepEqual(r.body.windows.map((w) => [w.seq_start, w.seq_end]), [[5, 9], [1, 4]],
+    "次序由 store 的 ORDER BY seq_start 保证，答复层不改序");
+  assert.deepEqual(r.body.windows[0].records.map((x) => x.seq), [5, 9], "每个窗口装自己区间的原文");
+  assert.equal(r.body.windows[0].link_count, 2, "同一窗口派生了 2 条记忆——这个计数是「按窗口看」的第二维");
+  // 多取一行判截断：store 侧只照 limit 取，不替调用方判断「还有没有」。
+  assert.deepEqual(asked, [["s1", PROVENANCE_DEFAULT_WINDOWS + 1]]);
+});
+
+test("provenanceReply：撞上 limit 时 truncated=true，且多出来的那条不许漏出去", () => {
+  // 少了这个读数，被截断的答复与「本来就只有这么多」逐字节相同——调用方会把半份
+  // 转录当成全部，这正是这张脸最容易骗人的地方。
+  const service = {
+    distillWindowsFor: () => [1, 2, 3].map((n) => ({
+      session_id: "s1", seq_start: n, seq_end: n, created_at: "t", link_count: 1
+    })),
+    distillRecordsFor: () => []
+  };
+  const r = provenanceReply({ service, selector: { ...SES, limit: 2 }, config: RECORDS_ON });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.truncated, true);
+  assert.equal(r.body.windows.length, 2, "limit=2 就只许回 2 个窗口，探针那一条不能混进答复");
+});
+
+test("provenanceReply：memory 方向也带 truncated（两个方向共一个读数）", () => {
+  const service = {
+    provenanceFor: () => [1, 2].map((n) => ({
+      session_id: "s1", seq_start: n, seq_end: n, created_at: "t"
+    })),
+    distillRecordsFor: () => []
+  };
+  const r = provenanceReply({ service, selector: { ...MEM, limit: 1 }, config: RECORDS_ON });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.truncated, true);
+  assert.equal(r.body.windows.length, 1);
+  assert.equal(r.body.memoryId, "m1");
+});
+
+test("provenanceReply：503 按方向判——只缺 session 那侧的方法时，memory 查询照旧 200", () => {
+  // 把一个方向的问题报成整张脸坏了，会让人去查一个没坏的部署。
+  const onlyMemory = {
+    provenanceFor: () => [],
+    distillRecordsFor: () => []
+  };
+  const ses = provenanceReply({ service: onlyMemory, selector: SES, config: RECORDS_ON });
+  assert.equal(ses.status, 503);
+  assert.equal(ses.body.error, PROVENANCE_UNAVAILABLE);
+  const mem = provenanceReply({ service: onlyMemory, selector: MEM, config: RECORDS_ON });
+  assert.equal(mem.status, 200, "缺的只是方向 2 的方法，方向 1 不该跟着坏");
+});
+
+test("provenanceReply：开关关着时 session 方向也 409，且一次 SQL 都不发", () => {
+  let touched = 0;
+  const service = {
+    distillWindowsFor: () => { touched++; return []; },
+    distillRecordsFor: () => { touched++; return []; }
+  };
+  const r = provenanceReply({ service, selector: SES, config: { distillRecords: { enabled: false } } });
+  assert.equal(r.status, 409);
+  assert.deepEqual(r.body, { error: DISTILL_RECORDS_DISABLED }, "方向不同，门是同一把");
+  assert.equal(touched, 0);
 });
 
 test("🔴 静态锁：口径字面量与共用答复只许出现在本模块，两个入口都要真的走它", () => {
@@ -162,7 +303,7 @@ test("🔴 静态锁：口径字面量与共用答复只许出现在本模块，
     assert.ok(!src.includes("distillRecords?.enabled === true"),
       `src/${name} 不准自己写开关判据——只许把 config 转交给共用模块`);
     // 而且要真的转交了：壳里调 provenanceReply 时必须带上 config。
-    assert.match(src, /provenanceReply\(\{ service, id: parsed\.id, config,/,
+    assert.match(src, /provenanceReply\(\{ service, selector: parsed\.selector, config,/,
       `src/${name} 要把本入口的 config 传给共用模块，否则门永远读不到用户的开关`);
   }
 });
