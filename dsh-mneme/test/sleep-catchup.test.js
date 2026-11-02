@@ -83,12 +83,15 @@ function makeHarness(overrides = {}) {
   const service = createService({ store, mirror: null, config: {} });
   let runs = 0;
   let outcome = () => ({ ok: true, status: "noop" });
+  // 运行**期间**要发生的事（写入 / 耗时）——用来复现"跑完那一刻已挂着的表只剩几秒"。
+  let duringRun = null;
   const sched = createSleepScheduler({
     service,
     config: { sleepModeEnabled: true, sleepIdleMinutes: 5, sleepMinIntervalHours: 1, ...overrides },
     logger: { warn: () => {} },
     onRun: async () => {
       runs++;
+      if (duringRun) await duringRun();
       return outcome();
     },
     now: () => nowMs,
@@ -117,7 +120,9 @@ function makeHarness(overrides = {}) {
     runs: () => runs,
     now: () => nowMs,
     setOutcome: (fn) => { outcome = fn; },
-    write: () => { nowMs += 1000; sched.noteWrite(); }
+    setDuringRun: (fn) => { duringRun = fn; },
+    write: () => { nowMs += 1000; sched.noteWrite(); },
+    advance: (ms) => { nowMs += ms; }
   };
 }
 
@@ -126,7 +131,7 @@ const HOUR = 3_600_000;
 
 test("issue#529 续排：clean + 还有没进这一轮的对 ⇒ 下一个闹钟钉在静默窗口，不等最小间隔", async () => {
   const h = makeHarness();
-  h.setOutcome(() => ({ ok: true, status: "noop", catchup: true, backlog: true }));
+  h.setOutcome(() => ({ ok: false, status: "noop", catchup: true, backlog: true }));
   h.write();
   await h.fireNext();
   assert.equal(h.runs(), 1, "静默到点起跑一轮");
@@ -152,6 +157,46 @@ test("issue#529 续排：不 clean 时不追，间隔回到最小间隔", async 
   h.store.close();
 });
 
+test("issue#529 续排：运行期间用户写入挂的表要在收尾时重挂，不能剩几秒就开下一批", async () => {
+  const h = makeHarness();
+  h.setOutcome(() => ({ ok: false, status: "noop", catchup: true, backlog: true }));
+  h.write();
+  // 运行一开始就按静默窗口挂好了表（at = 起跑时刻 + 5min + 1s）。
+  const armedAt = h.timers[0].at;
+  h.setDuringRun(async () => {
+    // 运行早期用户又写了一次：noteWrite 撤表重挂，新表从**那一刻**起算。
+    h.advance(MIN);
+    h.write();
+    // 这一轮本身跑了很久（LLM 往返 + 落库），早就越过那只表的到点时刻。真实环境里
+    // 这只表此刻已经可以立即触发——收尾若不重挂，下一批就是"几秒后开跑"，
+    // 「让库安静一个静默窗口再追」形同虚设。
+    h.advance(10 * MIN);
+  });
+  await h.fireNext();
+  assert.equal(h.runs(), 1);
+  assert.ok(h.now() > armedAt, "前置：这一轮确实跑过了原来那只表的到点时刻");
+  assert.equal(h.timers.length, 1, "收尾必须只剩（重挂的）一只表");
+  assert.equal(h.timers[0].at - h.now(), 5 * MIN + 1000, "关键：从**收尾这一刻**重算整一个静默窗口，不是沿用运行期挂的旧表");
+  h.store.close();
+});
+
+test("issue#529 续排：台账写入失败要让这一轮不 clean，不能每个静默窗口重问同一个冲突", async () => {
+  const { service, store, vectorIndex } = setup();
+  seedSimilarPairs(service, vectorIndex, 8);
+  // 留痕写不进去：这一对既没被记成"已审"，下一轮还会原样回到候选池。若仍判 clean，
+  // 续排会一个静默窗口问一次 LLM、直到连击上限，而审计上每轮都是干净的成功轮。
+  service.saveConflictReviewed = () => {
+    throw new Error("ledger unavailable");
+  };
+  const ctx = mockCtx(() => "[]");
+  const config = baseConfig({ sleepConflictMaxPairs: 1, sleepConflictMaxPairsPerRun: 2 });
+  const result = await runSleep(ctx, service, config, ctx.logger, { embedder, vectorIndex }, null);
+  assert.ok(result.phases.conflicts.ledgerFailed > 0, "前置：确实有留痕写入失败");
+  assert.equal(result.phases.conflicts.clean, false, "关键：没记上账就不算落地");
+  assert.equal(result.catchup, false, "不 clean ⇒ 不追下一批，回到正常节奏");
+  store.close();
+});
+
 test("issue#529 续排：失败轮不追（与连败退避互斥）", async () => {
   const h = makeHarness({ sleepFailureBackoff: true });
   h.setOutcome(() => ({ ok: false, status: "failed", catchup: true, backlog: true }));
@@ -167,9 +212,12 @@ test("issue#529 续排：失败轮不追（与连败退避互斥）", async () =
   h.store.close();
 });
 
-test("issue#529 续排：连击到上限即收手，不空转定时器", async () => {
+test("issue#529 续排：连击到上限即收手，闹钟回到正常间隔", async () => {
   const h = makeHarness();
-  h.setOutcome(() => ({ ok: true, status: "noop", catchup: true, backlog: true }));
+  // 用 runSleep 的真实返回形状：全判 keep 的一轮 status 是 noop，而 ok 只在
+  // ok/degraded 时为真——桩里写 ok:true 会让 maybeSchedule 走进与真实路径不同的分支
+  // （!ran 那条），于是「到顶后没有定时器」测的其实是桩的偏差，不是实现的行为。
+  h.setOutcome(() => ({ ok: false, status: "noop", catchup: true, backlog: true }));
   h.write();
   await h.fireNext();
   // 24 是实现里的 CATCHUP_STREAK_CAP：每轮都 clean 但池子永远追不完时，必须自己刹住。
@@ -178,10 +226,13 @@ test("issue#529 续排：连击到上限即收手，不空转定时器", async (
     await h.fireNext();
   }
   assert.equal(h.runs(), 24, "连追 24 轮");
-  assert.equal(h.timers.length, 0, "关键：到顶后不再补挂——否则每 5 分钟醒一次、被 shouldRun 否掉再重排，无谓但永不断链");
   const t = h.now();
   assert.equal(h.sched.shouldRun(t + 5 * MIN), false, "收手后回到最小间隔，不再按静默窗口放行");
   assert.equal(h.sched.shouldRun(t + HOUR), true);
+  // 收手后既不能是「一直按静默窗口重排」（空转链），也不能是「什么都不挂」
+  // （#187：CD 到期成了没有监听者的时刻）。正确形态是回到正常的最小间隔。
+  assert.equal(h.timers.length, 1, "按 #187 补挂一张表，但不能是续排的短表");
+  assert.equal(h.timers[0].at - h.now(), HOUR + 1000, "补的是正常最小间隔，不是 5 分钟的续排表");
   h.store.close();
 });
 
@@ -216,12 +267,12 @@ test("issue#529 续排：坏批让这一轮不 clean，即使还有 backlog 也�
 
 test("issue#529 续排：连击到顶收手之后，下一次正常触发要能重新起算（刹车不能变成永久闸）", async () => {
   const h = makeHarness();
-  h.setOutcome(() => ({ ok: true, status: "noop", catchup: true, backlog: true }));
+  h.setOutcome(() => ({ ok: false, status: "noop", catchup: true, backlog: true }));
   h.write();
   await h.fireNext();
   for (let i = 2; i <= 24; i++) await h.fireNext();
   assert.equal(h.runs(), 24);
-  assert.equal(h.timers.length, 0, "前置：到顶后已经收手");
+  assert.equal(h.timers[0].at - h.now(), HOUR + 1000, "前置：到顶后已收手，闹钟回到正常间隔");
 
   // 收手若只把 catchupWanted 置 false、**不把连击清零**，这个进程此后每一轮都会被同一道闸
   // 挡下（streak 只增不减），"等下一个静默窗口重新起算"就成了一句空话。
@@ -235,7 +286,8 @@ test("issue#529 续排：连击到顶收手之后，下一次正常触发要能�
 
 test("issue#529 续排：一轮抛错要把连击一并清零，不能把上一轮的进度带进下一次起算", async () => {
   const h = makeHarness();
-  const clean = () => ({ ok: true, status: "noop", catchup: true, backlog: true });
+  // 同上面两条：runSleep 在 status==="noop" 时给 ok:false，桩要照它写。
+  const clean = () => ({ ok: false, status: "noop", catchup: true, backlog: true });
   h.setOutcome(clean);
   h.write();
   await h.fireNext();

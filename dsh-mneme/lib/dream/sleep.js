@@ -478,6 +478,11 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // 单批的完整往返：送 → 解析 → 校验 → 应用 → 记账。抽成函数是为了让失败只影响
   // 自己这一批（下面的循环），而不是把整轮判死。
   const adjudicateBatch = async (batch, updateBudget) => {
+    // Issue #529 review（CodeRabbit ①）：留痕写入失败要能被上层看见。只打 warn 的话，
+    // 这一对既没记账、又被算成"送出去的全落地了"，于是下一轮它原样回到候选池、又被
+    // 算成可续排——每个静默窗口重问一次同一个冲突，直到连击上限才停，而审计上每轮
+    // 都是干净的成功轮。计数随返回值透出，由 phaseConflicts 折进 clean。
+    let ledgerFailed = 0;
     // Issue #536 review（CodeRabbit ③）：judged_at 是**发送时刻**，不是落地时刻。
     //
     // 取 max(墙钟, 本批两侧里最新的 updated_at)：`updated_at` 用的是 store 的
@@ -599,13 +604,18 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
             judged_at: judgedAt
           });
         } catch (error) {
+          // Issue #529 review（CodeRabbit）：留痕失败必须让这一轮**不 clean**。只 warn 的
+          // 话，这一对既没记账、又被算成"送出去的全落地了"，下一轮它原样回到候选池、
+          // 又被算成可续排——每个静默窗口重问一次同一个冲突，直到连击上限才停，而
+          // 审计上每一轮都是干净的成功轮。
+          ledgerFailed += 1;
           logger?.warn?.(`dsh-mneme sleep: failed to record reviewed conflict ${p.a.id}/${p.b.id}: ${String(error)}`);
         }
       }
     }
     // Issue #126 review（Copilot）：有决策被跳过时不能报 ok——与 dream 的 degraded 契约
     // 对齐（"合法子集已应用"是 degraded 而非 ok），否则消费方分不清整轮与残轮。
-    return { status: applied > 0 ? (skipped.length > 0 ? "degraded" : "ok") : failures.length ? "failed" : "noop", applied, failures, conflicts, skipped, updateUsed };
+    return { status: applied > 0 ? (skipped.length > 0 ? "degraded" : "ok") : failures.length ? "failed" : "noop", applied, failures, conflicts, skipped, updateUsed, ledgerFailed };
   };
   // 分批：每批独立往返，坏批只记 degraded 不中断。此前一次全送，任何一处理由
   // （撞上下文、输出截断、JSON 坏掉）都是整轮 failed——而整轮 failed 又不带 pairs，
@@ -619,6 +629,8 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   const conflicts = [];
   const skipped = [];
   let failedBatches = 0;
+  // Issue #529 review（CodeRabbit ①）：台账写入失败的累计数（逐批由 adjudicateBatch 报回）。
+  let ledgerFailed = 0;
   // 用户活动打断时**不能**落进下面那条 noop：noop 的语义是「看过，没冲突」，而被打断
   // 的那几批根本没送出去。用与入口处（signal 一开始就是 aborted）同一个词汇，避免
   // 同一件事两个状态名。
@@ -653,6 +665,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       continue;
     }
     applied += res.applied;
+    ledgerFailed += res.ledgerFailed ?? 0;
     updateLeft = Math.max(0, updateLeft - (res.updateUsed ?? 0));
     failures.push(...(res.failures ?? []));
     conflicts.push(...(res.conflicts ?? []));
@@ -682,8 +695,15 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // 这里把续排堵死。所以另给一个布尔，口径与下面台账的 unsettled 完全一致：failure
   // （写入失败）/ conflicts（CAS 冲突）/ skipped（非法被跳）任一出现过，就说明有对没
   // 落地，它下一轮还会被重新配出来，不算 clean。
+  // Issue #529 review（CodeRabbit ①）：台账写入失败同样算"没落地"——那一对没被记成
+  // 已审，下一轮会重新入池，与上面 unsettled 是同一个道理。
   const clean =
-    !interrupted && failedBatches === 0 && skipped.length === 0 && failures.length === 0 && conflicts.length === 0;
+    !interrupted &&
+    failedBatches === 0 &&
+    skipped.length === 0 &&
+    failures.length === 0 &&
+    conflicts.length === 0 &&
+    ledgerFailed === 0;
   return {
     status,
     clean,
@@ -697,6 +717,9 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     ledgerSkipped,
     perRunSkipped,
     applied,
+    // Issue #529 review（CodeRabbit ①）：留痕失败的对数——clean 为 false 时要能分清是
+    // 哪一类没落地（写入失败 / 非法被跳 / CAS 冲突 / 台账没记上）。
+    ledgerFailed,
     failures,
     conflicts,
     // Issue #126：#104 同向——被跳过的逐对明细要进审计行，否则事后无法判断
@@ -1223,6 +1246,20 @@ export function createSleepScheduler({
     } finally {
       sleepAbort = null;
       running = false;
+      // Issue #529 review（CodeRabbit ②）：运行期间用户写入会走 noteWrite()，它把闹钟
+      // 按**那一次写入**重算了一遍——那可能是静默窗口的尾声。若这一轮结束时报告
+      // catchup=true，那只表可能几秒后就要响，下一批紧接着开跑，于是「让库安静一个
+      // 静默窗口再追」变成「跑完立刻再跑」。这里把已挂着的表撤掉重挂，交给
+      // armNextWindow 从**此刻**算出整整一个静默窗口。
+      // 反过来（不追的轮次）保留 noteWrite 挂的那只表：它是按用户最后一次写入算的，
+      // 正是「用户写完了、安静满一个窗口再说」的意思。
+      if (catchupWanted) {
+        if (idleTimer) {
+          clearTimeoutFn(idleTimer);
+          idleTimer = null;
+        }
+        armNextWindow();
+      }
     }
   }
 
