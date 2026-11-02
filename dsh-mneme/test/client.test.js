@@ -2312,6 +2312,39 @@ test("skipped reasons are visible without expanding the collapsed detail section
   assert.ok(!dreamCards.includes("skippedReasons"),
     "the collapsed card no longer needs its own copy of the skip buckets");
 });
+
+// #495：organize 与巩固共用 dream_runs，一次 agent 主动整理写两行。这张卡的标题是
+// 「最近巩固」，若面板继续拿 lastRun 取数，一次整理就把卡面变成整理回执——正是
+// issue 报的那个现象。锁三件事：① 卡面读 lastConsolidation；② 退回 lastRun 时必须
+// 先排除 organize（旧服务端没有新键，不能拿 organize 行冒充巩固）；③ KPI 带那块
+// 「上一轮跳过什么」同样改读巩固轮，organize 的 skipped 不是巩固决策。
+test("dream status card reads the consolidation run, not whatever ran last (issue #495)", () => {
+  const dreamCards = clientSource.slice(
+    clientSource.indexOf("function DreamStatusCards("),
+    clientSource.indexOf("function InjectStatusCard(")
+  );
+  assert.ok(dreamCards.includes("state.lastConsolidation"),
+    "the card must consume lastConsolidation from /dream-status");
+  assert.ok(dreamCards.includes('state.lastRun.run_type === "organize"'),
+    "falling back to lastRun must still refuse an organize row — an old server may omit the new key");
+  assert.ok(/const run = state\.lastConsolidation\s*\n?\s*\|\| \(state\.lastRun && !organizedOnly/.test(dreamCards)
+    || dreamCards.includes("|| (state.lastRun && !organizedOnly"),
+    "the fallback branch must skip the row it just identified as organize");
+  // 脚注：最近一次后台运行确实是 organize 时点名它，而不是静默把它当巩固。
+  assert.ok(dreamCards.includes("memory.status.dreamOrganizeOnly"),
+    "an organize-only history must be named in a footnote, not shown as a consolidation");
+  // ① 的取数还必须晚于本卡自己那次 fetch，不能只是把键名写进注释里。
+  const fetchIdx = dreamCards.indexOf('apiFetch("/api/dsh-mneme/dream-status")');
+  const useIdx = dreamCards.indexOf("state.lastConsolidation");
+  assert.ok(fetchIdx >= 0 && useIdx > fetchIdx, "the key must be read from the /dream-status payload");
+
+  const tokenFlow = clientSource.slice(
+    clientSource.indexOf("function TokenFlowSection("),
+    clientSource.indexOf("function DreamStatusCards(")
+  );
+  assert.ok(tokenFlow.includes("d.lastConsolidation || d.lastRun"),
+    "the skip-reason KPI belongs to consolidation; organize skipped buckets would read as blocked consolidation");
+});
 // 设置页目录（#518）：用户要的是「左侧一个分类，直接跳到某一节」。这里锁五件事：
 // ① 目录由 tocGroups 一张表生成，五项分组标题全部走 groupHead(key) 渲染——两处各写
 //    一遍清单是这类索引最典型的腐烂方式，而腐烂后的目录会把人领到不存在的锚点；

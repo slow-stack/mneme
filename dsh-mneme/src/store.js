@@ -461,6 +461,10 @@ export const TYPES = new Set(["preference", "project", "decision", "history", "s
 // 截断上限（continuity.js）是两件事。
 const MAX_CONTINUITY_PENDING = 200;
 
+// dream_runs.run_type 的取值域（schema 注释同款）。既是白名单也是下推条件的护栏：
+// listDreamRuns 的 excludeRunType 会拼进 SQL 的 != 比较，非白名单值一律忽略。
+const DREAM_RUN_TYPES = ["auto", "sleep", "organize"];
+
 // Epistemic status: what kind of evidence a memory rests on. Defaults to
 // 'subjective' so legacy rows (and rows without any signal) stay compatible.
 const EPISTEMIC_STATUSES = new Set(["observation", "subjective", "inferred"]);
@@ -2246,11 +2250,16 @@ export function createStore(path) {
     return toDreamRun(row);
   }
 
-  function listDreamRuns({ limit = 50, offset = 0 } = {}) {
+  // #495：excludeRunType 是可选下推条件，默认不过滤——审计面（面板的最近运行、
+  // 回放脚本、各测试的 `listDreamRuns()` 无参调用）本来就该看全量，过滤只在
+  // 「最近一次真·巩固」这种需要排除 agent 主动整理的场合由调用方显式指定。
+  // 值走白名单：这个参数会拼进 SQL 的 != 条件，不接受任意字符串。
+  function listDreamRuns({ limit = 50, offset = 0, excludeRunType = null } = {}) {
     const { limit: lim, offset: off } = sanitizePage(limit, offset, 50);
+    const excluded = DREAM_RUN_TYPES.includes(excludeRunType) ? excludeRunType : null;
     const rows = db.prepare(
-      "SELECT * FROM dream_runs ORDER BY created_at DESC, id LIMIT ? OFFSET ?"
-    ).all(lim, off);
+      "SELECT * FROM dream_runs WHERE (? IS NULL OR run_type != ?) ORDER BY created_at DESC, id LIMIT ? OFFSET ?"
+    ).all(excluded, excluded, lim, off);
     return rows.map(toDreamRun);
   }
 
