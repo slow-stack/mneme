@@ -2454,9 +2454,9 @@ test("mobile: the narrow-container breakpoints reflow the two-column skeletons i
     ".mneme-entrail 是 overflow:hidden 的非滚动容器，overscroll-behavior 写在它身上是死代码");
   // 抽屉是覆盖层，窄容器里 52% 只剩 166px；满宽不丢关闭入口（✕ 在 .mneme-drawerbar）。
   assert.ok(body.includes(".mneme-drawer{width:100%}"), "详情抽屉在窄容器里必须满宽");
-  // 网格轨道必须有 100% 下限，否则容器比轨道窄时横向溢出被外层 overflow:hidden 切掉。
-  assert.ok(body.includes("minmax(min(252px,100%),1fr)"), "卡片网格的最小轨道必须夹到 100%");
-  assert.ok(body.includes("minmax(min(200px,100%),1fr)"), "属性网格的最小轨道必须夹到 100%");
+  // 网格轨道的 100% 下限不再锚定在本档：它的作用域是「所有宽度」，而 481–519px
+  // （480 主断点之上、两栏又排不下的中间带）恰恰落回基础规则。锁在基础规则上，
+  // 见本用例末尾的 topLevel 那组。本档只保留窄屏特有的 padding 与滚动链。
   // 固定宽弹层在 320px 会顶边：340px 的分享弹层比视口还宽。
   assert.ok(/\.mneme-sharedialog\{[^}]*calc\(100cqw - 32px\)/.test(body), "分享弹层宽度必须跟着容器收");
   assert.ok(/\.mneme-impdialog\{[^}]*calc\(100cqw - 32px\)/.test(body), "导入弹层宽度必须跟着容器收");
@@ -2501,4 +2501,44 @@ test("mobile: the narrow-container breakpoints reflow the two-column skeletons i
   // 这里只许加 opacity:1，不许在同一条里再动 color）。
   assert.match(cssBlock, /@media \(hover:none\)\{\.mneme-set-del\{opacity:1/,
     "触屏设备上 .mneme-set-del 必须常显——它的 base 是 opacity:0，只靠 :hover 恢复，手机上等于永久不可见");
+  // 断点之外还有一段中间带：481–519px 容器宽（480 主断点之上、两栏又排不下）。
+  // 这一段落回基础规则，所以 min(…,100%) 的轨道下限必须写在基础规则上，只在断点里
+  // 写等于给中间带留缺口。本组锁都作用在「剥掉嵌套块之后的顶层规则」上——否则
+  // 480 档里的同名声明会让断言假绿。
+  const topLevel = (() => {
+    let out = "";
+    let i = 0;
+    while (i < cssBlock.length) {
+      const at = cssBlock.indexOf("@", i);
+      out += cssBlock.slice(i, at === -1 ? cssBlock.length : at);
+      if (at === -1) break;
+      const open = cssBlock.indexOf("{", at);
+      if (open === -1) { out += cssBlock.slice(at); break; }
+      let depth = 0, j = open;
+      while (j < cssBlock.length) {
+        if (cssBlock[j] === "{") depth++;
+        else if (cssBlock[j] === "}") { depth--; if (depth === 0) { j++; break; } }
+        j++;
+      }
+      i = j;
+    }
+    return out;
+  })();
+  assert.ok(topLevel.length > 10000, "顶层规则切片异常（" + topLevel.length + " 字符）——切片实现坏了，下面的锁会假绿");
+  assert.match(topLevel, /\.mneme-cards\{[^}]*minmax\(min\(252px,100%\),1fr\)/,
+    "卡片网格的 100% 轨道下限必须写在基础规则上：481–519px 是 480 主断点之外的中间带，" +
+    "只在断点里兜底等于让这一段横向溢出 2–11px（外层 overflow:hidden 直接切掉）");
+  assert.match(topLevel, /\.mneme-attrgrid\{[^}]*minmax\(min\(200px,100%\),1fr\)/,
+    "属性网格同理：481–519px 时实体页 detail 只剩 257–276px，裸 200px 下限会溢出");
+  // 图谱的 touch-action 保持 none（这里是从 pan-y 回退后补的锁）。pan-y 那一版想解决
+  // 「手指在图上竖划时页面滚不动」，但它同时把纵向手势交给浏览器做页面平移，而图谱的
+  // 拖拽只挂了 mousedown/mousemove（全仓 onPointerDown/onTouchStart 命中 0）——触屏上
+  // 纵向拖拽到底走哪条路，浏览器是否派发兼容鼠标事件，没有真机无法定论。宁可保留现状
+  // 也不做无法复验的行为变更；真要两步都能用，得改成 Pointer Events，另开车道。
+  assert.match(topLevel, /\.mneme-graphsvg\{[^}]*touch-action:none/,
+    "图谱的 touch-action 必须写在基础规则上：481–519px 这段中间带落回基础规则，" +
+    "只在断点里声明等于给中间带留缺口");
+  assert.doesNotMatch(topLevel, /\.mneme-graphsvg\{[^}]*touch-action:pan-y/,
+    ".mneme-graphsvg 不得改回 touch-action:pan-y —— 纵向手势会被浏览器拿去滚页面，" +
+    "而图谱的拖拽只有鼠标事件实现，触屏拖拽行为无真机无法验证（见上方注释）");
 });

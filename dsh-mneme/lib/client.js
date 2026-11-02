@@ -2015,6 +2015,13 @@ window.__ModuleLoader__.load({
       // --- graph sub-view (fills the content area under the tabs) ---
       ".mneme-graph{flex:1;min-height:0;width:100%;display:flex;flex-direction:column;padding:12px 16px 16px;box-sizing:border-box}",
       ".mneme-graphbar{display:flex;gap:8px;align-items:center;flex:none;margin-bottom:10px}",
+      // touch-action 保持 none：图谱的拖拽与缩放只挂了 mousedown/mousemove/wheel，
+      // 全仓 onPointerDown/onTouchStart 命中 0，所以在触屏上它本来就不是一个可交手势的
+      // 面。改成 pan-y 会让纵向拖拽退回页面滚动——而浏览器在 touch-action:none 下会派发
+      // 兼容鼠标事件，触屏纵向拖拽究竟走哪条路，没有真机无法定论；这一版不做无法复验的
+      // 行为变更，留给出指针事件重写的那条车道。高度也不在这里限：480 主断点已压到
+      // min(320px,52vh)，把 52vh 写进基础规则会在常见窗口高度（≈680px）下把桌面也压成
+      // 353px，等于顺手改了大屏观感。
       ".mneme-graphsvg{flex:1;min-height:180px;width:100%;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-button-elevated-fill);cursor:grab;touch-action:none}",
       ".mneme-gnode{cursor:pointer}",
       ".mneme-gnode circle{stroke:var(--dsw-alias-bg-layer-2);stroke-width:2;transition:stroke-width .12s}",
@@ -2058,7 +2065,9 @@ window.__ModuleLoader__.load({
       ".mneme-layer{margin-top:24px}",
       ".mneme-layerhead{display:flex;align-items:baseline;gap:8px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);margin-bottom:10px}",
       ".mneme-layercount{font-size:12px;font-weight:400;color:var(--mneme-fg-dim)}",
-      ".mneme-attrgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}",
+      // 属性网格同理：min(200px,100%) 的 100% 兜底压在基础规则上，实体页 detail 在
+      // 481–519px 只剩 257–276px（rail 仍占 224px 横排），裸 200px 下限会溢出。
+      ".mneme-attrgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(200px,100%),1fr));gap:8px}",
       ".mneme-attrcard{min-width:0;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:8px 12px}",
       ".mneme-attrkey{font-size:11px;color:var(--mneme-fg-dim);margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".mneme-attrval{font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary);word-break:break-word}",
@@ -2173,8 +2182,12 @@ window.__ModuleLoader__.load({
       ".mneme-seg button{border:none;background:none;color:var(--mneme-fg-dim);cursor:pointer;font-family:inherit;font-size:12px;line-height:16px;padding:5px 10px;display:inline-flex;align-items:center;gap:5px}",
       ".mneme-seg button:hover{color:var(--dsw-alias-label-primary)}",
       ".mneme-seg button.mneme-active{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary);font-weight:500}",
-      // 卡片网格：响应式 auto-fill，卡片悬停轻浮起
-      ".mneme-cards{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(252px,1fr));gap:14px;padding:20px 24px 32px;align-content:start}",
+      // 卡片网格：响应式 auto-fill，卡片悬停轻浮起。
+      // 轨道下限用 min(252px,100%) 而不是裸 252px：容器（.mneme-xcontent）只有
+      // 265–294px 时裸下限仍要求 300px 轨道，网格横向溢出 2–11px 被外层 overflow:hidden
+      // 切掉。这个洞出现在 481–519px——480 主断点之外、两栏又放不下的中间带，所以
+      // 兜底必须落在基础规则上，只在断点里写等于给中间带留缺口。
+      ".mneme-cards{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(252px,100%),1fr));gap:14px;padding:20px 24px 32px;align-content:start}",
       ".mneme-card{display:flex;flex-direction:column;gap:7px;min-width:0;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:12px 13px;background:var(--dsw-alias-bg-layer-1);cursor:pointer;font-family:inherit;text-align:left;transition:border-color .12s,box-shadow .12s,transform .12s}",
       ".mneme-card:hover{border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary) 45%,var(--dsw-alias-border-l2));box-shadow:0 6px 20px color-mix(in srgb,var(--dsw-alias-label-primary) 10%,transparent);transform:translateY(-1px)}",
       ".mneme-card.mneme-active{border-color:var(--dsw-alias-state-business-primary)}",
@@ -2664,7 +2677,7 @@ window.__ModuleLoader__.load({
       // sharedialog 自己不带 padding：它和 impdialog 同挂一条 div（见 JSX 里的
       // `className:"mneme-impdialog mneme-sharedialog"`），盒模型由 impdialog 带过来，
       // 所以它同样 +30px；宽度取哪一条由源码顺序决定，故两条都得是 border-box。
-      "@container (max-width: 480px){.mneme-xbar{justify-content:flex-start;padding:0 52px 0 10px}.mneme-vtab{padding:0 10px}.mneme-vtabs{min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.mneme-vtabs::-webkit-scrollbar{height:0}.mneme-xmain{flex-direction:column}.mneme-xside{width:100%;flex:0 1 auto;min-height:0;max-height:min(42vh,300px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2);overscroll-behavior:contain}.mneme-xbrowsebar{padding:8px 12px}.mneme-filterbar{padding:8px 12px}.mneme-drawer{width:100%}.mneme-drawerbody{padding:16px 14px 24px}.mneme-cards{grid-template-columns:repeat(auto-fill,minmax(min(252px,100%),1fr));padding:14px 12px 24px;overscroll-behavior:contain}.mneme-ent{flex-direction:column}.mneme-entrail{width:100%;flex:0 1 auto;min-height:0;max-height:min(40vh,280px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2)}.mneme-entrailbody{overscroll-behavior:contain}.mneme-entdetail{padding:16px 14px 24px}.mneme-attrgrid{grid-template-columns:repeat(auto-fill,minmax(min(200px,100%),1fr))}.mneme-set{padding:8px 14px 40px}.mneme-status{padding:16px 14px 32px}.mneme-menu{box-sizing:border-box;min-width:0;width:min(200px,calc(100cqw - 32px))}.mneme-impdialog{box-sizing:border-box;width:min(300px,calc(100cqw - 32px))}.mneme-sharedialog{box-sizing:border-box;width:min(340px,calc(100cqw - 32px))}.mneme-graph{padding:10px 12px 12px}.mneme-graphsvg{max-height:min(320px,52vh);touch-action:pan-y}.mneme-glabel{font-size:14px}.mneme-graphside{position:static;width:auto;max-width:100%;max-height:min(200px,30vh);margin-top:8px}}",
+      "@container (max-width: 480px){.mneme-xbar{justify-content:flex-start;padding:0 52px 0 10px}.mneme-vtab{padding:0 10px}.mneme-vtabs{min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.mneme-vtabs::-webkit-scrollbar{height:0}.mneme-xmain{flex-direction:column}.mneme-xside{width:100%;flex:0 1 auto;min-height:0;max-height:min(42vh,300px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2);overscroll-behavior:contain}.mneme-xbrowsebar{padding:8px 12px}.mneme-filterbar{padding:8px 12px}.mneme-drawer{width:100%}.mneme-drawerbody{padding:16px 14px 24px}.mneme-cards{padding:14px 12px 24px;overscroll-behavior:contain}.mneme-ent{flex-direction:column}.mneme-entrail{width:100%;flex:0 1 auto;min-height:0;max-height:min(40vh,280px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2)}.mneme-entrailbody{overscroll-behavior:contain}.mneme-entdetail{padding:16px 14px 24px}.mneme-set{padding:8px 14px 40px}.mneme-status{padding:16px 14px 32px}.mneme-menu{box-sizing:border-box;min-width:0;width:min(200px,calc(100cqw - 32px))}.mneme-impdialog{box-sizing:border-box;width:min(300px,calc(100cqw - 32px))}.mneme-sharedialog{box-sizing:border-box;width:min(340px,calc(100cqw - 32px))}.mneme-graph{padding:10px 12px 12px}.mneme-graphsvg{max-height:min(320px,52vh);touch-action:pan-y}.mneme-glabel{font-size:14px}.mneme-graphside{position:static;width:auto;max-width:100%;max-height:min(200px,30vh);margin-top:8px}}",
       // 360 档只做两件事：隐掉 14px 的 tab 图标（.mneme-vtab 带图标时约 109px/个、
       // 4 个约 436px，320px 容器原地就横向溢出），再把正文 padding 收到 12–14px。
       // 页签横向滚动不在这一档、属于 480 主断点，理由见 480 档那条算式。
