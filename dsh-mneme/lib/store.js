@@ -3811,9 +3811,13 @@ export function createStore(path) {
         base_weight: base,
         gain
       });
-      if (out.length >= lim) break;
     }
-    return out;
+    // 排序必须在算完 gain 之后做，不能交给 SQL 的 weight DESC：不同 source 的
+    // base 不同，weight 大不等于 gain 大（llm 边 0.95 / gain 0.55 会压过
+    // tag 边 0.90 / gain 0.60）。早先在循环里按 lim 提前 break 时，被截掉的
+    // 恰恰是 gain 更大的边——面板按 limit=100 取数，截断处正是最该看见的那几条。
+    out.sort((a, b) => b.gain - a.gain || String(b.created_at).localeCompare(String(a.created_at)));
+    return out.slice(0, lim);
   }
 
   /** Relations where the entity appears on either side (from or to). */

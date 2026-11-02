@@ -109,6 +109,49 @@ test("boosted-relations reports the gate as off when only graphPassiveConfirm is
     "passive confirmation only bites when weight evolution is also on");
 });
 
+// 排序口径：按 gain 降序，不是按 weight 降序。不同 source 的 base 不同，
+// 所以 weight 大的边 gain 可能更小。首版把排序交给 SQL 的 weight DESC 并在
+// 循环里按 limit 提前 break，截断处丢掉的正是 gain 更大的边（评审指出）。
+test("boosted-relations ranks by gain, not by raw weight", async () => {
+  const { store, routes } = setup();
+  const a = store.createEntity({ name: "A", type: "technology" });
+  const b = store.createEntity({ name: "B", type: "technology" });
+  const c = store.createEntity({ name: "C", type: "technology" });
+  // llm 边：base 0.4，weight 0.95 → gain 0.55
+  const llmEdge = store.saveRelation({ from_entity: a.id, to_entity: b.id, relation_type: "uses", source: "llm" });
+  store.bumpRelationWeight(llmEdge.id, 0.55);
+  // tag 边：base 0.3，weight 0.90 → gain 0.60（weight 更小、gain 更大）
+  const tagEdge = store.saveRelation({ from_entity: a.id, to_entity: c.id, relation_type: "uses", source: "tag" });
+  store.bumpRelationWeight(tagEdge.id, 0.60);
+
+  const res = new FakeRes();
+  await routes.find((r) => r.path === BOOSTED).handler(req(BOOSTED), res);
+  const items = JSON.parse(res.body).items;
+  assert.ok(items.length >= 2);
+  assert.ok(items[0].gain >= items[1].gain, "the list must be ordered by gain");
+  assert.equal(items[0].to_name, "C",
+    "the tag edge (weight 0.90, gain 0.60) must outrank the llm edge (weight 0.95, gain 0.55)");
+});
+
+// 截断也必须发生在按 gain 排完之后：limit=1 时留下的得是 gain 最大那条。
+test("boosted-relations truncates after ranking by gain", async () => {
+  const { store, routes } = setup();
+  const a = store.createEntity({ name: "A", type: "technology" });
+  const b = store.createEntity({ name: "B", type: "technology" });
+  const c = store.createEntity({ name: "C", type: "technology" });
+  const llmEdge = store.saveRelation({ from_entity: a.id, to_entity: b.id, relation_type: "uses", source: "llm" });
+  store.bumpRelationWeight(llmEdge.id, 0.55);
+  const tagEdge = store.saveRelation({ from_entity: a.id, to_entity: c.id, relation_type: "uses", source: "tag" });
+  store.bumpRelationWeight(tagEdge.id, 0.60);
+
+  const res = new FakeRes();
+  await routes.find((r) => r.path === BOOSTED).handler(req(BOOSTED + "?limit=1"), res);
+  const items = JSON.parse(res.body).items;
+  assert.equal(items.length, 1);
+  assert.equal(items[0].to_name, "C",
+    "truncation must keep the largest gain, not the largest weight");
+});
+
 test("boosted-relations honours limit and never exceeds the hard cap", async () => {
   const { store, service, routes } = setup();
   for (let i = 0; i < 6; i++) {
