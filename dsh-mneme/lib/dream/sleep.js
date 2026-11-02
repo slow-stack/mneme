@@ -52,6 +52,12 @@ const CONFLICT_THRESHOLDS = { gentle: 0.92, normal: 0.85, aggressive: 0.75 };
 // 间隔、不能收紧用户自己设的）。
 const FAILURE_BACKOFF_CAP_MS = 24 * 3600000;
 
+// Issue #529（续排）：一轮内部最多连追多少轮。449 对的池子按每轮 60 对只需 8 轮，
+// 24 留足余量；超过就退回正常最小间隔。防的是"池子在长、每轮都 clean 但永远追不完"
+// ——用户持续写入时池子进得比追得快，光看 clean 会变成永不落地的每五分钟一轮，
+// 而审计上每轮都"有产出"，肉眼很难发现。
+const CATCHUP_STREAK_CAP = 24;
+
 function parseJsonArray(text) {
   if (typeof text !== "string") return undefined;
   const start = text.indexOf("[");
@@ -472,6 +478,11 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // 单批的完整往返：送 → 解析 → 校验 → 应用 → 记账。抽成函数是为了让失败只影响
   // 自己这一批（下面的循环），而不是把整轮判死。
   const adjudicateBatch = async (batch, updateBudget) => {
+    // Issue #529 review（CodeRabbit ①）：留痕写入失败要能被上层看见。只打 warn 的话，
+    // 这一对既没记账、又被算成"送出去的全落地了"，于是下一轮它原样回到候选池、又被
+    // 算成可续排——每个静默窗口重问一次同一个冲突，直到连击上限才停，而审计上每轮
+    // 都是干净的成功轮。计数随返回值透出，由 phaseConflicts 折进 clean。
+    let ledgerFailed = 0;
     // Issue #536 review（CodeRabbit ③）：judged_at 是**发送时刻**，不是落地时刻。
     //
     // 取 max(墙钟, 本批两侧里最新的 updated_at)：`updated_at` 用的是 store 的
@@ -593,13 +604,18 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
             judged_at: judgedAt
           });
         } catch (error) {
+          // Issue #529 review（CodeRabbit）：留痕失败必须让这一轮**不 clean**。只 warn 的
+          // 话，这一对既没记账、又被算成"送出去的全落地了"，下一轮它原样回到候选池、
+          // 又被算成可续排——每个静默窗口重问一次同一个冲突，直到连击上限才停，而
+          // 审计上每一轮都是干净的成功轮。
+          ledgerFailed += 1;
           logger?.warn?.(`dsh-mneme sleep: failed to record reviewed conflict ${p.a.id}/${p.b.id}: ${String(error)}`);
         }
       }
     }
     // Issue #126 review（Copilot）：有决策被跳过时不能报 ok——与 dream 的 degraded 契约
     // 对齐（"合法子集已应用"是 degraded 而非 ok），否则消费方分不清整轮与残轮。
-    return { status: applied > 0 ? (skipped.length > 0 ? "degraded" : "ok") : failures.length ? "failed" : "noop", applied, failures, conflicts, skipped, updateUsed };
+    return { status: applied > 0 ? (skipped.length > 0 ? "degraded" : "ok") : failures.length ? "failed" : "noop", applied, failures, conflicts, skipped, updateUsed, ledgerFailed };
   };
   // 分批：每批独立往返，坏批只记 degraded 不中断。此前一次全送，任何一处理由
   // （撞上下文、输出截断、JSON 坏掉）都是整轮 failed——而整轮 failed 又不带 pairs，
@@ -613,6 +629,8 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   const conflicts = [];
   const skipped = [];
   let failedBatches = 0;
+  // Issue #529 review（CodeRabbit ①）：台账写入失败的累计数（逐批由 adjudicateBatch 报回）。
+  let ledgerFailed = 0;
   // 用户活动打断时**不能**落进下面那条 noop：noop 的语义是「看过，没冲突」，而被打断
   // 的那几批根本没送出去。用与入口处（signal 一开始就是 aborted）同一个词汇，避免
   // 同一件事两个状态名。
@@ -647,6 +665,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       continue;
     }
     applied += res.applied;
+    ledgerFailed += res.ledgerFailed ?? 0;
     updateLeft = Math.max(0, updateLeft - (res.updateUsed ?? 0));
     failures.push(...(res.failures ?? []));
     conflicts.push(...(res.conflicts ?? []));
@@ -670,8 +689,24 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
         : failedBatches > 0
           ? "degraded"
           : "noop";
+  // Issue #529（续排）：「这一轮有没有产出」和「送出去的每一对是不是都落地了」是两件
+  // 正交的事，status 只回答前者。全判 keep 的轮次 applied 恒为 0 → status 是 noop
+  // （never ok），而它恰恰是 #529 里最该续排的场景；拿 status === "ok" 当判据会在
+  // 这里把续排堵死。所以另给一个布尔，口径与下面台账的 unsettled 完全一致：failure
+  // （写入失败）/ conflicts（CAS 冲突）/ skipped（非法被跳）任一出现过，就说明有对没
+  // 落地，它下一轮还会被重新配出来，不算 clean。
+  // Issue #529 review（CodeRabbit ①）：台账写入失败同样算"没落地"——那一对没被记成
+  // 已审，下一轮会重新入池，与上面 unsettled 是同一个道理。
+  const clean =
+    !interrupted &&
+    failedBatches === 0 &&
+    skipped.length === 0 &&
+    failures.length === 0 &&
+    conflicts.length === 0 &&
+    ledgerFailed === 0;
   return {
     status,
+    clean,
     // Issue #529 D：失败轮也要带 pairs/batches——此前只有成功路径带 pairs，85 条
     // 失败审计行全是"送了个寂寞"，连送了多少对都查不到。
     pairs: selected.length,
@@ -682,6 +717,9 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     ledgerSkipped,
     perRunSkipped,
     applied,
+    // Issue #529 review（CodeRabbit ①）：留痕失败的对数——clean 为 false 时要能分清是
+    // 哪一类没落地（写入失败 / 非法被跳 / CAS 冲突 / 台账没记上）。
+    ledgerFailed,
     failures,
     conflicts,
     // Issue #126：#104 同向——被跳过的逐对明细要进审计行，否则事后无法判断
@@ -1000,7 +1038,18 @@ export async function runSleep(ctx, service, config, logger, semantic = null, si
   } catch (error) {
     logger?.warn?.(`dsh-mneme sleep: failed to record audit run: ${String(error)}`);
   }
-  return { ok: status === "ok" || status === "degraded", status, runId, phases, receipt };
+  // Issue #529（续排）：给调度器的续排判据。两个条件缺一不可——
+  //   · 本轮**被预算截断**（conflict 相位报告还有没进这一轮的对）：说明池子没清空；
+  //   · 本轮**clean**：送出去的每一对都落地了，不是为了追一个永远失败的批次空转。
+  // `clean` 缺失时（该相位被 attempt 吞成 failed、或配置让它早退）按"不干净"算，
+  // 宁可少追一轮，也不要在失败状态下把间隔压到静默窗口。
+  const conflictPhase = phases.conflicts;
+  const backlog = Number(conflictPhase?.perRunSkipped ?? 0) > 0;
+  // clean 与 catchup 分开给：前者是"这一轮的活全落地了"，后者是"池子没清空 + 前者"。
+  // 合成一个字段会让"干净但没 backlog"看起来像出过问题，排查时反着读。
+  const clean = conflictPhase?.clean === true;
+  const catchup = backlog && clean;
+  return { ok: status === "ok" || status === "degraded", status, clean, catchup, backlog, runId, phases, receipt };
 }
 
 // ---------------------------------------------------------------- scheduler
@@ -1038,11 +1087,26 @@ export function createSleepScheduler({
   // 只是没活干，不该被当成失败拖着退避）。纯内存变量、宿主重启归零：跨重启的
   // 冷却本来就由 lastRunAtSeed（#89/#291）负责，两者不重叠。
   let consecutiveFailures = 0;
+  // Issue #529（续排）：上一轮报告"还有对没进这一轮、且送出去的全落地了"——池子没清空，
+  // 该接着追而不是等满一个最小间隔。只由 maybeSchedule 按 onRun 的返回置位，跑完一轮就
+  // 重新判：池子追干净或某一轮不 clean 时自动落回 false，不需要额外的复位路径。
+  let catchupWanted = false;
+  // Issue #529（续排）：进程内续排连击数。给"池子在长、每轮都 clean 但永远追不完"这类
+  // 库留一道刹车——用户持续写入时池子进得比追得快，光看 clean 会变成永不落地的每五分钟
+  // 一轮。超过上限就退回正常间隔，等下一个静默窗口重新起算。
+  let catchupStreak = 0;
 
   // Issue #529：有效最小间隔 = 基数 × 2^连续失败数。关闭或尚无失败时逐字节
   // 返回基数（默认关 = 行为与现状一致）。封顶取 max(基数, 24h) 而不是硬 24h：
   // 指数再大也不会把用户自己配的大基数（允许到 168h）压小。
   function effectiveMinIntervalMs() {
+    // Issue #529（续排）：还有 backlog 时把冷却项按 0 处理，让表落在**静默窗口**而不是
+    // 最小间隔上。不新增配置键：本轮的账本/更新写入会重置 lastWriteAt，下一轮自然至少
+    // 等一个 sleepIdleMinutes，这本身就是节流；再开一个键要连带 settings.js 白名单与
+    // test/api.test.js 的旗标计数锁，不值得为一件事动三个文件。
+    // 与连败互斥（同 issue 的第三条）：连续失败 > 0 时根本不追——两个逻辑抢同一只闹钟
+    // 最容易出"重排的是短的、判定的是长的"这种空转，互斥最省事。
+    if (catchupWanted && consecutiveFailures <= 0) return 0;
     const base = (config.sleepMinIntervalHours ?? 8) * 3600000;
     if (config.sleepFailureBackoff !== true || consecutiveFailures <= 0) return base;
     const cap = Math.max(base, FAILURE_BACKOFF_CAP_MS);
@@ -1058,8 +1122,10 @@ export function createSleepScheduler({
       idleTimer = null;
       // Issue #187：false = 撞上 CD（或 run 失败）——此前这里直接丢弃，"CD 到期"
       // 成了没有监听者的时刻，要等下一次写入才救回来。改为按剩余窗口重排。
+      // Issue #529（续排）：跑成了也未必收工——池子还有没进这一轮的对时要接着追，
+      // 而此时已经没有待触发的写入了，不在这里补挂就永远等不到下一轮。
       const ran = await maybeSchedule();
-      if (!ran) armNextWindow();
+      if (!ran || catchupWanted) armNextWindow();
     }, delay);
     idleTimer.unref?.();
   }
@@ -1076,15 +1142,22 @@ export function createSleepScheduler({
     // Issue #529：这里必须和 shouldRun 用同一个有效间隔，否则退避期里重排的闹钟
     // 会在基数到点就响、然后被 shouldRun 否掉再重排——空转一串没有意义的定时器。
     const cdMs = effectiveMinIntervalMs();
-    const delay = Math.max(
+    let delay = Math.max(
       lastRunAt + cdMs - now(),
       lastWriteAt + idleMs - now(),
       0
     ) + 1000;
+    // Issue #529（续排）：冷却项按 0 处理之后，静默项可能已经是负的（这一轮跑得久、
+    // 期间没有新写入），算出来只剩那 1 秒——追 backlog 不该变成秒级连发。续排下限钉在
+    // 一个静默窗口上：追得动就每轮追一批，但每批之间仍然让库安静下来。
+    // 有写入时静默项会自己变大（账本行落库会重置 lastWriteAt），这里只是保证下限。
+    if (catchupWanted) delay = Math.max(delay, idleMs + 1000);
     idleTimer = setTimeoutFn(async () => {
       idleTimer = null;
       const ran = await maybeSchedule();
-      if (!ran) armNextWindow();
+      // Issue #529（续排）：与 armIdleTimer 的回调同一条理由——追 backlog 的轮次
+      // 跑完必须自己补挂，否则续排在第二张表就断了。
+      if (!ran || catchupWanted) armNextWindow();
     }, delay);
     idleTimer.unref?.();
   }
@@ -1141,15 +1214,52 @@ export function createSleepScheduler({
       if (result) {
         const failed = typeof result.status === "string" ? result.status === "failed" : !result.ok;
         consecutiveFailures = failed ? consecutiveFailures + 1 : 0;
+        // Issue #529（续排）：判据只认 runSleep 给的 catchup——它是"池子还有没进这一轮
+        // 的对"且"送出去的每一对都落地了"二者的合取。**不要**在这里拿 status 反推：
+        // 全判 keep 的轮次 applied 恒为 0、status 是 noop，恰好在最该追的场景失效。
+        // 连续失败时不追（与退避互斥，见 effectiveMinIntervalMs），并把连击计数清零——
+        // 失败说明这轮的"追"没有意义，重新从正常节奏起算。
+        // 连击到顶就收手，并把连击清零——不清零的话这个进程从此再也不会追（streak 只增
+        // 不减，之后每一轮都被同一道闸挡下），"等下一个静默窗口重新起算"就成了空话。
+        // 收手必须落在 catchupWanted 这个状态上，不能只写在 effectiveMinIntervalMs 里：
+        // 那里改成"返回基数"之后，armNextWindow 仍会按 catchupWanted 把闹钟钉在静默
+        // 窗口上重排，于是每 5 分钟醒一次、每次都被 shouldRun 否掉再重排——没有 LLM
+        // 调用，但定时器链永远不断。
+        const wantCatchup = result.catchup === true && consecutiveFailures <= 0;
+        if (!wantCatchup || catchupStreak + 1 >= CATCHUP_STREAK_CAP) {
+          catchupStreak = 0;
+          catchupWanted = false;
+        } else {
+          catchupStreak += 1;
+          catchupWanted = true;
+        }
       }
       return !!(result && result.ok);
     } catch (error) {
       logger?.warn?.(`dsh-mneme sleep: run failed: ${error?.message ?? error}`);
       consecutiveFailures += 1; // Issue #529：抛错同样计入连败
+      // Issue #529（续排）：抛错也算失败，续排意图一并清掉——否则上一轮置位的状态会跟着
+      // 逃出 try 块，让下一次排表仍按静默窗口的空转节奏走。
+      catchupWanted = false;
+      catchupStreak = 0;
       return false;
     } finally {
       sleepAbort = null;
       running = false;
+      // Issue #529 review（CodeRabbit ②）：运行期间用户写入会走 noteWrite()，它把闹钟
+      // 按**那一次写入**重算了一遍——那可能是静默窗口的尾声。若这一轮结束时报告
+      // catchup=true，那只表可能几秒后就要响，下一批紧接着开跑，于是「让库安静一个
+      // 静默窗口再追」变成「跑完立刻再跑」。这里把已挂着的表撤掉重挂，交给
+      // armNextWindow 从**此刻**算出整整一个静默窗口。
+      // 反过来（不追的轮次）保留 noteWrite 挂的那只表：它是按用户最后一次写入算的，
+      // 正是「用户写完了、安静满一个窗口再说」的意思。
+      if (catchupWanted) {
+        if (idleTimer) {
+          clearTimeoutFn(idleTimer);
+          idleTimer = null;
+        }
+        armNextWindow();
+      }
     }
   }
 
