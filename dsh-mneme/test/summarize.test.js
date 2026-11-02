@@ -2127,3 +2127,99 @@ test("#493 失败护栏：一次成功即清零计数，不会隔窗累计", asy
   summarizer.dispose();
   store.close();
 });
+
+// ============================ #493 补充：失败计数落库（不再只在进程内）
+// 报告者 strange2000（2026-11-02）第 ① 条：别只存裸计数。原先 streak 活在
+// createSummarizer 闭包里的一个 Map，重启即清零——而这道护栏要防的恰恰是「确定性
+// 失败反复重试」，重启一次就绕过去了。两条用例各自钉一半：
+// 1) 换一个 summarizer 实例（= 重启）后计数仍然接得上，阈值照旧触发；
+// 2) 会话停了很久之后计数失效，不会被几周前攒下的 streak 误伤（他特别点名的那个
+//    反例：护栏自己变成新的误伤路径）。
+test("#493 补充：失败计数落库——换一个 summarizer 实例（模拟重启）仍然接得上", async () => {
+  const store = createStore(":memory:");
+  const outputs = ["不是 JSON", "还不是 JSON", "依然不是 JSON"];
+  let attempt = 0;
+  const failStream = () => (async function* () {
+    yield { type: "block-start", block: { type: "text" } };
+    yield { type: "text-delta", delta: outputs[attempt++] ?? "[]" };
+    yield { type: "finish", kind: "ok" };
+  })();
+  const config = { summarizeParseFailureMaxRetries: 3, distillRateLimitIntervalMs: 0 };
+  const sessionOf = () => ({
+    id: "s493-persisted-streak",
+    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    events: [userMessage("会被放弃的窗口", 1), { seq: 2, type: "turn/end" }]
+  });
+
+  // 第一个实例：失败两次就「重启」（dispose + 丢掉闭包），阈值 3 还没到。
+  const first = setup(config, { store, stream: failStream });
+  const handlerA = eventHandler(first.events);
+  const sessionA = sessionOf();
+  await handlerA(sessionA, { seq: 2, type: "turn/end" });
+  await handlerA(sessionA, { seq: 2, type: "turn/end" });
+  first.summarizer.dispose();
+  assert.equal(first.service.getDistillCursor("s493-persisted-streak"), undefined, "两次失败还没到阈值，游标不推进");
+  assert.equal(first.store.getDistillParseFailureStreak("s493-persisted-streak"), 2,
+    "计数必须已经在库里——进程内 Map 在这里会是 0（重启就丢）");
+
+  // 第二个实例：同一个库、同一个会话。第 3 次失败必须凑满阈值并放弃窗口。
+  const second = setup(config, { store, stream: failStream });
+  const handlerB = eventHandler(second.events);
+  const sessionB = sessionOf();
+  await handlerB(sessionB, { seq: 2, type: "turn/end" });
+
+  assert.equal(second.service.getDistillCursor("s493-persisted-streak")?.last_seq, 2,
+    "重启前攒下的 2 次 + 这次的 1 次 = 阈值，窗口必须被放弃（进程内 Map 到这儿是 1，不会放弃）");
+  const abandoned = second.service.listLlmAudits().filter((r) => r.status === "error")
+    .find((r) => r.metadata?.skipped === "parse-failure-streak");
+  assert.equal(abandoned?.metadata?.streak, 3, "审计里的 streak 是**累计**值，不是本次进程内从 1 起算");
+  assert.equal(second.store.getDistillParseFailureStreak("s493-persisted-streak"), 0,
+    "放弃后清零：窗口已消费，下一窗从全新状态起算");
+  second.summarizer.dispose();
+  store.close();
+});
+
+test("#493 补充：停了很久的会话，旧 streak 失效，不会被几周前的失败误伤", async () => {
+  const store = createStore(":memory:");
+  let attempts = 0;
+  const { events, calls, service, summarizer } = setup(
+    { summarizeParseFailureMaxRetries: 2, distillRateLimitIntervalMs: 0 },
+    {
+      store,
+      stream() {
+        return (async function* () {
+          yield { type: "block-start", block: { type: "text" } };
+          yield { type: "text-delta", delta: attempts++ === 0 ? "不是 JSON" : "[]" };
+          yield { type: "finish", kind: "ok" };
+        })();
+      }
+    }
+  );
+  const handler = eventHandler(events);
+  const session = {
+    id: "s493-stale-streak",
+    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    events: [userMessage("隔了很久才回来的窗口", 1), { seq: 2, type: "turn/end" }]
+  };
+
+  // 先在库里种一条「很久以前失败过一次」的记录（阈值 2，再有一次就会熔断）。
+  service.bumpDistillParseFailureStreak("s493-stale-streak");
+  const ancient = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  store.db.prepare("UPDATE distill_parse_failures SET updated_at = ? WHERE session_id = ?").run(ancient, "s493-stale-streak");
+  assert.equal(store.getDistillParseFailureStreak("s493-stale-streak"), 1, "不判失效时它还在");
+  assert.equal(store.getDistillParseFailureStreak("s493-stale-streak", { staleAfterMs: 7 * 24 * 60 * 60 * 1000 }), 0,
+    "读侧带失效窗口时必须当 0：30 天前的失败不算「连续失败」");
+
+  // 于是这次的第一次失败应当只算 streak=1，不熔断；成功一次即清零。
+  await handler(session, { seq: 2, type: "turn/end" });
+  const firstFail = service.listLlmAudits().find((r) => r.status === "error");
+  assert.equal(firstFail?.metadata?.streak, 1, "旧记录失效之后，这次失败是「新的第一次」");
+  assert.equal(firstFail?.metadata?.skipped, undefined, "不许因为几周前的失败就直接熔断当前窗口");
+  assert.equal(service.getDistillCursor("s493-stale-streak"), undefined, "游标没被跳过，窗口仍可重试");
+
+  await handler(session, { seq: 2, type: "turn/end" });
+  assert.equal(calls.length, 2);
+  assert.equal(store.getDistillParseFailureStreak("s493-stale-streak"), 0, "成功即清零（DELETE，不是写 0）");
+  summarizer.dispose();
+  store.close();
+});

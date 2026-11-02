@@ -2638,6 +2638,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
     transaction,
     getDistillCursor: (sessionId) => store.getDistillCursor(sessionId),
     setDistillCursor: (sessionId, lastSeq) => store.setDistillCursor(sessionId, lastSeq),
+    // #493 补充 §②：解析失败计数是**跨进程**的事实（护栏默认关，但开着时重启一次
+    // 就清零等于让护栏可被重启绕过）。整条是 bookkeeping，不挂 write hook。
+    getDistillParseFailureStreak: (sessionId, opts) => store.getDistillParseFailureStreak(sessionId, opts),
+    bumpDistillParseFailureStreak: (sessionId, opts) => store.bumpDistillParseFailureStreak(sessionId, opts),
+    clearDistillParseFailureStreak: (sessionId) => store.clearDistillParseFailureStreak(sessionId),
     // #399 蒸馏原始记录与溯源：与上面两条游标一样是纯 passthrough——它们不是
     // 记忆写入，不该触发 syncMirror / notifyWrite / 实体抽取（那些钩子挂在
     // saveWithDedupe 上）。distill_records 的落盘由 summarize.js 在蒸馏窗口内
