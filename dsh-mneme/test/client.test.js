@@ -2621,6 +2621,9 @@ test("memory drawer surfaces distillation provenance, both layers (issue #512)",
 //    误读成「比 manual 边弱」，而 0.3→0.5 恰恰是被用出来的证据；
 // ③ 闸关着时要说「闸关着」，而不是显示「还没有边被抬过」——后者让人以为系统
 //    在工作但没数据，前者才说明是开关没开；
+// ③c 空表文案也不能断言「从未抬过权」：端点只列「权重高于其来源基线」的边，
+//    一条人工边以 0.5 建立、被抬到 0.6 仍然低于基线 1.0，它确实被抬过却不在表里。
+//    文案只能描述「当前筛选结果为空」（评审第四轮指出）。
 // ④ 收起时不发请求（默认收起是刻意的：这是审计视角，不是日常视角）。
 test("entity graph surfaces the passive-confirmation review surface (issue #24)", () => {
   for (const key of [
@@ -2674,6 +2677,21 @@ test("entity graph surfaces the passive-confirmation review surface (issue #24)"
     "the empty-table copy must render even when the gate is closed");
   assert.ok(!/off\s*\?[^:]*gateOff[^:]*:\s*\(boosted\.items/.test(gateBranch),
     "the gate must not short-circuit the list branch");
+
+  // ③c 空表文案只描述「当前筛选为空」，不能断言「从未有边被抬过」：端点按
+  // gain > 0 筛，而 gain 是相对来源基线算的——manual 边 0.5→0.6 涨了，却仍低于
+  // 基线 1.0，不在表里。说「还没抬过」就是事实错误。
+  for (const lang of ["zh", "en"]) {
+    const re = new RegExp(`"memory\\.graph\\.boosted\\.empty": "([^"]*)"`, "g");
+    const all = [...clientSource.matchAll(re)].map((m) => m[1]);
+    assert.equal(all.length, 2, `empty copy must exist in both languages (${lang})`);
+    for (const copy of all) {
+      assert.ok(!/还没|从未|nothing raised|no edge has been raised/i.test(copy),
+        `empty copy must not claim nothing was ever raised: ${copy}`);
+      assert.ok(/筛选|filter|筛选下|只列|only edges/i.test(copy),
+        `empty copy must describe the current filter instead: ${copy}`);
+    }
+  }
 
   // ③b 加载失败不能被说成「闸关」或「没有数据」——那会把接口故障误导成配置问题
   const failIdx = clientSource.indexOf("boosted.error === true");
