@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/@modusensus/dsh-mneme?color=blue&label=npm)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Awesome](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
-[![tests](https://img.shields.io/badge/tests-2638%20passed-success)](https://github.com/slow-stack/mneme)
+[![tests](https://img.shields.io/badge/tests-2654%20passed-success)](https://github.com/slow-stack/mneme)
 [![CI](https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml)](https://github.com/slow-stack/mneme/actions)
 [![node](https://img.shields.io/badge/node-22%2B-blue)](https://nodejs.org)
 [![npm downloads](https://img.shields.io/npm/d18m/@modusensus/dsh-mneme.svg?color=blue&label=downloads)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
@@ -535,7 +535,8 @@ dsh plugin --profile web add "C:/path/to/modusensus-dsh-mneme-0.9.0.tgz"
 | `GET` | `/profile` | 用户画像，返回 `{profile:"..."}`；未设置时为空字符串 |
 | `GET` | `/rules` | 行为规则列表，返回 `{rules:[...]}`；未设置时为空数组 |
 | `GET` | `/memories?limit&offset&type&minImportance&source&order=chrono&include_archived&occurred_from&occurred_to` | 分页列出记忆（`include_archived=true` 含归档；occurred 时间窗按 `occurred_at` 回退 `created_at`） |
-| `GET` | `/memory/provenance?id=<memoryId>` 或 `?sessionId=<sid>`（可选 `&limit=`，默认 20、上限 100） | 溯源读出口，两个方向共用一条路径（#421 拆出两条：方向 1 记忆→窗口由 #509 交付，方向 2 会话→窗口由 #524 补上；宿主内面板路由 `/api/dsh-mneme/memory/provenance` 同一口径）。**两个主键互斥**：都缺 `400 {"error":"missing-id"}`、都给 `400 {"error":"ambiguous-id"}`（刻意不静默择一——两个方向的结果形状不同，猜一个只会在出事之后才发现）。方向 1 是一条溯源链接一个窗口；方向 2 把同一个 `(session_id, seq_start, seq_end)` 合并成一项（`GROUP BY`），带 `link_count`＝这个窗口派生出几条记忆，按 `seq_start` 排——逐链接返回会让「这个会话蒸了几次」被重复行淹没。两个方向都带 `truncated`（撞上 limit 时说「还有更多」；少了它，被截断的答复与「本来就这么少」逐字节相同）。`records` 是那段蒸馏窗口的**逐条会话原文**（按 `seq` 升序、不越出区间）。没有链接返回**空 `windows`**——「不是蒸馏来的」是有效答案，不是错误。状态码阶梯：`401` 无 token → `400` 缺参/多参/`invalid-limit` → `409 {"error":"distill-records-disabled"}`（`distillRecords.enabled` 关着；该开关是**启动快照**，面板改完要到下次启动生效，面板会显示「待重启」）→ `503 {"error":"provenance-unavailable"}`（该方向要用的方法没接线，**按方向判**——只缺 session 侧方法时方向 1 仍然 200）→ `200`。`409` 与 `503` 必须分开读数：前者是「用户关了」，后者是「装配坏了」。**关开关 ≠ 删掉已留存原文**——只是不再经 HTTP 提供，盘上的行要 `dsh-mneme reclaim`（或重新开启后的启动裁剪）才走，详见 [docs/DISTILL.md](docs/DISTILL.md) |
+| `GET` | `/memory/provenance?id=<memoryId>` 或 `?sessionId=<sid>`（可选 `&limit=`，默认 20、上限 100） | 溯源读出口，两个方向共用一条路径（#421 拆出两条：方向 1 记忆→窗口由 #509 交付，方向 2 会话→窗口由 #524 补上；宿主内面板路由 `/api/dsh-mneme/memory/provenance` 同一口径）。**两个主键互斥**：都缺 `400 {"error":"missing-id"}`、都给 `400 {"error":"ambiguous-id"}`（刻意不静默择一——两个方向的结果形状不同，猜一个只会在出事之后才发现）。方向 1 是一条溯源链接一个窗口 `{session_id, seq_start, seq_end, created_at, distill_run_id, run_type, trigger_source, run_status, records[]}`（#512 补运行归因：run 是归因主体，窗口只是它的一批输入；读不到整轮归因时整组 `null`，**不从区间或时间戳反推**），答复级另带 `mints[]`（行级归因：这条记忆出生自哪一轮 dream/sleep，只填 create）；方向 2 把同一个 `(session_id, seq_start, seq_end)` 合并成一项（`GROUP BY`），带 `link_count`＝这个窗口派生出几条记忆，按 `seq_start` 排——逐链接返回会让「这个会话蒸了几次」被重复行淹没。两个方向都带 `truncated`（撞上 limit 时说「还有更多」；少了它，被截断的答复与「本来就这么少」逐字节相同）。`records` 是那段蒸馏窗口的**逐条会话原文**（按 `seq` 升序、不越出区间）。没有链接返回**空 `windows`**——「不是蒸馏来的」是有效答案，不是错误。状态码阶梯：`401` 无 token → `400` 缺参/多参/`invalid-limit` → `409 {"error":"distill-records-disabled"}`（`distillRecords.enabled` 关着；该开关是**启动快照**，面板改完要到下次启动生效，面板会显示「待重启」）→ `503 {"error":"provenance-unavailable"}`（该方向要用的方法没接线，**按方向判**——只缺 session 侧方法时方向 1 仍然 200）→ `200`。`409` 与 `503` 必须分开读数：前者是「用户关了」，后者是「装配坏了」。**关开关 ≠ 删掉已留存原文**——只是不再经 HTTP 提供，盘上的行要 `dsh-mneme reclaim`（或重新开启后的启动裁剪）才走，详见 [docs/DISTILL.md](docs/DISTILL.md) |
+
 | `GET` | `/memories/:id` | 单条记忆 |
 | `POST` | `/memories` | 新增记忆 `{type,title,content,importance?,tags?,source?,sensitivity?,occurred_at?,agent_scope?,workspace_scope?}`；响应含 `action: created\|merged` |
 | `PUT` | `/memories/:id` | 局部更新 `{title?,content?,type?,importance?,tags?,reason?,agent_scope?,workspace_scope?}`；content 改写按 human_override 入档 |
@@ -719,7 +720,7 @@ src/
 ├── api.js            # HTTP 路由（Web 面板数据通道，含 /conflicts 冲突队列）
 └── index.js          # 插件接线
 lib/                  # src 的同步分发产物（npm run sync，prepack 钩子在发布时自动跑；一致性由 scripts/check-sync.js 在 CI 与 release.yml 校验——它只查不同步；唯一手写例外 lib/client.js——Web 面板 bundle，sync 不覆盖）
-test/                 # 2638 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
+test/                 # 2654 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
 scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压测 · sync-lib.js 同步 · check-sync.js 发布闸门 · benchmark-recall.js / benchmark-embed.js / benchmark-rerank.js 基准 · sync-test-badge.mjs 测试徽章 · build-runtime-manifest.mjs 运行时清单
 ```
 
@@ -728,7 +729,7 @@ scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压
 ```bash
 cd dsh-mneme
 npm install        # 安装 peer 依赖（以 devDependencies 形式，用于本地测试）
-npm test           # 运行 2638 个测试
+npm test           # 运行 2654 个测试
 npm run stress     # 三轴线压测：长会话检索 / 冲突仲裁 / 多 Agent 并发（离线 mock LLM）
 npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动执行）
 ```

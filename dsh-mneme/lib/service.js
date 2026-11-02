@@ -2652,6 +2652,14 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // （idx_memory_provenance_session），所以也是纯 passthrough——读的是 #399 早就
     // 落好的事实，不产生任何写入。
     distillWindowsFor: (sessionId, limit) => store.distillWindowsFor(sessionId, limit),
+    // #512 蒸馏运行与铸造归因：同样是 bookkeeping passthrough（与 saveDreamRun
+    // 那一组同语义）——run 是审计主体，notifyWrite 会绕回它自己的调度器。
+    saveDistillRun: (run) => store.saveDistillRun(run),
+    attachDistillRunAudit: (id, auditId) => store.attachDistillRunAudit(id, auditId),
+    getDistillRun: (id) => store.getDistillRun(id),
+    listDistillRuns: (opts) => store.listDistillRuns(opts),
+    saveMemoryMint: (mint) => store.saveMemoryMint(mint),
+    mintsFor: (memoryId) => store.mintsFor(memoryId),
     enqueue,
     setDreamHook(fn) { dreamHook = fn; },
     setSleepHook(fn) { sleepHook = fn; },

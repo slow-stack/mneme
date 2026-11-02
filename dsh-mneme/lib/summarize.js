@@ -6,6 +6,9 @@ import { STR, langOf } from "./lang.js";
 import { withEffortFallback, describeStreamFailure, EFFORT_REJECT_RE } from "./dream.js";
 // v0.9.0（M.O. 项目记忆）：蒸馏写入复用工具路径那把作用域解析器，见 createSummarizer。
 import { createScopeResolver } from "./scope.js";
+// #512：每轮蒸馏一个 run id（归因主体）。store 侧也能铸造，但这里必须知道它——
+// 写记忆时要把它一路带到 saveMemoryProvenance / 落 run 行，拿回来再写就是两次往返。
+import { randomUUID } from "node:crypto";
 
 // 编码记忆蒸馏 prompt（codingRetrospect 开启时启用）：在通用记忆之外，额外提取
 // 三类编码专属记忆，专治重复踩坑 / 遗忘被否决方案 / 丢失工程约束。字段仍沿用
@@ -735,6 +738,14 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
     // ever blocking the summarization itself.
     let audit = null;
     let abortedRun = false;
+    // #512：run 的三个事实必须活在 try 之外——finally 要落 run 行，而 finally 看不见
+    // try 块内声明的 let/const（会 ReferenceError，且那一下会把 inFlight 的清理一起跳过）。
+    let distillRunId = null;
+    let distillRunOpenedAt = null;
+    let distilledMemoryCount = 0;
+    let distilledWindow = null;
+    let distillRunStatus = null;
+    let distillRunError = null;
     try {
       if (!route) return;
       const persistedCursor = typeof service.getDistillCursor === "function"
@@ -800,6 +811,19 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       // 原语义占用（调用确实发生过），aborted 则由 finally 回滚。
       lastRunAt.set(session.id, Date.now());
       runsUsed.set(session.id, (prevRuns ?? 0) + 1);
+
+      // #512：一轮蒸馏 = 一个 run。落点选在这里而不是更早——上面所有 return（间隔门、
+      // 高峰门、run 预算、空窗口、窗口过小）都不是一轮真蒸馏，各有自己的审计口径；
+      // 从这里往下就是「调用确实发生过」，与 lastRunAt 那两行的边界完全重合。
+      // run 的落盘在 finally 里独立 try/catch：归因是审计主体，写不成只该 warn，
+      // 不该把已经落盘的记忆连坐。所以本函数在 store 没有该能力时整体降级为无归因。
+      // 归因用的三件事都从**真正发生的事**里取，不从推断里取：区间取实际写进
+      // memory_provenance 的那个窗口（transcript 关了就没有），条数取实际写成功的
+      // 记忆数（含 merged——被并入的既有行确实由这段原文改动）。
+      if (typeof service?.saveDistillRun === "function") {
+        distillRunId = randomUUID();
+        distillRunOpenedAt = new Date(now()).toISOString();
+      }
 
       if (config?.llmAudit?.enabled !== false && typeof service.saveLlmAudit === "function") {
         audit = {
@@ -942,6 +966,13 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       const { text, assembledText, aborted } = result ?? { text: "", assembledText: "", aborted: true };
       if (aborted) {
         abortedRun = true;
+        // #512：aborted 不等于「没发生」——LLM 调用真的发出去了，窗口也因此没被消费。
+        // 只有 dispose / 会话关闭才是「这一轮被主动打断」；模型侧流失败是一次失败的轮次，
+        // 两者在 run 台账上必须分得开，否则「这个窗口为什么一直没记忆」查不到原因。
+        distillRunStatus = controller.signal.aborted ? "aborted" : "failed";
+        distillRunError = controller.signal.aborted
+          ? "disposed"
+          : (streamFailure || "llm stream aborted");
         return;
       }
       const parsedResult = parseSummaryJsonResult(text || assembledText);
@@ -968,11 +999,15 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           commitCursor(session.id, nextSeq);
           parseFailureStreak.delete(session.id);
         }
+        // 读数与错误文案由同一个纯函数产出（#502）：三种失败形态各有各的说法，
+        // 「模型在说话」与「分类词不在枚举内」不能都写成 invalid summary JSON。
+        const failureAudit = summarizeParseFailureAudit(raw, parsedResult?.failure);
+        // #512：解析失败也是失败轮，run 要和 audit 记同一句原因（两个口径不一致
+        // 等于让人去猜哪一边是对的）。
+        distillRunStatus = "failed";
+        distillRunError = failureAudit.errorMessage;
         if (audit) {
           audit.status = "error";
-          // 读数与错误文案由同一个纯函数产出（#502）：三种失败形态各有各的说法，
-          // 「模型在说话」与「分类词不在枚举内」不能都写成 invalid summary JSON。
-          const failureAudit = summarizeParseFailureAudit(raw, parsedResult?.failure);
           audit.errorMessage = failureAudit.errorMessage;
           audit.metadata = {
             distillChars,
@@ -1063,8 +1098,14 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           // 被并入的既有记忆——本次窗口的原文确实贡献了它，链接它是诚实的。
           if (outcome?.memory?.id) savedIds.push(outcome.memory.id);
         }
+        // #512：run 的条数口径是「本次写成功的记忆行数」，与 savedIds 同源——
+        // 另起一个计数器会在 merged 分支上与它对不上（那一路也 push 了 id）。
+        distilledMemoryCount = savedIds.length;
         if (transcript && transcript.records.length) {
           service.saveDistillRecords(transcript.records);
+          if (transcript.seqStart !== undefined && transcript.seqEnd !== undefined) {
+            distilledWindow = { seqStart: transcript.seqStart, seqEnd: transcript.seqEnd };
+          }
           if (transcript.seqStart !== undefined && transcript.seqEnd !== undefined
             && typeof service.saveMemoryProvenance === "function") {
             for (const memoryId of savedIds) {
@@ -1073,7 +1114,11 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
                 sessionId: session.id,
                 seqStart: transcript.seqStart,
                 seqEnd: transcript.seqEnd,
-                createdAt: distilledAt
+                createdAt: distilledAt,
+                // #512：链接指回产出它的那一轮。distillRecords 关着时这里本就不跑，
+                // 于是那一轮不会留下任何窗口级归因——这是诚实的（没存原文就没有
+                // 「这段原文」可指），run 行本身照落，条数与状态仍然可查。
+                distillRunId: distillRunId ?? undefined
               });
             }
           }
@@ -1096,6 +1141,12 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       // Issue #239 定标：窗口字符数无条件随成功行落进 metadata。原先只有
       // capped / deduped / salvaged 其中一项发生时才建 metadata，默认档位下
       // 一条都不留——下一级预判规则的阈值就无从定标。
+      // #512：走到这里说明整轮真的落地了（记忆写入 + 游标提交都没抛）。状态按
+      // 实际产出分档，与 dream_runs 的 status 词表对齐：没有可写的记忆是 noop，
+      // 有记忆就是 ok。degraded 留给「写了但解析有损」那一路（下面按 salvaged 判）。
+      distillRunStatus = distilledMemoryCount > 0
+        ? (parsedResult.salvaged ? "degraded" : "ok")
+        : "noop";
       if (audit) {
         audit.metadata = {
           distillChars,
@@ -1109,6 +1160,8 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       // 都会在此之前退出，从而保留窗口供下一次重试。
       if (Number.isFinite(nextSeq)) lastDistilledSeq.set(session.id, nextSeq);
     } catch (error) {
+      distillRunStatus = abortedRun || controller.signal.aborted ? "aborted" : "failed";
+      distillRunError = String(error?.message ?? error);
       if (audit) {
         audit.status = "error";
         audit.errorMessage = String(error?.message ?? error);
@@ -1125,9 +1178,14 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         if (prevRuns === undefined) runsUsed.delete(session.id);
         else runsUsed.set(session.id, prevRuns);
       }
+      // #512：run 与它的开销读数（audit 行）分开落，且都不许把已经写好的记忆连坐——
+      // 归因是审计，写不成只该 warn。顺序刻意是「先 audit 后 run」：run.audit_id 要
+      // 引用刚插进去的那一行，而 saveLlmAudit 是按 lastInsertRowid 回读的
+      // （#534/#535 那条注释），拿到的就是自己那行，不会被并发写串。
+      let auditRow = null;
       if (audit) {
         try {
-          service.saveLlmAudit({
+          auditRow = service.saveLlmAudit({
             timestamp: audit.timestamp,
             trigger_source: "autoSummarize",
             operation_type: "summarize_compress",
@@ -1146,6 +1204,31 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           });
         } catch (auditError) {
           ctx.logger?.warn?.(`dsh-mneme: llm audit write failed: ${String(auditError)}`);
+        }
+      }
+      // #512：一轮真蒸馏对应一行 distill_runs，落点必须在这里（finally）而不是
+      // 事务里：run 是审计主体，事务只负责「记忆 + 原文 + 链接」同生共死；把 run
+      // 塞进事务会让一个审计写失败回滚掉已经算出来的记忆。
+      // status 为 null 说明在开轮之前就退出了（间隔门/高峰门/短窗口），那不是一轮。
+      if (distillRunId && distillRunStatus) {
+        try {
+          service.saveDistillRun({
+            id: distillRunId,
+            created_at: distillRunOpenedAt,
+            status: distillRunStatus,
+            error: distillRunError ?? undefined,
+            run_type: "autoSummarize",
+            trigger_source: "autoSummarize",
+            session_id: session.id,
+            seq_start: distilledWindow?.seqStart,
+            seq_end: distilledWindow?.seqEnd,
+            memory_count: distilledMemoryCount,
+            provider: audit?.route?.provider ?? route?.provider,
+            model: audit?.route?.model ?? route?.model,
+            audit_id: auditRow?.id
+          });
+        } catch (runError) {
+          ctx.logger?.warn?.(`dsh-mneme: distill run write failed: ${String(runError)}`);
         }
       }
       inFlight.delete(session.id);

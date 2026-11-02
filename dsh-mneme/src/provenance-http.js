@@ -198,20 +198,51 @@ export function provenanceReply({ service, selector, config = null, warn = null 
       ? service.distillWindowsFor(selector.sessionId, limit + 1)
       : service.provenanceFor(selector.memoryId);
     const truncated = rows.length > limit;
-    const windows = rows.slice(0, limit).map((link) => ({
-      session_id: link.session_id,
-      seq_start: link.seq_start,
-      seq_end: link.seq_end,
-      created_at: link.created_at,
-      link_count: link.link_count ?? 1,
-      // link_count 只有方向 2（session）会带：一个窗口派生出几条记忆。方向 1 的每
-      // 一行本来就是「一条记忆 → 一个窗口」，这个计数恒为 1，带出去只会是噪音（用
-      // ?? 兜住，免得方向 1 的答复凭空多一个 null 键）。
-      records: service.distillRecordsFor(link.session_id, link.seq_start, link.seq_end)
-    }));
+    // #512：run 是归因主体，窗口只是它的一批输入。能读到 run 就带上 run_type /
+    // trigger_source / status，读不到（旧库历史链接、或 store 没这一步）就整组
+    // 缺省——**不拿区间或时间戳去猜**：「看起来能追、实际是编的」比没有更坏。
+    const canReadRuns = typeof service?.getDistillRun === "function";
+    const windows = rows.slice(0, limit).map((link) => {
+      const base = {
+        session_id: link.session_id,
+        seq_start: link.seq_start,
+        seq_end: link.seq_end,
+        created_at: link.created_at,
+        // 到期裁剪后区间可能变空：链接刻意保留并指向空区间（clearDistillRecords 的
+        // 语义），面板据此显示「原文已过期」而非「没有来源」。
+        records: service.distillRecordsFor(link.session_id, link.seq_start, link.seq_end)
+      };
+      if (mode === "session") {
+        // link_count 只有方向 2（session）会带：一个窗口派生出几条记忆。方向 1 的每
+        // 一行本来就是「一条记忆 → 一个窗口」，这个计数恒为 1，带出去只会是噪音（用
+        // ?? 兜住，免得方向 1 的答复凭空多一个 null 键）。
+        return { ...base, link_count: link.link_count ?? 1 };
+      }
+      // 方向 2 的一行是一个窗口、可能派生多条记忆，没有单一归因主体，所以运行归因
+      // 只挂在方向 1 上；要逐条查某条记忆出生自哪一轮，仍走方向 1。
+      const run = canReadRuns && link.distill_run_id ? service.getDistillRun(link.distill_run_id) : undefined;
+      return {
+        ...base,
+        // #512：distill_run_id 为 null 就是历史行为——改造之前写下的链接没有第二轮
+        // 真相可查，面板据此显示「这一条没有运行归因」而不是给一个像样的空壳。
+        distill_run_id: link.distill_run_id ?? null,
+        run_type: run?.run_type ?? null,
+        trigger_source: run?.trigger_source ?? null,
+        run_status: run?.status ?? null
+      };
+    });
+    // 行级铸造归因（#512）：这条记忆出生自哪一轮。与窗口级是两层，各自独立缺省。
+    const mints = mode === "memory" && typeof service?.mintsFor === "function"
+      ? service.mintsFor(selector.memoryId).map((mint) => ({
+        run_id: mint.run_id,
+        run_type: mint.run_type,
+        trigger_source: mint.trigger_source,
+        created_at: mint.created_at
+      }))
+      : [];
     const body = mode === "session"
       ? { sessionId: selector.sessionId, windows, truncated }
-      : { memoryId: selector.memoryId, windows, truncated };
+      : { memoryId: selector.memoryId, windows, truncated, mints };
     return { status: 200, body };
   } catch (error) {
     warn?.(provenanceWarnMessage(error));

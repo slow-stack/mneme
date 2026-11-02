@@ -1637,6 +1637,82 @@ test("issue#399: expiring records keeps the memories and leaves provenance dangl
   assert.ok(store.provenanceFor(memoryId).length >= 1, "面板/CLI 仍能回答「这条记忆出自哪个窗口」，只是来源已过期");
 });
 
+// ── Issue #512：蒸馏归因补 run 概念 ────────────────────────────────────────
+//
+// 这四条锁的是「这条记忆是哪一次蒸馏带进来的」这条问句现在回答得出来：
+//   ① 一轮真蒸馏落一行 distill_runs，链接上带同一个 distill_run_id；
+//   ② run 与它的开销读数（llm_audit_logs）靠 audit_id 直连，不靠时间戳猜；
+//   ③ llmAudit 关掉时 run 仍然成立（归因不该依赖计费开关），只是没有 audit_id；
+//   ④ 失败轮也留一行——「那一轮跑了但没成」本身就是归因要回答的事。
+// 反面（历史链接保持 NULL、不回填）在 test/store.test.js 的迁移用例里锁。
+
+test("issue#512: a distilled window records one run, and every link points at it", async () => {
+  const { events, store } = setup(RECORDS_ON);
+  const session = recordsSession("s512-ok", [userMessage("这轮要能追到 run", 1), { seq: 2, type: "turn/end" }]);
+  await eventHandler(events)(session, { seq: 2, type: "turn/end" });
+
+  const runs = store.listDistillRuns();
+  assert.equal(runs.length, 1, "一轮真蒸馏就是一行 run");
+  const run = runs[0];
+  assert.equal(run.status, "ok");
+  assert.equal(run.run_type, "autoSummarize");
+  assert.equal(run.trigger_source, "autoSummarize");
+  assert.equal(run.session_id, "s512-ok");
+  assert.deepEqual([run.seq_start, run.seq_end], [1, 2], "run 记的是这一步真正蒸馏掉的窗口");
+  assert.equal(run.memory_count, 2, "记忆条数是实际写成功的条数");
+
+  const links = store.db.prepare("SELECT memory_id, distill_run_id FROM memory_provenance").all();
+  assert.equal(links.length, 2);
+  for (const link of links) {
+    assert.equal(link.distill_run_id, run.id, "每条记忆的链接都指向这一轮，不是 NULL、也不是别的轮");
+  }
+});
+
+test("issue#512: the run and its spend row are joined by audit_id, not guessed from timestamps", async () => {
+  const { events, store } = setup(RECORDS_ON);
+  const session = recordsSession("s512-audit", [userMessage("归因要连到开销行", 1), { seq: 2, type: "turn/end" }]);
+  await eventHandler(events)(session, { seq: 2, type: "turn/end" });
+
+  const run = store.listDistillRuns()[0];
+  const audits = store.listLlmAudits({ source: "autoSummarize" });
+  assert.equal(audits.length, 1);
+  assert.equal(run.audit_id, audits[0].id, "run 直接指着它自己那一行，不靠时间窗匹配");
+  // 反向也成立：从 run 拿到的 id 读回来就是那一条。
+  const join = store.getDistillRun(run.id);
+  assert.equal(join.audit_id, audits[0].id);
+});
+
+test("issue#512: with llmAudit off the run still lands — attribution must not depend on the spend switch", async () => {
+  const { events, store } = setup({ ...RECORDS_ON, llmAudit: { enabled: false } });
+  const session = recordsSession("s512-noaudit", [userMessage("关了计费也要能归因", 1), { seq: 2, type: "turn/end" }]);
+  await eventHandler(events)(session, { seq: 2, type: "turn/end" });
+
+  assert.equal(store.listLlmAudits().length, 0, "开关关着，一行 audit 都不写");
+  const runs = store.listDistillRuns();
+  assert.equal(runs.length, 1, "但 run 照落");
+  assert.equal(runs[0].status, "ok");
+  assert.equal(runs[0].audit_id, undefined, "没有开销行时这一列是空的——不填假 id");
+});
+
+test("issue#512: a failed round still leaves a run row saying it failed", async () => {
+  // 流失败：窗口保留待重试，但「跑过一轮且失败」这件事必须留痕，否则归因只记得住成的。
+  const { events, store } = setup(RECORDS_ON, {
+    stream: () => (async function* () {
+      yield { type: "block-start", block: { type: "text" } };
+      yield { type: "finish", kind: "error", error: { message: "upstream exploded" } };
+    })()
+  });
+  const session = recordsSession("s512-fail", [userMessage("这轮会失败", 1), { seq: 2, type: "turn/end" }]);
+  await eventHandler(events)(session, { seq: 2, type: "turn/end" });
+
+  const runs = store.listDistillRuns();
+  assert.equal(runs.length, 1, "失败轮也是一轮");
+  assert.equal(runs[0].status, "failed");
+  assert.ok(runs[0].error, "失败要有原因，空错误等于没说");
+  assert.equal(runs[0].memory_count, 0);
+  assert.equal(countRows(store, "SELECT count(*) AS c FROM distill_records"), 0, "失败轮不落原文");
+});
+
 test("issue#399: enabled=false (the default) writes nothing at all", async () => {
   const { events, store, service } = setup({ distillRateLimitIntervalMs: 0 });
   let saverCalls = 0;

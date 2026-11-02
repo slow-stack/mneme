@@ -525,7 +525,7 @@ export function applyDecisions(decisions, service, logger = null, snapshot = nul
         committed.push({ action: "keep", ids: d.ids });
         continue;
       }
-      const outcome = applyOne(d, service, snapshot, config);
+      const outcome = applyOne(d, service, snapshot, config, logger);
       if (outcome === "skipped") continue;
       applied += outcome.applied;
       committed.push(outcome.committed);
@@ -542,14 +542,14 @@ export function applyDecisions(decisions, service, logger = null, snapshot = nul
   return { applied, conflicts, failures, committed };
 }
 
-function applyOne(d, service, snapshot, config = {}) {
+function applyOne(d, service, snapshot, config = {}, logger = null) {
   switch (d.action) {
     case "archive": return applyArchive(d, service, snapshot);
     case "merge": return applyMerge(d, service, snapshot, config);
     case "conflict": return applyConflict(d, service, snapshot, config);
     case "supersede": return applySupersede(d, service, snapshot, config);
     case "differentiate": return applyDifferentiate(d, service, snapshot, config);
-    case "create": return applyCreate(d, service, config);
+    case "create": return applyCreate(d, service, config, logger);
     default: return applyUpdate(d, service, snapshot, config);
   }
 }
@@ -581,7 +581,7 @@ function pickBestKeeper(ids, preferred, service) {
  * Evidence ids ride in the content so a pattern stays traceable to its source
  * memories. saveWithDedupe dedupes identical mints (idempotent replay-safe).
  */
-function applyCreate(d, service, config = {}) {
+function applyCreate(d, service, config = {}, logger = null) {
   const language = langOf(config);
   const title = String(d.title ?? "").trim();
   const content = String(d.content ?? "").trim();
@@ -606,6 +606,22 @@ function applyCreate(d, service, config = {}) {
   });
   const memory = created?.memory;
   if (!memory) return "skipped"; // deduped/subsumed: nothing minted, clean no-op
+  // #512：这条记忆出生自哪一轮。只记 create——merge/conflict/update/supersede 对
+  // 既有行的改动已由 receipt_chain 按 (run_id, record_id) 记账，再造一份就是第二套账。
+  // 记账失败不许拖垮这次铸造：归因是审计，记忆已经落盘了。
+  try {
+    if (typeof service?.saveMemoryMint === "function" && config?.runId) {
+      service.saveMemoryMint({
+        memoryId: memory.id,
+        runId: config.runId,
+        runType: config.mintSource === "sleep" ? "sleep" : "dream",
+        triggerSource: config.mintSource === "sleep" ? "sleep" : "autoDream",
+        createdAt: new Date().toISOString()
+      });
+    }
+  } catch (mintError) {
+    logger?.warn?.(`dsh-mneme dream: failed to record memory mint: ${String(mintError?.message ?? mintError)}`);
+  }
   return { applied: 1, committed: { action: "create", id: memory.id, type } };
 }
 

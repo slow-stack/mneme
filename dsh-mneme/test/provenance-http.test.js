@@ -129,10 +129,52 @@ test("provenanceReply：一个链接一个窗口，原文按 seq 升序且不越
   assert.deepEqual(seen, [["s1", 10, 12]], "区间原样透传给 store");
 });
 
+test("provenanceReply #512：窗口带得动归属的那一轮 run，读不到就整组缺省而不是猜", () => {
+  const runs = new Map([["r1", { run_type: "autoSummarize", trigger_source: "autoSummarize", status: "ok" }]]);
+  const service = {
+    provenanceFor: () => [
+      { session_id: "s1", seq_start: 10, seq_end: 12, created_at: "2026-11-02T00:00:00Z", distill_run_id: "r1" },
+      // 改造之前写下的链接：distill_run_id 是 NULL。
+      { session_id: "s1", seq_start: 20, seq_end: 22, created_at: "2026-09-01T00:00:00Z", distill_run_id: null }
+    ],
+    distillRecordsFor: () => [],
+    getDistillRun: (id) => runs.get(id),
+    mintsFor: () => [{ run_id: "d1", run_type: "dream", trigger_source: "autoDream", created_at: "2026-11-01T00:00:00Z" }]
+  };
+  const r = provenanceReply({ service, selector: MEM, config: RECORDS_ON });
+  assert.equal(r.status, 200);
+  const [fresh, legacy] = r.body.windows;
+  assert.equal(fresh.distill_run_id, "r1");
+  assert.equal(fresh.run_type, "autoSummarize");
+  assert.equal(fresh.trigger_source, "autoSummarize");
+  assert.equal(fresh.run_status, "ok");
+  // 历史链接：id 为 null，三个派生字段也必须是 null——不许拿区间或时间戳反推一轮。
+  assert.equal(legacy.distill_run_id, null);
+  assert.equal(legacy.run_type, null, "没有 run 就不给类型，否则等于替用户编了一次归因");
+  assert.equal(legacy.trigger_source, null);
+  assert.equal(legacy.run_status, null);
+  assert.equal(r.body.mints.length, 1);
+  assert.equal(r.body.mints[0].run_type, "dream");
+});
+
+test("provenanceReply #512：service 没有 run 读取能力时，窗口字段照旧齐全但归因为空", () => {
+  // headless / 旧装配：provenanceFor 与 distillRecordsFor 在，getDistillRun / mintsFor 不在。
+  const service = {
+    provenanceFor: () => [{ session_id: "s1", seq_start: 1, seq_end: 2, created_at: "2026-11-02T00:00:00Z", distill_run_id: "r9" }],
+    distillRecordsFor: () => []
+  };
+  const r = provenanceReply({ service, selector: MEM, config: RECORDS_ON });
+  assert.equal(r.status, 200, "读 run 的能力缺一档不算装配坏——窗口本身仍可读");
+  assert.equal(r.body.windows[0].distill_run_id, "r9");
+  assert.equal(r.body.windows[0].run_type, null);
+  assert.deepEqual(r.body.mints, []);
+});
+
 test("provenanceReply：没有链接是有效答案——空 windows，200 不是 404", () => {
   const r = provenanceReply({ service: fakeService(), selector: MEM, config: RECORDS_ON });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body, { memoryId: "m1", windows: [], truncated: false });
+  // #524 的 truncated 与 #512 的 mints 都是答复级读数，各自独立缺省。
+  assert.deepEqual(r.body, { memoryId: "m1", windows: [], truncated: false, mints: [] });
 });
 
 test("provenanceReply：方法没接线是装配坏了——503，不与「没有来源」混为一个读数", () => {

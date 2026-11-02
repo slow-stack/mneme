@@ -351,6 +351,61 @@ CREATE INDEX IF NOT EXISTS idx_memory_provenance_session ON memory_provenance(se
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_provenance_link
   ON memory_provenance(memory_id, session_id, seq_start, seq_end);
 
+-- #512 蒸馏运行（run）：一次 autoSummarize 调用就是一轮。此前这条链路只在
+-- llm_audit_logs 里留一条计费痕迹，记忆侧的链接却只记到「会话 + seq 区间」——
+-- 「这条记忆是哪一次蒸馏带进来的」答不上，同一个区间重跑两次更分不出前后。
+-- 与 llm_audit_logs 的关系是**归因主体与它的开销读数**：run 是被归因的那一轮，
+-- audit 行是那一轮的开销；两边靠 distill_runs.audit_id 直接连，不靠时间戳猜。
+-- 为什么不复用 llm_audit_logs 的行 id 当 run id：audit 表按 llmAudit.retentionDays
+-- 到期裁剪（index.js 启动即调 deleteOldLlmAudits），归因会悬空；而 memory_provenance
+-- 与蒸馏窗口刻意活得更久（见 clearDistillRecords 注释）。归因不能挂在会被删掉的表上。
+-- 为什么不复用 dream_runs：那张表的每一列（snapshot_hash / input_count / decisions /
+-- outcome / receipt）都是巩固的语义，硬塞一个 run_type='autoSummarize' 会让
+-- 「dream_runs 的每一行都能回放一次巩固」这条契约失效。两张表各自的形状才是真的。
+-- audit_id 可空：llmAudit 关掉时那一轮没有 audit 行，run 仍然成立（归因不该依赖计费开关）。
+CREATE TABLE IF NOT EXISTS distill_runs (
+  id             TEXT PRIMARY KEY,
+  created_at     TEXT NOT NULL,
+  status         TEXT NOT NULL,   -- ok | degraded | noop | failed | aborted
+  error          TEXT,
+  -- 只放**有窗口**的蒸馏（autoSummarize，以及将来手动的 manual）。dream / sleep 的
+  -- 轮次不进这张表：它们是 dream_runs 的行，把同一轮复制成两行会让「哪张表是事实源」
+  -- 这个问题永远没有答案；那些记忆的归因走 memory_mints（见下）。
+  run_type       TEXT NOT NULL,   -- autoSummarize | manual
+  trigger_source TEXT NOT NULL,   -- autoSummarize | manual
+  session_id     TEXT,
+  seq_start      INTEGER,
+  seq_end        INTEGER,
+  memory_count   INTEGER NOT NULL DEFAULT 0,
+  provider       TEXT,
+  model          TEXT,
+  audit_id       INTEGER          -- llm_audit_logs.id（NULL = 那一轮没有 audit 行）
+);
+CREATE INDEX IF NOT EXISTS idx_distill_runs_created ON distill_runs(created_at);
+
+-- #512 记忆级「出生自哪一轮」。为什么它不是 memory_provenance 的一列：那张表的
+-- 粒度是 (记忆, 会话, seq 区间)，能表达的只有**窗口派生**的归因；而 dream / sleep
+-- 铸造的记忆根本没有窗口（session 与 seq 都不存在），硬塞一个合成区间就是
+-- 「看起来能追、实际是编的」。所以归因分两层，各自只记它真知道的事：
+--   · memory_provenance（+ distill_run_id）= 窗口级，「这段原文是哪一轮蒸出来的」；
+--   · 本表 = 行级，「这条记忆出生自哪一轮」，覆盖没有窗口的铸造路径。
+-- 只填 **create** 一种动作：merge/conflict/update/supersede 对既有行的改动，receipt_chain
+-- 已经按 (run_id, record_id) 记过了——再造一份就是第二套账。create 是那边唯一的洞
+-- （buildOutcome 刻意不给 create 派 disposition，receipt_chain 也就不产行）。
+-- run_type / trigger_source 就地冗余：run_id 在 dream_runs 与 distill_runs 两张表里
+-- 各有自己的主键域，读侧不该为了显示一个类型去 union 两张审计表。
+-- ON DELETE CASCADE：记忆行没了，归因没有指代对象；remove() 仍显式清（与
+-- memory_provenance 同一口径，不把清理挂在驱动默认上）。
+CREATE TABLE IF NOT EXISTS memory_mints (
+  memory_id      TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  run_id         TEXT NOT NULL,
+  run_type       TEXT NOT NULL,   -- dream | sleep
+  trigger_source TEXT NOT NULL,   -- autoDream | sleep
+  created_at     TEXT NOT NULL,
+  PRIMARY KEY (memory_id, run_id)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_mints_run ON memory_mints(run_id);
+
 -- entity gene (v0.3.0): named entities mentioned across memories, with
 -- time-boxed attributes (valid_from → valid_until) and typed relations.
 -- Attributes follow the snapshot style: saveAttr invalidates the previous
@@ -648,6 +703,26 @@ function toDreamRun(row) {
     store_chars: row.store_chars ?? undefined,
     // #534：失败轮的模型原始输出截断副本（NULL = 该轮没留下，或该轮是历史行）。
     raw_output: row.raw_output ? JSON.parse(row.raw_output) : undefined
+  };
+}
+
+function toDistillRun(row) {
+  if (!row) return undefined;
+  return {
+    id: row.id,
+    created_at: row.created_at,
+    status: row.status,
+    error: row.error ?? undefined,
+    run_type: row.run_type,
+    trigger_source: row.trigger_source,
+    session_id: row.session_id ?? undefined,
+    seq_start: row.seq_start ?? undefined,
+    seq_end: row.seq_end ?? undefined,
+    memory_count: row.memory_count ?? 0,
+    provider: row.provider ?? undefined,
+    model: row.model ?? undefined,
+    // NULL = 那一轮没有 audit 行（llmAudit 关着，或还没写回）。
+    audit_id: row.audit_id ?? undefined
   };
 }
 
@@ -1049,6 +1124,14 @@ export function createStore(path) {
   // 之后：老库打开时列还不存在（SCHEMA 的 CREATE TABLE 只对新建库生效）。
   addColumn("llm_audit_logs", "session_key", "ALTER TABLE llm_audit_logs ADD COLUMN session_key TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS idx_llm_audit_session ON llm_audit_logs(session_key);");
+
+  // #512：把每条溯源链接指回产出它的那一轮蒸馏（distill_runs.id）。
+  // 存量链接一律留 NULL——那是**本次改造之前的历史**，按 (session, 区间, created_at)
+  // 反推一个合成 id 会得到「读数正常、实际是猜的」归因，比不填更坏（与 #534
+  // raw_output「历史失败轮反推不出原文」同一口径：补不出的就承认补不出）。
+  // 索引建在加列之后：老库打开时列还不存在（SCHEMA 的 CREATE TABLE 只对新建库生效）。
+  addColumn("memory_provenance", "distill_run_id", "ALTER TABLE memory_provenance ADD COLUMN distill_run_id TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_memory_provenance_run ON memory_provenance(distill_run_id);");
 
   // Audit peer F: a legacy DB may hold a non-integer generation/applied_generation
   // (pre-v0.3.9 the JS gate truncated with Math.trunc and SQLite's CHECK only
@@ -1480,6 +1563,8 @@ export function createStore(path) {
       // 只有这一条挡得住。记录本身（distill_records）不删——删掉一条派生记忆
       // 不该让整个窗口的原文凭证消失。
       db.prepare("DELETE FROM memory_provenance WHERE memory_id = ?").run(id);
+      // #512：铸造记录同理——它也只是指着记忆行的索引，行没了索引就没有指代对象。
+      db.prepare("DELETE FROM memory_mints WHERE memory_id = ?").run(id);
       db.prepare("DELETE FROM memories WHERE id = ?").run(id);
       // Mirror sync must reflect the deletion; bump desired generation so a
       // crash between the delete and syncMirror leaves a recoverable debt.
@@ -1498,7 +1583,8 @@ export function createStore(path) {
    * 这个包」与「收起一个从来没导入过的包」都该是这个答案；早退也不 bump generation：
    * 什么都没删就别记一笔镜像债（remove() 每次必 bump，那是它的既有行为，不在这里扩大）。
    *
-   * side table 清理口径 = remove() 的口径（#399）：显式同事务清 memory_provenance。
+   * side table 清理口径 = remove() 的口径（#399 / #512）：显式同事务清 memory_provenance
+   * 与 memory_mints。
    * 这条是双保险，不是「FK 没开所以必须手写」：memory_provenance 挂着 ON DELETE CASCADE，
    * 而 node:sqlite 默认就把 foreign_keys 开成 1（实测 PRAGMA foreign_keys = 1），今天删行
    * 确实另有级联兜底；显式清理的存在是为了不依赖这份没人钉过的驱动默认，同时跟 remove()
@@ -1540,6 +1626,7 @@ export function createStore(path) {
         const chunk = ids.slice(start, start + DELETE_ID_CHUNK);
         const marks = chunk.map(() => "?").join(", ");
         db.prepare(`DELETE FROM memory_provenance WHERE memory_id IN (${marks})`).run(...chunk);
+        db.prepare(`DELETE FROM memory_mints WHERE memory_id IN (${marks})`).run(...chunk);
         deleted += db.prepare(`DELETE FROM memories WHERE id IN (${marks})`).run(...chunk).changes;
       }
       incrementGeneration();
@@ -2756,19 +2843,98 @@ export function createStore(path) {
    * 重跑的重复链接（否则幂等测试锁会挂）。
    * @returns {number} 实际插入行数
    */
-  function saveMemoryProvenance({ memoryId, sessionId, seqStart, seqEnd, createdAt }) {
+  function saveMemoryProvenance({ memoryId, sessionId, seqStart, seqEnd, createdAt, distillRunId }) {
+    // #512：distill_run_id 是「这条链接由哪一轮蒸馏写下」的可选归因。缺省落 NULL，
+    // 且**不回填**——存量链接没有第二轮真相可查，反推一个合成 id 比留空更坏。
     return db.prepare(
-      `INSERT INTO memory_provenance (memory_id, session_id, seq_start, seq_end, created_at)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO memory_provenance (memory_id, session_id, seq_start, seq_end, created_at, distill_run_id)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT DO NOTHING`
-    ).run(memoryId, sessionId, seqStart, seqEnd, createdAt).changes;
+    ).run(memoryId, sessionId, seqStart, seqEnd, createdAt, distillRunId ?? null).changes;
   }
 
-  /** 一条记忆的全部溯源链接（#399 面板/CLI 读取面）。 */
+  /** 一条记忆的全部溯源链接（#399 面板/CLI 读取面；#512 起带 distill_run_id）。 */
   function provenanceFor(memoryId) {
     return db.prepare(
-      `SELECT memory_id, session_id, seq_start, seq_end, created_at
+      `SELECT memory_id, session_id, seq_start, seq_end, created_at, distill_run_id
          FROM memory_provenance WHERE memory_id = ? ORDER BY created_at, session_id, seq_start`
+    ).all(memoryId);
+  }
+
+  /**
+   * 落盘一轮蒸馏运行（#512）。写入幂等（同 id replay 覆写、绝不重复），与
+   * saveDreamRun 同一口径，让同一逻辑轮可以重放核对。
+   *
+   * audit_id 是入参而不是在这里顺手写 audit：audit 行在 summarize.js 的 finally 里
+   * 落盘，而且**可能压根不存在**（llmAudit 关着）。run 先落、audit 后补再回填这一列，
+   * 比把两件事塞进一个事务诚实——归因不该依赖计费开关。
+   */
+  function saveDistillRun(run) {
+    const id = run.id ?? randomUUID();
+    const now = nowIso();
+    db.prepare(
+      `INSERT INTO distill_runs (id, created_at, status, error, run_type, trigger_source,
+         session_id, seq_start, seq_end, memory_count, provider, model, audit_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         created_at=excluded.created_at, status=excluded.status, error=excluded.error,
+         run_type=excluded.run_type, trigger_source=excluded.trigger_source,
+         session_id=excluded.session_id, seq_start=excluded.seq_start, seq_end=excluded.seq_end,
+         memory_count=excluded.memory_count, provider=excluded.provider, model=excluded.model,
+         audit_id=excluded.audit_id`
+    ).run(
+      id,
+      run.created_at ?? now,
+      run.status,
+      run.error ?? null,
+      run.run_type,
+      run.trigger_source,
+      run.session_id ?? null,
+      Number.isInteger(run.seq_start) ? run.seq_start : null,
+      Number.isInteger(run.seq_end) ? run.seq_end : null,
+      Number.isInteger(run.memory_count) ? run.memory_count : 0,
+      run.provider ?? null,
+      run.model ?? null,
+      Number.isInteger(run.audit_id) ? run.audit_id : null
+    );
+    return getDistillRun(id);
+  }
+
+  /** #512：事后补注某一轮的开销读数 id（audit 行在 run 之后才落盘）。 */
+  function attachDistillRunAudit(id, auditId) {
+    if (!id || !Number.isInteger(auditId)) return 0;
+    return db.prepare("UPDATE distill_runs SET audit_id = ? WHERE id = ?").run(auditId, id).changes;
+  }
+
+  function getDistillRun(id) {
+    return toDistillRun(db.prepare("SELECT * FROM distill_runs WHERE id = ?").get(id));
+  }
+
+  function listDistillRuns({ limit = 50, offset = 0 } = {}) {
+    const { limit: lim, offset: off } = sanitizePage(limit, offset, 50);
+    return db.prepare(
+      "SELECT * FROM distill_runs ORDER BY created_at DESC, id LIMIT ? OFFSET ?"
+    ).all(lim, off).map(toDistillRun);
+  }
+
+  /**
+   * 记一条「这条记忆出生自哪一轮」（#512）。只记 create：既有行的改动由
+   * receipt_chain 按 (run_id, record_id) 记，两套账不能有第二份。
+   * INSERT OR IGNORE 让重放幂等——同一 run 重放不该重复记一次铸造。
+   */
+  function saveMemoryMint({ memoryId, runId, runType, triggerSource, createdAt }) {
+    if (!memoryId || !runId || !runType || !triggerSource) return 0;
+    return db.prepare(
+      `INSERT OR IGNORE INTO memory_mints (memory_id, run_id, run_type, trigger_source, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(memoryId, runId, runType, triggerSource, createdAt ?? nowIso()).changes;
+  }
+
+  /** 一条记忆的铸造记录（#512 读侧；通常 0 或 1 条，跨轮重放才会多）。 */
+  function mintsFor(memoryId) {
+    return db.prepare(
+      `SELECT memory_id, run_id, run_type, trigger_source, created_at
+         FROM memory_mints WHERE memory_id = ? ORDER BY created_at, run_id`
     ).all(memoryId);
   }
 
@@ -3912,6 +4078,14 @@ export function createStore(path) {
     provenanceFor,
     distillRecordsFor,
     distillWindowsFor,
+    // #512 蒸馏运行与铸造归因：run 是归因主体，audit 行只是它的开销读数。
+    // 写入幂等（replay 覆写），读侧只读——两处都不触发 write hooks（bookkeeping）。
+    saveDistillRun,
+    attachDistillRunAudit,
+    getDistillRun,
+    listDistillRuns,
+    saveMemoryMint,
+    mintsFor,
     // 存储生命周期（#275 第一批）：无损回收的统计、清理与体积口径。
     dreamRunInputStats,
     clearDreamRunInputs,

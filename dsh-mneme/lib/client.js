@@ -892,6 +892,12 @@ window.__ModuleLoader__.load({
         "memory.explorer.detail.quality": "质量分",
         "memory.explorer.detail.entities": "关联实体",
         "memory.explorer.detail.entitiesEmpty": "开启实体抽取后，相关人物/项目会出现在这里",
+        "memory.explorer.detail.provenance": "蒸发归因",
+        "memory.explorer.detail.provenanceEmpty": "这条记忆没有归因：早于改造的历史行不补、也不猜",
+        "memory.explorer.detail.provenanceMint": "铸造自",
+        "memory.explorer.detail.provenanceWindow": "蒸馏窗口",
+        "memory.explorer.detail.provenanceNoRun": "无运行归因（历史行）",
+        "memory.explorer.detail.provenanceRecords": "{n} 条原文",
         "memory.explorer.detail.closeAria": "关闭详情",
         "memory.explorer.detail.editTitle": "标题",
         "memory.explorer.detail.editContent": "内容",
@@ -1655,6 +1661,12 @@ window.__ModuleLoader__.load({
         "memory.explorer.detail.quality": "Quality",
         "memory.explorer.detail.entities": "Related entities",
         "memory.explorer.detail.entitiesEmpty": "Turn on entity extraction and related people / projects appear here",
+        "memory.explorer.detail.provenance": "Distillation provenance",
+        "memory.explorer.detail.provenanceEmpty": "No attribution for this memory: rows older than the change are left blank, never guessed",
+        "memory.explorer.detail.provenanceMint": "Minted by",
+        "memory.explorer.detail.provenanceWindow": "Distill window",
+        "memory.explorer.detail.provenanceNoRun": "No run attribution (legacy row)",
+        "memory.explorer.detail.provenanceRecords": "{n} records",
         "memory.explorer.detail.closeAria": "Close details",
         "memory.explorer.detail.editTitle": "Title",
         "memory.explorer.detail.editContent": "Content",
@@ -2777,7 +2789,10 @@ window.__ModuleLoader__.load({
     //   ③ 关联记忆  memories recalled through the entity: prefix search
     //   ④ 关系图谱  the same ego graph the old graph-only tab drew
     function EntityPanel({ t, focusEntity, onJumpMemory }) {
-      const [entities, setEntities] = useState(null); // null = still loading
+      const [entities, setEntities] = useState(null);
+      // #512：这条记忆的归因——窗口级（哪一段原文蒸出来的）与行级（哪一轮铸造的）。
+      // null = 还没读到（或读失败），两者要分得开，不能被当成「没有归因」。
+      const [provenance, setProvenance] = useState(null); // null = still loading
       const [railQuery, setRailQuery] = useState("");
       const [entityName, setEntityName] = useState(focusEntity || "");
       const [depth, setDepth] = useState(1);
@@ -6501,6 +6516,21 @@ window.__ModuleLoader__.load({
         return () => { cancelled = true; };
       }, [memory.id]);
 
+      // #512：归因单独取一次。读失败/未开启时保持 null——「没读到」不等于
+      // 「没有归因」，界面上不能把这两件事显示成同一句话。
+      useEffect(() => {
+        let cancelled = false;
+        setProvenance(null);
+        apiFetch("/api/dsh-mneme/memory/provenance?id=" + encodeURIComponent(memory.id))
+          .then((res) => (res.ok ? res.json() : null))
+          .then((d) => {
+            if (cancelled) return;
+            if (d && Array.isArray(d.windows) && Array.isArray(d.mints)) setProvenance(d);
+          })
+          .catch(() => { if (!cancelled) setProvenance(null); });
+        return () => { cancelled = true; };
+      }, [memory.id]);
+
       const postUpdate = (patch, opts) => {
         setBusy(true);
         setSaveError(false);
@@ -6681,6 +6711,25 @@ window.__ModuleLoader__.load({
                     h("span", { className: "mneme-xdot", style: { color: typeColor(e.type) }, "aria-hidden": "true" }),
                     e.name
                   )))),
+          provenance !== null && h(react.Fragment, null,
+            h("div", { className: "mneme-xcolhead", style: { padding: "16px 0 0" } }, t("memory.explorer.detail.provenance")),
+            (provenance.windows.length === 0 && provenance.mints.length === 0)
+              ? h("div", { className: "mneme-featsubhint", style: { marginTop: 4 } }, t("memory.explorer.detail.provenanceEmpty"))
+              : h("div", { className: "mneme-dmeta" },
+                  provenance.mints.map((m, i) => h(react.Fragment, { key: "mint-" + m.run_id + "-" + i },
+                    h("span", { className: "mneme-dmetakey" }, t("memory.explorer.detail.provenanceMint")),
+                    h("span", { className: "mneme-dmetaval", title: m.run_id },
+                      [m.run_type, m.trigger_source, formatDateShort(m.created_at)].filter(Boolean).join(" · ")))),
+                  provenance.windows.map((w, i) => h(react.Fragment, { key: "win-" + w.session_id + "-" + w.seq_start + "-" + i },
+                    h("span", { className: "mneme-dmetakey" }, t("memory.explorer.detail.provenanceWindow")),
+                    h("span", { className: "mneme-dmetaval", title: w.session_id },
+                      [w.session_id + " · seq " + w.seq_start + "–" + w.seq_end,
+                       w.distill_run_id
+                         ? [w.run_type, w.run_status].filter(Boolean).join(" / ")
+                         : t("memory.explorer.detail.provenanceNoRun"),
+                       t("memory.explorer.detail.provenanceRecords").replace("{n}", String(w.records ? w.records.length : 0))
+                      ].join(" · ")))))
+          ),
           editing && h("div", { className: "mneme-xcolhead", style: { padding: "16px 0 4px" } }, t("memory.explorer.detail.editContent")),
           editing
             ? h("textarea", { className: "mneme-dcontent-input", value: content, onChange: (e) => setContent(e.target.value) })
