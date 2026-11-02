@@ -2611,3 +2611,60 @@ test("memory drawer surfaces distillation provenance, both layers (issue #512)",
   assert.ok(clientSource.includes("/api/dsh-mneme/memory/provenance?id=") && clientSource.includes("setProvenance(null)"),
     "a failed read must clear the block instead of pretending there is no attribution");
 });
+
+// Issue #24 块4：被动确认让「正常触达」自动抬高边的权重——这是唯一会悄悄改变
+// 检索形状的写动作，所以它必须有一个能查的地方，否则「自动确认」与「没人看过的
+// 自动确认」在界面上没有区别。这里锁四件事：
+// ① 复核区读的是那条专用端点，而不是把 ego 的边自己过滤一遍（抬高量 gain 只有
+//    后端知道——它要和来源基线比对，前端手里只有当前 weight）；
+// ② 边侧卡必须同时显示 weight 和 source：只看 weight 会把「tag 边被抬到 0.5」
+//    误读成「比 manual 边弱」，而 0.3→0.5 恰恰是被用出来的证据；
+// ③ 闸关着时要说「闸关着」，而不是显示「还没有边被抬过」——后者让人以为系统
+//    在工作但没数据，前者才说明是开关没开；
+// ④ 收起时不发请求（默认收起是刻意的：这是审计视角，不是日常视角）。
+test("entity graph surfaces the passive-confirmation review surface (issue #24)", () => {
+  for (const key of [
+    "memory.graph.boosted.title",
+    "memory.graph.boosted.hint",
+    "memory.graph.boosted.empty",
+    "memory.graph.boosted.gateOff",
+    "memory.graph.boosted.show",
+    "memory.graph.boosted.hide",
+    "memory.graph.boosted.gain",
+    "memory.graph.weight",
+    "memory.graph.source",
+    "memory.graph.src.manual",
+    "memory.graph.src.confirmed",
+    "memory.graph.src.tag",
+    "memory.graph.src.llm"
+  ]) {
+    const defined = clientSource.split(`"${key}":`).length - 1;
+    assert.equal(defined, 2, `i18n key ${key} must be defined exactly once in zh and once in en (got ${defined})`);
+  }
+
+  // ① 专用端点
+  assert.ok(clientSource.includes("/api/dsh-mneme/semantic/graph/boosted-relations?limit="),
+    "the review surface must read the boosted-relations endpoint");
+
+  // ② 边侧卡：weight 与 source 一起出现，且 source 走字典而不是直接上屏原词
+  assert.ok(clientSource.includes("memory.graph.weight\").replace(\"{w}\""),
+    "the edge side card must render the weight");
+  assert.ok(clientSource.includes("memory.graph.src.${selected.edge.source}"),
+    "the edge side card must localize the source, not print the raw enum");
+
+  // ③ 闸关与空表是两句不同的话。
+  // 断言必须落在「闸关分支之后的那一小段」而不是全文件 contains：gateOff 这个键
+  // 在字典定义里本来就有一次，全文件搜一遍，把渲染处换成 empty 也照样命中——
+  // 本条用例的首版变异自证就是这么翻车的。
+  const gateIdx = clientSource.indexOf("boosted.passiveConfirmEnabled !== true");
+  assert.ok(gateIdx > 0, "the off-gate branch must be driven by the server's passiveConfirmEnabled, not guessed");
+  const gateBranch = clientSource.slice(gateIdx, gateIdx + 220);
+  assert.ok(gateBranch.includes("memory.graph.boosted.gateOff"),
+    "a closed gate must say so instead of looking like an empty table");
+  assert.ok(!gateBranch.includes("boosted.empty"),
+    "the closed-gate branch must not borrow the empty-table copy — they are different facts");
+
+  // ④ 收起时不取数
+  assert.ok(clientSource.includes("if (boostedOpen) loadBoosted();"),
+    "the review surface must not fetch while collapsed");
+});

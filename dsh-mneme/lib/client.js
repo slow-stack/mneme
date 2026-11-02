@@ -452,6 +452,22 @@ window.__ModuleLoader__.load({
         "memory.graph.viewInGraph": "在实体视图中打开",
         "memory.graph.loading": "加载中…",
         "memory.graph.distance": "距中心 {n} 跳",
+        // issue #24 块4：被动确认的复核面。边侧卡显示权重/来源，复核区列「抬过的边」。
+        "memory.graph.weight": "权重 {w}",
+        "memory.graph.source": "来源 {s}",
+        "memory.graph.boosted.title": "被用出来的边",
+        "memory.graph.boosted.hint": "正常触达会自动抬高边的权重，这里列出被抬过的那些——抬升是唯一会改变检索形状的动作。",
+        "memory.graph.boosted.empty": "还没有边被抬过",
+        "memory.graph.boosted.gateOff": "被动确认当前是关的，所以不会有边被抬；打开「被动确认」后这里才会有内容。",
+        "memory.graph.boosted.show": "查看被用出来的边",
+        "memory.graph.boosted.hide": "收起",
+        "memory.graph.boosted.gain": "+{g}",
+        // 边的来源（#24 块2 的 RELATION_SOURCE_DEFAULTS）：决定权重的起点，
+        // 所以复核时必须和权重一起显示，否则「0.5 比 1.0 弱」这种误读无可避免。
+        "memory.graph.src.manual": "人工建立",
+        "memory.graph.src.confirmed": "人工确认",
+        "memory.graph.src.tag": "标签共现",
+        "memory.graph.src.llm": "模型抽取",
         "memory.settings.vectorTitle": "向量搜索",
         "memory.settings.vectorHint": "搜索不再只认字面：接入任意 OpenAI 兼容的 embedding 接口后，意思相近的记忆也能被召回。",
         "memory.settings.vectorEnabled": "启用向量搜索",
@@ -1242,6 +1258,22 @@ window.__ModuleLoader__.load({
         "memory.graph.viewInGraph": "Open in entity explorer",
         "memory.graph.loading": "Loading…",
         "memory.graph.distance": "{n} hop(s) from root",
+        // issue #24 块4：被动确认的复核面。
+        "memory.graph.weight": "weight {w}",
+        "memory.graph.source": "via {s}",
+        "memory.graph.boosted.title": "Edges put to use",
+        "memory.graph.boosted.hint": "A normal touch raises an edge's weight automatically. These are the ones that rose — raising is the only action that changes what gets recalled.",
+        "memory.graph.boosted.empty": "No edge has been raised yet",
+        "memory.graph.boosted.gateOff": "Passive confirmation is off, so nothing can be raised; turn it on and this list starts filling.",
+        "memory.graph.boosted.show": "Show edges put to use",
+        "memory.graph.boosted.hide": "Hide",
+        "memory.graph.boosted.gain": "+{g}",
+        // 边的来源（#24 块2 的 RELATION_SOURCE_DEFAULTS）：决定权重的起点，
+        // 所以复核时必须和权重一起显示，否则「0.5 比 1.0 弱」这种误读无可避免。
+        "memory.graph.src.manual": "manual",
+        "memory.graph.src.confirmed": "confirmed",
+        "memory.graph.src.tag": "tag overlap",
+        "memory.graph.src.llm": "model-extracted",
         "memory.settings.vectorTitle": "Vector Search",
         "memory.settings.vectorHint": "Match by meaning, not just wording — connect any OpenAI-compatible embeddings API.",
         "memory.settings.vectorEnabled": "Enable vector search",
@@ -2089,6 +2121,13 @@ window.__ModuleLoader__.load({
       ".mneme-relrow:hover{background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-reltype{flex:none;font-size:11px;line-height:16px;color:var(--mneme-accent);border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary) 35%,transparent);border-radius:6px;padding:0 6px}",
       ".mneme-relname{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      // issue #24 块4 复核面：抬过的边。用虚线边色（--mneme-graphic-dim 同层）
+      // 而不是新增颜色——它表达的是「同一条边，只是被用过」，不是新类别。
+      ".mneme-boosted{margin-top:6px;padding-top:6px;border-top:1px dashed var(--dsw-alias-border-l2)}",
+      ".mneme-boostedbody{margin-top:6px}",
+      ".mneme-boostedrow{cursor:default;font-size:12px;line-height:18px;padding:5px 10px}",
+      ".mneme-boostedrow:hover{background:none}",
+      ".mneme-boostedgain{font-size:11px;color:var(--mneme-accent)}",
       // --- settings: quiet stacked sections, one concern per section ---
       ".mneme-set{flex:1;min-height:0;overflow-y:auto;padding:8px 24px 48px;box-sizing:border-box}",
       ".mneme-set-inner{max-width:720px;margin:0 auto}",
@@ -2801,6 +2840,10 @@ window.__ModuleLoader__.load({
       const [selected, setSelected] = useState(null); // { kind: "node"|"edge", node?|edge? }
       const [attrs, setAttrs] = useState([]);
       const [related, setRelated] = useState([]);
+      // issue #24 块4：被动确认的复核面。默认收起——它是一个「想查的时候
+      // 才查」的面，不该占实体页第一屏；展开时才去取，省一次请求。
+      const [boostedOpen, setBoostedOpen] = useState(false);
+      const [boosted, setBoosted] = useState(null); // { count, passiveConfirmEnabled, items }
       const svgRef = useRef(null);
       const posRef = useRef([]); // live simulation positions, not React state
       const dragRef = useRef(null); // { id, moved }
@@ -2865,6 +2908,19 @@ window.__ModuleLoader__.load({
           .catch(() => {});
         return () => { cancelled = true; };
       }, [entityName]);
+
+      // issue #24 块4 复核面：只在展开时取，收起时不发请求。
+      const loadBoosted = useCallback(async () => {
+        try {
+          const res = await apiFetch("/api/dsh-mneme/semantic/graph/boosted-relations?limit=100");
+          setBoosted(res.ok ? await res.json() : { count: 0, items: [], passiveConfirmEnabled: false });
+        } catch {
+          setBoosted({ count: 0, items: [], passiveConfirmEnabled: false });
+        }
+      }, []);
+      useEffect(() => {
+        if (boostedOpen) loadBoosted();
+      }, [boostedOpen, loadBoosted]);
 
       // Simulation: run in rAF against posRef, tick React only every few frames.
       // Re-seeds when data changes; dragging writes straight into posRef.
@@ -3096,6 +3152,17 @@ window.__ModuleLoader__.load({
               ),
               h("div", { className: "mneme-gs-meta" },
                 `${t("memory.graph.relation")} · ${formatRelativeTime(selected.edge.created_at, t)}`),
+              // issue #24 块4：复核要看得见「这条边被抬过」。weight 是当前分，
+              // source 决定它的起点（manual 1.0 / confirmed 1.0 / tag 0.3 / llm 0.4）——
+              // 只看 weight 会把「tag 边被抬到 0.5」误读成「比 manual 边弱」。
+              (selected.edge.weight !== undefined || selected.edge.source !== undefined) && h("div", { className: "mneme-gs-meta" },
+                selected.edge.weight !== undefined
+                  ? t("memory.graph.weight").replace("{w}", Number(selected.edge.weight).toFixed(2))
+                  : null,
+                selected.edge.weight !== undefined && selected.edge.source ? " · " : null,
+                selected.edge.source
+                  ? t("memory.graph.source").replace("{s}", t(`memory.graph.src.${selected.edge.source}`) || selected.edge.source)
+                  : null),
               selected.edge.memory_id && h("button", {
                 className: "mneme-footbtn",
                 onClick: () => onJumpMemory && onJumpMemory({ id: selected.edge.memory_id })
@@ -3200,7 +3267,41 @@ window.__ModuleLoader__.load({
                         h("span", { className: "mneme-reltype" }, e.relation_type),
                         h("span", { className: "mneme-relname", style: { flex: 1 } }, otherName)
                       );
-                    })
+                    }),
+                    // issue #24 块4「例外管理」的可见面。被动确认是唯一会悄悄
+                    // 改变检索形状的动作（正常触达就抬权），所以它必须有个地方
+                    // 能查——否则「自动确认」和「没人看过的自动确认」没有区别。
+                    // 默认收起：这是审计视角，不是日常视角。
+                    h("div", { className: "mneme-boosted" },
+                      h("button", {
+                        className: boostedOpen ? "mneme-chip mneme-active" : "mneme-chip",
+                        "aria-expanded": boostedOpen ? "true" : "false",
+                        onClick: () => setBoostedOpen(!boostedOpen),
+                        title: t("memory.graph.boosted.hint")
+                      }, boostedOpen ? t("memory.graph.boosted.hide") : t("memory.graph.boosted.show")),
+                      boostedOpen && h("div", { className: "mneme-boostedbody" },
+                        boosted === null
+                          ? h("div", { className: "mneme-hint" }, t("memory.graph.loading"))
+                          : boosted.passiveConfirmEnabled !== true
+                            ? h("div", { className: "mneme-hint" }, t("memory.graph.boosted.gateOff"))
+                            : (boosted.items || []).length === 0
+                              ? h("div", { className: "mneme-hint" }, t("memory.graph.boosted.empty"))
+                              : h(react.Fragment, null,
+                                  h("div", { className: "mneme-hint" }, t("memory.graph.boosted.hint")),
+                                  boosted.items.map((b) => h("div", {
+                                    key: b.id,
+                                    className: "mneme-relrow mneme-boostedrow",
+                                    title: `${t("memory.graph.source").replace("{s}", t(`memory.graph.src.${b.source}`) || b.source)} · ${Number(b.weight).toFixed(2)}`
+                                  },
+                                    h("span", { className: "mneme-relname", style: { textAlign: "right", flex: 1 } }, b.from_name ?? b.from),
+                                    h("span", { className: "mneme-reltype" }, b.relation_type),
+                                    h("span", { className: "mneme-relname", style: { flex: 1 } }, `${b.to_name ?? b.to} `,
+                                      h("span", { className: "mneme-boostedgain" },
+                                        t("memory.graph.boosted.gain").replace("{g}", Number(b.gain).toFixed(2))))
+                                  ))
+                                )
+                      )
+                    )
                   )
             ),
             // ② 属性 — current snapshot (valid_until IS NULL)；空层整层隐藏

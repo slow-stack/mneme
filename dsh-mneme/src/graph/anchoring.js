@@ -46,7 +46,12 @@ export function minMax(scores) {
 /**
  * 把一条检测通路的结果归一化成 0..1 的打分表。
  * path 是离散通路名（exact/tag/...）→ 查 DISCRETE_LEVELS；是连续通路
- * （continuous=true）→ min-max。返回 { byId: Map<id, score>, order: [id...] }。
+ * （continuous=true）→ min-max。返回 { path, byId: Map<id, score>, order }。
+ *
+ * issue #24 块1 补充：返回值带上 `path`。anchorSeeds 用它记「这个种子被哪几路
+ * 激活」（`seeds[i].paths`），复核时据此判断一条边是被精确名、Tag 桥接还是向量
+ * 拉进来的。此前只有 { byId, order }，`p.path ?? "?"` 把每一路都记成 "?"，
+ * 通路身份在合并那一步就丢了。连续通路调用方传 `path: "vector"`（cos 相似度）。
  */
 export function normalizePath(hits, { path = "exact", continuous = false } = {}) {
   const ids = Array.isArray(hits) ? hits : [];
@@ -62,7 +67,7 @@ export function normalizePath(hits, { path = "exact", continuous = false } = {})
     const level = DISCRETE_LEVELS[path] ?? DISCRETE_LEVELS.substring;
     for (const id of ids) byId.set(id, level);
   }
-  return { byId, order: [...byId.keys()] };
+  return { path, byId, order: [...byId.keys()] };
 }
 
 /**

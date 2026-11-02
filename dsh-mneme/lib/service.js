@@ -560,16 +560,36 @@ export function createService({ store, mirror, config, onWrite, logger, document
    * 用出来的」延伸成检索信号：查询命中的不只有直接挂联，还有跳跃可达的活跃子图。
    * 邻居权重 = HOP_QUOTA[hop] × linked tier（attr 1.0 / relation 0.9），仍低于
    * 直达种子的满权，绝不喧宾夺主。
+   *
+   * #24 块1 补充（三路起点接线）：前半段只喂了 exact 一路，Tag 桥接与向量两路
+   * 能力在 anchoring.js 里却从未被调用。现补齐——
+   *   · exact：查询里出现实体名（布尔 1.0）；
+   *   · tag  ：查询词命中某条记忆的 tag，该记忆挂联的实体即种子（计数级别 0.4）;
+   *   · vector：查询向量近邻的记忆挂联的实体（cos 走 min-max，连续通路）。
+   * 三路在累加前各按自己的尺度归一化（离散级别 vs min-max），混加不会让高频
+   * Tag 淹没强向量命中。两路都是弱信号入口：任一路为空就少一路，全空则
+   * anchorSeeds 返回空、整个图轴让位（与加这两路之前的行为一致）。
+   * 三者共用 graphAnchoringEnabled 一个闸：默认关时仍是逐字节的 #219 单跳轴。
    */
-  function entityRecall(q, limit) {
+  function entityRecall(q, limit, { queryVector = null } = {}) {
     if (config?.entityRecallEnabled !== true) return [];
     try {
       const entities = store.findEntitiesMentionedIn(q);
-      if (!entities.length) return [];
+      // Tag 桥接与向量两路只服务锚定层：关锚定时不查（少两次库读，也守住
+      // 「关档行为逐字节不变」的承诺——见下方 if 分支）。
+      const anchoring = config?.graphAnchoringEnabled === true;
+      const tagEntities = anchoring && typeof store.findEntitiesByTags === "function"
+        ? (() => { try { return store.findEntitiesByTags(q); } catch { return []; } })()
+        : [];
+      // 早退只在**三路全无来源**时才成立。向量路的存在感恰恰在查询里没有实体名
+      // 的时候最大（「数据库迁移」说不出任何实体），若仍以「名字没命中」早退，
+      // 第二、三路就永远等不到自己被调用——接上了也等于没接。
+      const canVector = anchoring && Array.isArray(queryVector) && queryVector.length > 0 && !!vectorIndex;
+      if (!entities.length && !tagEntities.length && !canVector) return [];
       // 关闭锚定级联=逐字节复用 #219 单跳轴：种子裁剪/重排/截断全是 #24 新增的
       // 行为，默认关时一条都不许漏进旧路径（graphSeedCap 也只在开启后生效——
       // 无论 cap 调多小，关档时命中实体仍全量挂联）。
-      if (config?.graphAnchoringEnabled !== true) {
+      if (!anchoring) {
         const linked = store.getLinkedMemoryIds(entities.map((e) => e.id));
         if (!linked.size) return [];
         const hits = [];
@@ -581,9 +601,43 @@ export function createService({ store, mirror, config, onWrite, logger, document
         }
         return hits;
       }
-      // 锚定种子（精确名布尔通路——命名实体逻辑上是离散匹配，不参与 min-max）。
-      const exact = normalizePath(entities.map((e) => e.id), { path: "exact" });
-      const seeds = anchorSeeds({ paths: [exact], cap: config?.graphSeedCap ?? 12 });
+      // 三路激活信号，各自先归一化再累加（尺度不同，混加会让高频通路淹没强相关）。
+      const paths = [];
+      // 第一路：精确名（布尔通路——命名实体逻辑上是离散匹配，不参与 min-max）。
+      if (entities.length) {
+        paths.push(normalizePath(entities.map((e) => e.id), { path: "exact" }));
+      }
+      // 第二路：Tag 桥接（tag 共现，离散级别 0.4——比精确名弱、比子串强）。
+      if (tagEntities.length) {
+        paths.push(normalizePath(tagEntities.map((e) => e.id), { path: "tag" }));
+      }
+      // 第三路：向量（连续通路，cos 相似度走 min-max）。记忆 → 挂联实体反查，
+      // 同一实体被多条近邻记忆挂联时取最高分（一条更近的记忆就够证明相关）。
+      if (Array.isArray(queryVector) && queryVector.length && vectorIndex) {
+        try {
+          const near = vectorIndex.search(queryVector, { limit: limit * 2, threshold: 0 });
+          const bestOf = new Map();
+          for (const m of near) {
+            const score = m?.score ?? 0;
+            if (!(score > 0)) continue;
+            for (const eid of store.entityIdsForMemories([m.id])) {
+              if (!(bestOf.get(eid) >= score)) bestOf.set(eid, score);
+            }
+          }
+          if (bestOf.size) {
+            paths.push(normalizePath(
+              [...bestOf.entries()].map(([id, score]) => ({ id, score })),
+              { path: "vector", continuous: true }
+            ));
+          }
+        } catch { /* 向量路失败只是少一路，不拖垮整条图轴 */ }
+      }
+      if (!paths.length) return [];
+      // 激活分为 0 的种子不算种子：min-max 会把**连续通路里最弱的那条**压成 0，
+      // 可下游给种子挂联记忆的是固定满权 tier（1.0/0.9），不看种子自己的分数。
+      // 留着 0 分种子，等于让「这一路里最不像的那条」以最强的方式把记忆拉进池。
+      // 零分项在 anchorSeeds 里排最后，所以先取 cap 再滤掉不会浪费名额。
+      const seeds = anchorSeeds({ paths, cap: config?.graphSeedCap ?? 12 }).filter((s) => s.score > 0);
       if (!seeds.length) return [];
       // 0-hop 直达：挂联记忆按 tier 定分（attr 1.0 / relation 0.9）——与 #219
       // 单跳轴同分。MAX 语义：同一条记忆被多实体挂联时保留最高分。
@@ -939,6 +993,9 @@ export function createService({ store, mirror, config, onWrite, logger, document
     const keyword = rawKeyword.map((m) => ({ ...m, score: scoreKeyword(m, q), source: "keyword" }));
     const wantVector = mode === "vector" || mode === "hybrid" || (mode === "auto" && !!embedder);
     let vector = [];
+    // #24 块1：查询向量在这里算出来，图轴的向量起点要用同一份——再嵌一次既
+    // 多一次模型调用，也可能拿到不同的向量（本地模型带随机性时）。
+    let vectorQuery = null;
     if (wantVector && embedder) {
       try {
         // Legacy embedders expose embed(query); local ones expose embedSingle.
@@ -947,6 +1004,7 @@ export function createService({ store, mirror, config, onWrite, logger, document
           : embedder.embed.bind(embedder);
         const qv = await embedSingle(q);
         if (qv?.length) {
+          vectorQuery = qv;
           // Adaptive threshold (v0.5.0 1.2): the fetch runs at the loosest
           // branch floor so the head-gap rule can still re-admit the tail;
           // the final cutoff is computed against the fetched score
@@ -980,7 +1038,7 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // mentioned entities pull their linked memories into the pool. Keyword
     // mode stays text-only per the mode contract, so the axis is skipped
     // there even when enabled.
-    const entity = mode === "keyword" ? [] : entityRecall(q, lim);
+    const entity = mode === "keyword" ? [] : entityRecall(q, lim, { queryVector: vectorQuery });
     // Entity axis shares BM25's backfill weight (we = wb) until #217 recall
     // data justifies a distinct entity weight.
 
@@ -1819,7 +1877,7 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // 为空时兜底检索，避免注入路径双倍候选成本。
     if (config?.entityRecallEnabled === true && q) {
       try {
-        const graphHits = entityRecall(q, maxItems * 2);
+        const graphHits = entityRecall(q, maxItems * 2, { queryVector });
         if (graphHits.length) {
           const graphIds = new Set(graphHits.map((m) => m.id));
           candidates = [
@@ -2872,6 +2930,9 @@ export function createService({ store, mirror, config, onWrite, logger, document
     saveRelation: (r) => store.saveRelation(r),
     listEntities: (o) => store.listEntities(o),
     getRelations: (id) => store.getRelations(id),
+    // #24 块4 被动确认的复核出口：列出权重被 bump 抬过的边（gain = 现权 −
+    // 该 source 的初值）。纯读，不动权重——「看哪些边被用出来过」是人的动作。
+    listBoostedRelations: (o) => store.listBoostedRelations(o),
     // v0.7.0 实体热投影：实体热 = 关联记忆 heat 聚合（取 max）。无关联记忆
     // 或 heatEnabled=false 时返回 null；前端据此决定图谱节点大小/明暗。
     entityHeat: (entityId) => {
