@@ -3741,16 +3741,18 @@ export function createStore(path) {
       if (words.some((w) => tags.includes(w))) memHits.add(row.id);
     }
     if (!memHits.size) return [];
-    const entityIds = entityIdsForMemories([...memHits]);
-    if (!entityIds.length) return [];
-    const placeholders = entityIds.map(() => "?").join(",");
-    const ents = db.prepare(
-      `SELECT id, name FROM entities WHERE id IN (${placeholders})`
-    ).all(...entityIds);
-    const counts = new Map();
-    for (const id of entityIds) counts.set(id, (counts.get(id) ?? 0) + 1);
-    return ents
-      .map((e) => ({ id: e.id, name: e.name, via: counts.get(e.id) ?? 0 }))
+    // 计数必须在 SQL 里做：entityIdsForMemories 返回的是 DISTINCT entity_id，
+    // 拿它反推「命中几条记忆」永远是 1，排序就静默失效了（评审抓到的正是这个）。
+    const memPlaceholders = [...memHits].map(() => "?").join(",");
+    const rows2 = db.prepare(
+      `SELECT ea.entity_id AS id, e.name AS name, COUNT(DISTINCT ea.memory_id) AS via
+       FROM entity_attrs ea JOIN entities e ON e.id = ea.entity_id
+       WHERE ea.memory_id IN (${memPlaceholders}) AND ea.entity_id IS NOT NULL
+       GROUP BY ea.entity_id`
+    ).all(...memHits);
+    if (!rows2.length) return [];
+    return rows2
+      .map((r) => ({ id: r.id, name: r.name, via: r.via }))
       .sort((a, b) => b.via - a.via || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
       .slice(0, limit)
       .map(({ id, name }) => ({ id, name }));

@@ -2627,6 +2627,7 @@ test("entity graph surfaces the passive-confirmation review surface (issue #24)"
     "memory.graph.boosted.title",
     "memory.graph.boosted.hint",
     "memory.graph.boosted.empty",
+    "memory.graph.boosted.loadFailed",
     "memory.graph.boosted.gateOff",
     "memory.graph.boosted.show",
     "memory.graph.boosted.hide",
@@ -2658,11 +2659,23 @@ test("entity graph surfaces the passive-confirmation review surface (issue #24)"
   // 本条用例的首版变异自证就是这么翻车的。
   const gateIdx = clientSource.indexOf("boosted.passiveConfirmEnabled !== true");
   assert.ok(gateIdx > 0, "the off-gate branch must be driven by the server's passiveConfirmEnabled, not guessed");
-  const gateBranch = clientSource.slice(gateIdx, gateIdx + 220);
+  const gateBranch = clientSource.slice(gateIdx, gateIdx + 700);
   assert.ok(gateBranch.includes("memory.graph.boosted.gateOff"),
     "a closed gate must say so instead of looking like an empty table");
-  assert.ok(!gateBranch.includes("boosted.empty"),
-    "the closed-gate branch must not borrow the empty-table copy — they are different facts");
+  // 闸关时既有的提升仍然要列出来（评审指出：关掉闸只表示今后不再自动抬，
+  // 隐藏整张表会让人永远没法复核已经发生过的提升）。
+  assert.ok(/off\s*&&\s*h\([^)]*gateOff/.test(gateBranch),
+    "the off-gate notice must be rendered alongside the list, not as a replacement for it");
+  assert.ok(gateBranch.includes("items.length === 0"),
+    "the empty-table copy must be decided by item count, independently of the gate");
+  assert.ok(!/off\s*\?[^:]*gateOff[^:]*:\s*\(boosted\.items/.test(gateBranch),
+    "the gate must not short-circuit the list branch");
+
+  // ③b 加载失败不能被说成「闸关」或「没有数据」——那会把接口故障误导成配置问题
+  const failIdx = clientSource.indexOf("boosted.error === true");
+  assert.ok(failIdx > 0, "the panel must distinguish a failed fetch from a closed gate");
+  assert.ok(clientSource.slice(failIdx, failIdx + 160).includes("memory.graph.boosted.loadFailed"),
+    "a failed fetch must render its own copy");
 
   // ④ 收起时不取数
   assert.ok(clientSource.includes("if (boostedOpen) loadBoosted();"),

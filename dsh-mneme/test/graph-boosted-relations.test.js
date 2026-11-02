@@ -98,6 +98,17 @@ test("boosted-relations surfaces passiveConfirmEnabled=true when the gate is on"
   assert.equal(JSON.parse(res.body).passiveConfirmEnabled, true);
 });
 
+// 只有 graphPassiveConfirm 开着不算「会继续产生新提升」：touchRecalled 里
+// passive = graphPassiveConfirm && graphWeightEnabled，只看前者面板会说
+// 「会自动提升」而实际一条都不会抬（评审指出）。
+test("boosted-relations reports the gate as off when only graphPassiveConfirm is set", async () => {
+  const { routes } = setup({ config: { graphPassiveConfirm: true, graphWeightEnabled: false } });
+  const res = new FakeRes();
+  await routes.find((r) => r.path === BOOSTED).handler(req(BOOSTED), res);
+  assert.equal(JSON.parse(res.body).passiveConfirmEnabled, false,
+    "passive confirmation only bites when weight evolution is also on");
+});
+
 test("boosted-relations honours limit and never exceeds the hard cap", async () => {
   const { store, service, routes } = setup();
   for (let i = 0; i < 6; i++) {

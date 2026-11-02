@@ -458,7 +458,8 @@ window.__ModuleLoader__.load({
         "memory.graph.boosted.title": "被用出来的边",
         "memory.graph.boosted.hint": "正常触达会自动抬高边的权重，这里列出被抬过的那些——抬升是唯一会改变检索形状的动作。",
         "memory.graph.boosted.empty": "还没有边被抬过",
-        "memory.graph.boosted.gateOff": "被动确认当前是关的，所以不会有边被抬；打开「被动确认」后这里才会有内容。",
+        "memory.graph.boosted.loadFailed": "这一屏没取到数据（接口不可用），不是「没有边被抬过」——稍后重试。",
+        "memory.graph.boosted.gateOff": "被动确认当前是关的，今后不会再自动抬权；下面列的是此前已经抬过的边。",
         "memory.graph.boosted.show": "查看被用出来的边",
         "memory.graph.boosted.hide": "收起",
         "memory.graph.boosted.gain": "+{g}",
@@ -1264,7 +1265,8 @@ window.__ModuleLoader__.load({
         "memory.graph.boosted.title": "Edges put to use",
         "memory.graph.boosted.hint": "A normal touch raises an edge's weight automatically. These are the ones that rose — raising is the only action that changes what gets recalled.",
         "memory.graph.boosted.empty": "No edge has been raised yet",
-        "memory.graph.boosted.gateOff": "Passive confirmation is off, so nothing can be raised; turn it on and this list starts filling.",
+        "memory.graph.boosted.loadFailed": "Couldn't load this panel (endpoint unavailable) — that is not the same as \"nothing raised yet\". Try again later.",
+        "memory.graph.boosted.gateOff": "Passive confirmation is off, so nothing more will be raised; the edges below were raised earlier.",
         "memory.graph.boosted.show": "Show edges put to use",
         "memory.graph.boosted.hide": "Hide",
         "memory.graph.boosted.gain": "+{g}",
@@ -2913,9 +2915,11 @@ window.__ModuleLoader__.load({
       const loadBoosted = useCallback(async () => {
         try {
           const res = await apiFetch("/api/dsh-mneme/semantic/graph/boosted-relations?limit=100");
-          setBoosted(res.ok ? await res.json() : { count: 0, items: [], passiveConfirmEnabled: false });
+          setBoosted(res.ok
+            ? await res.json()
+            : { count: 0, items: [], passiveConfirmEnabled: false, error: true });
         } catch {
-          setBoosted({ count: 0, items: [], passiveConfirmEnabled: false });
+          setBoosted({ count: 0, items: [], passiveConfirmEnabled: false, error: true });
         }
       }, []);
       useEffect(() => {
@@ -3280,15 +3284,23 @@ window.__ModuleLoader__.load({
                         title: t("memory.graph.boosted.hint")
                       }, boostedOpen ? t("memory.graph.boosted.hide") : t("memory.graph.boosted.show")),
                       boostedOpen && h("div", { className: "mneme-boostedbody" },
-                        boosted === null
-                          ? h("div", { className: "mneme-hint" }, t("memory.graph.loading"))
-                          : boosted.passiveConfirmEnabled !== true
-                            ? h("div", { className: "mneme-hint" }, t("memory.graph.boosted.gateOff"))
-                            : (boosted.items || []).length === 0
-                              ? h("div", { className: "mneme-hint" }, t("memory.graph.boosted.empty"))
+                        (() => {
+                          if (boosted === null) return h("div", { className: "mneme-hint" }, t("memory.graph.loading"));
+                          // 加载失败 ≠ 闸关：接口挂了却说「被动确认是关的」，会把人
+                          // 引去翻设置，而真正的问题是这一屏没取到数据。
+                          if (boosted.error === true) return h("div", { className: "mneme-hint" }, t("memory.graph.boosted.loadFailed"));
+                          const items = boosted.items || [];
+                          const off = boosted.passiveConfirmEnabled !== true;
+                          // 闸关 ≠ 没有数据：已经抬过的边仍然在表里，关掉闸只表示
+                          // 「今后不再自动抬」。所以先出闸关提示，再照常列历史——
+                          // 否则人永远没法复核既有的提升。
+                          return h(react.Fragment, null,
+                            off && h("div", { className: "mneme-hint" }, t("memory.graph.boosted.gateOff")),
+                            items.length === 0
+                              ? (!off && h("div", { className: "mneme-hint" }, t("memory.graph.boosted.empty")))
                               : h(react.Fragment, null,
                                   h("div", { className: "mneme-hint" }, t("memory.graph.boosted.hint")),
-                                  boosted.items.map((b) => h("div", {
+                                  items.map((b) => h("div", {
                                     key: b.id,
                                     className: "mneme-relrow mneme-boostedrow",
                                     title: `${t("memory.graph.source").replace("{s}", t(`memory.graph.src.${b.source}`) || b.source)} · ${Number(b.weight).toFixed(2)}`
@@ -3300,6 +3312,8 @@ window.__ModuleLoader__.load({
                                         t("memory.graph.boosted.gain").replace("{g}", Number(b.gain).toFixed(2))))
                                   ))
                                 )
+                          );
+                        })()
                       )
                     )
                   )

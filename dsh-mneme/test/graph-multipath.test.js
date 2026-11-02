@@ -161,3 +161,25 @@ test("a zero-score seed does not inject its linked memory at full tier", async (
     "a 0-score seed must not pull its linked memory in at full tier"
   );
 });
+
+// ---- Tag 桥接的排序 -------------------------------------------------------
+// 「一个实体命中了几条记忆」是这条路的强弱信号，必须在 SQL 里数。
+// 首版拿 entityIdsForMemories 的 DISTINCT 结果反推计数，每个实体恒为 1，
+// 排序静默失效、只剩名字序（评审指出）。判别点：limit=1 时返回的是宽实体。
+// 命名上必须让「宽实体」在字母序里排后面——首版把宽实体叫 AWide，于是字母序
+// 也选它，用例空转通过（变异自证抓到的）。
+test("findEntitiesByTags ranks entities by how many tagged memories they cover", async () => {
+  const { store, service } = makeService();
+  const m1 = putMemory(store, service, { title: "m1", content: "c1", tags: ["数据库迁移"] });
+  const m2 = putMemory(store, service, { title: "m2", content: "c2", tags: ["数据库迁移"] });
+  // ZWide 挂两条命中记忆；ANarrow 只挂一条。名字序让 ANarrow 排前面，
+  // 所以只要计数生效，返回的必然是 ZWide。
+  linkAttr(store, "ZWide", m1);
+  linkAttr(store, "ZWide", m2, { key: "k2" });
+  linkAttr(store, "ANarrow", m1);
+
+  const hits = store.findEntitiesByTags("数据库迁移", { limit: 1 });
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].name, "ZWide",
+    "the entity covering more tagged memories must win over the alphabetical order");
+});

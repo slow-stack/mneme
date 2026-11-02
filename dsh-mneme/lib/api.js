@@ -1472,7 +1472,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           count: rows.length,
           // 提示「这张表为什么可能为空」：被确认抬升的边只在图真的被用过之后
           // 才出现，两个相关闸默认都关。面板据此说明而不是让人以为坏了。
-          passiveConfirmEnabled: config?.graphPassiveConfirm === true,
+          // 必须两个闸同时开才算「会继续产生新提升」——touchRecalled 里
+          // passive = graphPassiveConfirm && graphWeightEnabled，只看前者会让面板
+          // 说「会自动提升」而实际上一条都不会抬（评审指出）。
+          passiveConfirmEnabled: config?.graphPassiveConfirm === true && config?.graphWeightEnabled === true,
           items: rows.map((r) => ({
             id: r.id,
             from: r.from_entity,
