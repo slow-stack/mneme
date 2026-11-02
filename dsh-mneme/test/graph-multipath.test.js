@@ -114,9 +114,33 @@ test("vector path seeds from near memories when the query names no entity", asyn
   );
 });
 
+// ---- 向量起点也要看关系端点 -----------------------------------------------
+// 与 Tag 路同一条病：一条近邻记忆若只通过关系挂到实体上（phaseRelations 不建
+// attr 行），只读 entity_attrs 的反查会漏掉它，向量路就凭空少了种子。
+test("vector path seeds from relation-only memories, not just attr rows", async () => {
+  const { store, service, vectorIndex } = makeService(
+    { entityRecallEnabled: true, graphAnchoringEnabled: true },
+    { withEmbedder: true }
+  );
+  const nearMem = putMemory(store, service, { title: "alpha", content: "beta gamma" });
+  const farMem = putMemory(store, service, { title: "delta", content: "epsilon zeta" });
+  vectorIndex.saveEmbedding(nearMem.id, [1, 0, 0, 0]);
+  // nearMem 不写 attr，只通过一条关系挂到 RelSeed / RelNeighbor 上。
+  const seed = store.createEntity({ name: "RelSeed", type: "module" });
+  const neighbor = store.createEntity({ name: "RelNeighbor", type: "module" });
+  store.saveRelation({
+    from_entity: seed.id, to_entity: neighbor.id, relation_type: "uses",
+    memory_id: nearMem.id, metadata: { source: "sleep_relation_completion" }
+  });
+  linkAttr(store, "RelNeighbor", farMem, { key: "k2" });
+
+  const rows = await service.searchMemories("omega", { mode: "hybrid" });
+  assert.ok(rows.some((r) => r.id === farMem.id),
+    "a relation-only near memory must still produce vector seeds");
+});
+
 // 对照：没有 embedder 就没有向量路，三路全空时必须老实返回空，而不是凭空造种子。
-test("vector path absent leaves the axis empty (no phantom seeds)", async () => {
-  const { store, service } = makeService({ entityRecallEnabled: true, graphAnchoringEnabled: true });
+test("vector path absent leaves the axis empty (no phantom seeds)", async () => {  const { store, service } = makeService({ entityRecallEnabled: true, graphAnchoringEnabled: true });
   const nearMem = putMemory(store, service, { title: "alpha", content: "beta gamma" });
   const farMem = putMemory(store, service, { title: "delta", content: "epsilon zeta" });
   linkAttr(store, "VecSeed", nearMem);
@@ -182,4 +206,64 @@ test("findEntitiesByTags ranks entities by how many tagged memories they cover",
   assert.equal(hits.length, 1);
   assert.equal(hits[0].name, "ZWide",
     "the entity covering more tagged memories must win over the alphabetical order");
+});
+
+// ---- Tag 锚点的两个来源 ---------------------------------------------------
+// phaseRelations 只写 entity_relations.memory_id，不建 attr 行。所以「只通过关系
+// 挂到实体上」的记忆，若锚点只读 entity_attrs，关系两端一个种子都生不出来。
+// 判别点：这两个实体都没有任何 attr 行，只能从关系侧被看到。
+test("findEntitiesByTags sees relation endpoints, not only attr rows", () => {
+  const { store, service } = makeService();
+  const mem = putMemory(store, service, { title: "pg 调优", content: "一次调优", tags: ["postgres"] });
+  const a = store.createEntity({ name: "PgTuner", type: "module" });
+  const b = store.createEntity({ name: "PgCache", type: "module" });
+  store.saveRelation({
+    from_entity: a.id, to_entity: b.id, relation_type: "uses",
+    memory_id: mem.id, metadata: { source: "sleep_relation_completion" }
+  });
+
+  const names = store.findEntitiesByTags("postgres", { limit: 5 }).map((h) => h.name).sort();
+  assert.deepEqual(names, ["PgCache", "PgTuner"],
+    "a memory linked only through a relation must seed both endpoints");
+});
+
+// 同一 (实体, 记忆) 被 attr 与关系同时覆盖时只算一条：UNION 去的是对，不是行。
+test("findEntitiesByTags counts a memory once even when attr and relation both cover it", () => {
+  const { store, service } = makeService();
+  const m1 = putMemory(store, service, { title: "a", content: "b", tags: ["缓存"] });
+  const m2 = putMemory(store, service, { title: "c", content: "d", tags: ["缓存"] });
+  const wide = linkAttr(store, "ZBoth", m1);
+  store.saveRelation({ from_entity: wide.id, to_entity: wide.id, relation_type: "related_to", memory_id: m1.id });
+  linkAttr(store, "ABoth", m2);
+
+  const hits = store.findEntitiesByTags("缓存", { limit: 2 });
+  assert.deepEqual(hits.map((h) => h.name).sort(), ["ABoth", "ZBoth"]);
+  // 两边都是 1 条记忆时按名字序；若 m1 被数成 2 条，ZBoth 会排到前面。
+  assert.equal(hits[0].name, "ABoth",
+    "duplicate coverage of the same memory must not inflate the count");
+});
+
+// ---- 分块后计数仍然正确 ---------------------------------------------------
+// TAG_ID_CHUNK = 500，这条用例造 600 条命中记忆强制走两块：ZBulk 每块各 300 条
+// （合计 600），ABulk 只有 400 条（全在第一块）。判别点：正确累加时 ZBulk 胜出；
+// 若第二块覆盖而不是累加，ZBulk 只剩 300 < 400，字母序靠前的 ABulk 会赢。
+test("findEntitiesByTags accumulates counts across chunk boundaries", () => {
+  const { store } = makeService();
+  const zBulk = store.createEntity({ name: "ZBulk", type: "module" });
+  const aBulk = store.createEntity({ name: "ABulk", type: "module" });
+  const makeTagged = (i) => store.save({
+    type: "project", title: `t${i}`, content: `c${i}`, tags: ["分块测试"], importance: 3
+  });
+  // 600 条：前 300 条挂 ZBulk，后 300 条挂 ZBulk 的另一批 attr key，
+  // 其中前 400 条同时挂 ABulk（跨两块）。
+  for (let i = 0; i < 600; i++) {
+    const m = makeTagged(i);
+    store.saveAttr({ entity_id: zBulk.id, attr_key: `k${i % 2}`, attr_value: "v", memory_id: m.id });
+    if (i < 400) store.saveAttr({ entity_id: aBulk.id, attr_key: "k", attr_value: "v", memory_id: m.id });
+  }
+
+  const hits = store.findEntitiesByTags("分块测试", { limit: 1 });
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].name, "ZBulk",
+    "counts must be summed across chunks, not overwritten by the last batch");
 });

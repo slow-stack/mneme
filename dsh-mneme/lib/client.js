@@ -3294,10 +3294,12 @@ window.__ModuleLoader__.load({
                           // 闸关 ≠ 没有数据：已经抬过的边仍然在表里，关掉闸只表示
                           // 「今后不再自动抬」。所以先出闸关提示，再照常列历史——
                           // 否则人永远没法复核既有的提升。
+                          // 空表提示与闸门状态无关：闸关且一条都没有时，光说「下面列的是
+                          // 此前已经抬过的边」却不给任何行，人会以为这一屏坏了。
                           return h(react.Fragment, null,
                             off && h("div", { className: "mneme-hint" }, t("memory.graph.boosted.gateOff")),
                             items.length === 0
-                              ? (!off && h("div", { className: "mneme-hint" }, t("memory.graph.boosted.empty")))
+                              ? h("div", { className: "mneme-hint" }, t("memory.graph.boosted.empty"))
                               : h(react.Fragment, null,
                                   h("div", { className: "mneme-hint" }, t("memory.graph.boosted.hint")),
                                   items.map((b) => h("div", {

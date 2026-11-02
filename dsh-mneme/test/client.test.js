@@ -2668,6 +2668,10 @@ test("entity graph surfaces the passive-confirmation review surface (issue #24)"
     "the off-gate notice must be rendered alongside the list, not as a replacement for it");
   assert.ok(gateBranch.includes("items.length === 0"),
     "the empty-table copy must be decided by item count, independently of the gate");
+  // 空表提示本身也不能被闸门状态挡住：闸关且一条都没有时，光说「下面列的是此前
+  // 已经抬过的边」却不给任何行，读起来像这一屏坏了（评审第二轮指出）。
+  assert.ok(!/items\.length === 0\s*\?\s*\(!\s*off/.test(gateBranch),
+    "the empty-table copy must render even when the gate is closed");
   assert.ok(!/off\s*\?[^:]*gateOff[^:]*:\s*\(boosted\.items/.test(gateBranch),
     "the gate must not short-circuit the list branch");
 

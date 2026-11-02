@@ -1647,6 +1647,11 @@ export function createStore(path) {
   // 解析成本可以忽略、又永远够不到那格上限，块数只随包条数线性增长。
   const DELETE_ID_CHUNK = 500;
 
+  // Tag 锚点的 IN 列表分块。比 DELETE_ID_CHUNK 多一层顾虑：那条语句只有一处 IN，
+  // 这条有**三处**（attrs / relations.from / relations.to）共用同一个记忆 id 集合，
+  // 所以单块占用的参数是 3×chunk。取 500 后最坏 1500 个参数，离 32766 仍有二十倍余量。
+  const TAG_ID_CHUNK = 500;
+
   /**
    * 整包退出（车道 C）。删空一个不存在的包是幂等的 0，不是错误——对方点第二次「收起
    * 这个包」与「收起一个从来没导入过的包」都该是这个答案；早退也不 bump generation：
@@ -3743,13 +3748,42 @@ export function createStore(path) {
     if (!memHits.size) return [];
     // 计数必须在 SQL 里做：entityIdsForMemories 返回的是 DISTINCT entity_id，
     // 拿它反推「命中几条记忆」永远是 1，排序就静默失效了（评审抓到的正是这个）。
-    const memPlaceholders = [...memHits].map(() => "?").join(",");
-    const rows2 = db.prepare(
-      `SELECT ea.entity_id AS id, e.name AS name, COUNT(DISTINCT ea.memory_id) AS via
-       FROM entity_attrs ea JOIN entities e ON e.id = ea.entity_id
-       WHERE ea.memory_id IN (${memPlaceholders}) AND ea.entity_id IS NOT NULL
-       GROUP BY ea.entity_id`
-    ).all(...memHits);
+    //
+    // 两个来源都要算：只读 entity_attrs 会漏掉「记忆只通过关系挂到实体上」的情况
+    // ——phaseRelations 只写 entity_relations.memory_id、不建 attr 行，于是仅由关系
+    // 关联的记忆对关系两端一个种子都生不出来。这与 getLinkedMemoryIds 的口径一致
+    // （那边 attr 与 relation 两端同样并列）。UNION 去重的是 (实体, 记忆) 对，
+    // 所以同一条记忆的多条关联记录不会把 via 抬高。
+    //
+    // 分块理由同 DELETE_ID_CHUNK：一条语句一行一个 `?`，撞上 SQLITE_MAX_VARIABLE_NUMBER
+    // （32766）会整笔抛错，而调用方 try/catch 兜底 → 静默丢掉整条 Tag 锚点。
+    // 这里每块绑 3×TAG_ID_CHUNK 个参数（三处 IN 列表），500 仍有二十倍余量。
+    const rowsByEntity = new Map();
+    const memoryIds = [...memHits];
+    for (let offset = 0; offset < memoryIds.length; offset += TAG_ID_CHUNK) {
+      const batch = memoryIds.slice(offset, offset + TAG_ID_CHUNK);
+      const marks = batch.map(() => "?").join(",");
+      const batchRows = db.prepare(
+        `SELECT hits.id AS id, e.name AS name, COUNT(DISTINCT hits.memory_id) AS via
+         FROM (
+           SELECT entity_id AS id, memory_id FROM entity_attrs
+             WHERE memory_id IN (${marks}) AND entity_id IS NOT NULL
+           UNION
+           SELECT from_entity AS id, memory_id FROM entity_relations
+             WHERE memory_id IN (${marks}) AND from_entity IS NOT NULL
+           UNION
+           SELECT to_entity AS id, memory_id FROM entity_relations
+             WHERE memory_id IN (${marks}) AND to_entity IS NOT NULL
+         ) hits JOIN entities e ON e.id = hits.id
+         GROUP BY hits.id`
+      ).all(...batch, ...batch, ...batch);
+      for (const row of batchRows) {
+        const prev = rowsByEntity.get(row.id);
+        // 各块的记忆集合互不相交，所以 via 直接相加就是全集的 DISTINCT 计数。
+        rowsByEntity.set(row.id, { id: row.id, name: row.name, via: (prev?.via ?? 0) + Number(row.via) });
+      }
+    }
+    const rows2 = [...rowsByEntity.values()];
     if (!rows2.length) return [];
     return rows2
       .map((r) => ({ id: r.id, name: r.name, via: r.via }))
@@ -3762,15 +3796,24 @@ export function createStore(path) {
    * 按记忆批量反查实体 id（Tag 桥接用）。与 entitiesForMemory 的区别是「批量 +
    * 带 id」：那边是面板详情页的单条展示（只要 name/type），这边要的是能直接
    * 喂给 normalizePath 的 id 列表。同一 (记忆, 实体) 只出一次。
+   *
+   * 与 findEntitiesByTags 同口径：attr 行与关系两端并列。只读 entity_attrs 时，
+   * 一条只通过关系挂到实体上的记忆在向量路里也生不出种子（phaseRelations 不建 attr）。
    */
   function entityIdsForMemories(memoryIds) {
     const ids = Array.isArray(memoryIds) ? memoryIds.filter(Boolean) : [];
     if (!ids.length) return [];
     const placeholders = ids.map(() => "?").join(",");
     const rows = db.prepare(
-      `SELECT DISTINCT entity_id FROM entity_attrs
-       WHERE memory_id IN (${placeholders}) AND entity_id IS NOT NULL`
-    ).all(...ids);
+      `SELECT entity_id FROM entity_attrs
+         WHERE memory_id IN (${placeholders}) AND entity_id IS NOT NULL
+       UNION
+       SELECT from_entity AS entity_id FROM entity_relations
+         WHERE memory_id IN (${placeholders}) AND from_entity IS NOT NULL
+       UNION
+       SELECT to_entity AS entity_id FROM entity_relations
+         WHERE memory_id IN (${placeholders}) AND to_entity IS NOT NULL`
+    ).all(...ids, ...ids, ...ids);
     return rows.map((r) => r.entity_id);
   }
 
