@@ -2575,3 +2575,39 @@ test("mobile: the narrow-container breakpoints reflow the two-column skeletons i
     ".mneme-graphsvg 不得改回 touch-action:pan-y —— 纵向手势会被浏览器拿去滚页面，" +
     "而图谱的拖拽只有鼠标事件实现，触屏拖拽行为无真机无法验证（见上方注释）");
 });
+
+// Issue #512：面板详情抽屉要能说清「这条记忆是从哪来的」。
+//
+// 归因分两层：窗口级（哪一段原文蒸出来的）与行级（哪一轮铸造的）。这两层
+// 任何一层缺失都必须显示成「没有归因」，而不是让用户看到空白以为自己眼花了。
+test("memory drawer surfaces distillation provenance, both layers (issue #512)", () => {
+  for (const key of [
+    "memory.explorer.detail.provenance",
+    "memory.explorer.detail.provenanceEmpty",
+    "memory.explorer.detail.provenanceMint",
+    "memory.explorer.detail.provenanceWindow",
+    "memory.explorer.detail.provenanceNoRun",
+    "memory.explorer.detail.provenanceRecords"
+  ]) {
+    // 只数字典定义处（"key": 形态）——键在渲染里还会被 t("…") 再引一次，
+    // 数全量出现次数会把两种用法混为一谈。
+    const defined = clientSource.split(`"${key}":`).length - 1;
+    assert.equal(defined, 2, `i18n key ${key} must be defined exactly once in zh and once in en (got ${defined})`);
+  }
+
+  // 必须真的去读那一个端点，且是读不是算——归因的判据只有后端一处。
+  assert.ok(clientSource.includes("/api/dsh-mneme/memory/provenance?id="),
+    "the drawer must fetch the provenance endpoint");
+  // 两层都要渲染：只渲染窗口会让铸造出来的 pattern 永远显示「没有来源」，
+  // 而它们恰恰是归因最该说清的一类（没有会话区间可看）。
+  // 断到 .map( 为止：只写 "provenance.mints" 会被空态判断里的 .length 满足，
+  // 于是「渲染被整段删掉」这种回归照样能过（本用例的变异自证就是从这里翻车的）。
+  assert.ok(clientSource.includes("provenance.mints.map("), "mint-level attribution (which run minted the row) must render");
+  assert.ok(clientSource.includes("provenance.windows.map("), "window-level attribution (which transcript) must render");
+  assert.ok(clientSource.includes("\"memory.explorer.detail.provenanceNoRun\""),
+    "a legacy link without a run id must say so explicitly, not render an empty cell");
+
+  // 读失败要落回「没读到」而不是伪造一份空归因：两者在界面上是不同的话。
+  assert.ok(clientSource.includes("/api/dsh-mneme/memory/provenance?id=") && clientSource.includes("setProvenance(null)"),
+    "a failed read must clear the block instead of pretending there is no attribution");
+});

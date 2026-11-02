@@ -200,3 +200,86 @@ test("mint source: rows are countable by source after minting", () => {
   assert.equal(bySource.get("manual"), undefined, "nothing minted here fell back to the default");
   store.close();
 });
+
+// ── Issue #512：铸造出来的记忆要能追到「哪一轮」 ──
+//
+// source 只说「哪条管道」，不说「哪一次运行」。同一管道跑过几百轮之后，
+// 「这条 pattern 是哪一轮抽出来的」在数据面上仍然不可读——这正是 #512 要补的。
+// 归因落在 memory_mints：dream/sleep 铸造的记忆没有会话区间（session/seq 都不存在），
+// 硬塞合成区间就是编的，所以窗口级归因（memory_provenance）与行级归因（本表）分层。
+
+test("issue#512: a created row remembers which run minted it", () => {
+  const { store, service } = setup();
+  applyDecisions(
+    [{ action: "create", type: "pattern", title: "真模式", content: "规律", importance: 3 }],
+    service,
+    null,
+    null,
+    { mintSource: "dream", runId: "run-abc" }
+  );
+  const row = service.all().find((m) => m.type === "pattern");
+  assert.ok(row, "pattern minted");
+  const mints = store.mintsFor(row.id);
+  assert.equal(mints.length, 1, "one created row = one mint record");
+  assert.equal(mints[0].run_id, "run-abc");
+  assert.equal(mints[0].run_type, "dream");
+  assert.equal(mints[0].trigger_source, "autoDream");
+  store.close();
+});
+
+// 没有 run id 时什么都不写。旧装配（或直接调 applyDecisions 的调用方）没有 run 概念，
+// 这时候编一个 id 出来比留空更坏：它会让「能追到」变成一句谎话。
+test("issue#512: without a run id no mint record is fabricated", () => {
+  const { store, service } = setup();
+  applyDecisions(
+    [{ action: "create", type: "pattern", title: "无轮模式", content: "规律", importance: 3 }],
+    service,
+    null,
+    null,
+    { mintSource: "dream" }
+  );
+  const row = service.all().find((m) => m.type === "pattern");
+  assert.ok(row, "pattern still minted — 记账缺失不该拦铸造");
+  assert.deepEqual(store.mintsFor(row.id), []);
+  store.close();
+});
+
+// 只记 create。merge/conflict/update/supersede 动的是既有行，receipt_chain 已按
+// (run_id, record_id) 记过一遍；再造一份就是第二套账，两边迟早对不上。
+test("issue#512: only creation is recorded — edits to existing rows stay in receipt_chain", () => {
+  const { store, service } = setup();
+  const existing = service.saveWithDedupe({ type: "project", title: "既有行", content: "旧内容", importance: 3 }).memory;
+  applyDecisions(
+    [{ action: "update", ids: [existing.id], content: "新内容", importance: 4 }],
+    service,
+    null,
+    null,
+    { mintSource: "dream", runId: "run-upd" }
+  );
+  assert.deepEqual(store.mintsFor(existing.id), [], "update 不是铸造，不进 memory_mints");
+  store.close();
+});
+
+// 端到端：sleep 真的跑一轮，铸造出来的行要指回那一轮的 runId（不是随便一个 id）。
+test("issue#512: sleep mints point back at the run that produced them", async () => {
+  const { store, service } = setup();
+  mint(service);
+  mint(service);
+  const ctx = sleepCtx(
+    JSON.stringify([{ action: "create", type: "pattern", title: "真模式", content: "从 a 和 b 提取", importance: 3 }])
+  );
+  const config = { sleepModeEnabled: true, sleepPatternMinMemories: 10, sleepMaxPatternPerRun: 3 };
+  const result = await runSleep(ctx, service, config, ctx.logger, null, null);
+  assert.equal(result.phases.patterns.status, "ok", "pattern phase minted");
+
+  const row = service.all().find((m) => m.type === "pattern");
+  assert.ok(row, "pattern minted");
+  const mints = store.mintsFor(row.id);
+  assert.equal(mints.length, 1);
+  assert.equal(mints[0].run_id, result.runId, "归因要指回这一轮的 runId，不是另编一个");
+  assert.equal(mints[0].run_type, "sleep");
+  assert.equal(mints[0].trigger_source, "sleep");
+  // 那一轮 run 台账本身也在：两边能对上，归因才成立。
+  assert.equal(store.getDreamRun(result.runId).run_type, "sleep");
+  store.close();
+});

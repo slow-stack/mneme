@@ -881,8 +881,10 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
   if (!ok) return { status: "failed", error: `invalid decisions: ${errors.join("; ")}` };
   // 本相位的 create 落 source=sleep。来源从管道给而非从决策对象取——见
   // applyDecisions 的 @param config。
+  // #512：runId 也必须给——这是 sleep 唯一的真实铸造路径，漏了它，铸造出来的
+  // pattern 就只能追到「sleep 这条管道」，追不到「哪一轮 sleep」（正是 #512 要补的口子）。
   const { applied, failures, conflicts } = applyDecisions(
-    decisions, service, logger, snapshot, { ...config, mintSource: "sleep" }
+    decisions, service, logger, snapshot, { ...config, mintSource: "sleep", runId }
   );
   return {
     status: applied > 0 ? "ok" : "noop",

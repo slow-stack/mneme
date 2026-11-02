@@ -140,6 +140,8 @@
 
 `enabled` 这一格**同时管读写两侧**（#509 评审整改后）：写侧是蒸馏时是否落盘（`src/summarize.js:988`），读侧是溯源读出口是否把原文读出去（判据在 `src/provenance-http.js`，与写侧逐字同源，只此一份）。关着时读出口回 `409 {"error":"distill-records-disabled"}`——但**盘上的原文不会因此消失**：保留期裁剪与写入同在 `src/index.js:270` 一道门里，关掉开关意味着「不再写、启动期也不再裁」，已留的行会一直躺在库里，直到 `dsh-mneme reclaim`（它不读这个键，手动可删）或重新开启后的启动裁剪。所以「关掉就干净了」是误读，诚实的表述是「关掉 = 不再经 HTTP 提供」。
 
+**运行归因（#512）不加开关**：溯源窗口另外带 `distill_run_id / run_type / trigger_source / run_status`，答复级另带 `mints[]`（这条记忆出生自哪一轮 dream / sleep）。它记的是归因元数据、不含任何会话正文，所以不依附 `distillRecords.enabled`——上面那枚开关关着时端点照旧 409，但 `distill_runs` 与 `memory_mints` 两张表仍在记账。改造之前写下的行刻意留 NULL、不补：反推一个「看起来能追」的合成 id 比没有归因更坏。
+
 ## 注入
 
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |

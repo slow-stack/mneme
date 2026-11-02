@@ -192,7 +192,7 @@ README 路由表、`test/security-doc.test.js` 的清单锁），而两个方向
 量与开关判据只许出现在本模块、两个壳都真的把 `config` 转交进来、读侧判据与写侧
 `src/summarize.js:988` 逐字同源」写成断言。
 
-**形状**：一个窗口 `{session_id, seq_start, seq_end, created_at, link_count, records[]}`，
+**形状**：窗口在 `{session_id, seq_start, seq_end, created_at, records[]}` 之外按方向分叉——方向 1（`?id=`）每行是一个溯源链接，另带 `distill_run_id / run_type / trigger_source / run_status`（后四个字段见 §11），答复级再带 `mints[]`；方向 2（`?sessionId=`）把同一窗口的多条链接合并成一行，另带 `link_count`。**run 归因只挂在方向 1 上**：方向 2 的一行是一个窗口、通常派生多条记忆，没有单一归因主体，要逐条查仍走方向 1。
 `records` 是区间内的逐条会话原文（按 `seq` 升序、不越界）。没有链接的记忆返回**空
 `windows`**——「不是蒸馏来的」是有效答案，不是错误；未知 id 同样回空 `windows`（读端点
 不替调用方判断记忆是否存在）。到期裁剪后链接保留、指向空区间，面板据此显示「原文已过期」。
@@ -260,3 +260,49 @@ memory.db 的进程仍可读；唯一出路是 `dsh-mneme reclaim`（`src/mainte
 键，手动可删）或重新开启后的启动裁剪。把「关 = 删掉」写进任何文档都是谎话。后续可做的
 是让裁剪与写开关解耦（`retentionDays` 有值就裁，无论 `enabled`），那是让开关语义完全诚实
 的唯一修法，超出本轮范围。
+
+## 11. 运行归因：从「会话区间」到「哪一次蒸馏」（#512）
+
+§10 的窗口只回答「这条记忆蒸自哪一段原文」。同一段区间被重蒸馏过几次、哪一轮失败了、
+失败在哪一步——这些在 §10 的形状里读不出来，因为 `memory_provenance` 的粒度是
+(memory, 会话, 区间)，而区间是**输入**的坐标，不是**运行**的身份。
+
+拆成两层，因为它们回答的不是同一个问题：
+
+| 层 | 表 | 回答 | 谁能填 |
+|---|---|---|---|
+| 窗口级 | `memory_provenance.distill_run_id` → `distill_runs` | 这条记忆是**哪一轮蒸馏**从这段原文里提出来的 | 只有按窗口写入的 autoSummarize 路径 |
+| 行级 | `memory_mints(memory_id, run_id)` | 这条记忆**出生自哪一轮巩固** | dream / sleep 的 create 动作 |
+
+**为什么行级要另开一张表**：dream / sleep 铸造的 pattern 没有会话区间——session 与 seq
+都不存在。把合成区间塞进 `memory_provenance` 就是编造坐标，而一个错的坐标比没有坐标更坏
+（它看起来完全合法，会让「能追到」变成谎话）。所以那一层只记 run id，不记区间。
+
+**为什么行级只填 create**：merge / conflict / update / supersede 动的是**既有行**，
+`receipt_chain` 已按 (run_id, record_id) 记过一遍。再造一份就是第二套账，两边迟早对不上。
+create 是那边唯一的洞：`buildOutcome` 刻意不给 create 派 disposition，`receipt_chain`
+也就不产行。
+
+**为什么不复用 `llm_audit_logs.id` 当 run id**：`llmAudit.retentionDays` 到期裁剪会删掉
+audit 行，归因会跟着悬空；而 `memory_provenance` 刻意活得比原文更久（§10 的「来源已过期」
+就是这条设计的产物）。所以 run 是**归因主体**，audit 行只是它的**开销读数**，两边靠
+`distill_runs.audit_id` 连——不是靠时间戳猜。
+
+**为什么不复用 `dream_runs`**：那张表每一列都是巩固语义（`snapshot_hash` / `input_count` /
+`decisions` / `outcome` / `receipt`），「每行都能回放一次巩固」是它对消费方的契约。硬塞
+`run_type='autoSummarize'` 会让这条契约失效，而一个字段两种含义是这套 schema 里最容易腐烂
+的那种设计。dream / sleep 的轮次仍只记在 `dream_runs`，不复制进 `distill_runs`——两张表
+各说一件事，比一张表说两件事好。
+
+**历史行不猜**：迁移只加列/加表，存量 `memory_provenance.distill_run_id` 一律 NULL。反推
+一个「看起来能追」的合成 id 是最坏的一种坏：读数正常，实际是编的。面板遇到 NULL 显示
+「无运行归因（历史行）」，不是空白。
+
+**失败轮也记账**：`distill_runs.status` 取 `ok | degraded | noop | failed | aborted`。
+模型侧流失败与解析失败都会留一行 `failed`——否则「这个窗口为什么一直没有记忆」在台账上
+查不到原因。只有 dispose / 会话关闭才是 `aborted`（这一轮被主动打断），两者必须分得开。
+
+**读出口**：`GET /api/dsh-mneme/memory/provenance?id=` 的窗口按上表带上
+`distill_run_id / run_type / trigger_source / run_status`（读不到整组 null），答复级另带
+`mints[]`（`{run_id, run_type, trigger_source, created_at}`）。面板详情抽屉有一个
+「蒸发归因」区块渲染这两层。

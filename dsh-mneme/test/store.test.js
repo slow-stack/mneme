@@ -554,3 +554,138 @@ test("Issue #495: listDreamRuns excludes a run type by pushdown, and only accept
   assert.equal(store.listDreamRuns({ excludeRunType: "nope" }).length, 3);
   store.close();
 });
+
+// ============================ #512 蒸馏 run 归因
+
+test("#512 迁移：老库补上 distill_run_id 列与两张新表，存量链接留 NULL 不猜", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-migrate-run-"));
+  const dbPath = join(dir, "legacy.db");
+  try {
+    // 存量库：#399 时代的形状——memory_provenance 没有 distill_run_id，也没有
+    // distill_runs 与 memory_mints。这一行代表「改造之前就落盘的链接」，它没有 run 可指。
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec("CREATE TABLE memories (" +
+      "id TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, " +
+      "tags TEXT NOT NULL DEFAULT '[]', importance INTEGER NOT NULL DEFAULT 3, " +
+      "forgotten INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0, " +
+      "source TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);");
+    legacy.exec("CREATE TABLE memory_provenance (" +
+      "memory_id TEXT NOT NULL, session_id TEXT NOT NULL, " +
+      "seq_start INTEGER NOT NULL, seq_end INTEGER NOT NULL, created_at TEXT NOT NULL);");
+    legacy.exec("INSERT INTO memories (id, type, title, content, tags, importance, forgotten, archived, source, created_at, updated_at) " +
+      "VALUES ('old1', 'history', '老记忆', '内容', '[]', 3, 0, 0, NULL, '2026-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z');");
+    legacy.exec("INSERT INTO memory_provenance (memory_id, session_id, seq_start, seq_end, created_at) " +
+      "VALUES ('old1', 's-old', 1, 5, '2026-01-02T00:00:00.000Z');");
+    legacy.close();
+
+    const store = createStore(dbPath);
+    const cols = store.db.prepare("PRAGMA table_info(memory_provenance)").all().map((c) => c.name);
+    assert.ok(cols.includes("distill_run_id"), "存量库重开即补上 distill_run_id");
+    for (const table of ["distill_runs", "memory_mints"]) {
+      const row = store.db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
+      ).get(table);
+      assert.ok(row, "存量库重开即建 " + table);
+    }
+
+    const links = store.provenanceFor("old1");
+    assert.equal(links.length, 1);
+    assert.equal(
+      links[0].distill_run_id,
+      null,
+      "历史链接保持 NULL：反推一个合成 run id 比不填更坏（读数正常、实际是猜的）"
+    );
+    assert.equal(store.mintsFor("old1").length, 0, "历史记忆不补铸造记录——那时根本没有 run 概念");
+    store.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#512 迁移幂等：重开已升级的库不重复 ALTER、不动已落盘的 run 归因", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-migrate-run2-"));
+  const dbPath = join(dir, "upgraded.db");
+  try {
+    const first = createStore(dbPath);
+    const m = first.save({ type: "history", title: "t", content: "c" });
+    first.saveDistillRun({
+      id: "run-a",
+      status: "ok",
+      run_type: "autoSummarize",
+      trigger_source: "autoSummarize",
+      session_id: "s1",
+      seq_start: 1,
+      seq_end: 2,
+      memory_count: 1
+    });
+    first.saveMemoryProvenance({
+      memoryId: m.id, sessionId: "s1", seqStart: 1, seqEnd: 2,
+      createdAt: "2026-11-01T00:00:00.000Z", distillRunId: "run-a"
+    });
+    first.close();
+
+    const second = createStore(dbPath);
+    const cols = second.db.prepare("PRAGMA table_info(memory_provenance)")
+      .all().filter((c) => c.name === "distill_run_id");
+    assert.equal(cols.length, 1, "列只存在一份，没被重复 ALTER");
+    assert.equal(second.provenanceFor(m.id)[0].distill_run_id, "run-a", "重开不动已落盘的归因");
+    assert.equal(second.getDistillRun("run-a").status, "ok");
+    second.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#512 distill_runs：同 id replay 覆写而不重复", () => {
+  const store = openMemory();
+  store.saveDistillRun({
+    id: "r1", status: "failed", error: "boom",
+    run_type: "autoSummarize", trigger_source: "autoSummarize",
+    session_id: "s1", seq_start: 1, seq_end: 3, memory_count: 0,
+    created_at: "2026-11-01T00:00:00.000Z"
+  });
+  // 同一轮重放（等价于宿主重启后重试同一逻辑轮）：必须覆写，不能变成两行。
+  store.saveDistillRun({
+    id: "r1", status: "ok",
+    run_type: "autoSummarize", trigger_source: "autoSummarize",
+    session_id: "s1", seq_start: 1, seq_end: 3, memory_count: 2,
+    created_at: "2026-11-01T00:00:00.000Z"
+  });
+  const runs = store.listDistillRuns();
+  assert.equal(runs.length, 1, "一轮只有一行");
+  assert.equal(runs[0].status, "ok", "replay 覆写成最新的事实");
+  assert.equal(runs[0].error, undefined, "覆写清掉上一次的错误");
+  assert.equal(runs[0].memory_count, 2);
+  assert.equal(runs[0].audit_id, undefined, "没有 audit 行时是 undefined，不是 0");
+  store.close();
+});
+
+test("#512 distill_runs：audit_id 事后补注，补不存在的 run 静默返回 0", () => {
+  const store = openMemory();
+  store.saveDistillRun({ id: "r2", status: "ok", run_type: "autoSummarize", trigger_source: "autoSummarize" });
+  assert.equal(store.attachDistillRunAudit("r2", 42), 1);
+  assert.equal(store.getDistillRun("r2").audit_id, 42);
+  assert.equal(store.attachDistillRunAudit("missing", 42), 0, "行不存在时不动任何东西");
+  assert.equal(store.attachDistillRunAudit("r2", null), 0, "非整数 audit id 一律不写");
+  store.close();
+});
+
+test("#512 memory_mints：同一 (记忆, run) 只记一次，删记忆时显式清掉归因", () => {
+  const store = openMemory();
+  const m = store.save({ type: "pattern", title: "抽出来的规律", content: "c", source: "dream" });
+  const mint = { memoryId: m.id, runId: "run-d", runType: "dream", triggerSource: "autoDream", createdAt: "2026-11-01T00:00:00.000Z" };
+  assert.equal(store.saveMemoryMint(mint), 1);
+  assert.equal(store.saveMemoryMint(mint), 0, "INSERT OR IGNORE：重放不重复记一次铸造");
+  const rows = store.mintsFor(m.id);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].run_type, "dream");
+  assert.equal(rows[0].trigger_source, "autoDream");
+
+  store.remove(m.id);
+  assert.equal(
+    store.db.prepare("SELECT count(*) AS c FROM memory_mints WHERE memory_id = ?").get(m.id).c,
+    0,
+    "记忆没了，归因不许悬空（CASCADE 之外仍显式清，与 memory_provenance 同一口径）"
+  );
+  store.close();
+});
