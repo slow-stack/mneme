@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-02
+
 ## 🆕 新增
 
 - **溯源读出口补上反方向：`GET /memory/provenance?sessionId=<sid>`——「这个会话蒸出了哪几个窗口」第一次可直接查，此前只能「从一条记忆往回找」（#524，从 #421 拆出方向 2）**：#421 当初拆成两个方向，方向 1（记忆 → 窗口 → `distill_records` 原文）由 #509 交付，方向 2（会话 → 它产出的蒸馏窗口）一直没做。底下其实早就齐了——`memory_provenance` 自 #399 就在写、`idx_memory_provenance_session` 自那时就建着——缺的只是入参方向：`parseProvenanceQuery` 只认 `?id=<memoryId>`，`session_id` 只在响应里躺着。**复用同一条路径而不是新开一条**：多一条路径就多四处要登记的地方（`SECURITY.md` 两张表、包 README 路由表、`test/security-doc.test.js` 的清单锁），而两个方向读的是同一批数据、只是入口不同；`SECURITY.md` 只登记路径不登记 query 形状，所以方向 2 在那两张表里一行都不用加。两个主键**互斥**：都缺 `400 missing-id`、都给 `400 ambiguous-id`——**刻意不做「都给则择一」**，择一意味着调用方可以发一个自己也不知道会被读哪个主键的请求，而两个方向的答复形状不同，那种静默选择只会在出事之后才被发现。
