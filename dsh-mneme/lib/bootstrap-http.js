@@ -19,8 +19,7 @@
  */
 export const BOOTSTRAP_UNAVAILABLE = "bootstrap-unavailable";
 
-/** 引导失败的 warn 文案。两条路径共用，日志里不会出现两种拼法。 */
-export /**
+/**
  * 记日志这一手，只许经这里。
  *
  * 照 `share-http.js` 的同一份理由抄（C5 评审裁定）：warn 裸调时，宿主 logger 自己坏掉就会
@@ -34,6 +33,7 @@ function warnSafely(warn, message) {
   } catch { /* 记日志是自己的事，坏了的日志不许把已经算好的答复一起带走 */ }
 }
 
+/** 引导失败的 warn 文案。两条路径共用，日志里不会出现两种拼法。 */
 function bootstrapWarnMessage(error) {
   return `[dsh-mneme] bootstrap failed: ${String(error)}`;
 }
