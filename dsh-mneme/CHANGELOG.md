@@ -24,6 +24,10 @@
 
   验收：`test/graph-multipath.test.js`（10 条）与 `test/graph-boosted-relations.test.js`（9 条）新增，面板侧锁在 `test/client.test.js` 的 #24 用例；每条新用例都做过变异自证（把被它锁住的那行改坏，看它是否真的变红），其中两处首版用例是**空转的**、被变异自证当场抓住后重写：0 分种子用例原本把两条记忆挂在同一个实体上，滤不滤 0 分都到不了；排序用例把宽实体命名成字母序靠前的名字，按名字排也能过。全量 2680 tests / 2679 pass / 0 fail / 1 skipped。
 
+### 贡献者 / Thanks
+
+- **@strange2000** — #553 的现场报告：把崩溃定位到「打开记忆详情必崩」这一步，贴出两条 renderer 日志、确认库本身无损（27 张表、`integrity_check` 正常），并顺手指出同一个 slot 里组件抛错会带走整个 renderer、建议补 error boundary。根因到行号级的排查是从这份报告起步的。
+
 ## [0.10.0] - 2026-11-02
 
 ## 🆕 新增
