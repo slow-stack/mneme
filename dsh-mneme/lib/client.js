@@ -7163,6 +7163,10 @@ window.__ModuleLoader__.load({
         const target = String(dir || "").trim();
         if (!target) { setErr(t("memory.explorer.bootstrapNoDir")); return; }
         setBusy(true);
+        // 同步告诉父组件，别等下面那个 effect：effect 要等这次渲染提交后才跑，
+        // 中间那一拍父组件的 bootstrapBusy 还是 false，此时点「⋯」仍会把弹层卸掉，
+        // 请求的成功或失败就再没有地方显示（评审 #4452539705）。
+        if (onBusyChange) onBusyChange(true);
         setErr("");
         apiFetch("/api/dsh-mneme/bootstrap", {
           method: "POST",
@@ -7185,7 +7189,11 @@ window.__ModuleLoader__.load({
             setMsg(t("memory.explorer.bootstrapDone")
               .replace("{n}", String((d && d.created) ?? 0))
               .replace("{m}", String((d && d.merged) ?? 0)));
-            timerRef.current = setTimeout(() => { onImported(); onClose(); }, 900);
+            // onImported 同步调，只把 onClose 留在定时器里：切视图会卸载本组件并清掉
+            // timerRef，若刷新也排在那 900ms 之后，这一步就静默丢了——库已经写进去了，
+            // 列表却还是旧的（评审 #4452539711）。
+            onImported();
+            timerRef.current = setTimeout(() => onClose(), 900);
           })
           .catch(() => { setBusy(false); setErr(t("memory.explorer.bootstrapFailed")); });
       };
@@ -8068,19 +8076,22 @@ window.__ModuleLoader__.load({
                 }
               }, "⋯"),
               menuOpen && h("div", { className: "mneme-menu", role: "menu" },
-                h("button", { type: "button", role: "menuitem", onClick: () => { setCreateOpen(true); setMenuOpen(false); } },
+                // 引导请求在飞时，会挂弹层的那几项一律 disabled：这些弹层共用同一个
+                // 绝对定位锚点，后渲染的会盖住引导弹层，它那句「新建几条、并入几条」
+                // 就没地方看了（评审 #4452539738）。导出两项不挂弹层，照旧可点。
+                h("button", { type: "button", role: "menuitem", disabled: bootstrapBusy, onClick: () => { setCreateOpen(true); setMenuOpen(false); } },
                   t("memory.explorer.newMemory")),
                 h("button", { type: "button", role: "menuitem", onClick: () => { setMenuOpen(false); exportData("json"); } },
                   t("memory.explorer.exportJson")),
                 h("button", { type: "button", role: "menuitem", onClick: () => { setMenuOpen(false); exportData("markdown"); } },
                   t("memory.explorer.exportMarkdown")),
-                h("button", { type: "button", role: "menuitem", onClick: () => { setImportOpen(true); setMenuOpen(false); } },
+                h("button", { type: "button", role: "menuitem", disabled: bootstrapBusy, onClick: () => { setImportOpen(true); setMenuOpen(false); } },
                   t("memory.explorer.importMd")),
-                h("button", { type: "button", role: "menuitem", onClick: () => { setBootstrapOpen(true); setMenuOpen(false); } },
+                h("button", { type: "button", role: "menuitem", disabled: bootstrapBusy, onClick: () => { setBootstrapOpen(true); setMenuOpen(false); } },
                   t("memory.explorer.bootstrap")),
-                h("button", { type: "button", role: "menuitem", onClick: () => { setShareOpen(true); setMenuOpen(false); } },
+                h("button", { type: "button", role: "menuitem", disabled: bootstrapBusy, onClick: () => { setShareOpen(true); setMenuOpen(false); } },
                   t("memory.explorer.sharePack")),
-                h("button", { type: "button", role: "menuitem", onClick: () => { setReceiveOpen(true); setMenuOpen(false); } },
+                h("button", { type: "button", role: "menuitem", disabled: bootstrapBusy, onClick: () => { setReceiveOpen(true); setMenuOpen(false); } },
                   t("memory.explorer.receivePack")),
               ),
               importOpen && h(ImportDialog, {

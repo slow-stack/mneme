@@ -1413,7 +1413,7 @@ test("panel can create a memory by hand: menu entry wired to the dialog", () => 
   // 入口在「更多操作」菜单里，且菜单项真的调用 setCreateOpen(true)——只断言文案
   // 存在的话，把 onClick 摘掉测试照样绿。
   assert.ok(clientSource.includes('"memory.explorer.newMemory"'), "menu entry label must exist");
-  assert.ok(/role: "menuitem", onClick: \(\) => \{ setCreateOpen\(true\); setMenuOpen\(false\); \}/.test(clientSource),
+  assert.ok(/role: "menuitem", (?:disabled: bootstrapBusy, )?onClick: \(\) => \{ setCreateOpen\(true\); setMenuOpen\(false\); \}/.test(clientSource),
     "the menu item must actually open the create dialog");
   assert.ok(clientSource.includes("const [createOpen, setCreateOpen] = useState(false)"),
     "the dialog needs its own open state");
@@ -2741,9 +2741,36 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
     /onBusyChange: setBootstrapBusy/.test(clientSource),
     "the dialog must report its busy state up, or the guard reads a stale false"
   );
+  // 会挂弹层的菜单项在忙碌时必须禁用（评审 #4452539738）：新建 / 导入 / 引导 / 分享 /
+  // 接收共五处。这些弹层共用同一个绝对定位锚点，后渲染的会盖住引导弹层那句
+  // 「新建几条、并入几条」。数个数而不是逐个锁字符串——少一处就等于留了一条绕过
+  // 弹层的路，而这条路的代价是用户看不到自己那次引导的结果。
+  assert.equal(
+    clientSource.split("disabled: bootstrapBusy").length - 1,
+    5,
+    "every dialog-mounting menu item must be disabled while bootstrap is busy"
+  );
+  // 两个导出项不挂弹层，不该被一起禁掉——引导在飞时照样能导出。
+  for (const line of clientSource.split("\n")) {
+    if (!line.includes("exportData(")) continue;
+    assert.ok(
+      !line.includes("disabled: bootstrapBusy"),
+      "the export items mount no dialog and must stay clickable while bootstrap is busy"
+    );
+  }
   const bsIdx = clientSource.indexOf("function BootstrapDialog");
-  const bsBody = clientSource.slice(bsIdx, bsIdx + 3200);
+  // 切到下一个弹层为止，而不是给一个拍脑袋的字符数：这轮改动静悄悄把窗口撑破了，
+  // 断言于是在一个截断的片段上做，失败信息还指着「输入框没禁用」这种不存在的毛病。
+  const bsEnd = clientSource.indexOf("// --- 分享包弹层 ---", bsIdx);
+  const bsBody = clientSource.slice(bsIdx, bsEnd > bsIdx ? bsEnd : bsIdx + 4200);
   assert.ok(bsIdx > 0, "BootstrapDialog must exist");
+  // 忙碌状态必须**同步**报上去（评审 #4452539705）：只靠上面那个 useEffect 的话，
+  // 它要等这次渲染提交后才跑，中间那一拍父组件的 bootstrapBusy 还是 false，此时点
+  // 「⋯」仍会把弹层卸掉，请求的成功或失败就再没有地方显示。
+  assert.ok(
+    /setBusy\(true\);[\s\S]{0,400}?onBusyChange\(true\);/.test(bsBody),
+    "busy must be reported up synchronously, not only through the effect"
+  );
   assert.ok(
     /apiFetch\("\/api\/dsh-mneme\/bootstrap"/.test(bsBody),
     "the dialog must POST to the bootstrap route"
@@ -2768,6 +2795,19 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
   const successTail = bsBody.slice(doneIdx, timerIdx);
   assert.ok(!/setBusy\(false\)/.test(successTail), "the success path must not re-enable the button");
   assert.ok(/clearTimeout\(timerRef\.current\)/.test(bsBody), "the stored timer must actually be cleared on unmount");
+  // 刷新必须同步调、不能排进定时器（评审 #4452539711）：切视图会卸载本组件并把
+  // timerRef 清掉，若刷新也挂在那 900ms 后面，它就静默丢了——库已经写进去了，
+  // 列表却还是旧的。而这条路径上用户刚看到「新建 N 条」，最容易立刻去翻列表。
+  const importedIdx = bsBody.indexOf("onImported();");
+  assert.ok(importedIdx > 0, "the success path must refresh the list");
+  assert.ok(
+    importedIdx < timerIdx,
+    "onImported must run synchronously, not inside the close timer"
+  );
+  assert.ok(
+    !/setTimeout\(\(\)\s*=>\s*\{?\s*onImported/.test(bsBody),
+    "the refresh must not be deferred into the close timer"
+  );
   // 错误按服务端的码分开说（missing-dir / dir-not-found / not-a-directory /
   // bootstrap-unavailable），不能一律「引导失败」——三种情况下用户该做的事不同。
   assert.ok(
