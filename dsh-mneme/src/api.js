@@ -3,7 +3,7 @@ import { isAbsolute } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { timingSafeEqual, randomBytes } from "node:crypto";
-import { FEATURE_FLAG_SPEC } from "./settings.js";
+
 import { TYPES } from "./store.js";
 import { TYPE_FILE, renderMirrorText, renderFileHeader, parseHumanEdits, MIRROR_READONLY_TYPES } from "./mirror.js";
 import { langOf } from "./lang.js";
@@ -19,6 +19,14 @@ import { describeLocalRuntime, publicRuntimeStatus } from "./runtime/loader.js";
 import { hostModulesDir, provisionRuntime } from "./runtime/provision.js";
 import { classify, fetchLatestVersion, PACKAGE_VERSION } from "./version-check.js";
 import { parseReclaimQuery, parseReclaimJson, readReclaimFields, reclaimReply, RECLAIM_UNAVAILABLE } from "./reclaim-http.js";
+// Issue #386 第 6 条：从目录引导（bootstrap）在面板侧也要有入口。协议层口径只在
+// bootstrap-http.js 里写一份，与 Bearer 数据面共用（#411 那条纪律：两张皮只许剩
+// 鉴权与路径不同）。
+import { parseBootstrapJson, readBootstrapDir, bootstrapReply, BOOTSTRAP_UNAVAILABLE } from "./bootstrap-http.js";
+import { bootstrapFromDirectory } from "./bootstrap.js";
+// Issue #386 第 7 条：面板能改的键 vs schema 里存在的键，两份清单的唯一算法在这里。
+// 这里引的是同一份（不是照抄），谁改白名单都对得上。
+import { describeConfigKeys, flagKeysFromSpec } from "./config-keys.js";
 import { parseShareBody, shareReply, shareFilename, parseReceiveBody, receiveReply, parseUndoBody, undoReply } from "./share-http.js";
 import { readPipelineDoc, loadPipelines, projectPipelineDir } from "./pipeline.js";
 import { loadRunsById, runsDir, RUNS_SUFFIX } from "./pipeline-runs.js";
@@ -231,14 +239,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   // **反推不出待重启**，必须另比一次冻结值——这是本字段存在的唯一理由。
   // 只报「显式覆盖 ≠ 冻结值」的键：未被覆盖的键运行时值就是 cfg 值，不存在落差；
   // config 缺席（旧调用方直连、未传 cfg）时无从比较，返回空数组而不编造。
-  const flagKeys = [
-    ...FEATURE_FLAG_SPEC.booleans,
-    ...Object.keys(FEATURE_FLAG_SPEC.ints),
-    ...Object.keys(FEATURE_FLAG_SPEC.numbers),
-    ...FEATURE_FLAG_SPEC.strings,
-    ...FEATURE_FLAG_SPEC.urls,
-    ...Object.keys(FEATURE_FLAG_SPEC.enums)
-  ];
+  // 顺序见 config-keys.js 的 flagKeysFromSpec（booleans → ints → numbers → strings
+  // → urls → enums）。这张表曾经在这里手拼一遍，第 7 条把「面板能改哪些键」做成
+  // 对外清单之后，两处各算一份就会立刻分歧——所以搬进模块，这里只引。
+  const flagKeys = flagKeysFromSpec();
   // 嵌套键在 kv 里按点号平铺（"memoryQualityFilter.enabled"），运行时 cfg 里
   // 是嵌套对象，effective 从对象子字段取值；其余键照旧从 cfg 顶层取。
   // 这张表必须与 settings.js 白名单里的点号键一一对应：#254 加键时漏了这里，
@@ -1802,6 +1806,85 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           service.mergeHumanEdits(body.type, edits);
           sendJson(res, 200, { merged: edits.length, type: body.type });
         });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  // --- 从目录引导（bootstrap，#386 第 6 条）------------------------------------
+  // 后端能力从 #220 起就在（src/bootstrap.js：六类确定性产物、零 LLM、吃
+  // saveWithDedupe 的去重），但只有 Bearer 数据面一条入口，面板够不着——「用户照
+  // 文档去找入口，发现产品界面里没有」。
+  //
+  // policy 取 token 而不是 token-write：它写记忆（虽然幂等），与 /import 同类，
+  // 而 /import 就是整条要 token 的。GET 不给读分支：没有「预览一次引导会写什么」
+  // 的形态，硬造一个 dryRun 等于把 bootstrap.js 拆成两半，收益不抵风险。
+  //
+  // 为什么不在服务端限制目录范围：插件没有「工作区根」概念（bootstrap.js 的注释
+  // 写着不猜路径），而这条路由与 /export、/import 同级，本来就能读写整库；额外加
+  // 一个路径白名单只会让人以为它比邻座更安全。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/bootstrap",
+    policy: "token",
+    handler(req, res) {
+      try {
+        if (req.method !== "POST") {
+          sendJson(res, 404, { error: "not-found" });
+          return;
+        }
+        return readBody(req, res).then((text) => {
+          if (text === null) return;
+          const parsed = parseBootstrapJson(text);
+          if (!parsed.ok) {
+            sendJson(res, 400, { error: parsed.error });
+            return;
+          }
+          // 顺序：先判 body 形状与 dir，再判能力是否接线。缺 dir 是调用方的问题，
+          // 报「能力没接线」会把人引到错误的排查方向（reclaim 那边同一条纪律）。
+          const dirResult = readBootstrapDir(parsed.body);
+          if (!dirResult.ok) {
+            sendJson(res, 400, { error: dirResult.error });
+            return;
+          }
+          if (typeof service?.saveWithDedupe !== "function") {
+            sendJson(res, 503, { error: BOOTSTRAP_UNAVAILABLE });
+            return;
+          }
+          return bootstrapReply({
+            bootstrapper: ({ dir }) => bootstrapFromDirectory({ service, dir, logger: ctx.logger }),
+            dir: dirResult.dir,
+            warn: (msg) => ctx.logger?.warn?.(msg)
+          }).then(({ status, body }) => sendJson(res, status, body));
+        });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  // --- 配置键覆盖面（#386 第 7 条，只读）--------------------------------------
+  // 面板能改的键（settings.js 白名单）与 schema 里存在的键（config.js）是两张表，
+  // 从没被摆在一起对过。这条路由把它们交/差出来，回答「哪些键只能改配置文件」。
+  //
+  // 只回**键名与计数**，一个值都不回：apiToken 这类敏感键的名字出现在「仅配置
+  // 文件」清单里正是这条 issue 想让人看见的东西（否则用户不知道它存在），但值
+  // 出这道门就会成为一个新的泄漏面。
+  //
+  // policy 取 open：与 /inject-status、/features 的读分支同级——面板要渲染，且
+  // 键名本身已经逐条写在 docs/CONFIGURATION.md 里（公开文档），不构成新秘密。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/config-keys",
+    policy: "open",
+    handler(req, res) {
+      try {
+        if (req.method !== "GET") {
+          sendJson(res, 404, { error: "not-found" });
+          return;
+        }
+        sendJson(res, 200, describeConfigKeys());
       } catch {
         sendJson(res, 500, { error: "internal" });
       }

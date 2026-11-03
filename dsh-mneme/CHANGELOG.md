@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- **面板补上「从目录引导」入口，并把「哪些配置键只能改文件」摆出来（#386 第 6、7 条）**：这两件事后端早就有了、面板里都没有。`bootstrap` 从 #220 起就在 `src/bootstrap.js` 里（六类确定性产物、零 LLM、吃 `saveWithDedupe` 的 `(type, title, scope)` 去重），但只有 Bearer 数据面一条入口，面板够不着；配置键则只有 `settings.js` 的白名单一张表、`config.js` 的 schema 另一张表，从没被摆在一起对过——「用户能理解、但面板改不到」那批键只能靠读源码 + 手数。
+
+  - **`POST /api/dsh-mneme/bootstrap`（`policy: token`）**：与 `/import` 同类（写库、幂等），所以不给 GET 读分支、也不借 `token-write` 的读写双义。判定顺序是「body 形状 → dir → 能力是否接线」：反过来的话，少填一个目录的人会看到「能力没接线」，去查错的方向。协议层口径抽在 `src/bootstrap-http.js`，与 8790 那条共用一份（#411 的纪律：两张皮只许剩鉴权与路径不同）。失败按码分开说——`missing-dir` / `dir-not-found` / `not-a-directory` / `bootstrap-unavailable` 四种情况下用户该做的事完全不同，统一成「引导失败」等于让他自己猜。
+  - **`GET /api/dsh-mneme/config-keys`（`policy: open`）**：只回键名与计数，**一个值都不回**。`apiToken` 这类键的名字出现在「只能改文件」清单里正是这条 issue 想让人看见的（否则用户不知道它存在），值出门就成了一处新泄漏面；用例同时锁了「名字在、值不在」和「装的任何值都不回声」。三份清单由 `src/config-keys.js` 现算：`panelEditable` = 白名单 ∩ 有默认值的 schema 键，`fileOnly` = schema 声明 − 白名单，`undefaulted` = 白名单 − 有默认值的 schema 键。
+  - **读 schema 声明而不是 `Config({})` 的解析结果**：第一版踩了这个坑——`apiToken` 是 `z.string()` 没有 `.default()`，解析结果里根本没有它，于是「最该被看见的敏感键」被自己的清单漏掉了。改成走 schema 的 ref 图（`object.dict` 递归、`dict` 靠 `meta.default` 还原键名、其余当叶子），探针实测声明 196 个、解析 191 个、白名单 113 个，差集正好是 `dreamProvider` / `dreamModel` / `dreamReasoningEffort` / `apiToken` / `sleepReasoningEffort`。
+  - **顺带发现一处真实的不对称**：`dreamProvider` / `dreamModel` 在 `settings.js` 白名单里，`config.js` 那边却没有 `.default()`，于是面板有输入框、保存也能存，`featureSnapshot()` 的 `if (value !== undefined)` 却把它跳过——留空时它永远不进「当前生效值」。清单把这件事单独列出来，**没有擅自补默认值**：补了会改变「未配置时到底用哪个模型」的既有行为，那是另一个决定。
+  - **面板**：溢出菜单新增「从目录引导…」（菜单按钮的 onClick 里同步关掉它，否则两个弹层并存）；设置页 `connect` 组尾新增「配置键覆盖面」只读卡，默认收起，破折号 chip 一行排开、长键名不截断（这张表的用处就是把 `memoryQualityFilter.archiveThreshold` 这样的名字完整抄进配置文件）。取数失败与「真的没有只读键」分开说——把失败画成 0 条，人会以为清单就是空的。`docs/CONFIGURATION.md` 的读法说明改成指向这张卡，不再逐行标注。
+  - **验证**：新增 `test/config-keys-routes.test.js`（14 条：policy/鉴权/坏 JSON/顺序锁/真实目录导入/不回值/三桶划分/两处点名键）+ `test/client.test.js` 一条面板锁（菜单项、弹层挂载、请求形状、四种错误码、11 个 i18n 键中英各在、卡片挂载位置）。八处变异自证全部 KILLED——含把 `/bootstrap` 的 policy 改成 open、把 `schemaLeafKeys` 换回解析结果、把 `undefaulted` 折进 `panelEditable`、把能力判定挪到 dir 校验之前、删掉菜单项、把取数失败渲染成空表、以及「卡片写了但没挂上」。全量 2696 tests / 2695 pass / 0 fail / 1 skipped，`check-sync` 85 文件一致。
+
 ## [0.10.1] - 2026-11-03
 
 - **修一个打开记忆详情就崩掉整个宿主的崩溃（#553）**：0.10.0 里点开侧边栏任意一条记忆的详情抽屉，渲染进程立刻抛 `ReferenceError: provenance is not defined`。崩的是 renderer，整个宿主跟着重启，进行中的会话被打断，100% 复现。

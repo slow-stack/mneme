@@ -2714,6 +2714,95 @@ test("entity graph surfaces the passive-confirmation review surface (issue #24)"
 //   · 现有用例——它们读的是源码字符串，从不执行组件。
 // 所以这里不锁某一个名字，而是把**每个组件里「调了 setter 却没有声明」**这件事整体扫一遍，
 // 才对得起「别再有人把 state 放进隔壁组件」这个意图。
+test("panel exposes the bootstrap entry and the config-key coverage card (issue #386)", () => {
+  // 第 6 条：从目录引导。后端从 #220 就在，缺的是面板入口——所以锁四件事：
+  // 菜单项存在、弹层真的挂在菜单上、请求打的是新路由、错误分码显示。
+  assert.ok(
+    /setBootstrapOpen\(true\); setMenuOpen\(false\)/.test(clientSource),
+    "the overflow menu needs a bootstrap item that opens its dialog"
+  );
+  assert.ok(
+    /bootstrapOpen && h\(BootstrapDialog, \{/.test(clientSource),
+    "the dialog must actually be mounted, not just declared"
+  );
+  // 菜单按钮的 onClick 里必须也关掉它，否则点「⋯」会留下上一个弹层。
+  assert.ok(
+    /setImportOpen\(false\); setBootstrapOpen\(false\); setCreateOpen\(false\)/.test(clientSource),
+    "the overflow toggle must close the bootstrap dialog too"
+  );
+  const bsIdx = clientSource.indexOf("function BootstrapDialog");
+  const bsBody = clientSource.slice(bsIdx, bsIdx + 3200);
+  assert.ok(bsIdx > 0, "BootstrapDialog must exist");
+  assert.ok(
+    /apiFetch\("\/api\/dsh-mneme\/bootstrap"/.test(bsBody),
+    "the dialog must POST to the bootstrap route"
+  );
+  assert.ok(
+    /JSON\.stringify\(\{ dir \}\)/.test(bsBody),
+    "the request body carries the raw dir string"
+  );
+  // 错误按服务端的码分开说（missing-dir / dir-not-found / not-a-directory /
+  // bootstrap-unavailable），不能一律「引导失败」——三种情况下用户该做的事不同。
+  assert.ok(
+    /"memory\.explorer\.bootstrapErr\." \+ String\(code/.test(bsBody),
+    "error codes must be mapped to distinct messages"
+  );
+  for (const key of [
+    "memory.explorer.bootstrap",
+    "memory.explorer.bootstrapTitle",
+    "memory.explorer.bootstrapHint",
+    "memory.explorer.bootstrapConfirm",
+    "memory.explorer.bootstrapDone",
+    "memory.explorer.bootstrapNoDir",
+    "memory.explorer.bootstrapFailed",
+    "memory.explorer.bootstrapErr.missing-dir",
+    "memory.explorer.bootstrapErr.dir-not-found",
+    "memory.explorer.bootstrapErr.not-a-directory",
+    "memory.explorer.bootstrapErr.bootstrap-unavailable"
+  ]) {
+    assert.ok(
+      clientSource.split(`"${key}"`).length - 1 >= 2,
+      `i18n key ${key} must exist in both dictionaries`
+    );
+  }
+
+  // 第 7 条：配置键覆盖面只读卡。
+  const ckIdx = clientSource.indexOf("function ConfigKeysCard");
+  assert.ok(ckIdx > 0, "ConfigKeysCard must exist");
+  const ckBody = clientSource.slice(ckIdx, ckIdx + 2900);
+  assert.ok(/apiFetch\("\/api\/dsh-mneme\/config-keys"\)/.test(ckBody), "the card must read the new route");
+  // 取数失败与「真的没有只读键」必须分开说，否则失败会被读成「清单是空的」。
+  assert.ok(
+    !/state\.failed \|\| !counts\s*\?\s*null/.test(ckBody),
+    "a failed fetch must not collapse into an empty list"
+  );
+  assert.ok(/memory\.settings\.configKeys\.loadFailed/.test(ckBody), "the failed branch needs its own copy");
+  // 只列键名，不渲染任何值。
+  assert.ok(/className: "mneme-keychip"/.test(ckBody), "keys render as chips");
+  assert.ok(!/\.value/.test(ckBody.replace(/display:\s*"flex"[\s\S]{0,80}/g, "")), "the card must not render any key value");
+  for (const key of [
+    "memory.settings.configKeys.title",
+    "memory.settings.configKeys.desc",
+    "memory.settings.configKeys.summary",
+    "memory.settings.configKeys.fileOnlyHead",
+    "memory.settings.configKeys.undefaultedHead",
+    "memory.settings.configKeys.undefaultedHint",
+    "memory.settings.configKeys.show",
+    "memory.settings.configKeys.hide",
+    "memory.settings.configKeys.loadFailed"
+  ]) {
+    assert.ok(
+      clientSource.split(`"${key}"`).length - 1 >= 2,
+      `i18n key ${key} must exist in both dictionaries`
+    );
+  }
+  // 卡片要真的挂到设置页上（connect 组尾、help 组头之前），不是写了没插。
+  const mountIdx = clientSource.indexOf("h(ConfigKeysCard, { t })");
+  const helpIdx = clientSource.indexOf('groupHead("help")');
+  assert.ok(mountIdx > 0, "ConfigKeysCard must be mounted in the settings page");
+  assert.ok(mountIdx < helpIdx, "the card belongs to the end of the connect group, before the help section");
+});
+
 test("every client component declares the setters it calls (issue #553)", () => {
   // 浏览器/宿主全局，不是 React state，不该被要求声明
   const GLOBALS = new Set([
