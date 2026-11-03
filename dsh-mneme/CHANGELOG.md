@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-03
+
 - **修一个打开记忆详情就崩掉整个宿主的崩溃（#553）**：0.10.0 里点开侧边栏任意一条记忆的详情抽屉，渲染进程立刻抛 `ReferenceError: provenance is not defined`。崩的是 renderer，整个宿主跟着重启，进行中的会话被打断，100% 复现。
 
   根因是两个隔了三千多行的组件：`MemoryDrawer` 的归因 effect 与渲染块在读 `provenance` / `setProvenance`，而那句 `useState` 落在了同文件**上一个**组件 `EntityPanel` 里（`74ba401` 加归因区块时放错了位置）。`EntityPanel` 里那份是纯死代码——整个函数体除声明外对 `provenance` 零引用。渲染先于 effect，所以第一帧就炸；就算渲染放过，effect 也会在 `setProvenance` 上炸。声明挪进 `MemoryDrawer`、死代码删掉，并写明这个 state 为什么必须住在读它的那个组件里。
@@ -21,6 +23,10 @@
   **被动确认的复核面**：新增 `GET /semantic/graph/boosted-relations`（`policy: "open"`，同 `/semantic/graph/*` 前缀，`SECURITY.md` 两张表不必新增行），返回「合法抬升量 > 0 的边」——`gain` 必须由后端算，因为要和**来源基线**比对（`RELATION_SOURCE_DEFAULTS`：manual 1.0 / confirmed 1.0 / tag 0.3 / llm 0.4），前端手里只有当前 `weight`。判据用 `gain > 0` 而不是 `>= 0`：`weight` 是 REAL，`1.0 - 1.0` 在浮点里可能是 `1e-17`，用 `>=` 会把每一条从未被抬过的边都列进来。**排序也必须在算完 `gain` 之后做**：SQL 按 `weight DESC` 排、循环里再按条数截断，会让 llm 边（0.95，gain 0.55）压掉 tag 边（0.90，gain 0.60），被 `limit` 砍掉的恰恰是抬得更多的那条——故收全后按 `gain` 降序再 `slice`。ego 路由的 `edges` 同时补上 `weight` 与 `source`——只看 `weight` 会把「tag 边被抬到 0.5」误读成「比 manual 边弱」，而 `0.3 → 0.5` 恰恰是被用出来的证据。面板里这一面**默认收起、展开才取数**：它是审计视角而不是日常视角；闸关时只说「今后不会再自动抬权；下面列的是此前已经抬过的边」，**不隐藏列表**（关闸之后正是复核既有提升的时候），且空表提示与闸关状态解耦——否则「闸关 + 一条都没有」会只剩一句提示、没有任何行，读起来像这一屏坏了；取数失败单独说，不冒充闸关。
 
   验收：`test/graph-multipath.test.js`（10 条）与 `test/graph-boosted-relations.test.js`（9 条）新增，面板侧锁在 `test/client.test.js` 的 #24 用例；每条新用例都做过变异自证（把被它锁住的那行改坏，看它是否真的变红），其中两处首版用例是**空转的**、被变异自证当场抓住后重写：0 分种子用例原本把两条记忆挂在同一个实体上，滤不滤 0 分都到不了；排序用例把宽实体命名成字母序靠前的名字，按名字排也能过。全量 2680 tests / 2679 pass / 0 fail / 1 skipped。
+
+### 贡献者 / Thanks
+
+- **@strange2000** — #553 的现场报告：把崩溃定位到「打开记忆详情必崩」这一步，贴出两条 renderer 日志、确认库本身无损（27 张表、`integrity_check` 正常），并顺手指出同一个 slot 里组件抛错会带走整个 renderer、建议补 error boundary。根因到行号级的排查是从这份报告起步的。
 
 ## [0.10.0] - 2026-11-02
 
