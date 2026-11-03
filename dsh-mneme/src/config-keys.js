@@ -67,7 +67,9 @@ export function defaultedLeafKeys(instance = Config({})) {
  *     把已知的那几个名字还原出来；没有默认值就整条当一个叶子；
  *   - 其它：叶子。
  *
- * 探针实测：声明叶子 192 个（比解析结果多一个 apiToken）、白名单 113 个。
+ * 探针实测：声明叶子 196 个、解析结果 191 个、白名单 113 个。两边差的那五个是
+ * `dreamProvider` / `dreamModel` / `dreamReasoningEffort` / `apiToken` /
+ * `sleepReasoningEffort`——都只声明、没给默认值。
  */
 export function schemaLeafKeys(schema = Config) {
   const out = [];
@@ -108,7 +110,8 @@ export function schemaLeafKeys(schema = Config) {
  *   effective（api.js 的 `if (value !== undefined)`）。列出来而不擅自补默认值：
  *   补默认值会改变「未配置时到底用哪个模型」的既有行为，那是另一个决定。
  *
- * 三份互不相交，并集 = schema 声明叶子 ∪ 白名单。
+ * 三份互不相交，并集 = 白名单 ∪（声明里不在白名单的那批）——探针实测白名单
+ * 113 个全部都在声明里，所以并集就是声明的 196 个，一个不漏也不重复。
  */
 export function describeConfigKeys() {
   const declared = schemaLeafKeys();
