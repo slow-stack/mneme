@@ -20,7 +20,21 @@
 export const BOOTSTRAP_UNAVAILABLE = "bootstrap-unavailable";
 
 /** 引导失败的 warn 文案。两条路径共用，日志里不会出现两种拼法。 */
-export function bootstrapWarnMessage(error) {
+export /**
+ * 记日志这一手，只许经这里。
+ *
+ * 照 `share-http.js` 的同一份理由抄（C5 评审裁定）：warn 裸调时，宿主 logger 自己坏掉就会
+ * 从 catch 块里再抛出去，而两侧 handler 那个外层 try 在 .then 的回调里早已退栈——现场
+ * 就是「一个字节都没回」（#410）。守卫住在层里，两张脸（in-process 与 Bearer 数据面）
+ * 拿到的就是同一个脾气，不必每张脸各记一次。
+ */
+function warnSafely(warn, message) {
+  try {
+    warn?.(message);
+  } catch { /* 记日志是自己的事，坏了的日志不许把已经算好的答复一起带走 */ }
+}
+
+function bootstrapWarnMessage(error) {
   return `[dsh-mneme] bootstrap failed: ${String(error)}`;
 }
 
@@ -85,7 +99,7 @@ export function bootstrapReply({ bootstrapper, dir, warn = null }) {
     .then((summary) => ({ status: 200, body: summary }))
     .catch((error) => {
       if (error?.code) return { status: 400, body: { error: error.code } };
-      warn?.(bootstrapWarnMessage(error));
+      warnSafely(warn, bootstrapWarnMessage(error));
       return { status: 500, body: { error: "internal" } };
     });
 }

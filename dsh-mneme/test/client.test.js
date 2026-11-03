@@ -2725,10 +2725,21 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
     /bootstrapOpen && h\(BootstrapDialog, \{/.test(clientSource),
     "the dialog must actually be mounted, not just declared"
   );
-  // 菜单按钮的 onClick 里必须也关掉它，否则点「⋯」会留下上一个弹层。
+  // 菜单按钮的 onClick 里必须也关掉它，否则点「⋯」会留下上一个弹层。但它现在带一个
+  // 条件：引导请求在飞时不关（否则等于绕过弹层里那两道 busy 禁用的锁，评审
+  // #4452245292）。所以这里锁的是「有条件地关」，不是无条件关。
   assert.ok(
-    /setImportOpen\(false\); setBootstrapOpen\(false\); setCreateOpen\(false\)/.test(clientSource),
-    "the overflow toggle must close the bootstrap dialog too"
+    /setImportOpen\(false\);\s*\n\s*\/\/[\s\S]{0,200}?if \(!bootstrapBusy\) setBootstrapOpen\(false\);/.test(clientSource),
+    "the overflow toggle must close the bootstrap dialog when it is not busy"
+  );
+  // 父组件必须真的把这个标志接下来，否则上面那句恒为真（undefined → !undefined）。
+  assert.ok(
+    /const \[bootstrapBusy, setBootstrapBusy\] = useState\(false\)/.test(clientSource),
+    "the parent needs a bootstrapBusy flag for the guard above to mean anything"
+  );
+  assert.ok(
+    /onBusyChange: setBootstrapBusy/.test(clientSource),
+    "the dialog must report its busy state up, or the guard reads a stale false"
   );
   const bsIdx = clientSource.indexOf("function BootstrapDialog");
   const bsBody = clientSource.slice(bsIdx, bsIdx + 3200);
@@ -2741,6 +2752,22 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
     /JSON\.stringify\(\{ dir \}\)/.test(bsBody),
     "the request body carries the raw dir string"
   );
+  // 请求在飞时锁住三处：输入框、取消、提交。少了输入框那一处，用户改成 B 之后回来的
+  // 提示会贴在 B 旁边、而它讲的是 A 的结果（评审 #4452245279）。断言从 `type: "text"`
+  // 一路看到 `onChange`，而不是只说「附近有个 disabled: busy」——后者底下的按钮也能满足。
+  assert.ok(
+    /type: "text",[\s\S]{0,400}?disabled: busy,[\s\S]{0,400}?onChange: \(e\) => \{ setDir/.test(bsBody),
+    "the dir input must be disabled while the request is in flight"
+  );
+  // 成功路径不再复位 busy（900ms 提示期间按钮不该重新变得可点），且定时器句柄要能清：
+  // 否则第二次提交的结果会写进已经卸载的组件（评审 #4452245256）。断言窗口只取
+  // 「setMsg…到 setTimeout」之间——再往后就是 catch 里的网络错误兜底，那一处复位是对的。
+  const doneIdx = bsBody.indexOf("memory.explorer.bootstrapDone");
+  const timerIdx = bsBody.indexOf("timerRef.current = setTimeout(");
+  assert.ok(timerIdx > doneIdx, "the success branch must schedule its close through the stored ref");
+  const successTail = bsBody.slice(doneIdx, timerIdx);
+  assert.ok(!/setBusy\(false\)/.test(successTail), "the success path must not re-enable the button");
+  assert.ok(/clearTimeout\(timerRef\.current\)/.test(bsBody), "the stored timer must actually be cleared on unmount");
   // 错误按服务端的码分开说（missing-dir / dir-not-found / not-a-directory /
   // bootstrap-unavailable），不能一律「引导失败」——三种情况下用户该做的事不同。
   assert.ok(
@@ -2777,6 +2804,12 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
     "a failed fetch must not collapse into an empty list"
   );
   assert.ok(/memory\.settings\.configKeys\.loadFailed/.test(ckBody), "the failed branch needs its own copy");
+  // 摘要里的三类数字都必须来自服务端算好的桶：只填 {file} 会让「schema − panel」与
+  // 展开后「只能改文件」那段对不上（评审 #4452245244）。
+  assert.ok(
+    /\.replace\("\{undefaulted\}", String\(counts\.undefaulted\)\)/.test(ckBody),
+    "the summary must report the undefaulted bucket too, not make the reader subtract"
+  );
   // 只列键名，不渲染任何值。
   assert.ok(/className: "mneme-keychip"/.test(ckBody), "keys render as chips");
   assert.ok(!/\.value/.test(ckBody.replace(/display:\s*"flex"[\s\S]{0,80}/g, "")), "the card must not render any key value");
@@ -2801,6 +2834,12 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
   const helpIdx = clientSource.indexOf('groupHead("help")');
   assert.ok(mountIdx > 0, "ConfigKeysCard must be mounted in the settings page");
   assert.ok(mountIdx < helpIdx, "the card belongs to the end of the connect group, before the help section");
+  // 引导成功只递增 reloadKey；搜索态的列表走 remoteItems 那条 effect，它若不吃
+  // reloadKey，搜索词不变就永远看不到新导入的行（评审 #4452245305）。
+  assert.ok(
+    /\}, \[query, semantic, searchTopK, reloadKey\]\);/.test(clientSource),
+    "the search effect must re-run after an import/bootstrap bumps reloadKey"
+  );
 });
 
 test("every client component declares the setters it calls (issue #553)", () => {

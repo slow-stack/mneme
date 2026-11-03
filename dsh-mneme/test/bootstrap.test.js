@@ -175,6 +175,14 @@ test("bootstrap validates its inputs with coded errors", async () => {
       bootstrapFromDirectory({ service, dir: filePath }),
       (e) => e instanceof BootstrapError && e.code === "not-a-directory"
     );
+    // 带首尾空格的路径不许被静默 trim 成真目录（#386 第 6 条评审）：协议层
+    // readBootstrapDir 承诺「回传原串、交给 fs 报错」，这一层若偷偷改写，用户填
+    // " /repo " 会被读成 "/repo"，而报告上照样写着成功——读的是另一个目录，
+    // 他却一无所知。所以这里必须仍然是 dir-not-found。
+    await assert.rejects(
+      bootstrapFromDirectory({ service, dir: ` ${root} ` }),
+      (e) => e instanceof BootstrapError && e.code === "dir-not-found"
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

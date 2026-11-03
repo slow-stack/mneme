@@ -16,6 +16,7 @@ import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { Config } from "../src/config.js";
 import { describeConfigKeys, schemaLeafKeys, defaultedLeafKeys, flagKeysFromSpec } from "../src/config-keys.js";
+import { bootstrapReply } from "../src/bootstrap-http.js";
 
 class FakeRes extends EventEmitter {
   constructor() { super(); this.statusCode = 200; this.body = ""; }
@@ -118,6 +119,19 @@ test("bootstrap reports the coded error when the directory does not exist", asyn
   assert.equal(json.error, "dir-not-found");
   // 失败路径不能留下半截记忆：目录都没读到，一条都不该落库。
   assert.equal(service.count({}), 0);
+});
+
+test("bootstrapReply survives a logger that throws (the layer never throws)", async () => {
+  // 这一层的契约是「从不抛」：warn 裸调时，宿主 logger 自己坏掉会从 catch 块里再抛出去，
+  // 而两侧 handler 的外层 try 在 .then 回调里早已退栈——现场就是「一个字节都没回」
+  // （#410，share-http.js 的 warnSafely 注释记着同一件事）。守卫必须住在层里。
+  const reply = await bootstrapReply({
+    bootstrapper: () => Promise.reject(new Error("disk on fire")),
+    dir: "/tmp",
+    warn: () => { throw new Error("logger is broken too"); }
+  });
+  assert.equal(reply.status, 500);
+  assert.deepEqual(reply.body, { error: "internal" });
 });
 
 test("bootstrap imports deterministic artifacts from a real directory", async () => {

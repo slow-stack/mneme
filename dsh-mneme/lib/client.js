@@ -537,7 +537,7 @@ window.__ModuleLoader__.load({
         "memory.settings.mcp.copied": "已复制",
         "memory.settings.configKeys.title": "配置键覆盖面",
         "memory.settings.configKeys.desc": "配置文件里的键，面板能改多少、哪些只能手改。只列键名，不显示任何值。",
-        "memory.settings.configKeys.summary": "schema 里共 {schema} 个键，面板能改 {panel} 个，其余 {file} 个只能改配置文件。",
+        "memory.settings.configKeys.summary": "schema 里共 {schema} 个键：面板能改 {panel} 个，{file} 个只能改配置文件，另有 {undefaulted} 个登记了却没有默认值。",
         "memory.settings.configKeys.fileOnlyHead": "只能改配置文件（{n} 个）",
         "memory.settings.configKeys.undefaultedHead": "面板登记了、但运行时没有默认值（{n} 个）",
         "memory.settings.configKeys.undefaultedHint": "这些键在白名单里，所以面板上有输入框；但 schema 没给默认值，留空时「当前生效值」里就没有它。填一个值才会生效。",
@@ -1362,7 +1362,7 @@ window.__ModuleLoader__.load({
         "memory.settings.mcp.copied": "Copied",
         "memory.settings.configKeys.title": "Config key coverage",
         "memory.settings.configKeys.desc": "How many config-file keys the panel can change, and which ones are file-only. Key names only — no values are shown.",
-        "memory.settings.configKeys.summary": "The schema has {schema} keys; the panel can change {panel}, the other {file} are file-only.",
+        "memory.settings.configKeys.summary": "The schema has {schema} keys: the panel can change {panel}, {file} are file-only, and {undefaulted} are registered without a runtime default.",
         "memory.settings.configKeys.fileOnlyHead": "File-only ({n})",
         "memory.settings.configKeys.undefaultedHead": "Registered for the panel but has no runtime default ({n})",
         "memory.settings.configKeys.undefaultedHint": "These keys are on the whitelist, so the panel shows an input for them, but the schema gives no default — while unset they are absent from the effective snapshot. Set a value for them to take effect.",
@@ -5704,7 +5704,11 @@ window.__ModuleLoader__.load({
               t("memory.settings.configKeys.summary")
                 .replace("{schema}", String(counts.schemaLeaf))
                 .replace("{panel}", String(counts.panelEditable))
-                .replace("{file}", String(counts.fileOnly))),
+                .replace("{file}", String(counts.fileOnly))
+                // 三类的数字必须都来自服务端算出来的桶：写成 schema − panel 会与展开后
+                // 「只能改文件」那段对不上（评审 #4452245244），因为 schema 之外还多出
+                // 白名单里登记了却没默认值的那几个键。
+                .replace("{undefaulted}", String(counts.undefaulted))),
             open && h("div", { style: { marginTop: 10 } },
               // 两段各自的标题也带上条数，收起时只看 summary 就够判断要不要展开。
               h("div", { className: "mneme-featsubhint", style: { marginTop: 2 } },
@@ -7137,15 +7141,25 @@ window.__ModuleLoader__.load({
     //
     // 与 ImportDialog 的两处刻意的不同：
     // 1. 成功路径**不**重复 setBusy(false)。这里没有「同键再提交一次会追加正文」的
-    //    风险（bootstrap 是 _overwrite 刷新），但 900ms 的提示阅读时间同样成立。
+    //    风险（bootstrap 是 _overwrite 刷新），但 900ms 的提示阅读时间同样成立；
+    //    更要紧的是这一段里组件仍挂着，按钮若重新可点，人会以为「没反应」再点一次。
+    //    定时器句柄存进 ref，卸载时清掉——否则第二次提交的结果会写进已卸载的组件
+    //    （#386 第 6 条评审）。
     // 2. 错误按服务端的码分开说。「目录不存在」「不是目录」「能力没接线」三种情况下
     //    用户该做的事完全不同，统一成一句「引导失败」等于让他自己猜。
-    function BootstrapDialog({ t, onClose, onImported }) {
+    function BootstrapDialog({ t, onClose, onImported, onBusyChange }) {
       const [dir, setDir] = useState("");
       const [busy, setBusy] = useState(false);
       const [msg, setMsg] = useState("");
       const [err, setErr] = useState("");
+      const timerRef = useRef(null);
+      useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+      // 忙碌状态要让外面也知道：菜单那个「⋯」在请求进行中若把弹层卸掉，等于绕过
+      // 了下面那两个 disabled 的按钮，请求还在飞、界面已经没了（评审 #4452245292）。
+      useEffect(() => { if (onBusyChange) onBusyChange(busy); }, [busy, onBusyChange]);
+      useEffect(() => () => { if (onBusyChange) onBusyChange(false); }, [onBusyChange]);
       const submit = () => {
+        if (busy) return;
         const target = String(dir || "").trim();
         if (!target) { setErr(t("memory.explorer.bootstrapNoDir")); return; }
         setBusy(true);
@@ -7171,8 +7185,7 @@ window.__ModuleLoader__.load({
             setMsg(t("memory.explorer.bootstrapDone")
               .replace("{n}", String((d && d.created) ?? 0))
               .replace("{m}", String((d && d.merged) ?? 0)));
-            setBusy(false);
-            setTimeout(() => { onImported(); onClose(); }, 900);
+            timerRef.current = setTimeout(() => { onImported(); onClose(); }, 900);
           })
           .catch(() => { setBusy(false); setErr(t("memory.explorer.bootstrapFailed")); });
       };
@@ -7189,6 +7202,9 @@ window.__ModuleLoader__.load({
             type: "text",
             value: dir,
             placeholder: "/path/to/project",
+            // 请求进行中锁住输入框：否则用户改成 B，回来的提示就贴在 B 旁边，
+            // 而它说的是 A 的结果（评审 #4452245279）。
+            disabled: busy,
             onChange: (e) => { setDir(e.target.value); setErr(""); }
           })
         ),
@@ -7682,6 +7698,8 @@ window.__ModuleLoader__.load({
       const [menuOpen, setMenuOpen] = useState(false);
       const [importOpen, setImportOpen] = useState(false);
       const [bootstrapOpen, setBootstrapOpen] = useState(false);
+      // 引导请求是否在飞：「⋯」按钮在忙碌时必须不关弹层（评审 #4452245292）。
+      const [bootstrapBusy, setBootstrapBusy] = useState(false);
       const [createOpen, setCreateOpen] = useState(false);
       const [shareOpen, setShareOpen] = useState(false);
       const [receiveOpen, setReceiveOpen] = useState(false);
@@ -7785,7 +7803,10 @@ window.__ModuleLoader__.load({
             .catch(() => { if (!cancelled) setRemoteItems([]); });
         }, 250);
         return () => { cancelled = true; clearTimeout(timer); };
-      }, [query, semantic, searchTopK]);
+        // reloadKey 必须进依赖：导入/引导/接收成功时只递增它，而搜索态下 items 走
+        // remoteItems 那条路——少了这一格，搜索词不变就永远看不到刚进来的新行
+        // （评审 #4452245305）。
+      }, [query, semantic, searchTopK, reloadKey]);
 
       // Live view: while the memory tab is open, quietly re-fetch page 1
       // every 30s (and on every activation) so fresh memories surface
@@ -8035,7 +8056,16 @@ window.__ModuleLoader__.load({
                 "aria-label": t("memory.explorer.more"),
                 "aria-expanded": String(menuOpen),
                 title: t("memory.explorer.more"),
-                onClick: () => { setMenuOpen(!menuOpen); setImportOpen(false); setBootstrapOpen(false); setCreateOpen(false); setShareOpen(false); setReceiveOpen(false); }
+                onClick: () => {
+                  setMenuOpen(!menuOpen);
+                  setImportOpen(false);
+                  // 引导弹层只在不忙的时候才关：它内部已经用 busy 禁用了取消与提交，
+                  // 这里若照旧卸载，等于给了一条绕过那两道锁的路（评审 #4452245292）。
+                  if (!bootstrapBusy) setBootstrapOpen(false);
+                  setCreateOpen(false);
+                  setShareOpen(false);
+                  setReceiveOpen(false);
+                }
               }, "⋯"),
               menuOpen && h("div", { className: "mneme-menu", role: "menu" },
                 h("button", { type: "button", role: "menuitem", onClick: () => { setCreateOpen(true); setMenuOpen(false); } },
@@ -8061,6 +8091,7 @@ window.__ModuleLoader__.load({
               bootstrapOpen && h(BootstrapDialog, {
                 t,
                 onClose: () => setBootstrapOpen(false),
+                onBusyChange: setBootstrapBusy,
                 onImported: () => setReloadKey((k) => k + 1)
               }),
               shareOpen && h(ShareDialog, { t, onClose: () => setShareOpen(false) }),
