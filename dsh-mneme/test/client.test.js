@@ -2703,3 +2703,76 @@ test("entity graph surfaces the passive-confirmation review surface (issue #24)"
   assert.ok(clientSource.includes("if (boostedOpen) loadBoosted();"),
     "the review surface must not fetch while collapsed");
 });
+
+// issue #553：`MemoryDrawer` 用了 `provenance` / `setProvenance`，而那句 useState 却落在
+// 同文件的上一个组件 `EntityPanel` 里——于是打开任何一条记忆详情都会在渲染期抛
+// `ReferenceError: provenance is not defined`，整个 renderer 被带走（DSH 直接重启）。
+//
+// 这个形状不是笔误级别的，它躲得过三样东西：
+//   · 眼睛——两个组件隔了三千多行，同名的 useState 看起来完全正常；
+//   · 语法检查——`provenance` 是合法标识符，只是不在作用域里；
+//   · 现有用例——它们读的是源码字符串，从不执行组件。
+// 所以这里不锁某一个名字，而是把**每个组件里「调了 setter 却没有声明」**这件事整体扫一遍，
+// 才对得起「别再有人把 state 放进隔壁组件」这个意图。
+test("every client component declares the setters it calls (issue #553)", () => {
+  // 浏览器/宿主全局，不是 React state，不该被要求声明
+  const GLOBALS = new Set([
+    "setTimeout", "setInterval", "setImmediate", "setAnimationFrame",
+    "setState" // 子组件把 setter 当参数传下去时，形参名会命中，由 params 分支放行
+  ]);
+
+  const lines = clientSource.split("\n");
+  // 组件 = 缩进 4 空格的 function 声明（本文件所有 UI 组件都是这个形状）。
+  // 排除自身名字就叫 `setXxx` 的——那是普通的 setter 函数定义，不是组件
+  // （`openLibrary` / `setOverlayOpen` 就是一对模块级函数，后者调用自身是递归）。
+  const comps = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^    function ([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{/);
+    if (!m || /^set[A-Z]/.test(m[1])) continue;
+    let end = lines.length;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (/^    function /.test(lines[j]) || /^\s{0,3}(const|let|export|class) /.test(lines[j])) {
+        end = j;
+        break;
+      }
+    }
+    comps.push({ name: m[1], params: m[2], start: i + 1, text: lines.slice(i, end).join("\n") });
+  }
+  assert.ok(comps.length > 50, `expected the component scan to find many components, got ${comps.length}`);
+
+  const offenders = [];
+  // 模块作用域里已经存在同名绑定时不算越界（`openLibrary` 调 `setOverlayOpen` 就是这类：
+  // 后者是模块级的普通函数，不是 React setter，而且函数声明会提升，先调后声明也成立）。
+  // 整个 bundle 包在 `__ModuleLoader__.load({...})` 里，所以「模块顶层」= 缩进正好 4 空格。
+  const moduleScope = new Set();
+  for (const l of lines) {
+    if (!/^    \S/.test(l)) continue;
+    const f = l.match(/^    function\s+([A-Za-z_$][\w$]*)/);
+    if (f) moduleScope.add(f[1]);
+    const c = l.match(/^    (?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/);
+    if (c) moduleScope.add(c[1]);
+  }
+
+  for (const c of comps) {
+    const declared = new Set();
+    // const [x, setX] = ... / const setX = ...
+    for (const m of c.text.matchAll(/const\s*\[[^\]]*?,\s*(set[A-Za-z_$][\w$]*)\s*\]\s*=/g)) declared.add(m[1]);
+    for (const m of c.text.matchAll(/const\s+(set[A-Za-z_$][\w$]*)\s*=/g)) declared.add(m[1]);
+    // 形参：组件自身的、以及体内嵌套函数/箭头函数的形参——
+    // setter 经常这样往下传（`routeSelects(providerKey, modelKey, testState, setTestState, …)`）。
+    for (const m of c.params.matchAll(/(set[A-Za-z_$][\w$]*)/g)) declared.add(m[1]);
+    for (const m of c.text.matchAll(/\(([^()]*)\)\s*(?:=>|\{)/g)) {
+      for (const p of m[1].matchAll(/set[A-Za-z_$][\w$]*/g)) declared.add(p[0]);
+    }
+    // 调用点：setXxx( ——排除 obj.setXxx(
+    for (const m of c.text.matchAll(/(?<![.\w$])(set[A-Z][A-Za-z0-9_$]*)\s*\(/g)) {
+      const name = m[1];
+      if (GLOBALS.has(name) || declared.has(name) || moduleScope.has(name)) continue;
+      offenders.push(`${c.name} (line ${c.start}) calls ${name} without declaring it`);
+    }
+  }
+
+  assert.deepEqual(offenders, [],
+    "a setter must be declared in the component that calls it — a state hook placed in the "
+    + "neighbouring component compiles fine but throws ReferenceError at render time (#553)");
+});
