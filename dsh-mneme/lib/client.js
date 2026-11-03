@@ -8032,7 +8032,18 @@ window.__ModuleLoader__.load({
         setSelectedId(target.id);
       };
 
+      // 引导请求在飞时不许离开记忆视图（评审 #4453639221）：`.mneme-xtools` 整块挂在
+      // `view === "memory"` 之下，BootstrapDialog 就在里面。任何离开这个视图的动作都会
+      // 连它一起卸载——请求还在飞、界面已经没了，那句「新建几条、并入几条」就再没有
+      // 地方显示。这里只拦「离开」的路径：jumpToMemory / browseWithFilter 是回到
+      // memory，不拦。
+      const leaveMemory = (key) => {
+        if (bootstrapBusy) return;
+        setView(key);
+      };
+
       const openGraphFor = (name) => {
+        if (bootstrapBusy) return;
         setGraphFocus(name || "");
         setView("entity");
       };
@@ -8061,9 +8072,14 @@ window.__ModuleLoader__.load({
               h("button", {
                 key: s.key,
                 type: "button",
+                // 引导请求在飞时四个视图标签一律禁用（评审 #4453639221）：离开 memory
+                // 会把整个 `.mneme-xtools` 连同里面的 BootstrapDialog 卸掉。onClick 仍
+                // 走 leaveMemory 而不是 setView——disabled 只是第一道，第二道在函数里，
+                // 免得将来有人给标签换一种可点的实现就绕过去了。
+                disabled: bootstrapBusy,
                 className: view === s.key ? "mneme-vtab mneme-active" : "mneme-vtab",
                 "aria-pressed": String(view === s.key),
-                onClick: () => setView(s.key)
+                onClick: () => leaveMemory(s.key)
               },
                 h(Icon, { name: s.key === "memory" ? "database" : s.key === "entity" ? "waypoints" : s.key === "status" ? "activity" : "settings", size: 14, className: "mneme-vtabico" }),
                 s.label

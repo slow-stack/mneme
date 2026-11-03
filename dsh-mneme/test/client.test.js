@@ -2750,12 +2750,31 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
     "the forwarder must set both levels synchronously and keep a stable identity"
   );
   // 会挂弹层的菜单项在忙碌时必须禁用（评审 #4452539738）：新建 / 导入 / 引导 / 分享 /
-  // 接收共五处，加上「⋯」按钮自己（见下）。数个数而不是逐个锁字符串——少一处就等于
-  // 留了一条绕过弹层的路，而这条路的代价是用户看不到自己那次引导的结果。
+  // 接收共五处，加上「⋯」按钮自己（见下），再加上四个视图标签（评审 #4453639221，
+  // 源码里那一处在 `.map` 里，一处覆盖四个）。数个数而不是逐个锁字符串——少一处就
+  // 等于留了一条绕过弹层的路，而这条路的代价是用户看不到自己那次引导的结果。
   assert.equal(
     clientSource.split("disabled: bootstrapBusy").length - 1,
-    6,
-    "every dialog-mounting menu item plus the overflow toggle must be disabled while bootstrap is busy"
+    7,
+    "every dialog-mounting menu item, the overflow toggle and the view tabs must be disabled while bootstrap is busy"
+  );
+  // 视图标签离开 memory 会连 `.mneme-xtools` 与其中的 BootstrapDialog 一起卸载
+  // （评审 #4453639221）。两道锁都要有：`disabled` 是第一道，onClick 走 leaveMemory
+  // 是第二道——将来有人给标签换一种可点的实现时，函数里的判断还在。
+  assert.ok(
+    /disabled: bootstrapBusy,[\s\S]{0,300}?onClick: \(\) => leaveMemory\(s\.key\)/.test(clientSource),
+    "view tabs must route through leaveMemory, not setView directly"
+  );
+  assert.ok(
+    /const leaveMemory = \(key\) => \{[\s\S]{0,120}?if \(bootstrapBusy\) return;[\s\S]{0,80}?setView\(key\);/.test(clientSource),
+    "leaveMemory must refuse to switch views while a bootstrap request is in flight"
+  );
+  // 视图标签不是唯一的出口：记忆视图里那个实体 chip（`openGraphFor`）也把 view 切到
+  // "entity"，同样会把 BootstrapDialog 一起卸掉。这条是变异自证抓出来的——四个变异体
+  // 里只有它活下来，说明我先前只锁了标签、漏了这条真实的旁路。
+  assert.ok(
+    /const openGraphFor = \(name\) => \{[\s\S]{0,120}?if \(bootstrapBusy\) return;/.test(clientSource),
+    "the entity chip's graph jump must also refuse to leave memory while bootstrap is busy"
   );
   // 「⋯」按钮自己也要禁用（评审 #4453225585）：菜单与引导弹层共用同一个绝对定位锚点、
   // 同一层 z-index，弹层排在菜单之后渲染，会把菜单顶上那两项导出盖住——它们没有
