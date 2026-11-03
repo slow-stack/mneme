@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **修一个打开记忆详情就崩掉整个宿主的崩溃（#553）**：0.10.0 里点开侧边栏任意一条记忆的详情抽屉，渲染进程立刻抛 `ReferenceError: provenance is not defined`。崩的是 renderer，整个宿主跟着重启，进行中的会话被打断，100% 复现。
+
+  根因是两个隔了三千多行的组件：`MemoryDrawer` 的归因 effect 与渲染块在读 `provenance` / `setProvenance`，而那句 `useState` 落在了同文件**上一个**组件 `EntityPanel` 里（`74ba401` 加归因区块时放错了位置）。`EntityPanel` 里那份是纯死代码——整个函数体除声明外对 `provenance` 零引用。渲染先于 effect，所以第一帧就炸；就算渲染放过，effect 也会在 `setProvenance` 上炸。声明挪进 `MemoryDrawer`、死代码删掉，并写明这个 state 为什么必须住在读它的那个组件里。
+
+  这个形状躲得过眼睛（隔三千行、同名 state 看着完全正常）、语法检查（`provenance` 是合法标识符，只是不在作用域里）和原有用例（只读源码字符串，从不执行组件），所以补的不是「锁一个名字」的用例，而是按组件扫「调了 `setXxx(` 却没有声明」——锁的是这个结构。扫描器要认的几种合法情形都放行了：`setTimeout`/`setInterval` 这类全局、把 setter 当形参往下传的嵌套函数、模块级同名 setter（`openLibrary` 调 `setOverlayOpen`，那是模块级 pub/sub，不是 React state）。变异自证：把声明原样搬回 `EntityPanel`，用例当场打红 `MemoryDrawer calls setProvenance without declaring it`。
+
 - **图谱的锚定层补上另外两路起点，被动确认有了能查的地方（#24 收尾）**：issue #24 的四块设计里，块 1 的「精确名 / Tag / 向量三路起点」当初只接了精确名一路——`anchoring.js` 本身早就支持多路（`anchorSeeds` 累加、`HOP_QUOTA` 分层都在），缺的是 `service.js` 的调用点只喂了 `normalizePath(..., { path: "exact" })` 一路，而通路身份在合并那一步就丢了（`normalizePath` 的返回值里没有 `path`，`anchorSeeds` 里 `p.path ?? "?"` 把每一路都记成 `"?"`）。块 4 的「例外管理」同样只有自动确认、没有可见面——面板里 `passiveConfirm` 一次都不出现。
 
   **Tag 路走全等匹配，不走子串**：`store.findEntitiesByTags` 把查询按标点和空白切成词、滤掉单字（中文单字作 tag 没有区分度），再要求 `tags` 数组里**某个 tag 与词完全相等**。子串匹配会让 `ai` 命中 `mail`、让 `Java` 命中 `JavaScript`，而这条路的作用是「用户提到了某个主题词」，模糊命中的代价是把整类无关记忆拉进图轴。排序按命中记忆数降序、名称升序——同分时要有确定性顺序，否则同一查询两次跑出来的种子次序不同。

@@ -2831,9 +2831,6 @@ window.__ModuleLoader__.load({
     //   ④ 关系图谱  the same ego graph the old graph-only tab drew
     function EntityPanel({ t, focusEntity, onJumpMemory }) {
       const [entities, setEntities] = useState(null);
-      // #512：这条记忆的归因——窗口级（哪一段原文蒸出来的）与行级（哪一轮铸造的）。
-      // null = 还没读到（或读失败），两者要分得开，不能被当成「没有归因」。
-      const [provenance, setProvenance] = useState(null); // null = still loading
       const [railQuery, setRailQuery] = useState("");
       const [entityName, setEntityName] = useState(focusEntity || "");
       const [depth, setDepth] = useState(1);
@@ -6615,6 +6612,13 @@ window.__ModuleLoader__.load({
       const [saveError, setSaveError] = useState(false);
       const [copied, setCopied] = useState(false);
       const [entities, setEntities] = useState(null);
+      // #512：这条记忆的归因——窗口级（哪一段原文蒸出来的）与行级（哪一轮铸造的）。
+      // null = 还没读到（或读失败），两者要分得开，不能被当成「没有归因」。
+      // 这个 state 必须住在**读它的那个组件**里：加归因区块时它曾被误放进
+      // EntityPanel（同文件的上一个组件），于是 MemoryDrawer 的 effect 与渲染块
+      // 引用到一个不存在的绑定，一开抽屉就 ReferenceError 把整个 renderer 带走
+      // （issue #553）。同名 state 落在隔壁组件里，静态扫描与 review 都不容易看出来。
+      const [provenance, setProvenance] = useState(null); // null = still loading
       // 整包退出的两段：先干跑清点（点按钮那一发），再确认物删。撤是**物理删除**不是归档
       // （归档行仍占 share_external_id 的 UNIQUE 位，撤了会导不回来，理由在
       // src/share-import.js 的 deleteSharePack），所以这里比删除那条路多一站清点。
