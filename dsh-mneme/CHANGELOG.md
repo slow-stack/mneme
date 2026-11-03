@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-03
+
 - **修一个打开记忆详情就崩掉整个宿主的崩溃（#553）**：0.10.0 里点开侧边栏任意一条记忆的详情抽屉，渲染进程立刻抛 `ReferenceError: provenance is not defined`。崩的是 renderer，整个宿主跟着重启，进行中的会话被打断，100% 复现。
 
   根因是两个隔了三千多行的组件：`MemoryDrawer` 的归因 effect 与渲染块在读 `provenance` / `setProvenance`，而那句 `useState` 落在了同文件**上一个**组件 `EntityPanel` 里（`74ba401` 加归因区块时放错了位置）。`EntityPanel` 里那份是纯死代码——整个函数体除声明外对 `provenance` 零引用。渲染先于 effect，所以第一帧就炸；就算渲染放过，effect 也会在 `setProvenance` 上炸。声明挪进 `MemoryDrawer`、死代码删掉，并写明这个 state 为什么必须住在读它的那个组件里。
