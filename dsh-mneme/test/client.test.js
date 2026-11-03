@@ -2738,26 +2738,33 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
     "the parent needs a bootstrapBusy flag for the guard above to mean anything"
   );
   assert.ok(
-    /onBusyChange: setBootstrapBusy/.test(clientSource),
+    /onBusyChange: reportBootstrapBusy/.test(clientSource),
     "the dialog must report its busy state up, or the guard reads a stale false"
   );
+  // 这个转发函数必须同步调外层、且身份稳定：走 useEffect 转报的话要等渲染提交后
+  // 才跑，中间那一拍外层读到 false（#4452539705 的老毛病）；而若每渲染新建一个，
+  // BootstrapDialog 的卸载 effect（依赖 [onBusyChange]）会在父组件每次重渲染时
+  // 先跑 cleanup 调一次 onBusyChange(false)——而父组件正是在置 busy 之后重渲染的。
+  assert.ok(
+    /const reportBootstrapBusy = useCallback\(\(v\) => \{[\s\S]{0,200}?setBootstrapBusy\(v\);[\s\S]{0,200}?onBusyChange\(v\);/.test(clientSource),
+    "the forwarder must set both levels synchronously and keep a stable identity"
+  );
   // 会挂弹层的菜单项在忙碌时必须禁用（评审 #4452539738）：新建 / 导入 / 引导 / 分享 /
-  // 接收共五处。这些弹层共用同一个绝对定位锚点，后渲染的会盖住引导弹层那句
-  // 「新建几条、并入几条」。数个数而不是逐个锁字符串——少一处就等于留了一条绕过
-  // 弹层的路，而这条路的代价是用户看不到自己那次引导的结果。
+  // 接收共五处，加上「⋯」按钮自己（见下）。数个数而不是逐个锁字符串——少一处就等于
+  // 留了一条绕过弹层的路，而这条路的代价是用户看不到自己那次引导的结果。
   assert.equal(
     clientSource.split("disabled: bootstrapBusy").length - 1,
-    5,
-    "every dialog-mounting menu item must be disabled while bootstrap is busy"
+    6,
+    "every dialog-mounting menu item plus the overflow toggle must be disabled while bootstrap is busy"
   );
-  // 两个导出项不挂弹层，不该被一起禁掉——引导在飞时照样能导出。
-  for (const line of clientSource.split("\n")) {
-    if (!line.includes("exportData(")) continue;
-    assert.ok(
-      !line.includes("disabled: bootstrapBusy"),
-      "the export items mount no dialog and must stay clickable while bootstrap is busy"
-    );
-  }
+  // 「⋯」按钮自己也要禁用（评审 #4453225585）：菜单与引导弹层共用同一个绝对定位锚点、
+  // 同一层 z-index，弹层排在菜单之后渲染，会把菜单顶上那两项导出盖住——它们没有
+  // disabled，却点不到。上一轮我以为「导出项不挂弹层所以照旧可点」就没事了，那是错的：
+  // 可点的是菜单项本身，但它被遮住了。不开菜单，才不存在「可点但被遮住」。
+  assert.ok(
+    /title: t\("memory\.explorer\.more"\),[\s\S]{0,600}?disabled: bootstrapBusy,[\s\S]{0,200}?onClick: \(\) => \{\s*\n\s*setMenuOpen\(!menuOpen\);/.test(clientSource),
+    "the overflow toggle must be disabled while bootstrap is busy, so the dialog never covers its items"
+  );
   const bsIdx = clientSource.indexOf("function BootstrapDialog");
   // 切到下一个弹层为止，而不是给一个拍脑袋的字符数：这轮改动静悄悄把窗口撑破了，
   // 断言于是在一个截断的片段上做，失败信息还指着「输入框没禁用」这种不存在的毛病。
@@ -2879,6 +2886,62 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
   assert.ok(
     /\}, \[query, semantic, searchTopK, reloadKey\]\);/.test(clientSource),
     "the search effect must re-run after an import/bootstrap bumps reloadKey"
+  );
+});
+
+test("the memory overlay refuses to close while a library request is in flight (issue #386)", () => {
+  // 引导请求在飞时，Esc / 背板 / ✕ 三条关闭路径都必须在。少一处，弹层连同
+  // MemoryExplorer 一起卸载，POST 还在飞——回来那句「新建几条、并入几条」就没有
+  // 地方显示，用户会以为没成功，而库其实已经写进去了（评审 #4453225573）。
+  const ovIdx = clientSource.indexOf("function MemoryOverlay");
+  assert.ok(ovIdx > 0, "MemoryOverlay must exist");
+  // 切到下一个模块级定义为止：给字符数会在下一次改动里被悄悄撑破。
+  const ovEnd = clientSource.indexOf("const EXPLORER_TYPES", ovIdx);
+  const ovBody = clientSource.slice(ovIdx, ovEnd > ovIdx ? ovEnd : ovIdx + 2600);
+
+  // 忙碌标志必须从 Explorer 上得来：MemoryOverlay 自己不知道有没有请求在飞。
+  assert.ok(
+    /useState\(false\)/.test(ovBody) && /explorerBusy/.test(ovBody),
+    "the overlay needs its own busy flag"
+  );
+  assert.ok(
+    /h\(MemoryExplorer, \{ t, onBusyChange: setExplorerBusy \}\)/.test(ovBody),
+    "the explorer must report its busy state up to the overlay"
+  );
+  // 用 ref 读、不把 busy 列进那个 effect 的依赖：effect 每次重跑都会
+  // closeBtnRef.current.focus()，请求一起一落就把正在输目录的用户踢出输入框。
+  assert.ok(
+    /const explorerBusyRef = useRef\(false\)/.test(ovBody),
+    "the guard must read through a ref, so busy changes do not re-run the focus effect"
+  );
+  assert.ok(
+    /explorerBusyRef\.current = explorerBusy/.test(ovBody),
+    "the ref must track the state"
+  );
+  assert.ok(
+    !/\[open, explorerBusy\]/.test(ovBody),
+    "explorerBusy must stay out of the focus effect's deps"
+  );
+
+  // 三条关闭路径逐一检查：Esc、背板、✕ 都走同一个守卫。
+  assert.equal(
+    ovBody.split("if (!explorerBusyRef.current) setOpen(false);").length - 1,
+    3,
+    "all three close paths (Escape, backdrop, ✕) must guard on the busy ref"
+  );
+  assert.ok(
+    /if \(e\.key === "Escape"\) \{ if \(!explorerBusyRef\.current\) setOpen\(false\); return; \}/.test(ovBody),
+    "Escape must not close the overlay while a request is in flight"
+  );
+  // ✕ 用 aria-disabled 而不是真的 disabled：真 disabled 会把焦点从按钮上拿走，
+  // 而 #178 的 Tab 环拿 closeBtnRef 当入口，焦点落空就出不去。
+  assert.ok(
+    /"aria-disabled": String\(explorerBusy\)/.test(ovBody),
+    "the close button must announce the blocked state"
+  );
+  assert.ok(
+    !/className: "mneme-footbtn",\s*\n\s*ref: closeBtnRef,\s*\n\s*disabled: /.test(ovBody),
+    "the close button must not be hard-disabled — that would break the #178 focus ring"
   );
 });
 

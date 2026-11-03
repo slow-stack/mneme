@@ -5050,6 +5050,16 @@ window.__ModuleLoader__.load({
     // 上下文裁不住它；运行时拒绝 react-dom 时就地渲染（position:fixed 仍然成立）。
     function MemoryOverlay({ t }) {
       const [open, setOpen] = useOverlayOpen();
+      // 库内是否有请求在飞（目前只有「从目录引导」会置位）。Esc / 背板 / ✕ 三条
+      // 关闭路径都要看它：关掉弹层会把 MemoryExplorer 连同引导弹层一起卸载，
+      // 而 POST 还在飞，回来那句「新建几条、并入几条」就再没有地方显示——
+      // 库写进去了，用户却以为没成功（评审 #4453225573）。
+      const [explorerBusy, setExplorerBusy] = useState(false);
+      // 用 ref 读而不是进 effect 依赖：那个 effect 在 [open] 变化时会
+      // closeBtnRef.current.focus()，若把 explorerBusy 也列进依赖，每次请求
+      // 起落都会重跑一次并抢焦点——用户正打字输目录时会被踢出输入框。
+      const explorerBusyRef = useRef(false);
+      useEffect(() => { explorerBusyRef.current = explorerBusy; }, [explorerBusy]);
       // #178：弹层焦点管理——打开时把焦点移入面板（关闭按钮为入口），
       // Tab 循环圈在面板内（Tab 从最后一个元素出去回到关闭按钮），
       // Esc/关闭时把焦点还给触发元素（侧边栏入口）。
@@ -5058,7 +5068,8 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (!open) return undefined;
         const onKey = (e) => {
-          if (e.key === "Escape") { setOpen(false); return; }
+          // 库内请求在飞时不响应 Esc：见上面 explorerBusy 的注释。
+          if (e.key === "Escape") { if (!explorerBusyRef.current) setOpen(false); return; }
           if (e.key !== "Tab" || !panelRef.current) return;
           const focusables = panelRef.current.querySelectorAll('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])');
           if (focusables.length === 0) return;
@@ -5086,7 +5097,7 @@ window.__ModuleLoader__.load({
       const tree = h(react.Fragment, null,
         h("div", {
           className: "mneme-backdrop",
-          onClick: () => setOpen(false),
+          onClick: () => { if (!explorerBusyRef.current) setOpen(false); },
           "aria-hidden": "true"
         }),
         h("div", { className: "mneme-overlay", role: "region", "aria-label": t("memory.view.label"), ref: panelRef },
@@ -5099,12 +5110,15 @@ window.__ModuleLoader__.load({
               type: "button",
               className: "mneme-footbtn",
               ref: closeBtnRef,
+              // 忙碌时不禁用、只标 aria-disabled：真的 disabled 会把焦点从按钮上
+              // 拿走，而 #178 的 Tab 环靠 closeBtnRef 当入口，焦点落空就出不去。
+              "aria-disabled": String(explorerBusy),
               "aria-label": t("memory.overlay.close"),
               title: t("memory.overlay.close"),
-              onClick: () => setOpen(false)
+              onClick: () => { if (!explorerBusyRef.current) setOpen(false); }
             }, "✕")
           ),
-          h("div", { className: "mneme-overlaybody" }, h(MemoryExplorer, { t }))
+          h("div", { className: "mneme-overlaybody" }, h(MemoryExplorer, { t, onBusyChange: setExplorerBusy }))
         )
       );
       if (reactDom && typeof document !== "undefined") return reactDom.createPortal(tree, document.body);
@@ -7669,7 +7683,7 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function MemoryExplorer({ t }) {
+    function MemoryExplorer({ t, onBusyChange }) {
       const [view, setView] = useState("memory"); // memory | entity | status | settings
       const [items, setItems] = useState([]); // loaded browse pages, chrono desc
       const [total, setTotal] = useState(0); // server count for the current type filter
@@ -7708,6 +7722,18 @@ window.__ModuleLoader__.load({
       const [bootstrapOpen, setBootstrapOpen] = useState(false);
       // 引导请求是否在飞：「⋯」按钮在忙碌时必须不关弹层（评审 #4452245292）。
       const [bootstrapBusy, setBootstrapBusy] = useState(false);
+      // 一路直接抬到外层 MemoryOverlay：它要在 Esc / 背板 / ✕ 三条关闭路径上一起挡
+      // （评审 #4453225573）。刻意**不**用 useEffect 转报——那要等渲染提交后才跑，
+      // 中间那一拍外层守卫读到的是 false，正是 #4452539705 那条的老毛病。
+      // 走 BootstrapDialog 的回调，它的 submit 里是同步调的。
+      // better-sidebar 那个 tab 注册时不传 onBusyChange，所以这里必须容忍 undefined。
+      // 身份必须稳定：BootstrapDialog 的卸载 effect 依赖 [onBusyChange]，父组件每
+      // 重渲染一次就会先跑 cleanup 调 onBusyChange(false)——而父组件恰好是在
+      // setBootstrapBusy(true) 之后重渲染的，那一抹等于把刚置上的忙碌标记当场抹掉。
+      const reportBootstrapBusy = useCallback((v) => {
+        setBootstrapBusy(v);
+        if (onBusyChange) onBusyChange(v);
+      }, [onBusyChange]);
       const [createOpen, setCreateOpen] = useState(false);
       const [shareOpen, setShareOpen] = useState(false);
       const [receiveOpen, setReceiveOpen] = useState(false);
@@ -8064,6 +8090,13 @@ window.__ModuleLoader__.load({
                 "aria-label": t("memory.explorer.more"),
                 "aria-expanded": String(menuOpen),
                 title: t("memory.explorer.more"),
+                // 引导请求在飞时整个「⋯」都不给开：菜单与引导弹层共用同一个
+                // 绝对定位锚点、同一层 z-index，弹层排在菜单之后渲染，会把
+                // 菜单顶上的两项导出盖住——它们没有 disabled，却点不到
+                // （评审 #4453225585）。不开菜单，就不存在「可点但被遮住」。
+                // 这也顺带把 #4452245292 那条锁得更死：菜单开不了，就没有
+                // 任何路径能在请求中途把引导弹层卸掉。
+                disabled: bootstrapBusy,
                 onClick: () => {
                   setMenuOpen(!menuOpen);
                   setImportOpen(false);
@@ -8102,7 +8135,7 @@ window.__ModuleLoader__.load({
               bootstrapOpen && h(BootstrapDialog, {
                 t,
                 onClose: () => setBootstrapOpen(false),
-                onBusyChange: setBootstrapBusy,
+                onBusyChange: reportBootstrapBusy,
                 onImported: () => setReloadKey((k) => k + 1)
               }),
               shareOpen && h(ShareDialog, { t, onClose: () => setShareOpen(false) }),
