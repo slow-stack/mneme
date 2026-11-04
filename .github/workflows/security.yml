@@ -9,6 +9,9 @@ name: Security
 #   1. gitleaks         —— 密钥泄露扫描（NPM_TOKEN 等一旦进历史就完了，这是最便宜的保险）
 #   2. dependency-review —— PR 依赖 diff：新引入依赖的已知漏洞 / 投毒包举报（OSV）
 #   3. osv-scanner      —— 全量 lockfile 扫描（push 到 main 时兜底，结果进 Security 标签页）
+#   4. workflow-hygiene —— 工作流本体静态扫描：actionlint（语法/shell）+ zizmor（模板注入 /
+#      过度权限 / 供应链姿态；审计政策在根目录 zizmor.yml）。此前按 zizmor 口径写工作流
+#      靠自觉（release-prep.yml 的 env 注入注释就是先例），现在 CI 真跑。
 # Socket App（行为级投毒检测）是 GitHub App，不占本文件——在 github.com/apps/socket-security 安装后自动生效。
 
 on:
@@ -19,13 +22,20 @@ on:
 permissions:
   contents: read
 
+# 与 CI 同一套并发取消口径：PR 连推取消旧 run；push 到 main 落到 run_id 永不取消
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   gitleaks:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # 全历史扫描：只扫增量会漏掉历史里已存在的密钥
+          persist-credentials: false # 扫描全程不 push
       # 不用 gitleaks-action：v2 起对组织仓库强制 license（个人免费、组织收费），
       # 官方二进制本身开源免费，直接跑即可，行为等价
       - name: Run gitleaks (binary, full history)
@@ -36,8 +46,11 @@ jobs:
   dependency-review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       # OSV 的「恶意包」（投毒）severity 为 critical → moderate 门槛即可拦住；
       # 正常依赖升级不出声，不敏感
       - uses: actions/dependency-review-action@v5
@@ -48,12 +61,40 @@ jobs:
 # （2026-10 审计前它是 false，只上传 SARIF 不拦；lockfile 当时 0 漏洞，所以打开没有存量噪音）
   osv-scanner:
     if: github.event_name == 'push'
+    # 注意：reusable workflow 的调用 job 不允许 timeout-minutes（actionlint 把过关），
+    # 超时由 reusable workflow 内部控制
     permissions:
       actions: read
       contents: read
       security-events: write
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.7.0
+    # 第三方 reusable workflow 按 zizmor 政策 hash 钉死（tag 是可变引用）
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
     with:
       fail-on-vuln: true
       scan-args: |-
         -r ./dsh-mneme
+
+  # 工作流本体的静态扫描：actionlint 抓语法与 shell 低级错误，zizmor 抓模板注入 /
+  # 过度权限 / 供应链反模式。同样「红 ≠ 拦合并」——没进 required checks 前只是记录。
+  workflow-hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write # zizmor SARIF 上传进 Security 标签页（advanced-security 默认开）
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: |
+          curl -sSfL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz | tar -xz actionlint
+          ./actionlint -no-color
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          # 锁内层工具版本：zizmor 新增审计集会让本 job 无改动变红；dependabot bump
+          # 动作 ref 时顺手对齐这个数字（本地 `uvx zizmor .` 预检用同版本）
+          version: 1.32.0
+          # 在线审计走 GitHub API，会引入网络抖动假红（codecov TLS 有前科）；离线审计集足够
+          online-audits: false

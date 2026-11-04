@@ -17,7 +17,9 @@ name: Release
 #   - tag 必须与 dsh-mneme/package.json version 完全一致（vX.Y.Z ↔ X.Y.Z），否则直接失败；
 #   - tag 对应版本必须在 dsh-mneme/CHANGELOG.md 里有小节（文档先行，发布时自动抽取作 Release 说明）。
 #
-# 手动触发（workflow_dispatch）支持 dry_run：只跑 verify + test，不发布不建 Release。
+# 手动触发（workflow_dispatch）默认干跑（dry_run 默认 true）：只跑 verify + test，
+# 不发布不建 Release。发布正路是推 v* tag——手点 Run workflow 的误触不应该能直接
+# publish（verify 只查 CHANGELOG 有节，不查 tag）；确要走手动发布，显式取消勾选。
 
 on:
   push:
@@ -28,7 +30,7 @@ on:
       dry_run:
         description: '只验证 + 测试，不发布（dry run）'
         type: boolean
-        default: false
+        default: true
 
 # 权限按 job 发放，工作流级一律只读：
 #   publish → id-token: write（npm provenance 走 OIDC，不需要长期 token）
@@ -38,18 +40,33 @@ on:
 permissions:
   contents: read
 
+# 发布链全局单飞：两个 tag 挨得近时排队而非并行——npm 侧有 skip-if-exists 兜底，
+# gh release create/edit 没有等价守卫，并行会竞态。cancel-in-progress 刻意为
+# false：取消跑到一半的 publish 比排队等它更糟。
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   # ── 1. 版本号管理：tag ↔ package.json ↔ CHANGELOG 三方一致 ──────────────
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+          # 发布链不吃任何包管理器缓存（zizmor cache-poisoning）：setup-node v4.1 起
+          # 默认开 npm 缓存，必须显式关——tag 触发的流水线直接产出 npm 包，缓存命中
+          # 路径一旦被污染没有 PR 阶段的复核兜底。同一棵树在 PR 的 CI（带缓存）已
+          # 全量绿过，这里多花的一两分钟买的是发布面干净。
+          package-manager-cache: false
 
       - name: Resolve version (tag push or package.json)
         id: ver
@@ -69,13 +86,16 @@ jobs:
 
       # 文档更新守门：CHANGELOG 缺该版本小节 → 说明发布说明没写，阻断并提示
       - name: CHANGELOG has a section for this version
+        env:
+          # version 的来源（tag 名 / package.json）都是维护者可控，zizmor 只记
+          # informational，但本工作流统一走 env 注入让扫描器零推理
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          V="${{ steps.ver.outputs.version }}"
-          if ! grep -qE "^## \[${V}\]" dsh-mneme/CHANGELOG.md; then
-            echo "::error::dsh-mneme/CHANGELOG.md 缺少 ## [${V}] 小节——请先补发布说明"
+          if ! grep -qE "^## \[${VERSION}\]" dsh-mneme/CHANGELOG.md; then
+            echo "::error::dsh-mneme/CHANGELOG.md 缺少 ## [${VERSION}] 小节——请先补发布说明"
             exit 1
           fi
-          echo "CHANGELOG section found for ${V}"
+          echo "CHANGELOG section found for ${VERSION}"
 
   # ── 2. 双平台全量测试（Windows + Linux × Node 22/24，与 CI 同矩阵）────────
   test:
@@ -86,17 +106,19 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         node-version: [22, 24]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: dsh-mneme
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
-          cache-dependency-path: dsh-mneme/package-lock.json
+          package-manager-cache: false # 发布链不吃缓存，理由见 verify 同款配置
 
       - name: Install dependencies
         run: npm ci
@@ -112,6 +134,7 @@ jobs:
     needs: [verify, test]
     if: github.event_name == 'push' || inputs.dry_run != true
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # npm provenance 用 OIDC 而不是长期 token 签名：--provenance 需要 id-token。
     # 挂在 job 上而不是 workflow 上，别的 job 拿不到这个能力。
     permissions:
@@ -119,11 +142,14 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org/
+          package-manager-cache: false # 发布链不吃缓存，理由见 verify 同款配置
 
       - name: Registry current state (diagnostic)
         run: |
@@ -135,7 +161,7 @@ jobs:
       - name: Publish @modusensus/dsh-mneme (skip if exists)
         working-directory: dsh-mneme
         run: |
-          V="${{ needs.verify.outputs.version }}"
+          V="$VERSION"
           if npm view "@modusensus/dsh-mneme@${V}" version >/dev/null 2>&1; then
             echo "v${V} already published on registry — skipping"
           else
@@ -145,6 +171,7 @@ jobs:
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.verify.outputs.version }} # 统一 env 注入，理由见 verify 的 CHANGELOG 步
 
       # 真闸门：拿不到这个版本就非零退出，让 job 变红。
       # 原先这里是 `echo "Published: $(npm view "@modusensus/dsh-mneme@${V}" version)"` —— 命令
@@ -154,7 +181,9 @@ jobs:
       # 轮询而不是一次性查询：registry 有传播延迟（v0.8.16 实测 publish→可见约 4.5 分钟），
       # 一次性查询只有假绿或假红两种结局；幂等跳过路径首次探测即通过，不付等待成本。
       - name: Verify published version (blocking gate)
-        run: node dsh-mneme/scripts/publish-gate.mjs "${{ needs.verify.outputs.version }}"
+        env:
+          VERSION: ${{ needs.verify.outputs.version }} # 统一 env 注入，理由见 verify 的 CHANGELOG 步
+        run: node dsh-mneme/scripts/publish-gate.mjs "$VERSION"
 
   # ── 4. GitHub Release（按 v0.7.9 / v0.7.10 的既定格式，说明自动取自 CHANGELOG）──
   # needs 里必须带 publish：Release 是对外的「这个版本已发布」声明，registry 才是唯一事实。
@@ -167,11 +196,14 @@ jobs:
     needs: [verify, test, publish]
     if: github.event_name == 'push' || inputs.dry_run != true
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # 建/改 GitHub Release 要写权限，只有这个 job 需要。
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # Release 正文的渲染搬进了 dsh-mneme/scripts/release-notes.mjs（原先这段是内联 node -e）。
       # 搬出去的理由不是「代码要短」：Release 正文的排版会被反复调整，内联脚本改一次就要动工作流
@@ -179,7 +211,9 @@ jobs:
       # 渲染是分层而不是截断：标题 + 一句导语默认可见，剩余正文折进 details —— CHANGELOG 本体
       # 一个字不动（那是含决策理由的完整记录），压缩只发生在对外渲染这一步。
       - name: Extract release notes from CHANGELOG
-        run: node dsh-mneme/scripts/release-notes.mjs "${{ needs.verify.outputs.version }}"
+        env:
+          VERSION: ${{ needs.verify.outputs.version }} # 统一 env 注入，理由见 verify 的 CHANGELOG 步
+        run: node dsh-mneme/scripts/release-notes.mjs "$VERSION"
 
       - name: Create / update GitHub Release
         env:
@@ -204,11 +238,14 @@ jobs:
     needs: [verify, test, publish, release]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Job summary
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
           {
-            echo "## Release pipeline — ${{ needs.verify.outputs.version }}"
+            echo "## Release pipeline — $VERSION"
             echo ""
             echo "| job | result |"
             echo "|-----|--------|"

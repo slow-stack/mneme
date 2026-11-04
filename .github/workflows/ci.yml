@@ -23,6 +23,13 @@ on:
 permissions:
   contents: read
 
+# PR 连推多个 commit 时取消同分支的旧 run（实测整轮 3-6.5 分钟，堆叠纯烧分钟）。
+# push / workflow_dispatch 事件没有 head_ref，组名落到 run_id（每次运行唯一）
+# → main 基线永不取消，required checks 口径不受影响。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   test:
     strategy:
@@ -31,11 +38,16 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         node-version: [22, 24]
     runs-on: ${{ matrix.os }}
+    # 实测最长腿 ~6.5 分钟（windows 冷缓存）；20 分钟只兜真挂死——不设的话默认 360 分钟
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: dsh-mneme
     steps:
+      # 全程不 push，token 不留在 runner 的 git 配置里（zizmor artipacked）
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
@@ -73,7 +85,7 @@ jobs:
       # 网络抖动可在步内消化——上报失败仍不应挡 merge。
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.node-version == 24
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: dsh-mneme/coverage/lcov.info
@@ -102,11 +114,14 @@ jobs:
         #   0.1.7-rc.2 —— 0.1 线最新（老桌面端 2.0.14 内置的 0.1.7-rc.1 属同一段）
         host: ["0.1.0-rc.8", "0.1.7-rc.2"]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: dsh-mneme
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:
