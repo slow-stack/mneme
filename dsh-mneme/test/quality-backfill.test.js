@@ -171,6 +171,9 @@ test("迁移：分批翻页、按原文判重复、只减自有扣分键", () =>
     insert.run("demoted", "降级行", summary, '["repetitive","low_quality"]', 50, REPETITIVE);
     // 原型链标签：constructor 不在自有键里，一分都不该扣（扣了就是 NaN）。
     insert.run("proto-tag", "原型链标签", LONG_NOTE, '["repetitive","constructor"]', 50, null);
+    // 非字符串元素：Object.hasOwn 会对它做属性键转换并抛 TypeError。这里没有任何 catch，
+    // 异常会直接让 createStore 中止——插件整树起不来，且登记行永远写不上、每次打开都重撞。
+    insert.run("obj-tag", "对象标签", LONG_NOTE, '["repetitive",{"toString":1}]', 50, null);
     legacy.close();
 
     const store = createStore(dbPath);
@@ -192,6 +195,10 @@ test("迁移：分批翻页、按原文判重复、只减自有扣分键", () =>
       assert.equal(demoted._full_content, REPETITIVE, "判据读原文不等于改原文");
       assert.ok(demoted.content.startsWith("这段摘要"), "content 仍是摘要，迁移不许顺手恢复原文");
 
+      // 整条原样放过（与坏 tags 同一策略）：本迁移不该顺手重写一个自己解析不了的值。
+      assert.equal(raw("obj-tag").tags, '["repetitive",{"toString":1}]', "非字符串标签不许碰，更不许让它把打开库搞崩");
+      assert.equal(raw("obj-tag").quality_score, 50);
+
       const proto = raw("proto-tag");
       assert.deepEqual(JSON.parse(proto.tags), ["constructor"], "repetitive 撤掉，其余标签原样保留");
       // constructor 不是自有扣分键 → 一分不扣，重建值 100；存量 50 是旧误判压出来的，
@@ -199,6 +206,83 @@ test("迁移：分批翻页、按原文判重复、只减自有扣分键", () =>
       assert.equal(proto.quality_score, 100, "constructor 不得扣分：重建值应为满分");
     } finally {
       store.close();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// 第三条边界：CAS 落空的行这一趟没修到，那就不许登记「已完成」——登记行是「这条迁移
+// 跑完了」的唯一证据，写早了，那条行会带着旧分与旧标签一直留在库里，再没人回头看它。
+// 这里用 AFTER UPDATE 触发器造**确定性**的 CAS 落空（不用定时器）：cur-a 的 rowid 在前，
+// 它一被改写就分别去改 cur-b 的 tags 与 cur-c 的正文，于是这两行的 UPDATE 因 WHERE 不匹配
+// 而 changes = 0。两条分开测，是因为它们各自对应 CAS 的一个条件：cur-b 验 tags，
+// cur-c 验正文——只校验 tags/quality_score 时，cur-c 那种「正文被换成重复文本、另两列没动」
+// 的情况会原地通过，把本该保留的 repetitive 撤掉。
+test("迁移：CAS 落空时不写登记行，下次打开整条重跑", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-qbackfill3-"));
+  const dbPath = join(dir, "legacy.db");
+  try {
+    assert.ok(repetitionRatio(LONG_NOTE.trim()) < REPETITION_THRESHOLD, "fixture: 长文必须不重复");
+
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec(
+      "CREATE TABLE memories (" +
+        "id TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL," +
+        "tags TEXT NOT NULL DEFAULT '[]', importance INTEGER NOT NULL DEFAULT 3," +
+        "forgotten INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0," +
+        "source TEXT, quality_score REAL, content_hash TEXT," +
+        "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    );
+    // content_hash 给非空哨兵：这一列的存量回填跑在本条迁移之前，也会 UPDATE memories，
+    // 若留 NULL 就会提前触发下面的触发器、把 cas 冲突挪到错误的位置。
+    const insert = legacy.prepare(
+      "INSERT INTO memories (id, type, title, content, tags, importance, forgotten, archived, source, quality_score, content_hash, created_at, updated_at) VALUES (?, 'project', ?, ?, ?, 3, 0, 0, NULL, 50, ?, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')"
+    );
+    insert.run("cur-a", "样本 A", LONG_NOTE, '["repetitive","low_quality"]', "sentinel-a");
+    insert.run("cur-b", "样本 B", LONG_NOTE, '["repetitive","low_quality"]', "sentinel-b");
+    insert.run("cur-c", "样本 C", LONG_NOTE, '["repetitive","low_quality"]', "sentinel-c");
+    // 只认 cur-a：别的 UPDATE 不该引发冲突，否则测到的就不是本条迁移的 CAS 了。
+    const replaced = '["repetitive","meta"]';
+    legacy.exec(
+      "CREATE TRIGGER cas_conflict AFTER UPDATE ON memories WHEN NEW.id = 'cur-a' " +
+        "BEGIN " +
+        "UPDATE memories SET tags = '" + replaced + "' WHERE id = 'cur-b'; " +
+        "UPDATE memories SET content = '" + REPETITIVE + "' WHERE id = 'cur-c'; " +
+        "END;"
+    );
+    legacy.close();
+
+    const store = createStore(dbPath);
+    try {
+      // cur-a 修好了（它就是触发源），cur-b 的 CAS 落空、原样留着。
+      assert.deepEqual(store.getById("cur-a").tags, [], "触发源那一行本身照常修好");
+      assert.deepEqual(store.getById("cur-b").tags, ["repetitive", "meta"], "tags 变了：CAS 落空的行这一趟不许被覆盖");
+      assert.deepEqual(store.getById("cur-c").tags, ["repetitive", "low_quality"],
+        "只有正文变了也得挡下：判据读的是正文，不校验它就会把该保留的 repetitive 撤掉");
+      assert.equal(store.getById("cur-c").content, REPETITIVE, "迁移不许顺手把正文改回去");
+      const mark = store.db
+        .prepare("SELECT 1 FROM applied_migrations WHERE id = ?")
+        .get("2026-11-quality-repetitive-backfill");
+      assert.equal(mark, undefined, "还有行没修到时不许登记：登记行一写，它就再也不会被处理");
+    } finally {
+      store.close();
+    }
+
+    // 再开一次：cur-a 已不是候选（repetitive 已撤），触发器不再开火，cur-b 这次能修好、
+    // 登记行也才写上——「重跑」而不是「放弃」，这是不重试、只推迟登记的完整语义。
+    const again = createStore(dbPath);
+    try {
+      assert.deepEqual(again.getById("cur-b").tags, ["meta"], "重跑时补上落空的那一行");
+      // cur-c 的正文已被换成真重复文本：重跑时判据看到它是真重复，标签就该留着——
+      // 这条顺带证明「重跑」不是「无条件撤销」，判据每次都重新读当次正文。
+      assert.deepEqual(again.getById("cur-c").tags, ["repetitive", "low_quality"], "重跑按当次正文重新判");
+      const mark = again.db
+        .prepare("SELECT 1 FROM applied_migrations WHERE id = ?")
+        .get("2026-11-quality-repetitive-backfill");
+      assert.ok(mark, "没有落空之后才登记");
+    } finally {
+      again.close();
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });

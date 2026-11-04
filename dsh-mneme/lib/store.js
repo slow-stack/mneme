@@ -1164,7 +1164,7 @@ export function createStore(path) {
   // 回填分批提交、登记行最后单独提交，不做「一个大事务包住全部」：逐批提交才不会把
   // 「候选行数 × 全文长度」攒在内存与一次 WAL 里；而这样拆之所以仍然安全，是因为
   // **修过的行就不再是候选**（repetitive 已撤），中途崩掉重跑只会从断点接着走，不会
-  // 重复加回分数。登记行只认「全部批次都跑完了」，半截进度不落地。
+  // 重复加回分数。登记行只认「全部批次都跑完、且没有一条被 CAS 挡下」，半截进度不落地。
   {
     const MIGRATION_ID = "2026-11-quality-repetitive-backfill";
     const applied = db.prepare("SELECT 1 FROM applied_migrations WHERE id = ?").get(MIGRATION_ID);
@@ -1184,14 +1184,21 @@ export function createStore(path) {
           ORDER BY rowid
           LIMIT ?`
       );
-      // CAS：带上读到的旧 tags 与旧 quality_score 作为条件。多宿主共用一个库是支持
-      // 形态（busy_timeout + WAL），SELECT 到 UPDATE 之间别的进程可能刚改过这一行——
-      // 那就以它为准、跳过这一条，不拿这次读到的旧判断覆盖它。
+      // CAS：带上读到的旧 tags、旧 quality_score 与两列正文作为条件。多宿主共用一个库是
+      // 支持形态（busy_timeout + WAL），SELECT 到 UPDATE 之间别的进程可能刚改过这一行——
+      // 那就以它为准、跳过这一条，不拿这次读到的旧判断覆盖它。正文两列也要带：判据读的是
+      // 正文，只校验 tags/quality_score 时，正文被换成重复文本而另两列未变仍会 CAS 通过，
+      // 于是把本该保留的 repetitive 撤掉。
       const stmt = db.prepare(
         `UPDATE memories SET tags = ?, quality_score = ?
           WHERE id = ? AND tags = ? AND quality_score IS ?
+            AND content IS ? AND _full_content IS ?
             AND tags LIKE '%"repetitive"%'`
       );
+      // CAS 落空的行这一趟没修到，它们仍是候选——那就别登记「已完成」，下次打开整条重跑
+      // （修过的行已不是候选，重跑天然幂等）。否则一条被别处同时改写而保留 repetitive 的行
+      // 会带着旧分与旧标签一直留在库里。
+      let casMisses = 0;
       let cursor = 0;
       for (;;) {
         const rows = selectBatch.all(cursor, BATCH);
@@ -1206,6 +1213,10 @@ export function createStore(path) {
             continue; // 坏 tags 不动：这条迁移不该顺手重写一个解析不了的值
           }
           if (!Array.isArray(tags) || !tags.includes("repetitive")) continue;
+          // 含非字符串元素的行整条放过：下面 Object.hasOwn 对对象元素会先做属性键转换，
+          // 抛 TypeError（JSON.parse('{"toString":1}') 这类值可达），而这里没有任何 catch，
+          // 异常会直接让 createStore 中止、迁移永远登不上记，下次打开原地再撞同一行。
+          if (!tags.every((t) => typeof t === "string")) continue;
           // 判据落在**原文**上：已降级的行 content 只剩前 120 字摘要（demoteToSummary
           // 把正文挪进 _full_content，且它不重算 quality_score），拿摘要判重复会把
           // 「前缀不重复、后段大量重复」的原文放过去——而那恰好是旧度量最容易误判的
@@ -1227,21 +1238,31 @@ export function createStore(path) {
           // 显式同步而不是留给下次写入：不重算的路径不会自己把它修好。
           const next = kept.filter((t) => t !== "low_quality");
           if (score < 30) next.push("low_quality");
-          updates.push([JSON.stringify(next), score, row.id, row.tags, row.quality_score]);
+          updates.push([
+            JSON.stringify(next),
+            score,
+            row.id,
+            row.tags,
+            row.quality_score,
+            row.content,
+            row._full_content
+          ]);
         }
         if (updates.length === 0) continue;
         const batch = updates;
         // 一批一个事务：逐条自动提交是每行一次 WAL 提交（与 content_hash 回填同一个教训）。
         runAtomically(() => {
-          for (const u of batch) stmt.run(u[0], u[1], u[2], u[3], u[4]);
+          for (const u of batch) {
+            if (stmt.run(u[0], u[1], u[2], u[3], u[4], u[5], u[6]).changes === 0) casMisses += 1;
+          }
         });
       }
-      // 登记行单独提交，且只在**所有批次都跑完之后**：它是「这条迁移已完成」的证据，
-      // 半截进度不能落地，否则重跑会被自己挡住、剩下的行再也修不回来。
+      // 登记行单独提交，且只在**所有批次都跑完、且没有一条 CAS 落空**之后：它是「这条迁移
+      // 已完成」的证据，半截进度不能落地，否则重跑会被自己挡住、剩下的行再也修不回来。
       const mark = db.prepare("INSERT OR IGNORE INTO applied_migrations (id, applied_at) VALUES (?, ?)");
       // 时间戳这里直接用 new Date()：nowIso 的单调守卫是给 memories.updated_at 用的，
       // 而且它依赖的 lastTs 此刻还没初始化（TDZ），调它会在打开库时直接抛。
-      runAtomically(() => mark.run(MIGRATION_ID, new Date().toISOString()));
+      if (casMisses === 0) runAtomically(() => mark.run(MIGRATION_ID, new Date().toISOString()));
     }
   }
 
