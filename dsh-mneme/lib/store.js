@@ -2,6 +2,10 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { contentHashOf } from "./content-hash.js";
+// 质量分回填要的判据与扣分表。只取常量与纯函数：依赖方向 store → quality-filter 单向
+// （quality-filter.js 不 import 任何本包模块，是纯函数模块），不构成环，也不会让存储层
+// 反向依赖服务层。判据只许有一份——回填另写一个 0.7 就会与写入路径悄悄分叉。
+import { REPETITION_THRESHOLD, SIGNAL_DEDUCTIONS, repetitionRatio } from "./quality-filter.js";
 // 政策轴（issue #471）的归一化函数。刻意只取归一化，不取判定：判定（buildPausedIndex /
 // matchPausedScopes / createScopeStateGate）留在 scope-state.js，由 service 侧消费，
 // 存储层只管「一格状态怎么落」。依赖方向 store → scope-state → scope 是单向的
@@ -48,6 +52,20 @@ CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance);
 -- Issue #202：all()/list() 按 updated_at 排序，无索引时走临时 B 树全表排序
 -- （5k 行实测 all() 231ms → 135ms）。IF NOT EXISTS 幂等，存量库启动即建。
 CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at);
+
+-- 一次性数据迁移的登记表：一条迁移一行，跑过就记下。看起来多余（本文件其余迁移都
+-- 靠「条件式 SQL 恒等幂等」），但存量回填那类迁移的条件在跑完之后**恒不命中、却仍要
+-- 全表扫一遍才能证明不命中**——质量分回填的探测在本机 12,827 行上是 36.7 ms，而
+-- createStore 稳态才 3.3 ms，等于每次打开都白付十倍的开销。登记表把这一步变成一次
+-- 主键 seek。
+-- 为什么不是 PRAGMA user_version：实测它在 BEGIN 里设值**不随 ROLLBACK 回退**，与回填
+-- 放不进同一个事务（先置标记再回填中途失败 = 永久漏跑）；而且它全库只有一个整数，被
+-- 单条迁移占掉之后，日后真需要 schema 版本号就没地方放了。普通表既能跟着事务回退，
+-- 也能一条迁移一行。
+CREATE TABLE IF NOT EXISTS applied_migrations (
+  id          TEXT PRIMARY KEY,
+  applied_at  TEXT NOT NULL
+);
 
 -- autoDream audit trail: one row per consolidation run, capturing the exact
 -- input snapshot digest + the LLM decision list + per-id outcome + a compact
@@ -1109,6 +1127,81 @@ export function createStore(path) {
       // 一个事务包住整批：逐条自动提交是每行一次 WAL 提交，几千行的存量库上纯属浪费。
       runAtomically(() => {
         for (const [hash, id] of updates) stmt.run(hash, id);
+      });
+    }
+  }
+
+  // 一次性数据迁移 #1：撤回旧重复度度量的误判（#560 的收尾）。
+  //
+  // v0.7.12 起 repetitive 用的是「唯一字符数 ÷ 总长度 < 0.3」，这个比率随长度单调下降，
+  // 于是长中文记忆被系统性判成重复：本机 12,827 条里 800–2000 字的 94.3%、2000 字以上的
+  // 100% 命中。0.10.2 把度量换成 trigram 重复率（> 0.7），那只管住了**新写入**——
+  // evaluateMemoryQuality 全仓只有 service 的写路径一处调用，更新路径不重算 quality_score，
+  // 所以库里那批标签与扣分原封不动。
+  //
+  // 口径是「手术式撤销」，不是「整列重算」：整列重算会顺手重新裁一遍别人的分——实测会
+  // 新命中 90 条 meta 与 98 条 self_referential（判据没变、但评分当时没跑到这些行），
+  // 那是双向改写，越过了「只撤除被修掉的那个误判」的范围。这里只动带 repetitive 的行，
+  // 且必须**用新度量复算仍然不重复**才动；新度量下依旧 > 0.7 的是真重复，标签有效，保持原样。
+  //
+  // 分数据「只升不降」：重建值来自存活标签的扣分表，取 max(存量, 重建) 而不是直接取重建——
+  // 存量分不是纯标签函数（实测有 3 行与任何标签组合都对不上，历史上有信号被改路径抹掉过），
+  // 直接用重建值会把这批行往下压。这次迁移的理由是「它被误扣了 50」，只有加回去才对得上。
+  //
+  // 不碰 archived / archived_at / updated_at / content_hash / embedding，也不 bump
+  // generation：归档位是另一个决定（撤销归档 = 把 300 条重新放进注入池），不夹带在
+  // 「修分数」里；不刷 updated_at 则代表镜像不重排——代价是镜像文件里这些行的 tags 行
+  // 会显示已删掉的 repetitive，而 parseHumanEdits 不解析 tags，陈旧只停留在显示层、不回灌。
+  //
+  // 用 applied_migrations 登记而不是条件式恒等幂等：这批条件在跑完之后**恒不命中**，
+  // 但要全表扫一遍才能证明不命中（本机实测 36.7 ms，而 createStore 稳态只有 3.3 ms）——
+  // 每次打开都白付十倍开销。登记表把它变成一次主键 seek，且登记行与回填在**同一个事务**里，
+  // 中途失败一起回退（PRAGMA user_version 做不到：实测它在 BEGIN 里设值不随 ROLLBACK 回退，
+  // 先置标记再回填会永久漏跑）。
+  {
+    const MIGRATION_ID = "2026-11-quality-repetitive-backfill";
+    const applied = db.prepare("SELECT 1 FROM applied_migrations WHERE id = ?").get(MIGRATION_ID);
+    if (!applied) {
+      // LIKE 只负责候选裁剪，真正的判据是下一段的 tags.includes("repetitive")——把
+      // LIKE 放松成 %repetitive% 也筛不出错误结果（变异自证里它是等价变异）。用带引号
+      // 的形态是为了缩小候选集、少解析几条将来可能出现的坏 JSON，不是为了防误伤。
+      const rows = db
+        .prepare(`SELECT id, content, tags, quality_score FROM memories WHERE tags LIKE '%"repetitive"%'`)
+        .all();
+      const updates = [];
+      for (const row of rows) {
+        let tags;
+        try {
+          tags = JSON.parse(row.tags);
+        } catch {
+          continue; // 坏 tags 不动：这条迁移不该顺手重写一个解析不了的值
+        }
+        if (!Array.isArray(tags) || !tags.includes("repetitive")) continue;
+        // 新度量下仍然重复 → 标签是对的，保持原样（不重算分数：那会变成整列重算）
+        if (repetitionRatio(String(row.content ?? "").trim()) > REPETITION_THRESHOLD) continue;
+        const kept = tags.filter((t) => t !== "repetitive");
+        let rebuilt = 100;
+        for (const tag of kept) rebuilt -= SIGNAL_DEDUCTIONS[tag] ?? 0;
+        rebuilt = Math.max(0, Math.min(100, Math.round(rebuilt)));
+        const stored = Number.isFinite(row.quality_score) ? row.quality_score : null;
+        const score = stored === null ? rebuilt : Math.max(stored, rebuilt);
+        // low_quality 是分数的派生态（< 30 必须有、≥ 30 必须没有），分数动了它就跟着动。
+        // 显式同步而不是留给下次写入：不重算的路径不会自己把它修好。
+        const next = kept.filter((t) => t !== "low_quality");
+        if (score < 30) next.push("low_quality");
+        updates.push([JSON.stringify(next), score, row.id]);
+      }
+      const stmt = db.prepare(
+        `UPDATE memories SET tags = ?, quality_score = ? WHERE id = ? AND tags LIKE '%"repetitive"%'`
+      );
+      const mark = db.prepare("INSERT OR IGNORE INTO applied_migrations (id, applied_at) VALUES (?, ?)");
+      // 一个事务包住整批与登记行：逐条自动提交是每行一次 WAL 提交（与 content_hash 回填
+      // 同一个教训），而登记行必须与回填同生共死——它单独提交就等于「记了账没干活」。
+      // 时间戳这里直接用 new Date()：nowIso 的单调守卫是给 memories.updated_at 用的，
+      // 而且它依赖的 lastTs 此刻还没初始化（TDZ），调它会在打开库时直接抛。
+      runAtomically(() => {
+        for (const [tagsJson, score, id] of updates) stmt.run(tagsJson, score, id);
+        mark.run(MIGRATION_ID, new Date().toISOString());
       });
     }
   }

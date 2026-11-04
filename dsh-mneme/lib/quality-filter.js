@@ -26,6 +26,20 @@
 export const META_MEMORY_RE =
   /记忆|mneme|recall|inject|上下文|token|prompt|系统指令|作为AI|作为助手|我需要记住|总结一下刚才/;
 
+// The deduction table is exported because a SECOND reader needs the same numbers: the
+// one-time backfill in store.js reconstructs a stored score from a row's surviving tags
+// (it cannot re-score wholesale — that would also re-apply signals that were never on
+// the row). Duplicating 45/15/80/50/80 there would make "what a tag costs" two facts
+// that can drift apart, and the drift would be silent: the backfill would just write
+// slightly wrong numbers. Keys are the tag names, not the reasons.
+export const SIGNAL_DEDUCTIONS = Object.freeze({
+  meta: 45,
+  self_referential: 15,
+  short_content: 80,
+  repetitive: 50,
+  duplicate: 80
+});
+
 // Own-type labels, used for self-reference detection (the English type value
 // the AI writers emit plus the Chinese equivalent a human would type).
 const TYPE_LABELS = {
@@ -107,26 +121,26 @@ export function evaluateMemoryQuality(memory, options = {}) {
   let score = 100;
 
   if (META_MEMORY_RE.test(text)) {
-    score -= 45;
+    score -= SIGNAL_DEDUCTIONS.meta;
     tags.push("meta");
     reasons.push("meta-memory vocabulary");
   }
 
   const labels = TYPE_LABELS[memory?.type];
   if (labels && labels.some((l) => text.includes(l))) {
-    score -= 15;
+    score -= SIGNAL_DEDUCTIONS.self_referential;
     tags.push("self_referential");
     reasons.push("mentions its own type");
   }
 
   if (minContentLength > 0 && trimmed.length < minContentLength) {
-    score -= 80;
+    score -= SIGNAL_DEDUCTIONS.short_content;
     tags.push("short_content");
     reasons.push(`content shorter than ${minContentLength} chars`);
   }
 
   if (trimmed.length > 0 && repetitionRatio(trimmed) > REPETITION_THRESHOLD) {
-    score -= 50;
+    score -= SIGNAL_DEDUCTIONS.repetitive;
     tags.push("repetitive");
     reasons.push("repetitive content");
   }
@@ -134,7 +148,7 @@ export function evaluateMemoryQuality(memory, options = {}) {
   if (recentContents.length > 0 && trimmed.length > 0) {
     for (const other of recentContents) {
       if (textSimilarity(trimmed, other) > 0.85) {
-        score -= 80;
+        score -= SIGNAL_DEDUCTIONS.duplicate;
         tags.push("duplicate");
         reasons.push("near-duplicate of a recent memory");
         break;
