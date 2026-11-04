@@ -16,6 +16,7 @@
   "icon": "assets/icon.svg",
   "bin": {
     "dsh-mneme": "bin/cli.mjs",
+    "dsh-mneme-choro": "bin/dsh-mneme-choro.mjs",
     "dsh-mneme-mcp": "bin/dsh-mneme-mcp.mjs",
     "dsh-mneme-serve": "bin/dsh-mneme-serve.mjs"
   },
@@ -106,7 +107,8 @@
     ]
   },
   "dependencies": {
-    "morphicons": "^1.7.1"
+    "morphicons": "^1.7.1",
+    "yaml": "^2.9.1"
   },
   "overrides": {
     "adm-zip": "0.6.1",
