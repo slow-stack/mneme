@@ -853,6 +853,45 @@ test("token flow: 7-day bars pad to a continuous week, heatmap uses its own 56-d
   );
 });
 
+// 8 周沉淀图（热力右侧那块空白）是第二条独立数据源，四处静默失效都会让图看着
+// 正常但结论错掉，所以照样锁形状：
+// ① 必须自带 days=56 请求——复用 days=7 的响应会让 8 根柱子只有 1 根有数据；
+// ② sinkStats 为 null（未到）与 {}（已知为空）必须分开，否则加载态先画 8 根
+//    零高柱子，再「长出来」，用户看到的是一次假抖动；
+// ③ 图例/柱体不能在三总量全 0 时照画——那等于把「最近没有东西进库」这句
+//    谎话说成事实；
+// ④ 两列并排必须带窄容器回落，否则 480px 侧栏里热力与沉淀互相压扁。
+test("consolidation chart: own 56-day window, null-vs-empty split, and a narrow-container fallback", () => {
+  assert.ok(
+    clientSource.includes("semantic/consolidation-stats?days=56"),
+    "the consolidation chart must issue its own days=56 request"
+  );
+  assert.ok(
+    /if \(!sinkStats\) return null;/.test(clientSource),
+    "an unloaded consolidation response must stay null, else the loading state paints 8 empty weeks"
+  );
+  assert.ok(
+    /sinkDays && !sinkError/.test(clientSource),
+    "labels/legend must be gated on a loaded, non-erroring response"
+  );
+  assert.ok(
+    /sinkAddedTotal \+ sinkMergedTotal \+ sinkArchivedTotal === 0/.test(clientSource),
+    "an all-zero window must render the empty state, not eight zero-height bars"
+  );
+  // 两列：热力按内容宽 auto，沉淀吃剩余；窄容器回落单列。
+  assert.ok(
+    clientSource.includes("grid-template-columns:auto minmax(0,1fr)"),
+    "the heat row and the consolidation chart must sit in two columns"
+  );
+  assert.ok(
+    clientSource.includes("@container (max-width:960px){.mneme-flowrow{grid-template-columns:minmax(0,1fr)}}"),
+    "two columns must collapse to one in a narrow container"
+  );
+  // 两根柱的语义色必须走语义层，不能直接拿宿主 label token 当填充色（#178）。
+  assert.ok(clientSource.includes(".mneme-sinkbar--added{background:var(--mneme-chart-3)}"));
+  assert.ok(clientSource.includes(".mneme-sinkbar--merged{background:var(--mneme-chart-2)}"));
+});
+
 // 巩固/睡眠模型路由 UI：下拉数据来自宿主侧已注册适配器（/llm-providers，
 // 云端插件侧端点），「测试连通性」走 POST /test-model 真实最小调用。旧后端
 // 端点 404 时必须回退纯文本输入——前端自门控，不挡旧版本。

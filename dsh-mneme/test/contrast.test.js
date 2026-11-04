@@ -278,7 +278,11 @@ const GRAPHICS = [
   { sel: ".mneme-heatcell.l1", prop: "background" },
   { sel: ".mneme-heatcell.l2", prop: "background" },
   { sel: ".mneme-heatcell.l3", prop: "background" },
-  { sel: ".mneme-heatcell.l4", prop: "background" }
+  { sel: ".mneme-heatcell.l4", prop: "background" },
+  // 8 周沉淀的两根柱：高度差就是「进来的 vs 稳住的」这层信息本身（新增高、
+  // 巩固矮＝库在膨胀），柱子掉回浅灰等于把结论擦掉，所以按图形色 3:1 锁。
+  { sel: ".mneme-sinkbar--added", prop: "background" },
+  { sel: ".mneme-sinkbar--merged", prop: "background" }
 ];
 test("图形色（热度/打卡/连线）在浅深两主题下都达到 3:1", () => {
   const bySel = new Map(rules.map((r) => [r.sel, r]));

@@ -1124,6 +1124,13 @@ window.__ModuleLoader__.load({
         "memory.status.token.heat": "8 周热力 · 每天花了多少",
         "memory.status.token.heatLess": "少",
         "memory.status.token.heatMore": "多",
+        "memory.status.token.sink": "8 周沉淀 · 进来的 vs 稳住的",
+        "memory.status.token.sinkAdded": "新增",
+        "memory.status.token.sinkMerged": "巩固",
+        "memory.status.token.sinkArchived": "归档",
+        "memory.status.token.sinkGap": "巩固/新增",
+        "memory.status.token.sinkEmpty": "最近还没有记录",
+        "memory.status.token.sinkFoot": "巩固按去重记录数计，同一条被多轮合并只算一次",
         "memory.status.token.last7": "近 7 天",
         "memory.status.token.meterOnly": "（只计量）",
         "memory.status.token.detail": "详细状态卡（原「库内一览 / 后台运转」9 张，点击展开）",
@@ -1938,6 +1945,13 @@ window.__ModuleLoader__.load({
         "memory.status.token.heat": "8-week heat · daily spend",
         "memory.status.token.heatLess": "less",
         "memory.status.token.heatMore": "more",
+        "memory.status.token.sink": "8-week consolidation · in vs kept",
+        "memory.status.token.sinkAdded": "added",
+        "memory.status.token.sinkMerged": "consolidated",
+        "memory.status.token.sinkArchived": "archived",
+        "memory.status.token.sinkGap": "consolidated/added",
+        "memory.status.token.sinkEmpty": "nothing recorded yet",
+        "memory.status.token.sinkFoot": "consolidated counts distinct records; re-merging the same record counts once",
         "memory.status.token.last7": "last 7 days",
         "memory.status.token.meterOnly": "(metered only)",
         "memory.status.token.detail": "Detailed status cards (the original 9 under Library / Background activity, click to expand)",
@@ -2533,6 +2547,25 @@ window.__ModuleLoader__.load({
       ".mneme-heatcell.l4{background:var(--mneme-heat-1)}",
       ".mneme-heatlegend{display:flex;align-items:center;gap:3px;margin-top:8px;font-size:10.5px;color:var(--mneme-fg-dim)}",
       ".mneme-heatlegend .mneme-heatcell{width:10px;height:10px}",
+      // 热力右侧的空白：热力只有 56 格 × 11px ≈ 745px 宽，而容器可用宽 968px，
+      // 右边常年空着约 220px。原先三块图各自独占整行，空白是「每块只占半行」造成的，
+      // 不是某个空 div——所以这里把热力与沉淀图并成两列（左侧热力按内容宽 auto，
+      // 右侧吃剩余），容器窄到放不下两列时回落单列竖排。
+      ".mneme-flowrow{display:grid;grid-template-columns:auto minmax(0,1fr);gap:20px;align-items:start}",
+      "@container (max-width:960px){.mneme-flowrow{grid-template-columns:minmax(0,1fr)}}",
+      ".mneme-flowheat{min-width:0}",
+      ".mneme-flowsink{min-width:0;display:flex;flex-direction:column}",
+      // 8 周沉淀只画两条（进来的 / 稳住的）：220px 宽里三序列会细到看不清，
+      // 归档数改在下方图例里给总量。
+      ".mneme-sinkchart{display:flex;align-items:flex-end;gap:4px;height:96px;margin-top:12px}",
+      ".mneme-sinkcol{flex:1;min-width:0;display:flex;align-items:flex-end;gap:2px;height:100%}",
+      ".mneme-sinkbar{flex:1;min-width:0;border-radius:2px 2px 0 0;min-height:1px}",
+      ".mneme-sinkbar--added{background:var(--mneme-chart-3)}",
+      ".mneme-sinkbar--merged{background:var(--mneme-chart-2)}",
+      ".mneme-sinklabels{display:flex;gap:4px;margin-top:4px;font-size:9.5px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums}",
+      ".mneme-sinklabels span{flex:1;min-width:0;text-align:center;white-space:nowrap}",
+      ".mneme-sinklegend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:8px;font-size:10.5px;color:var(--mneme-fg-dim)}",
+      ".mneme-sinklegend b{font-weight:600;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}",
       // 原 9 卡降级折叠区：默认收起，展开才挂载子卡（见 TokenFlowSection 注释）。
       ".mneme-legacy{max-width:1000px;margin:0 auto 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:12px 16px}",
       ".mneme-legacy summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}",
@@ -5908,6 +5941,11 @@ window.__ModuleLoader__.load({
     function TokenFlowSection({ t }) {
       const [stats, setStats] = useState(null);
       const [heatStats, setHeatStats] = useState(null);
+      // 沉淀曲线（/semantic/consolidation-stats）与 token 审计不同源：前者读
+      // memories.created_at / receipt_chain / archived_at，与「花了多少 token」
+      // 无关，所以是独立请求、独立 error 位——一个失败不该把另一个图也拖成错误态。
+      const [sinkStats, setSinkStats] = useState(null);
+      const [sinkError, setSinkError] = useState(false);
       const [statsError, setStatsError] = useState(false);
       // #521 评审：待确认冲突与「上一轮跳过明细」同源（/dream-status），一次请求两用。
       // 跳过明细必须出现在首屏——它原先只挂在折叠区里的 DreamStatusCards 上，而那个
@@ -5934,6 +5972,14 @@ window.__ModuleLoader__.load({
             setHeatStats(j && typeof j === "object" ? (j.stats || j) : {});
           })
           .catch(() => { if (!cancelled) setHeatStats({}); });
+        // 沉淀曲线同样要 56 天窗口，理由与热力一致（7 天的 by_day 撑不满 8 周）。
+        apiFetch("/api/dsh-mneme/semantic/consolidation-stats?days=56")
+          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+          .then((j) => {
+            if (cancelled) return;
+            setSinkStats(j && typeof j === "object" ? j : {});
+          })
+          .catch(() => { if (!cancelled) setSinkError(true); });
         // KPI 第 4 格的待确认冲突与 DreamStatusCards 同源（/dream-status），
         // 同样监听 mneme:conflicts-changed 重取（#295），两处计数永不漂移。
         const loadConflicts = () => {
@@ -6053,6 +6099,42 @@ window.__ModuleLoader__.load({
         for (const d of [1, 3, 5]) rows[(d - startDow + 7) % 7] = ["一", "三", "五"][[1, 3, 5].indexOf(d)];
         return rows;
       })();
+      // 8 周沉淀：56 天原始序列在热力右侧那条约 220px 的竖列里会细到看不出，
+      // 所以按周聚成 8 桶（右端对齐今天 UTC，与 7 天柱状同一套「补连续区间」
+      // 口径，缺周填 0）。三条线只画两条——新增与巩固是这张图要表达的剪刀差，
+      // 归档数改在图例里给总量（它从 10-12 才开始非零，混进同一坐标会误导）。
+      // sinkStats 为 null（未到）与 {}（已知为空）必须分开：前者不画图，后者
+      // 画空态，否则加载态会先画 8 根零高柱子。
+      const sinkDays = (() => {
+        if (!sinkStats) return null;
+        const rows = Array.isArray(sinkStats.by_day) ? sinkStats.by_day : [];
+        const byDay = new Map(rows.map((d) => [String((d && d.day) ?? ""), d]));
+        const out = [];
+        for (let w = 7; w >= 0; w--) {
+          let added = 0;
+          let merged = 0;
+          let archived = 0;
+          let first = "";
+          for (let i = 6; i >= 0; i--) {
+            const key = new Date(endDay.getTime() - (w * 7 + i) * 86400000).toISOString().slice(0, 10);
+            if (!first) first = key;
+            const row = byDay.get(key);
+            added += Number((row && row.added) ?? 0);
+            merged += Number((row && row.merged) ?? 0);
+            archived += Number((row && row.archived) ?? 0);
+          }
+          out.push({ key: first, added, merged, archived });
+        }
+        return out;
+      })();
+      const sinkMax = Math.max(1, ...((sinkDays ?? []).map((d) => d.added)));
+      const sinkSum = (field) => (sinkDays ?? []).reduce((a, d) => a + d[field], 0);
+      const sinkAddedTotal = sinkSum("added");
+      const sinkMergedTotal = sinkSum("merged");
+      const sinkArchivedTotal = sinkSum("archived");
+      // 巩固/新增的比值取自总量而非逐周：单周可能新增为 0（无分母），总量口径
+      // 才是「这个库到底在膨胀还是在巩固」的答案。
+      const sinkGap = sinkAddedTotal > 0 ? `${((sinkMergedTotal / sinkAddedTotal) * 100).toFixed(0)}%` : "—";
       const kpi = (title, num, cap) =>
         h(StatusCard, { t, title, loading, error: statsError, num, cap });
       const segClass = (s) =>
@@ -6146,29 +6228,76 @@ window.__ModuleLoader__.load({
           h("div", { className: "mneme-barlabels" },
             days.map((d) => h("span", { key: d.day }, d.day.slice(5)))
           ),
-          h("h3", { className: "mneme-xcolhead" }, t("memory.status.token.heat")),
-          // 月份行与格子列同用列主序网格对齐：每月占的列数 = 该月在这个
-          // 56 天窗口里的列数（按列的起始日期算），标签只在该列起点画一次。
-          h("div", { className: "mneme-heatmonths" },
-            monthLabels.map((m) => h("span", { key: m.key, style: { gridColumn: `${m.from} / span ${m.span}` } }, m.label))
-          ),
-          h("div", { className: "mneme-heatwrap" },
-            h("div", { className: "mneme-heatrows", "aria-hidden": "true" },
-              heatRowLabels.map((d, i) => h("span", { key: i }, d))
+          // 热力与沉淀并排两列：热力只有约 745px，右侧原本整块空着。两列
+          // 在窄容器里回落单列（见 .mneme-flowrow 的 @container）。
+          h("div", { className: "mneme-flowrow" },
+            h("div", { className: "mneme-flowheat" },
+              h("h3", { className: "mneme-xcolhead" }, t("memory.status.token.heat")),
+              // 月份行与格子列同用列主序网格对齐：每月占的列数 = 该月在这个
+              // 56 天窗口里的列数（按列的起始日期算），标签只在该列起点画一次。
+              h("div", { className: "mneme-heatmonths" },
+                monthLabels.map((m) => h("span", { key: m.key, style: { gridColumn: `${m.from} / span ${m.span}` } }, m.label))
+              ),
+              h("div", { className: "mneme-heatwrap" },
+                h("div", { className: "mneme-heatrows", "aria-hidden": "true" },
+                  heatRowLabels.map((d, i) => h("span", { key: i }, d))
+                ),
+                h("div", { className: "mneme-heatgrid" },
+                  heatCells.map((c) => h("div", {
+                    key: c.key,
+                    className: heatLevel(c.total, heatQ) ? `mneme-heatcell l${heatLevel(c.total, heatQ)}` : "mneme-heatcell",
+                    title: `${c.key} · ${c.total.toLocaleString()}`
+                  }))
+                )
+              ),
+              h("div", { className: "mneme-heatlegend" },
+                h("span", null, t("memory.status.token.heatLess")),
+                h("span", { className: "mneme-heatcell" }),
+                [1, 2, 3, 4].map((lv) => h("span", { key: lv, className: `mneme-heatcell l${lv}` })),
+                h("span", null, t("memory.status.token.heatMore"))
+              )
             ),
-            h("div", { className: "mneme-heatgrid" },
-              heatCells.map((c) => h("div", {
-                key: c.key,
-                className: heatLevel(c.total, heatQ) ? `mneme-heatcell l${heatLevel(c.total, heatQ)}` : "mneme-heatcell",
-                title: `${c.key} · ${c.total.toLocaleString()}`
-              }))
+            h("div", { className: "mneme-flowsink" },
+              h("h3", { className: "mneme-xcolhead" }, t("memory.status.token.sink")),
+              sinkError
+                ? h("div", { className: "mneme-statuscap", style: { color: "var(--mneme-danger)" } }, t("memory.status.error"))
+                : !sinkDays
+                  // 未到：什么都不画。画空态会把「还没加载完」说成「最近没有记录」。
+                  ? null
+                  : sinkAddedTotal + sinkMergedTotal + sinkArchivedTotal === 0
+                  ? h("div", { className: "mneme-statuscap", style: { marginTop: "12px" } }, t("memory.status.token.sinkEmpty"))
+                  : h("div", { className: "mneme-sinkchart" },
+                      (sinkDays ?? []).map((d) => h("div", { className: "mneme-sinkcol", key: d.key },
+                        // 两根柱同一基准（本期最大新增），高度差就是剪刀差本身；
+                        // 巩固可能远小于新增，故给 1px 下限免得整根消失。
+                        h("div", {
+                          className: "mneme-sinkbar mneme-sinkbar--added",
+                          style: { height: `${Math.max((d.added / sinkMax) * 100, d.added > 0 ? 1 : 0)}%` },
+                          title: `${d.key} · ${t("memory.status.token.sinkAdded")} ${d.added}`
+                        }),
+                        h("div", {
+                          className: "mneme-sinkbar mneme-sinkbar--merged",
+                          style: { height: `${Math.max((d.merged / sinkMax) * 100, d.merged > 0 ? 1 : 0)}%` },
+                          title: `${d.key} · ${t("memory.status.token.sinkMerged")} ${d.merged}`
+                        })
+                      ))
+                    ),
+              sinkDays && !sinkError
+                ? h("div", { className: "mneme-sinklabels" },
+                    sinkDays.map((d) => h("span", { key: d.key }, d.key.slice(5)))
+                  )
+                : null,
+              // 图例只在有数据时给：加载中把三个 0 画出来等于谎报「最近没东西进库」。
+              sinkDays && !sinkError
+                ? h("div", { className: "mneme-sinklegend" },
+                    h("span", null, `${t("memory.status.token.sinkAdded")} `, h("b", null, sinkAddedTotal.toLocaleString())),
+                    h("span", null, `${t("memory.status.token.sinkMerged")} `, h("b", null, sinkMergedTotal.toLocaleString())),
+                    h("span", null, `${t("memory.status.token.sinkArchived")} `, h("b", null, sinkArchivedTotal.toLocaleString())),
+                    h("span", null, `${t("memory.status.token.sinkGap")} `, h("b", null, sinkGap))
+                  )
+                : null,
+              h("div", { className: "mneme-statuscap", style: { marginTop: "6px", fontSize: "11px" } }, t("memory.status.token.sinkFoot"))
             )
-          ),
-          h("div", { className: "mneme-heatlegend" },
-            h("span", null, t("memory.status.token.heatLess")),
-            h("span", { className: "mneme-heatcell" }),
-            [1, 2, 3, 4].map((lv) => h("span", { key: lv, className: `mneme-heatcell l${lv}` })),
-            h("span", null, t("memory.status.token.heatMore"))
           )
         )
       );

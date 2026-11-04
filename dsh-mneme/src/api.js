@@ -1312,6 +1312,27 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     }
   });
 
+  // 沉淀曲线（面板「8 周沉淀」图）：按天返回 added / merged / archived 三条序列。
+  // 与 llm-audit/stats 并列但不同源——那边算的是「花了多少 token」，这边算的是
+  // 「进来了多少条、真被巩固掉多少条、归档了多少条」。合并数与新增数背离时
+  // （2026-10-25~10-31 那段：新增照旧、合并归零）这张图是唯一能一眼看出来的地方。
+  // 窗口钳制 1-365 天（缺省 56，正好是热力图的 8 周），口径见 store.getConsolidationStats。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/semantic/consolidation-stats",
+    policy: "open",
+    handler(req, res) {
+      try {
+        const url = new URL(req.url, "http://localhost");
+        const days = Math.max(1, Math.min(365, Number(url.searchParams.get("days") ?? 56) || 56));
+        const stats = service.getConsolidationStats?.({ days }) ?? null;
+        sendJson(res, 200, stats ?? { error: "unavailable" });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
   // --- 记忆级溯源读出口（#399 写、#421 读）-----------------------------------
   // #399 把蒸馏窗口的原文落进 distill_records、把 memory → (session, seq 区间)
   // 的归因写进 memory_provenance，但只做了写：库里有答案、service.provenanceFor

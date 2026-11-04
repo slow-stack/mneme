@@ -2922,6 +2922,8 @@ export function createService({ store, mirror, config, onWrite, logger, document
     listLlmAudits: (opts) => store.listLlmAudits(opts),
     countLlmAudits: (opts) => store.countLlmAudits(opts),
     getLlmAuditStats: (opts) => store.getLlmAuditStats(opts),
+    // 面板「8 周沉淀」图（只读聚合）：进来的 / 真沉淀的 / 归档的按天三条线。
+    getConsolidationStats: (opts) => store.getConsolidationStats(opts),
     deleteOldLlmAudits: (before) => store.deleteOldLlmAudits(before),
     // Entity gene (v0.3.0) passthroughs for the autoDream apply path
     // (applyDecisions): records supersedes relations after an update and

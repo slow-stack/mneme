@@ -944,3 +944,86 @@ test("wiring: maintenance is built before the panel createApi call and passed in
   assert.match(callText(src, standaloneAt), /maintenance/);
 });
 
+
+// ---------------------------------------------------------------------------
+// /api/dsh-mneme/semantic/consolidation-stats（8 周沉淀图的数据源）
+// ---------------------------------------------------------------------------
+// 这条路由喂的是面板里唯一一条「进来的 vs 真稳住的」对照曲线，所以锁的不是
+// 形状而是**口径**——三处静默错法都能让图看着正常、结论完全反过来：
+//   ① merged 若数 receipt_chain 的行数，同一记录被多轮合并会重复计数，
+//      「巩固很多」的假象正好抹掉要看的那个剪刀差（活库实测 2412 行 / 1796 记录）；
+//   ② imported 行若混进 added，别人导入的原文会被算成「我们这个库自己长出来的」；
+//   ③ 未知窗口与已知窗口若都回空 by_day，前端没法区分「还没到」和「最近没有」。
+function daysAgo(n) {
+  return new Date(Date.now() - n * 86400000).toISOString();
+}
+
+test("consolidation-stats counts distinct merged records, excludes imported rows, and splits added/archived", async () => {
+  const { store, routes } = setup("");
+  const route = handler(routes, "/api/dsh-mneme/semantic/consolidation-stats");
+  const at = daysAgo(2);
+  // 两条本地记忆（created_at 是 INSERT 铸造的，造历史只能直改列——这是仓库里
+  // audit / recall-stats / receipt-chain 几处测试共用的既有做法）。
+  const a = store.save({ type: "project", title: "本地甲", content: "正文甲" });
+  const b = store.save({ type: "project", title: "本地乙", content: "正文乙" });
+  store.db.prepare("UPDATE memories SET created_at = ? WHERE id IN (?, ?)").run(at, a.id, b.id);
+  // 外来行：导入的原文，既不是我们长出来的，也不该被算进沉淀曲线。
+  const importedRow = store.save({ type: "project", title: "别人的", content: "导入原文", source: "imported" });
+  store.db.prepare("UPDATE memories SET created_at = ? WHERE id = ?").run(at, importedRow.id);
+  // 同一条记录被合并两次（多轮重复记账）：merged 口径必须只算 1。
+  for (const receipt of ["r1", "r2"]) {
+    store.saveReceipt({
+      receipt_id: receipt, run_id: "run-1", record_id: a.id, kind: "merge",
+      input_digest: "d", verdict: "live", count_before: 2, count_after: 1,
+      policy_epoch: 0, created_at: at
+    });
+  }
+  // conflict 不进 merged：它不是「被巩固」，是被挂起了。
+  store.saveReceipt({
+    receipt_id: "r3", run_id: "run-2", record_id: b.id, kind: "conflict",
+    input_digest: "d", verdict: "live", count_before: 2, count_after: 2,
+    policy_epoch: 0, created_at: at
+  });
+  // 归档：archived_at 由 setArchived 落，之后直改到 3 天前。
+  store.setArchived(b.id, true);
+  store.db.prepare("UPDATE memories SET archived_at = ? WHERE id = ?").run(daysAgo(3), b.id);
+
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/semantic/consolidation-stats?days=56"), res);
+  assert.equal(res.statusCode, 200);
+  const body = JSON.parse(res.body);
+  assert.equal(body.days, 56, "窗口要复述调用方要的那一段");
+  const added = body.by_day.reduce((n, r) => n + r.added, 0);
+  const merged = body.by_day.reduce((n, r) => n + r.merged, 0);
+  const archived = body.by_day.reduce((n, r) => n + r.archived, 0);
+  assert.equal(added, 2, "imported 行不能算进 added（3 条里只有 2 条是本库长出来的）");
+  assert.equal(merged, 1, "同一 record_id 的两条 receipt 只能算 1 条巩固");
+  assert.equal(archived, 1);
+  assert.equal(body.total_added, 2);
+  assert.equal(body.total_merged, 1);
+  assert.equal(body.total_archived, 1);
+  store.close();
+});
+
+test("consolidation-stats clamps the window and reports an empty window as an empty list", async () => {
+  const { service, routes } = setup("");
+  const route = handler(routes, "/api/dsh-mneme/semantic/consolidation-stats");
+
+  // 缺省 56 天（= 热力图的 8 周），越界钳到 1..365，坏值回落缺省。
+  // days=0 走的是「坏值」分支而不是钳到 1：0 在这里不是「只要今天」的合法窗口，
+  // 和 llm-audit/stats 同一套写法，两条曲线对同一个参数给同样的窗口。
+  for (const [q, expect] of [["", 56], ["?days=0", 56], ["?days=-5", 1], ["?days=9999", 365], ["?days=abc", 56]]) {
+    const res = new FakeRes();
+    await route.handler(req("/api/dsh-mneme/semantic/consolidation-stats" + q), res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).days, expect, `days=${q} 的窗口钳制变了`);
+  }
+  // 空库回的是 by_day: []（不是 null）：前端才能分清「已知为空」与「还没到」。
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/semantic/consolidation-stats"), res);
+  const body = JSON.parse(res.body);
+  assert.ok(Array.isArray(body.by_day) && body.by_day.length === 0);
+  assert.equal(body.total_added, 0);
+  assert.equal(service.count(), 0);
+});
+
