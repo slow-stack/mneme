@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+- **状态页热力右侧那块常年空着的 220px 补上「8 周沉淀」图：新增 vs 巩固两根柱并排、归档给总量（用户 2026-11-04 提的）**：热力图 56 格 × 11px 只有约 745px 宽，而这块容器可用宽 968px，右边一直空着——**空白不是某个空 div，是「三块图各自独占整行」造成的**，所以改的是布局（热力与沉淀并成两列，窄容器回落单列），而不是往某个槽里塞图。新图要回答的是面板此前答不了的那个问题：库是在巩固，还是只在膨胀。
+
+  - **口径不许复用 `dream_runs.applied`**：那一列在 degraded 轮里也是非零（实测 2026-11-03 两轮分别 14、16，而当日 receipt_chain 总共 19 行），拿它当「今天沉淀了多少」会把失败轮算成成果。逐条真源只有 `receipt_chain`：`kind IN ('merge','update') AND verdict='live'`。**这一条正是「跑了很多轮但看起来没沉淀」假象的来源**，也是这套图存在的理由。
+  - **`merged` 按 record_id 去重，不是数行数**：同一条记录被多轮合并会重复记账（本机 56 天窗口 2412 行只对应 1796 个记录），数行数会把「反复合并同一批」显示成「大量巩固」，恰好抹掉要看的那道剪刀差。SQL 用子查询 `GROUP BY day, record_id` 再外层 `count(*)`，测试锁死这个口径（把 `GROUP BY day, record_id` 改成再加 `receipt_id` → 红）。
+  - **`added` 必须排掉 `source = 'imported'`**：别人导入的原文不是本库长出来的，混进来会把导入量算成自己的产出。谓词写 `(source IS NULL OR source <> ?)`——本方行 `source` 为 NULL，只写 `<>` 会因三值逻辑把整批本地行一起丢掉；常量取 `src/memory-source.js` 的 `IMPORTED_SOURCE`，不硬编码字符串（变异：去掉这个谓词 → 红）。
+  - **`archived` 用 `archived_at`，不是 `archived` 布尔**：那一列是「进入归档面那一刻」且幂等（重复归档不刷新、取消归档置 NULL），所以 `date(archived_at)` 日聚合正好是「当天新归档条数」。**归档面 10-12 之前恒为 0**，它不该和另外两条被当成长期对照读——所以这张图只画两根柱（新增 vs 巩固），归档数进图例给总量。
+  - **不新建表、不落盘日报、不加 cron**：图是读时聚合，三条 SQL 各扫各的。766MB 活库实测 56 天窗口 49ms + 45ms + 2ms，可接受，不加索引。**「每天写一份日报」这个形态被否掉**，理由是它要么每次全量重算（等于把今天已经算过的东西再算一遍），要么追加写 JSONL——后者断电会粘连出半行，而面板要的是「现在库里长什么样」，不是一份历史存档。
+  - **未到 / 已知为空必须分开**：`sinkStats === null` 时既不画柱也不画图例（否则加载态先画 8 根零高柱子再「长出来」，用户看到的是一次假抖动）；`{}` 且三总量全 0 才画空态那句话。`days` 缺省 56（正好 8 周，与热力同窗），钳 1..365，`days=0` 回落缺省而不是钳到 1（与 `llm-audit/stats` 同一套写法，两条曲线对同一个参数给同样的窗口）。
+  - **两根柱的颜色进图形锁**：柱高差就是结论本身（新增高、巩固矮 = 库在膨胀），掉回浅灰等于把结论擦掉。`.mneme-sinkbar--added` / `--merged` 用 `--mneme-chart-3` / `--mneme-chart-2`，并加进 `test/contrast.test.js` 的 GRAPHICS 表按 3:1 审（不引入任何新字面量色）。
+  - **验证**：`npm test` 2719 tests / 2718 pass / 0 fail / 1 skipped；`check-sync` 85 文件一致。变异自证六处，全部当场变红：`merged` 退回数行数 → 红「同一 record_id 的两条 receipt 只能算 1 条巩固」；`added` 去掉 imported 排除 → 红；前端把 `if (!sinkStats) return null` 改成 `return []` → 红；删掉 `@container (max-width:960px)` 回落 → 红；把全零空态分支改成 `false` → 红；柱子改回 `--dsw-alias-label-tertiary` → 红（对比度锁 + 语义层锁双杀）。
+
 - **记忆库从「侧栏 footer 挤一个入口 + 居中浮层」改成宿主原生面板位：侧栏一颗图标进 `sidebar.panellist`，正文落 `main` 整页（参照 dsh-baleen，用户 2026-11-04 提的）**：此前唯一的完整入口是 `sidebar.footer.action`，点开是一个 `createPortal` 到 `document.body` 的居中浮层——它不是宿主的面板，占着屏幕中央却不参与宿主的布局与导航状态，Esc/焦点环/背板点击都得自己实现一遍，而截图里它看起来又很像「一个新窗口」。宿主早就给了成对的座位：`sidebar.panellist`（侧栏面板列表，list 槽）与 `main`（正文区，keyed 槽），侧栏一行的点击由宿主 `PanelRow` 自己调 `layout.selectPanel(id)`，插件只交一颗图标和一片内容。**main 的 `key` 必须与侧栏的 `id` 逐字相同**（两者都取 `dsh-mneme`）——宿主按 `options.key` 在 keyed 槽里找 entry，对不上会抛 `layout.selectPanel: main panel "…" is not registered`；这条不是防御性写作，是宿主 `layout.js` 里真会抛的那一行。
 
   - **模板块只交「图标」和「页面」，不自己造按钮、不做关闭**：宿主 `PanelRow` 已经渲染了 `button` + `aria-label` + `Tooltip` + `aria-current` + active 高亮，插件再套一层按钮就是两颗可聚焦元素（Tab 停两次、读屏报两次），而 `onClick` 还得自己去 `selectPanel`——那是宿主自己的活。回到会话也不由我们提供：宿主所有「打开会话」的路径都走 `selectPanel(null)`（`workspace.js` 的 `openSession` / `openWorkspaceSession` 都是 `replaceMain(…, "reveal")`），baleen 的面板同样没有返回按钮。`main` 槽只给出 `min-width:0; overflow:hidden` 的容器，注册者必须自己铺满 `100%` 并自管滚动，所以外层新增 `.mneme-panel`。

@@ -3010,6 +3010,84 @@ export function createStore(path) {
     };
   }
 
+  /**
+   * 沉淀曲线（面板「8 周沉淀」图）：按天给出「进来的」与「真沉淀的」两条序列，
+   * 用来一眼看出库到底在巩固还是在膨胀——只看新增会以为一直在长，只看总量
+   * 看不出巩固停摆（2026-10-25~10-31 那段新增照旧、合并归零，就是这张图要
+   * 暴露的形态）。
+   *
+   * added    = 当天新建记忆。排除外来导入行（本库不为别人导入的原文记账，
+   *            见 memory-source.js）；`source IS NULL OR` 那一支是必填——
+   *            SQL 三值逻辑让 `NULL <> 'imported'` 求值为 NULL 而非 true，
+   *            只写后者的版本会让本方行（source 恒为 NULL）整批消失。
+   * merged   = 当天 receipt_chain 里 kind∈(merge,update) 且 verdict='live' 的
+   *            **去重 record_id 数**，不是行数。同一条记录被多轮巩固重复记账
+   *            是常态（活库实测 2412 行只对应 1796 个记录，见 #559 期间的
+   *            核对），按行数会把「又记了一遍」算成「又沉淀了一条」。口径与
+   *            store 里「已巩固」的既有子查询同源（kind IN ('merge','update')
+   *            AND verdict='live'），不另立一套。
+   * archived = 当天进入归档面的条数（archived_at 幂等，见其注释：已归档再
+   *            归档不刷新，取消归档置 NULL），所以日聚合 = 当天新归档条数。
+   *
+   * 三列都按 UTC 日期切分，与 getLlmAuditStats 的 by_day 同一套日期口径，
+   * 前端补零/对齐逻辑因此可以复用。
+   *
+   * 只返回有数据的日期（GROUP BY 不补零），与 by_day 同形——补零是展示层的事，
+   * 后端补零会让「未知」和「已知为空」在响应里长得一样。
+   */
+  function getConsolidationStats({ days = 56 } = {}) {
+    const span = Math.max(1, Math.min(365, Math.floor(Number(days)) || 56));
+    const since = new Date(Date.now() - span * 86400000).toISOString();
+    const added = db.prepare(
+      `SELECT date(created_at) AS day, count(*) AS c
+         FROM memories
+        WHERE created_at >= ? AND (source IS NULL OR source <> ?)
+        GROUP BY date(created_at) ORDER BY day ASC`
+    ).all(since, IMPORTED_SOURCE);
+    const merged = db.prepare(
+      `SELECT day, count(*) AS c FROM (
+         SELECT date(created_at) AS day, record_id
+           FROM receipt_chain
+          WHERE created_at >= ? AND kind IN ('merge', 'update') AND verdict = 'live'
+          GROUP BY day, record_id
+       ) GROUP BY day ORDER BY day ASC`
+    ).all(since);
+    const archived = db.prepare(
+      `SELECT date(archived_at) AS day, count(*) AS c
+         FROM memories
+        WHERE archived_at IS NOT NULL AND archived_at >= ? AND (source IS NULL OR source <> ?)
+        GROUP BY date(archived_at) ORDER BY day ASC`
+    ).all(since, IMPORTED_SOURCE);
+    // 三串按天并进一张表：三条 SQL 各扫各的索引，比一次 UNION + 外层聚合好读，
+    // 也让某一段全 0 时不会因为缺行而丢掉这一天（缺的是 0，不是不存在）。
+    const byDay = new Map();
+    const bump = (rows, key) => {
+      for (const r of rows) {
+        const day = String(r.day ?? "");
+        if (!day) continue;
+        const cur = byDay.get(day) ?? { day, added: 0, merged: 0, archived: 0 };
+        cur[key] = Number(r.c) || 0;
+        byDay.set(day, cur);
+      }
+    };
+    bump(added, "added");
+    bump(merged, "merged");
+    bump(archived, "archived");
+    const list = [...byDay.values()].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+    const sum = list.reduce(
+      (acc, r) => ({ added: acc.added + r.added, merged: acc.merged + r.merged, archived: acc.archived + r.archived }),
+      { added: 0, merged: 0, archived: 0 }
+    );
+    return {
+      days: span,
+      since,
+      by_day: list,
+      total_added: sum.added,
+      total_merged: sum.merged,
+      total_archived: sum.archived
+    };
+  }
+
   /** Delete audit rows older than `before` (ISO string). Returns count removed. */
   function deleteOldLlmAudits(before) {
     return db.prepare("DELETE FROM llm_audit_logs WHERE timestamp < ?").run(before).changes;
@@ -4457,6 +4535,7 @@ export function createStore(path) {
     listLlmAudits,
     countLlmAudits,
     getLlmAuditStats,
+    getConsolidationStats,
     deleteOldLlmAudits,
     // 蒸馏原始记录与记忆级溯源（#399）：窗口凭证的写入/统计/裁剪，链接的读写。
     saveDistillRecords,
