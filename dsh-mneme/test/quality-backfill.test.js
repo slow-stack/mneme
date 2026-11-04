@@ -74,7 +74,8 @@ test("迁移：长中文散文的 repetitive 误判被撤回，分数与 low_qua
     // 解析不了 / 不是数组：打开库时抛异常等于插件整树起不来，一律原样放过。
     add("broken-tags", LONG_NOTE, '["repetitive"', 50, false, "2026-01-05T00:00:00.000Z");
     add("not-array", LONG_NOTE, '{"repetitive":true}', 50, false, "2026-01-06T00:00:00.000Z");
-    // 子串但非标签：带引号的精确匹配不该命中（这是选 %"repetitive"% 而非 %repetitive% 的理由）。
+    // 子串但非标签：LIKE 只做候选裁剪，真正的判据是下一段的 tags.includes("repetitive")。
+    // 带引号形态的意义只是少解析几条坏 JSON，误伤由 includes 兜住。
     add("substring", LONG_NOTE, '["low_quality_repetitive"]', 50, false, "2026-01-07T00:00:00.000Z");
     // 撤掉 repetitive 后仍 < 30（100 − 80 = 20）→ low_quality 必须留着：它是分数的派生态。
     add("still-low", LONG_NOTE, '["duplicate","repetitive","low_quality"]', 20, false, "2026-01-08T00:00:00.000Z");
@@ -129,6 +130,76 @@ test("迁移：长中文散文的 repetitive 误判被撤回，分数与 low_qua
     assert.deepEqual(again.getById("misjudged").tags, ["repetitive"], "登记后不再跑：重开不得二次改写");
     assert.equal(again.getById("misjudged").quality_score, 50);
     again.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// 第二批边界：分批、原文判据、原型链查表。三条都不是「好看一点」，各自对应一种会静默
+// 写坏数据或漏修的形态——
+//   * 分批：候选行带全文，一次 .all() 把行数 × 正文长度全攒在内存，且一次超大 WAL 提交；
+//   * 原文判据：已降级的行 content 只是前 120 字摘要，拿摘要判重复正好会放过「前缀干净、
+//     后段大量重复」——旧度量误判最多的那一类；
+//   * 原型链查表：SIGNAL_DEDUCTIONS 是对象字面量，查 constructor 拿到的是原型上的函数，
+//     `?? 0` 兜不住，分数会算成 NaN 再写进 REAL 列。
+test("迁移：分批翻页、按原文判重复、只减自有扣分键", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-qbackfill2-"));
+  const dbPath = join(dir, "legacy.db");
+  try {
+    assert.ok(repetitionRatio(LONG_NOTE.trim()) < REPETITION_THRESHOLD, "fixture: 长文必须不重复");
+    assert.ok(repetitionRatio(REPETITIVE) > REPETITION_THRESHOLD, "fixture: 填充分必须重复");
+
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec(
+      "CREATE TABLE memories (" +
+        "id TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL," +
+        "tags TEXT NOT NULL DEFAULT '[]', importance INTEGER NOT NULL DEFAULT 3," +
+        "forgotten INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0," +
+        "source TEXT, quality_score REAL, content_hash TEXT, _full_content TEXT," +
+        "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    );
+    const insert = legacy.prepare(
+      "INSERT INTO memories (id, type, title, content, tags, importance, forgotten, archived, source, quality_score, content_hash, _full_content, created_at, updated_at) VALUES (?, 'project', ?, ?, ?, 3, 0, 0, NULL, ?, NULL, ?, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')"
+    );
+    // 260 条跨过 BATCH=200，逼第二轮翻页真的发生（只有一轮的话分批逻辑等于没测）。
+    for (let i = 0; i < 260; i++) {
+      insert.run("bulk-" + String(i).padStart(3, "0"), "批量 " + i, LONG_NOTE, '["repetitive","low_quality"]', 50, null);
+    }
+    // 已降级：content 是前 120 字摘要（这里刻意给一段不重复的摘要），原文在 _full_content
+    // 且它才是真重复的那一类。按原文判 → 标签保留；按摘要判 → 会被误撤。
+    const summary = "这段摘要本身很短，字符分布也正常，按它判重复永远不会命中。" + "公共政策执行的偏差并不是单一原因造成的。".repeat(2);
+    insert.run("demoted", "降级行", summary, '["repetitive","low_quality"]', 50, REPETITIVE);
+    // 原型链标签：constructor 不在自有键里，一分都不该扣（扣了就是 NaN）。
+    insert.run("proto-tag", "原型链标签", LONG_NOTE, '["repetitive","constructor"]', 50, null);
+    legacy.close();
+
+    const store = createStore(dbPath);
+    try {
+      const raw = (id) => store.db.prepare("SELECT * FROM memories WHERE id = ?").get(id);
+      // 260 条全修完，且不含任何 null 分（NaN 会被写成 NULL）。
+      const bulk = store.db
+        .prepare("SELECT COUNT(*) AS c FROM memories WHERE id LIKE 'bulk-%' AND tags = '[]' AND quality_score = 100")
+        .get().c;
+      assert.equal(bulk, 260, "跨批次的行必须逐批全部修完");
+      const nulls = store.db
+        .prepare("SELECT COUNT(*) AS c FROM memories WHERE quality_score IS NULL")
+        .get().c;
+      assert.equal(nulls, 0, "分数算成 NaN 会落成 NULL，这里必须是 0");
+
+      const demoted = raw("demoted");
+      assert.deepEqual(JSON.parse(demoted.tags), ["repetitive", "low_quality"], "按摘要判会把这条原文重复的行误撤");
+      assert.equal(demoted.quality_score, 50, "原文仍重复 → 分数与标签一起保持原样");
+      assert.equal(demoted._full_content, REPETITIVE, "判据读原文不等于改原文");
+      assert.ok(demoted.content.startsWith("这段摘要"), "content 仍是摘要，迁移不许顺手恢复原文");
+
+      const proto = raw("proto-tag");
+      assert.deepEqual(JSON.parse(proto.tags), ["constructor"], "repetitive 撤掉，其余标签原样保留");
+      // constructor 不是自有扣分键 → 一分不扣，重建值 100；存量 50 是旧误判压出来的，
+      // 取 max 抬回 100。若误按原型链扣分，这里会是 NaN → 写入 NULL，下面的断言就抓它。
+      assert.equal(proto.quality_score, 100, "constructor 不得扣分：重建值应为满分");
+    } finally {
+      store.close();
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

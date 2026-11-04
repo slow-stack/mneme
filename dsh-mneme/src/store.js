@@ -1152,12 +1152,19 @@ export function createStore(path) {
   // generation：归档位是另一个决定（撤销归档 = 把 300 条重新放进注入池），不夹带在
   // 「修分数」里；不刷 updated_at 则代表镜像不重排——代价是镜像文件里这些行的 tags 行
   // 会显示已删掉的 repetitive，而 parseHumanEdits 不解析 tags，陈旧只停留在显示层、不回灌。
+  // 这层陈旧还会自己收敛：镜像每次 syncMirror 都是全量重渲染（store.list limit:null），
+  // 所以启动后第一次业务写就把这批行刷对了——为这几分钟专门接一条「打开库即全量重绘」
+  // 的路径，代价（新导出 syncMirror + createStore 回传标记 + 两个启动点各改一行）大于收益。
   //
   // 用 applied_migrations 登记而不是条件式恒等幂等：这批条件在跑完之后**恒不命中**，
   // 但要全表扫一遍才能证明不命中（本机实测 36.7 ms，而 createStore 稳态只有 3.3 ms）——
-  // 每次打开都白付十倍开销。登记表把它变成一次主键 seek，且登记行与回填在**同一个事务**里，
-  // 中途失败一起回退（PRAGMA user_version 做不到：实测它在 BEGIN 里设值不随 ROLLBACK 回退，
-  // 先置标记再回填会永久漏跑）。
+  // 每次打开都白付十倍开销。登记表把它变成一次主键 seek（PRAGMA user_version 做不到：
+  // 实测它在 BEGIN 里设值不随 ROLLBACK 回退，先置标记再回填会永久漏跑）。
+  //
+  // 回填分批提交、登记行最后单独提交，不做「一个大事务包住全部」：逐批提交才不会把
+  // 「候选行数 × 全文长度」攒在内存与一次 WAL 里；而这样拆之所以仍然安全，是因为
+  // **修过的行就不再是候选**（repetitive 已撤），中途崩掉重跑只会从断点接着走，不会
+  // 重复加回分数。登记行只认「全部批次都跑完了」，半截进度不落地。
   {
     const MIGRATION_ID = "2026-11-quality-repetitive-backfill";
     const applied = db.prepare("SELECT 1 FROM applied_migrations WHERE id = ?").get(MIGRATION_ID);
@@ -1165,44 +1172,76 @@ export function createStore(path) {
       // LIKE 只负责候选裁剪，真正的判据是下一段的 tags.includes("repetitive")——把
       // LIKE 放松成 %repetitive% 也筛不出错误结果（变异自证里它是等价变异）。用带引号
       // 的形态是为了缩小候选集、少解析几条将来可能出现的坏 JSON，不是为了防误伤。
-      const rows = db
-        .prepare(`SELECT id, content, tags, quality_score FROM memories WHERE tags LIKE '%"repetitive"%'`)
-        .all();
-      const updates = [];
-      for (const row of rows) {
-        let tags;
-        try {
-          tags = JSON.parse(row.tags);
-        } catch {
-          continue; // 坏 tags 不动：这条迁移不该顺手重写一个解析不了的值
-        }
-        if (!Array.isArray(tags) || !tags.includes("repetitive")) continue;
-        // 新度量下仍然重复 → 标签是对的，保持原样（不重算分数：那会变成整列重算）
-        if (repetitionRatio(String(row.content ?? "").trim()) > REPETITION_THRESHOLD) continue;
-        const kept = tags.filter((t) => t !== "repetitive");
-        let rebuilt = 100;
-        for (const tag of kept) rebuilt -= SIGNAL_DEDUCTIONS[tag] ?? 0;
-        rebuilt = Math.max(0, Math.min(100, Math.round(rebuilt)));
-        const stored = Number.isFinite(row.quality_score) ? row.quality_score : null;
-        const score = stored === null ? rebuilt : Math.max(stored, rebuilt);
-        // low_quality 是分数的派生态（< 30 必须有、≥ 30 必须没有），分数动了它就跟着动。
-        // 显式同步而不是留给下次写入：不重算的路径不会自己把它修好。
-        const next = kept.filter((t) => t !== "low_quality");
-        if (score < 30) next.push("low_quality");
-        updates.push([JSON.stringify(next), score, row.id]);
-      }
-      const stmt = db.prepare(
-        `UPDATE memories SET tags = ?, quality_score = ? WHERE id = ? AND tags LIKE '%"repetitive"%'`
+      // 按 rowid 键集翻页，每批独立提交：候选行带全文，一次 .all() 会把「行数 × 正文
+      // 长度」全攒在内存里（本机 1,476 条合计 726 KB，大库不是这个量级）。分批之所以
+      // 仍然安全，是因为候选集自己会收缩——修过的行撤掉 repetitive 就不再命中；
+      // 中途崩掉重跑只会从断点接着走，不会把已经加回去的分再加一遍。
+      const BATCH = 200;
+      const selectBatch = db.prepare(
+        `SELECT rowid AS rid, id, content, _full_content, tags, quality_score
+           FROM memories
+          WHERE tags LIKE '%"repetitive"%' AND rowid > ?
+          ORDER BY rowid
+          LIMIT ?`
       );
+      // CAS：带上读到的旧 tags 与旧 quality_score 作为条件。多宿主共用一个库是支持
+      // 形态（busy_timeout + WAL），SELECT 到 UPDATE 之间别的进程可能刚改过这一行——
+      // 那就以它为准、跳过这一条，不拿这次读到的旧判断覆盖它。
+      const stmt = db.prepare(
+        `UPDATE memories SET tags = ?, quality_score = ?
+          WHERE id = ? AND tags = ? AND quality_score IS ?
+            AND tags LIKE '%"repetitive"%'`
+      );
+      let cursor = 0;
+      for (;;) {
+        const rows = selectBatch.all(cursor, BATCH);
+        if (rows.length === 0) break;
+        cursor = rows[rows.length - 1].rid;
+        const updates = [];
+        for (const row of rows) {
+          let tags;
+          try {
+            tags = JSON.parse(row.tags);
+          } catch {
+            continue; // 坏 tags 不动：这条迁移不该顺手重写一个解析不了的值
+          }
+          if (!Array.isArray(tags) || !tags.includes("repetitive")) continue;
+          // 判据落在**原文**上：已降级的行 content 只剩前 120 字摘要（demoteToSummary
+          // 把正文挪进 _full_content，且它不重算 quality_score），拿摘要判重复会把
+          // 「前缀不重复、后段大量重复」的原文放过去——而那恰好是旧度量最容易误判的
+          // 那一类。未降级的行 _full_content 为 NULL，退回 content，与原判据一致。
+          const body = String(row._full_content ?? row.content ?? "");
+          // 新度量下仍然重复 → 标签是对的，保持原样（不重算分数：那会变成整列重算）
+          if (repetitionRatio(body.trim()) > REPETITION_THRESHOLD) continue;
+          const kept = tags.filter((t) => t !== "repetitive");
+          let rebuilt = 100;
+          // 只减自有键：SIGNAL_DEDUCTIONS 是普通对象字面量，查「constructor」命中的
+          // 是原型链上的函数，`?? 0` 挡不住，会把分数算成 NaN 再写进列里。
+          for (const tag of kept) {
+            if (Object.hasOwn(SIGNAL_DEDUCTIONS, tag)) rebuilt -= SIGNAL_DEDUCTIONS[tag];
+          }
+          rebuilt = Math.max(0, Math.min(100, Math.round(rebuilt)));
+          const stored = Number.isFinite(row.quality_score) ? row.quality_score : null;
+          const score = stored === null ? rebuilt : Math.max(stored, rebuilt);
+          // low_quality 是分数的派生态（< 30 必须有、≥ 30 必须没有），分数动了它就跟着动。
+          // 显式同步而不是留给下次写入：不重算的路径不会自己把它修好。
+          const next = kept.filter((t) => t !== "low_quality");
+          if (score < 30) next.push("low_quality");
+          updates.push([JSON.stringify(next), score, row.id, row.tags, row.quality_score]);
+        }
+        if (updates.length === 0) continue;
+        const batch = updates;
+        // 一批一个事务：逐条自动提交是每行一次 WAL 提交（与 content_hash 回填同一个教训）。
+        runAtomically(() => {
+          for (const u of batch) stmt.run(u[0], u[1], u[2], u[3], u[4]);
+        });
+      }
+      // 登记行单独提交，且只在**所有批次都跑完之后**：它是「这条迁移已完成」的证据，
+      // 半截进度不能落地，否则重跑会被自己挡住、剩下的行再也修不回来。
       const mark = db.prepare("INSERT OR IGNORE INTO applied_migrations (id, applied_at) VALUES (?, ?)");
-      // 一个事务包住整批与登记行：逐条自动提交是每行一次 WAL 提交（与 content_hash 回填
-      // 同一个教训），而登记行必须与回填同生共死——它单独提交就等于「记了账没干活」。
       // 时间戳这里直接用 new Date()：nowIso 的单调守卫是给 memories.updated_at 用的，
       // 而且它依赖的 lastTs 此刻还没初始化（TDZ），调它会在打开库时直接抛。
-      runAtomically(() => {
-        for (const [tagsJson, score, id] of updates) stmt.run(tagsJson, score, id);
-        mark.run(MIGRATION_ID, new Date().toISOString());
-      });
+      runAtomically(() => mark.run(MIGRATION_ID, new Date().toISOString()));
     }
   }
 
