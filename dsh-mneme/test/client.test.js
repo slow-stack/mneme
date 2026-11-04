@@ -2211,9 +2211,8 @@ test("update-check status names match the backend classify contract verbatim", (
     "the backend must register the version-check route");
 });
 
-// 画像提取草稿（#497）面板面：路由对齐、四种结局各有自己的话、以及「采用」必须把草稿
-// 文本直接交给保存。最后一条防的是一个具体陷阱——保存函数带默认参数时，把函数本身当
-// onClick 处理器会把 click 事件当成要存的文本存进去。
+// 画像提取草稿（#497）面板面：路由对齐、四种结局各有自己的话、按钮坐在哪张卡上、
+// 以及草稿**只出副本**（2026-11-04 改口径：不再把草稿写进画像字段）。
 test("profile extraction ships its button, distinct outcomes and correct save wiring", () => {
   const apiSource = readFileSync(join(root, "src/api.js"), "utf8");
   assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/profile/extract"'),
@@ -2235,7 +2234,10 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
     "memory.settings.profileDraftTitle",
     "memory.settings.profileDraftRows",
     "memory.settings.profileDraftTruncated",
-    "memory.settings.profileDraftApply",
+    "memory.settings.profileDraftCopy",
+    "memory.settings.profileDraftCopied",
+    "memory.settings.profileDraftCopyHint",
+    "memory.settings.profileDraftCopyFailed",
     "memory.settings.profileDraftDiscard",
     "memory.features.profileExtractEnabled",
     "memory.features.profileExtractEnabled.hint"
@@ -2246,8 +2248,40 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
   assert.ok(/group\.enhance[\s\S]{0,700}"profileExtractEnabled"/.test(clientSource),
     "FEATURE_GROUPS group.enhance must carry profileExtractEnabled");
 
-  // 采用草稿：显式传文本；保存按钮也不能把 click 事件当参数传进去。
-  assert.ok(clientSource.includes("if (await saveProfile(text))"), "applying a draft must commit state only after a verified save");
+  // 位置锁（2026-11-04）：提取按钮属于「Agent 眼中的你」卡，不属于「用户画像」卡。
+  // 此前没有任何用例锁位置——整块 UI 搬走测试也不会红，这正是它被放错地方却一直绿的原因。
+  // 锁法：三处锚点的先后顺序 + 两张卡标题之间不许出现 profileExtract。
+  const profileCardIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))');
+  const personaViewIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.personaView"))');
+  const extractButtonIdx = clientSource.indexOf('t("memory.settings.profileExtract")');
+  assert.ok(profileCardIdx > 0 && personaViewIdx > profileCardIdx && extractButtonIdx > personaViewIdx,
+    "the extract button must render inside the persona-view card, which comes after the user-profile card");
+  assert.ok(!clientSource.slice(profileCardIdx, personaViewIdx).includes("profileExtract"),
+    "the user-profile card must not carry any extract UI");
+
+  // 只出副本（2026-11-04 桉桉定的口径）：草稿不许再走落库路径。此前 applyProfileDraft 会
+  // 直接 PUT /profile —— 把用户手写的那份覆盖掉，且没有撤销。
+  assert.ok(clientSource.includes("function copyProfileDraft()"), "the draft action must be a copy, not a save");
+  assert.ok(!clientSource.includes("if (await saveProfile(text))"), "a draft must never be committed to the profile field");
+  assert.ok(clientSource.includes("copyProfileDraftFallback(text)"),
+    "the draft action must copy the draft text, with a fallback when the clipboard API is unavailable");
+  // 复制是这条路径唯一的产出：静默失败等于让用户以为复制成功、粘贴时拿到旧文本。
+  assert.ok(clientSource.includes('t("memory.settings.profileDraftCopyFailed")'),
+    "a failed copy must say so instead of silently doing nothing");
+  // 光 announce() 不够：那个 live region 是 1px 裁剪元素，只有屏幕阅读器读得到。
+  // 视力正常的用户看到按钮文字不变、页面不变，会以为复制成功，粘贴时拿到旧内容。
+  assert.ok(clientSource.includes("const [profileDraftCopyFailed, setProfileDraftCopyFailed] = react.useState(false)"),
+    "the failed copy needs its own state, not just an announce() to a hidden live region");
+  assert.ok(clientSource.includes("setProfileDraftCopyFailed(true)"),
+    "the failure branch must flip the visible state");
+  const copyFailedIdx = clientSource.indexOf("profileDraftCopyFailed ? h(\"span\"");
+  assert.ok(copyFailedIdx > 0, "the failure must render as visible text near the copy button, not only in the live region");
+  assert.ok(clientSource.slice(copyFailedIdx, copyFailedIdx + 220).includes('role: "alert"'),
+    "the visible failure text should announce itself to assistive tech too");
+  // 颜色走语义层：宿主 label-tertiary 这类低对比层当正文色会掉到 AA 以下（#178）。
+  assert.ok(clientSource.slice(copyFailedIdx, copyFailedIdx + 220).includes('style: { color: "var(--mneme-danger)" }'),
+    "the failure text must use the --mneme-danger semantic layer, not a raw host token");
+  // 采用路径没了之后，保存按钮仍不能把 click 事件当参数传进去（保存函数带默认参数）。
   assert.ok(!clientSource.includes("onClick: saveProfile }"), "the save button must not receive the click event as its value argument");
   // apiFetch 是 fetch 的薄壳：非 2xx 不抛。画像这条以前没判 res.ok（同页的 persona
   // 一直判），于是服务端 403/413 时界面照样闪「画像已保存」。
@@ -2256,6 +2290,58 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
     "the profile saver must verify the response status before reporting success");
   // 没配模型是一句可行动的话（先去选模型），不能和「模型没按格式回」共用一条文案。
   assert.ok(clientSource.includes('"no-route" ? "noroute"'), "no-route must map to its own panel outcome, not the generic failure");
+});
+
+// 复制的竞态（CodeRabbit #559 第二轮）：剪贴板是异步的，回调属于哪一份草稿必须能认出来。
+// 复制 A 还没落地时又提取出草稿 B，A 的回调就会在 B 上打勾或报错——B 一个字都没被复制过，
+// 而「已复制」会挂 1.5 秒，于是同一屏上可能出现「已复制」和「复制没成功」两句相反的话。
+test("profile draft copy ticket keeps stale copy callbacks off a newer draft", () => {
+  const copySrc = clientSource.slice(
+    clientSource.indexOf("function copyProfileDraft("),
+    clientSource.indexOf("function copyProfileDraft(") + 2000
+  );
+  assert.ok(clientSource.includes("const profileCopyTicket = react.useRef(0)"),
+    "each copy attempt needs a ticket so a stale clipboard callback can be told apart");
+  assert.ok(copySrc.includes("const ticket = ++profileCopyTicket.current"),
+    "every attempt must take a fresh ticket before the async clipboard call");
+  assert.ok(copySrc.includes("const current = () => ticket === profileCopyTicket.current"),
+    "the callback must compare its ticket against the live one");
+  // 成功与失败两条回调都要判票：只判一条，另一条照样会污染新草稿。
+  assert.equal((copySrc.match(/if \(\(?!current\(\)\)\) return;/g) || []).length >= 2 ||
+    (copySrc.match(/if \(!current\(\)\) return;/g) || []).length >= 2, true,
+    "both the success and failure callbacks must drop themselves when their ticket is stale");
+  // 失败必须撤掉「已复制」：成功态能挂 1.5 秒，这期间重试失败会同时显示两句相反的话。
+  const failSrc = copySrc.slice(copySrc.indexOf("const failed = () =>"));
+  assert.ok(failSrc.slice(0, 200).includes("setProfileDraftCopied(false)"),
+    "a failed retry must clear the lingering copied state instead of showing both messages");
+  // 换草稿（重新提取 / 丢弃）都要让旧票作废，并清掉旧提示。
+  const extractSrc = clientSource.slice(clientSource.indexOf("async function extractProfileDraft("));
+  assert.ok(extractSrc.slice(0, 400).includes("profileCopyTicket.current += 1"),
+    "starting a new extraction must invalidate the previous copy attempt");
+  const discardSrc = clientSource.slice(clientSource.indexOf('t("memory.settings.profileDraftDiscard")') - 400);
+  assert.ok(discardSrc.slice(0, 400).includes("profileCopyTicket.current += 1") &&
+    discardSrc.slice(0, 400).includes("setProfileDraftCopyFailed(false)"),
+    "discarding the draft must clear both the ticket and the error text it left behind");
+});
+
+// 实体总数读不到时不许拿切片长度冒充（CodeRabbit #559 第二轮）：路由回落时把
+// entities.length 写进 total，面板再把它当全库数显示，等于把「这次取回多少」说成
+// 「全库有多少」——那正是这条路由原来「永远 500」的错法换个方向复发。
+test("entity card shows an unknown total instead of passing a slice off as the library", () => {
+  for (const key of ["memory.status.entitiesUnknown"]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  const cardSrc = clientSource.slice(
+    clientSource.indexOf("function EntitiesStatusCard("),
+    clientSource.indexOf("function EntitiesStatusCard(") + 2600
+  );
+  assert.ok(cardSrc.includes("j.totalExact === true"),
+    "the card must gate the big number on the backend's exactness flag");
+  assert.ok(cardSrc.includes('state.totalKnown === false ? "—"'),
+    "an inexact total must render as unknown, not as a plausible-looking number");
+  assert.ok(cardSrc.includes('t("memory.status.entitiesUnknown")'),
+    "the card must say why the total is missing, not just blank it out");
 });
 
 // Issue #521：degraded 轮的跳过明细必须能在面板上看见。此前 skipped 只落库，

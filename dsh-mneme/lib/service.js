@@ -2929,6 +2929,7 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // passthroughs above — never write-hook-triggering memory mutations.
     saveRelation: (r) => store.saveRelation(r),
     listEntities: (o) => store.listEntities(o),
+    countEntities: () => store.countEntities(),
     getRelations: (id) => store.getRelations(id),
     // #24 块4 被动确认的复核出口：列出权重被 bump 抬过的边（gain = 现权 −
     // 该 source 的初值）。纯读，不动权重——「看哪些边被用出来过」是人的动作。

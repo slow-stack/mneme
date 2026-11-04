@@ -4079,6 +4079,16 @@ export function createStore(path) {
     return rows.map(toEntity);
   }
 
+  /**
+   * 实体总行数（全库，不受 limit 影响）。目录路由的 `total` 必须走这里：
+   * 它此前填的是 `entities.length`（本次切片长度），于是库里一万六千个实体
+   * 在面板上永远显示 500 —— 数字看着像"实体太少"，其实是被上限截断了。
+   * 与 listEntities 同源同表，只差一个 COUNT。
+   */
+  function countEntities() {
+    return db.prepare("SELECT COUNT(*) AS n FROM entities").get().n;
+  }
+
   // --- 图召回轴（issue #219）-------------------------------------------------
 
   /**
@@ -4497,6 +4507,7 @@ export function createStore(path) {
     findEntityByName,
     findEntityById,
     listEntities,
+    countEntities,
     updateEntity,
     saveAttr,
     invalidateOldAttr,
