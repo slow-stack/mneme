@@ -1,0 +1,13 @@
+# 依赖巡查只管 GitHub Actions：四个工作流里 uses 的动作与 reusable workflow
+# 靠人记版本会积灰（2026-11 清点时 checkout / setup-node 已落后三个大版本），
+# 每周让 dependabot 报一次升级 PR，不再攒成一次手工大跳。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+# npm 生态刻意不纳入：dsh-mneme 的 devDependencies 里 @deepseek-ai/dsh-* 四件是
+# 宿主线的刻意钉子（升级节奏跟宿主发版走，老线兼容由 CI 的 test-host-legacy 腿
+# 真跑验证），其余依赖的面很小且有全量回归兜底——自动 bump 只会造噪音。
