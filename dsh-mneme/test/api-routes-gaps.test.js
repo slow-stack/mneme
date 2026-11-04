@@ -125,7 +125,7 @@ test("entities directory is read-only and returns empty list", async () => {
   const res = new FakeRes();
   await route.handler(req("/api/dsh-mneme/entities"), res);
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(JSON.parse(res.body), { entities: [], total: 0 });
+  assert.deepEqual(JSON.parse(res.body), { entities: [], total: 0, totalExact: true });
 });
 
 test("entities lists seeded entities without auth", async () => {
@@ -192,6 +192,21 @@ test("a failing entity count still returns the slice instead of a 500", async ()
   const data = JSON.parse(res.body);
   assert.equal(data.entities.length, 3, "the already-read slice survives");
   assert.equal(data.total, 3, "total falls back to the slice length");
+  // 回落值必须自曝是回落：面板拿 total 当全库数显示，不标记就等于把「这次取回 3 条」
+  // 说成「全库 3 个」——这正是那条路由原来「永远 500」的错法，换个方向复发。
+  assert.equal(data.totalExact, false, "a fallback total must be marked as inexact");
+});
+
+test("a working entity count is marked exact", async () => {
+  const { routes, service } = setup();
+  for (let i = 0; i < 3; i++) service.createEntity({ name: "e" + i, type: "concept" });
+  const route = handler(routes, "/api/dsh-mneme/entities");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/entities?limit=2"), res);
+  const data = JSON.parse(res.body);
+  assert.equal(data.entities.length, 2, "the slice honours the limit");
+  assert.equal(data.total, 3, "the total is the whole library, not the slice");
+  assert.equal(data.totalExact, true, "a counted total is exact");
 });
 
 // ---------------------------------------------------------------------------

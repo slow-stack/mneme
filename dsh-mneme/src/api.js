@@ -1558,14 +1558,20 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         // 只回落、不冒泡：它在外层 try 里，一抛整条响应就变成 500，已经把切片读出来的
         // 那份列表也跟着丢掉——一个装饰性的总数不该决定目录能不能显示。
         let total = entities.length;
+        // totalExact 是给面板看的：计数失败或老宿主没这个方法时，total 只能退回切片
+        // 长度，那已经不是「全库有多少」而只是「这次取回多少」。不回这个标记，面板
+        // 会把切片长度当成全库数照常显示——正是这条路由原来那个「永远 500」的错法。
+        let totalExact = false;
         if (typeof service.countEntities === "function") {
           try {
             total = service.countEntities();
+            totalExact = true;
           } catch {
             total = entities.length;
+            totalExact = false;
           }
         }
-        sendJson(res, 200, { entities, total });
+        sendJson(res, 200, { entities, total, totalExact });
       } catch {
         sendJson(res, 500, { error: "internal" });
       }

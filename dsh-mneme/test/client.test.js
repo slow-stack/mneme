@@ -2292,6 +2292,58 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
   assert.ok(clientSource.includes('"no-route" ? "noroute"'), "no-route must map to its own panel outcome, not the generic failure");
 });
 
+// 复制的竞态（CodeRabbit #559 第二轮）：剪贴板是异步的，回调属于哪一份草稿必须能认出来。
+// 复制 A 还没落地时又提取出草稿 B，A 的回调就会在 B 上打勾或报错——B 一个字都没被复制过，
+// 而「已复制」会挂 1.5 秒，于是同一屏上可能出现「已复制」和「复制没成功」两句相反的话。
+test("profile draft copy ticket keeps stale copy callbacks off a newer draft", () => {
+  const copySrc = clientSource.slice(
+    clientSource.indexOf("function copyProfileDraft("),
+    clientSource.indexOf("function copyProfileDraft(") + 2000
+  );
+  assert.ok(clientSource.includes("const profileCopyTicket = react.useRef(0)"),
+    "each copy attempt needs a ticket so a stale clipboard callback can be told apart");
+  assert.ok(copySrc.includes("const ticket = ++profileCopyTicket.current"),
+    "every attempt must take a fresh ticket before the async clipboard call");
+  assert.ok(copySrc.includes("const current = () => ticket === profileCopyTicket.current"),
+    "the callback must compare its ticket against the live one");
+  // 成功与失败两条回调都要判票：只判一条，另一条照样会污染新草稿。
+  assert.equal((copySrc.match(/if \(\(?!current\(\)\)\) return;/g) || []).length >= 2 ||
+    (copySrc.match(/if \(!current\(\)\) return;/g) || []).length >= 2, true,
+    "both the success and failure callbacks must drop themselves when their ticket is stale");
+  // 失败必须撤掉「已复制」：成功态能挂 1.5 秒，这期间重试失败会同时显示两句相反的话。
+  const failSrc = copySrc.slice(copySrc.indexOf("const failed = () =>"));
+  assert.ok(failSrc.slice(0, 200).includes("setProfileDraftCopied(false)"),
+    "a failed retry must clear the lingering copied state instead of showing both messages");
+  // 换草稿（重新提取 / 丢弃）都要让旧票作废，并清掉旧提示。
+  const extractSrc = clientSource.slice(clientSource.indexOf("async function extractProfileDraft("));
+  assert.ok(extractSrc.slice(0, 400).includes("profileCopyTicket.current += 1"),
+    "starting a new extraction must invalidate the previous copy attempt");
+  const discardSrc = clientSource.slice(clientSource.indexOf('t("memory.settings.profileDraftDiscard")') - 400);
+  assert.ok(discardSrc.slice(0, 400).includes("profileCopyTicket.current += 1") &&
+    discardSrc.slice(0, 400).includes("setProfileDraftCopyFailed(false)"),
+    "discarding the draft must clear both the ticket and the error text it left behind");
+});
+
+// 实体总数读不到时不许拿切片长度冒充（CodeRabbit #559 第二轮）：路由回落时把
+// entities.length 写进 total，面板再把它当全库数显示，等于把「这次取回多少」说成
+// 「全库有多少」——那正是这条路由原来「永远 500」的错法换个方向复发。
+test("entity card shows an unknown total instead of passing a slice off as the library", () => {
+  for (const key of ["memory.status.entitiesUnknown"]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  const cardSrc = clientSource.slice(
+    clientSource.indexOf("function EntitiesStatusCard("),
+    clientSource.indexOf("function EntitiesStatusCard(") + 2600
+  );
+  assert.ok(cardSrc.includes("j.totalExact === true"),
+    "the card must gate the big number on the backend's exactness flag");
+  assert.ok(cardSrc.includes('state.totalKnown === false ? "—"'),
+    "an inexact total must render as unknown, not as a plausible-looking number");
+  assert.ok(cardSrc.includes('t("memory.status.entitiesUnknown")'),
+    "the card must say why the total is missing, not just blank it out");
+});
+
 // Issue #521：degraded 轮的跳过明细必须能在面板上看见。此前 skipped 只落库，
 // 响应里没有聚合，status: degraded + applied: 3 从外面看完全是健康轮的样子——
 // 一整类动作 100% 被拦要自己写 SQL 才看得出，那个 bug 跑了一整天才被发现。

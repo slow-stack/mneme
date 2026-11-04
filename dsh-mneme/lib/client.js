@@ -331,6 +331,7 @@ window.__ModuleLoader__.load({
         "memory.settings.profileDraftTitle": "草稿副本（不会自动保存）",
         "memory.settings.profileDraftRows": "依据记忆条数",
         "memory.status.entitiesSampled": "分类计数只统计最近 500 个实体；总数是全库",
+        "memory.status.entitiesUnknown": "总数读不到；下面是最近 500 个实体的分类计数",
         "memory.settings.profileDraftTruncated": "条目较多，这次只读了前面一部分",
         "memory.settings.profileDraftCopy": "复制草稿",
         "memory.settings.profileDraftCopied": "已复制",
@@ -1166,6 +1167,7 @@ window.__ModuleLoader__.load({
         "memory.settings.profileDraftTitle": "Draft copy (never saved automatically)",
         "memory.settings.profileDraftRows": "Based on entries",
         "memory.status.entitiesSampled": "Per-type counts cover the newest 500 entities only; the total is the whole library",
+        "memory.status.entitiesUnknown": "Total unavailable; the counts below cover the newest 500 entities",
         "memory.settings.profileDraftTruncated": "many entries — only the first batch was read",
         "memory.settings.profileDraftCopy": "Copy draft",
         "memory.settings.profileDraftCopied": "Copied",
@@ -4025,6 +4027,10 @@ window.__ModuleLoader__.load({
       // 阅读器读得到。视力正常的用户看到按钮文字没变、页面也没变化，就会以为复制成功，
       // 粘贴时拿到旧的剪贴板内容——比不提示更糟。
       const [profileDraftCopyFailed, setProfileDraftCopyFailed] = react.useState(false);
+      // 复制的每一趟都要能认出「这条回调还属于当前这份草稿吗」。剪贴板是异步的，复制 A 的
+      // promise 还没落地时又提取出草稿 B，A 的回调就会在 B 上打勾或报错——B 一个字都没被
+      // 复制过。用递增序号做票据：换草稿或重新复制都换票，旧票的回调直接丢弃。
+      const profileCopyTicket = react.useRef(0);
       // 保存失败要可见（persona 那条一直有，画像这条以前是静默 catch）。
       const [profileError, setProfileError] = react.useState("");
       const [cmdError, setCmdError] = react.useState("");
@@ -4248,6 +4254,10 @@ window.__ModuleLoader__.load({
       async function extractProfileDraft() {
         setProfileExtracting(true);
         setProfileDraft(null);
+        // 新草稿一出现，上一趟复制的回调立刻作废，连它留下的两种提示也一并清掉。
+        profileCopyTicket.current += 1;
+        setProfileDraftCopied(false);
+        setProfileDraftCopyFailed(false);
         try {
           const res = await apiFetch("/api/dsh-mneme/profile/extract", {
             method: "POST",
@@ -4289,11 +4299,26 @@ window.__ModuleLoader__.load({
         const text = profileDraft.text || "";
         // 每次尝试先清掉上次的失败提示：失败过以后再成功，红字不能留在屏上。
         setProfileDraftCopyFailed(false);
-        const ok = () => { setProfileDraftCopied(true); announce(t("memory.settings.profileDraftCopied")); setTimeout(() => setProfileDraftCopied(false), 1500); };
+        // 这一趟的票。回调落地时票已经不是当前那张，就说明界面早已换了一份草稿。
+        const ticket = ++profileCopyTicket.current;
+        const current = () => ticket === profileCopyTicket.current;
+        const ok = () => {
+          if (!current()) return;
+          setProfileDraftCopied(true);
+          announce(t("memory.settings.profileDraftCopied"));
+          setTimeout(() => { if (current()) setProfileDraftCopied(false); }, 1500);
+        };
         // 剪贴板失败要说话：这个方法唯一的产出就是"文本进了剪贴板"，静默失败
         // 会让用户以为复制成功、粘贴时却拿到旧内容（草稿是只读 <pre>，选中再
         // 复制是她能自己走的退路，得明确告诉她走这条）。
-        const failed = () => { setProfileDraftCopyFailed(true); announce(t("memory.settings.profileDraftCopyFailed")); };
+        // 失败还要顺手撤掉「已复制」：成功态能挂 1.5 秒，这期间重试失败会同时出现
+        // 「已复制」和「复制没成功」两句相反的话。
+        const failed = () => {
+          if (!current()) return;
+          setProfileDraftCopied(false);
+          setProfileDraftCopyFailed(true);
+          announce(t("memory.settings.profileDraftCopyFailed"));
+        };
         if (navigator.clipboard?.writeText) {
           navigator.clipboard.writeText(text).then(ok, () => copyProfileDraftFallback(text) ? ok() : failed());
         } else {
@@ -4771,7 +4796,12 @@ window.__ModuleLoader__.load({
             h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 6 } },
               h("button", { type: "button", className: "mneme-btn", onClick: copyProfileDraft },
                 profileDraftCopied ? t("memory.settings.profileDraftCopied") : t("memory.settings.profileDraftCopy")),
-              h("button", { type: "button", className: "mneme-btn", onClick: () => setProfileDraft(null) }, t("memory.settings.profileDraftDiscard")),
+              h("button", { type: "button", className: "mneme-btn", onClick: () => {
+                profileCopyTicket.current += 1;
+                setProfileDraft(null);
+                setProfileDraftCopied(false);
+                setProfileDraftCopyFailed(false);
+              } }, t("memory.settings.profileDraftDiscard")),
               h("span", { className: "mneme-set-desc" }, t("memory.settings.profileDraftCopyHint")),
               profileDraftCopyFailed ? h("span", { className: "mneme-set-desc", role: "alert", style: { color: "var(--mneme-danger)" } },
                 t("memory.settings.profileDraftCopyFailed")) : null
@@ -5236,7 +5266,7 @@ window.__ModuleLoader__.load({
 
     // 实体 — directory snapshot grouped by entity type.
     function EntitiesStatusCard({ t }) {
-      const [state, setState] = useState({ loading: true, error: false, total: 0, byType: [] });
+      const [state, setState] = useState({ loading: true, error: false, total: 0, totalKnown: true, byType: [] });
       useEffect(() => {
         let cancelled = false;
         const order = ["organization", "person", "project", "technology", "concept"];
@@ -5256,10 +5286,13 @@ window.__ModuleLoader__.load({
             // 大数字用后端回的全库 total；分类型小行仍来自本次切片（最近 500 个），
             // 两个口径不一样，切片写进 foot 里说清楚——以前 total 取 list.length，
             // 一万六千个实体永远显示成 500，看着像"实体太少"。
-            const realTotal = typeof j.total === "number" && j.total >= list.length ? j.total : list.length;
-            setState({ loading: false, error: false, total: realTotal, sampled: list.length < realTotal, byType });
+            // totalExact 为假（计数失败 / 老宿主）时 total 只是切片长度，不能当全库数
+            // 显示：那正是原来「永远 500」的错法。这时大数字显示“—”，脚注说明总数读不到。
+            const totalKnown = j.totalExact === true && typeof j.total === "number";
+            const realTotal = totalKnown ? j.total : list.length;
+            setState({ loading: false, error: false, total: realTotal, totalKnown, sampled: list.length < realTotal, byType });
           })
-          .catch(() => { if (!cancelled) setState({ loading: false, error: true, total: 0, byType: [] }); });
+          .catch(() => { if (!cancelled) setState({ loading: false, error: true, total: 0, totalKnown: true, byType: [] }); });
         return () => { cancelled = true; };
       }, []);
       const rows = state.byType.map(([ty, n]) => ({ label: entityTypeLabel(t, ty), value: String(n) }));
@@ -5268,9 +5301,11 @@ window.__ModuleLoader__.load({
         title: t("memory.status.entities"),
         loading: state.loading,
         error: state.error,
-        num: state.total.toLocaleString(),
+        num: state.totalKnown === false ? "—" : state.total.toLocaleString(),
         rows,
-        foot: state.sampled === true ? t("memory.status.entitiesSampled") : null
+        foot: state.totalKnown === false
+          ? t("memory.status.entitiesUnknown")
+          : state.sampled === true ? t("memory.status.entitiesSampled") : null
       });
     }
 
