@@ -107,9 +107,11 @@ export function extractTopicKeys(memory) {
  * 理由）。两个 reason 分开报是为了可解释：`blank` 是真的什么都没写（提交一个空表单），
  * `noise` 是写了但只有标点/空白（`...`、`---`）——两者的修法不同。
  *
- * 为什么不用 quality-filter 的 `repetitive`（dedupRatio < 0.3）一起判：那是**写入后**
- * 的评分扣分项，扣分可以错（只影响排序与归档），硬拒不能错。一条字符多样性低的正常
- * 记忆（同一种分隔符排出的长清单）会被它判成 repetitive，本判据不背这个误杀面。
+ * 为什么不用 quality-filter 的 `repetitive`（trigram 重复率 > 0.7）一起判：那是**写入
+ * 后**的评分扣分项，扣分可以错（只影响排序与归档），硬拒不能错。判据本身的误杀面已经
+ * 收窄了（本次改动换掉了按长度衰减的旧度量），但「谁该进库」与「进库后谁该排后面」
+ * 仍是两个决定：前者要用户改不了，后者只要排序可解释。重复片段里也可能藏着一条真
+ * 事实（同一句规则被追加两遍），这种东西该留、只是排后面。
  *
  * @param {{title?: string, content?: string}|null|undefined} memory
  * @returns {"blank"|"noise"|null} 命中即返回 reason，否则 null

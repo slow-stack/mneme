@@ -305,7 +305,7 @@ test("Bug7: near-duplicate content is archived and tagged low_quality", () => {
   assert.ok(row.quality_score < 30, `score below archive threshold: ${row.quality_score}`);
 });
 
-test("Bug7: repetitive (dedup<0.3) content is scored into the degraded band", () => {
+test("Bug7: repetitive (trigram > 0.7) content is scored into the degraded band", () => {
   const { store, service } = qualitySetup();
   const result = service.saveWithDedupe({ type: "history", title: "唠叨", content: "好好好好好好好好好好好好好好好好好好" });
   const row = store.getById(result.memory.id);
