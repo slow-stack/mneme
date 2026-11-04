@@ -3259,3 +3259,57 @@ test("every client component declares the setters it calls (issue #553)", () => 
     "a setter must be declared in the component that calls it — a state hook placed in the "
     + "neighbouring component compiles fine but throws ReferenceError at render time (#553)");
 });
+
+// --- 实体页计数口径（#562 真机验证发现） ---
+// 实体页左侧栏此前固定显示「500 个实体」：它拿 `entities.length` 当总数，而那份列表
+// 是 `/entities?limit=500` 取回的最新 500 个。库里一万六千个实体被截成一个看起来正常
+// 的数字，用户据此判断「实体太少」——#559 只修了状态页那张卡，实体页这一处漏了。
+// 本用例锁四件事，防的回归各不相同：
+//   ① 总数来源必须是后端回的 `total`+  `totalExact`，不是切片长度；
+//   ② 全库数读不到时（老宿主 / 计数失败）退回切片长度而不是显示空白；
+//   ③ 列表本身仍只有 500 条，必须在界面上说清「总数是全库、列表是最近 N 个」，
+//      否则数字对了而列表还是 500 行，同一处观感错位只是换了个方向；
+//   ④ 那句说明走 i18n（中英各一条），不能硬编码中文。
+test("the entity rail counts the whole library, not the newest slice", () => {
+  const start = clientSource.indexOf("function EntityPanel(");
+  assert.ok(start > 0, "EntityPanel must exist");
+  const nextFn = clientSource.indexOf("\n    function ", start + 10);
+  assert.ok(nextFn > start, "EntityPanel must be followed by another module-level function");
+  const body = clientSource.slice(start, nextFn);
+
+  // ① 总数取自 totalExact 守门的 total。
+  assert.ok(
+    body.includes("setEntityTotal(j.totalExact === true && typeof j.total === \"number\" ? j.total : null)"),
+    "the rail total must come from the backend's total/totalExact, not the slice length"
+  );
+
+  // ② 计数行用全库数，读不到才退回切片长度。
+  assert.ok(
+    body.includes('t("memory.entities.count").replace("{n}", String(entityTotal !== null ? entityTotal : entities.length))'),
+    "the rail count must print the whole-library total with a slice-length fallback"
+  );
+  assert.ok(
+    !body.includes('t("memory.entities.count").replace("{n}", String(entities.length))'),
+    "printing entities.length directly is the \"always 500\" bug this test exists to prevent"
+  );
+
+  // ③ 列表只列最近 N 个这件事必须写出来（且只在真有截断时写）。
+  assert.ok(
+    /entityTotal !== null && entityTotal > entities\.length[\s\S]{0,200}memory\.entities\.countSampled/.test(body),
+    "a truncated list must say so instead of letting one number stand for both"
+  );
+  assert.ok(
+    body.includes('t("memory.entities.countSampled").replace("{shown}", String(entities.length))'),
+    "the notice must name how many entities the list actually shows"
+  );
+
+  // ④ 文案双语齐备，样式走语义色层。
+  for (const key of ["memory.entities.countSampled"]) {
+    const defined = clientSource.split(`"${key}":`).length - 1;
+    assert.equal(defined, 2, `i18n key ${key} must be defined exactly once in zh and once in en (got ${defined})`);
+  }
+  assert.ok(
+    clientSource.includes(".mneme-xcountnote{") && /color:var\(--mneme-fg-dim\)/.test(clientSource.slice(clientSource.indexOf(".mneme-xcountnote{"))),
+    "the notice needs its own dim style on the semantic colour layer"
+  );
+});

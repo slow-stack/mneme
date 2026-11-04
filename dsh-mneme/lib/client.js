@@ -395,6 +395,7 @@ window.__ModuleLoader__.load({
         "memory.explorer.tabSettings": "设置",
         "memory.explorer.tabStatus": "状态",
         "memory.entities.count": "{n} 个实体",
+      "memory.entities.countSampled": "列表只列最近 {shown} 个；上方总数是全库",
         "memory.entities.pick": "从左侧选择一个实体，查看它的属性与关系",
         // 搜索框有字但一条没筛出来时用它；与 entities.none（库里真没实体）分开，
         // 否则「暂无实体」会把打错一个字误导成「你还没开抽取」。
@@ -1231,6 +1232,7 @@ window.__ModuleLoader__.load({
         "memory.explorer.tabSettings": "Settings",
         "memory.explorer.tabStatus": "Status",
         "memory.entities.count": "{n} entities",
+      "memory.entities.countSampled": "The list shows the newest {shown} only; the total above is the whole library",
         "memory.entities.pick": "Select an entity to see its attributes and relations",
         "memory.entities.noMatch": "No entities match that search — try another word",
         "memory.entities.none": "No entities yet — turn on entity extraction and people / projects / concepts will accumulate here",
@@ -2067,6 +2069,9 @@ window.__ModuleLoader__.load({
       // 低于详情抽屉(6)，下拉菜单/导入对话框随容器整体上浮。
       ".mneme-xtools{position:absolute;right:14px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:8px;padding:0;z-index:3}",
       ".mneme-xcount{flex:none;font-size:12px;line-height:16px;color:var(--mneme-fg-dim);white-space:nowrap}",
+    // 目录计数下面那行小字：说清「总数是全库、列表只列最近 N 个」，两个口径
+    // 不一样不能只靠一个数字冒充（实体页此前就吃到这个亏）。
+    ".mneme-xcountnote{font-size:11px;line-height:15px;color:var(--mneme-fg-dim);white-space:nowrap}",
       // --- three-column browse layout: hairline separators, no outer box ---
       ".mneme-xmain{flex:1;min-height:0;display:flex;flex-direction:row;overflow:hidden}",
       ".mneme-xside{flex:none;width:264px;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;padding:16px 14px;border-right:1px solid var(--dsw-alias-border-l2);box-sizing:border-box;display:flex;flex-direction:column;gap:8px}",
@@ -2901,6 +2906,12 @@ window.__ModuleLoader__.load({
     //   ④ 关系图谱  the same ego graph the old graph-only tab drew
     function EntityPanel({ t, focusEntity, onJumpMemory }) {
       const [entities, setEntities] = useState(null);
+      // 目录只取最近 500 个（limit=500），可「一共抽出多少实体」问的是全库。
+      // 后端回 total + totalExact（见 src/api.js 的 /entities），这里必须用全库数，
+      // 否则左侧栏永远显示「500 个实体」——那正是「实体太少」这个观感的另一半来源：
+      // 状态页已经在 #559 修正，实体页这一处当时漏了。null = 全库数读不到（老宿主
+      // 或计数失败），此时退回切片长度并如实标成切片口径，不冒充全库。
+      const [entityTotal, setEntityTotal] = useState(null);
       const [railQuery, setRailQuery] = useState("");
       const [entityName, setEntityName] = useState(focusEntity || "");
       const [depth, setDepth] = useState(1);
@@ -2923,8 +2934,12 @@ window.__ModuleLoader__.load({
         let cancelled = false;
         apiFetch("/api/dsh-mneme/entities?limit=500")
           .then((r) => (r.ok ? r.json() : { entities: [] }))
-          .then((j) => { if (!cancelled) setEntities(Array.isArray(j.entities) ? j.entities : []); })
-          .catch(() => { if (!cancelled) setEntities([]); });
+          .then((j) => {
+            if (cancelled) return;
+            setEntities(Array.isArray(j.entities) ? j.entities : []);
+            setEntityTotal(j.totalExact === true && typeof j.total === "number" ? j.total : null);
+          })
+          .catch(() => { if (!cancelled) { setEntities([]); setEntityTotal(null); } });
         return () => { cancelled = true; };
       }, []);
 
@@ -3176,8 +3191,13 @@ window.__ModuleLoader__.load({
             value: railQuery,
             onChange: (e) => setRailQuery(e.target.value)
           }),
+          // 大数字用全库数；全库数读不到（老宿主 / 计数失败）时退回切片长度，
+          // 但那只是「这次取回多少」，所以要多一行脚注说清列表本身只列最近 500 个。
           entities !== null && entities.length > 0 && h("div", { className: "mneme-xcount" },
-            t("memory.entities.count").replace("{n}", String(entities.length)))
+            t("memory.entities.count").replace("{n}", String(entityTotal !== null ? entityTotal : entities.length))),
+          entities !== null && entityTotal !== null && entityTotal > entities.length
+            && h("div", { className: "mneme-xcountnote" },
+              t("memory.entities.countSampled").replace("{shown}", String(entities.length)))
         ),
         h("div", { className: "mneme-entrailbody" },
           entities === null && h("div", { className: "mneme-xempty" }, "…"),
