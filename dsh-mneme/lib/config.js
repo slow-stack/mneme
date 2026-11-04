@@ -696,6 +696,10 @@ export const Config = z.object({
   //       injection sort re-ranks by importance * quality_score/100 (degraded)
   //   score < 30 → archived + tagged low_quality (still explicitly searchable)
   // Meta-memory markers, near-duplicates and repetitive filler lose points.
+  // "Repetitive" is trigram repetition > 0.7 (this change). The shipped v0.7.12
+  // measure was unique-chars/total, which decays with length: it flagged 94% of
+  // 800-2000 char memories and 100% of longer ones, i.e. long Chinese prose was
+  // punished for being long. Threshold rationale lives in quality-filter.js.
   memoryQualityFilter: z.object({
     enabled: z.boolean().default(true),
     archiveThreshold: z.natural().min(1).max(100).default(30),
