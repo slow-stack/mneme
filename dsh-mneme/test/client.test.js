@@ -35,20 +35,164 @@ test("status card: hasData counts the archive metric", () => {
   assert.match(m[0], /d\.archive\?\.total/, "hasData must count archive.total, not just runs/active rows");
 });
 
-// The memory entry lives at the sidebar foot, not in the settings modal: the
-// migration must register into `sidebar.footer.action` (the list slot the
-// sidebar shell renders beside Settings) and must not keep a `settings.section`
-// registration, or the entry would appear twice under different hosts.
-test("memory entry registers into the sidebar foot slot", () => {
+// The memory entry is a first-class host panel now: `sidebar.panellist` puts a
+// glyph into the host's own panel list (the host row owns the button, the click
+// and aria-current) and `main` puts the library into the center column, side by
+// side with the conversation — the centered sheet is no longer the primary
+// surface (#559 follow-up; baleen does the same).
+//
+// Both seats are gated on the host declaring them, so the old footer entry has
+// to survive as the fallback for hosts without the seat pair. This test locks
+// the pair AND the fallback: dropping either one strands a whole host family
+// (new hosts get a sheet on top of the conversation again, old hosts lose the
+// entry entirely).
+test("memory entry registers the host panel seats and keeps the footer fallback", () => {
+  assert.ok(
+    clientSource.includes('ctx.slots.inject("sidebar.panellist"'),
+    "client must inject into sidebar.panellist (the host panel list)"
+  );
+  assert.ok(
+    clientSource.includes('name: "sidebar.panellist"'),
+    "the sidebar seat must be registered under its real slot name"
+  );
+  // main 的 key 必须与侧栏 id 逐字相同：宿主 PanelRow 点一下就是
+  // layout.selectPanel(id)，它在 main 槽里按 options.key 找 entry，对不上直接抛。
+  // 两处改成同一个常量以外的任何写法（比如 main 用 "mneme"、侧栏用 "dsh-mneme"）
+  // 面板点了没反应且控制台报 "main panel ... is not registered"。
+  assert.ok(
+    clientSource.includes('key: "dsh-mneme"'),
+    "the main seat key must match the sidebar seat id verbatim"
+  );
+  assert.ok(
+    clientSource.includes('ctx.slots.spec("sidebar.panellist")'),
+    "the footer fallback must be gated on the host actually declaring the panel seat"
+  );
+  assert.ok(
+    clientSource.includes("dropFooterSeat()"),
+    "once the panel seat exists the footer entry must be torn down, or the sidebar shows two memory entries"
+  );
   assert.ok(
     clientSource.includes('ctx.slots.inject("sidebar.footer.action"'),
-    "client must inject into sidebar.footer.action"
+    "client must keep injecting into sidebar.footer.action as the old-host fallback"
   );
   assert.equal(
     clientSource.includes('"settings.section"'),
     false,
     "the old settings.section registration must be gone"
   );
+});
+
+// 上一条锁的是「代码里有没有这两套座位」，这条锁「装/卸真的按条件跑」。
+// 回归表现（都靠字符串锁抓不到）：
+//  · 新宿主上两套都装 → 侧栏两颗记忆入口；
+//  · 宿主先声明 panellist、后来撤掉/换形态 → 回落不装回来，入口整个消失；
+//  · 回落被重复装入 → footer 里叠两个按钮；
+//  · 卸载 panellist 座位时忘了连带卸 main → 侧栏没图标但 activePanelId 仍指向
+//    一个已死面板（宿主 retainMainPanels 会把它复位成会话，界面上看不出来，
+//    但用户的「回到记忆库」状态被悄悄清掉）。
+test("panel seats: the fallback mounts and unmounts with the host's declaration", () => {
+  // 匹配范围必须一直吃到最后一条 inject 的收尾：非贪婪到第一个 \n      });
+  // 会停在 panellist 那段的中途，footer 回落根本进不了沙箱，测出来的永远不会红。
+  const src = clientSource.match(/const hostHasPanelSeat = \(\) =>[\s\S]*?ctx\.slots\.inject\("sidebar\.footer\.action"[\s\S]*?\n      \}\);/);
+  assert.ok(src, "the seat block must be extractable verbatim");
+  const boot = new Function("ctx", "t", "h", `${src[0]}\n return { hostHasPanelSeat };`);
+  const makeCtx = (specFor) => {
+    const regs = [];
+    const ctx = {
+      slots: {
+        spec: (key) => specFor(key),
+        inject: (key, cb) => { ctx.injected.push({ key, cb }); return () => {}; },
+        register: (opts, comp) => {
+          const rec = { opts, comp, alive: true };
+          regs.push(rec);
+          return () => { rec.alive = false; };
+        }
+      },
+      injected: []
+    };
+    return { ctx, regs };
+  };
+  const alive = (regs, name) => regs.filter((r) => r.alive && r.opts.name === name).length;
+
+  // 宿主只在「那个槽已被声明」时才跑 inject 的回调，所以这里也只在对应的
+  // spec 存在时点火：一把全点会把新座位的注册塞进老宿主，测出来的就不是真行为。
+  const fire = (ctx, key) => ctx.injected.filter((i) => i.key === key).map((i) => i.cb());
+
+  // 新宿主：panellist 已声明。只该有 panellist + main 两份注册。
+  {
+    const { ctx, regs } = makeCtx((key) => (key === "sidebar.panellist" ? { kind: "list" } : undefined));
+    const api = boot(ctx, (k) => k, () => null);
+    assert.equal(api.hostHasPanelSeat(), true);
+    const disposes = fire(ctx, "sidebar.panellist");
+    fire(ctx, "sidebar.footer.action");
+    assert.equal(disposes.length, 1);
+    assert.equal(alive(regs, "sidebar.panellist"), 1, "exactly one panel-list seat");
+    assert.equal(alive(regs, "main"), 1, "the main seat must be registered alongside it");
+    assert.equal(alive(regs, "sidebar.footer.action"), 0, "the footer fallback must not mount on a host that has the seat");
+  }
+
+  // 老宿主：没有 panellist。回落必须装上，且只装一份。
+  {
+    const { ctx, regs } = makeCtx(() => undefined);
+    const api = boot(ctx, (k) => k, () => null);
+    assert.equal(api.hostHasPanelSeat(), false);
+    fire(ctx, "sidebar.footer.action");
+    assert.equal(alive(regs, "sidebar.panellist"), 0);
+    assert.equal(alive(regs, "main"), 0);
+    assert.equal(alive(regs, "sidebar.footer.action"), 1, "old hosts keep exactly one footer entry");
+  }
+
+  // 座位消失：卸载 panellist 之后回落必须自己装回来，否则那台宿主上没有入口。
+  // 真实顺序是「声明先没了（spec 变 undefined），再把 entry 的 disposer 跑掉」，
+  // 所以这里要让 spec 跟着一起变——判据读的是当下这次 spec()，不是启动时那次。
+  {
+    let declared = true;
+    const { ctx, regs } = makeCtx(() => (declared ? { kind: "list" } : undefined));
+    boot(ctx, (k) => k, () => null);
+    const disposes = fire(ctx, "sidebar.panellist");
+    assert.equal(alive(regs, "sidebar.footer.action"), 0);
+    declared = false;
+    disposes.forEach((d) => d());
+    assert.equal(alive(regs, "sidebar.panellist"), 0);
+    assert.equal(alive(regs, "main"), 0, "unmounting the seat must tear down the main panel too");
+    assert.equal(alive(regs, "sidebar.footer.action"), 1, "the fallback must come back when the seat disappears");
+  }
+});
+
+// 侧栏那颗 glyph 是「宿主面板行里的图标」，不是按钮：宿主 PanelRow 已经渲染
+// button + aria-label + Tooltip + aria-current，插件再套一层按钮就会出现两颗
+// 可聚焦元素（Tab 停两次，读屏报两次），而且我们这层的 onClick 还得自己去调
+// layout.selectPanel —— 那是宿主自己的活。
+// 主面板同理不自带「回到会话」：宿主 openSession / 新建会话都走 selectPanel(null)，
+// 用户点侧栏任何会话行就回去了（baleen 也不做这颗按钮）。
+function sliceComponent(name) {
+  const start = clientSource.indexOf("    function " + name + "(");
+  assert.notEqual(start, -1, name + " must exist as a component");
+  // 组件体到下一个「四空格缩进的 }」为止：与本文件 :3060 那条静态扫描同一套缩进约定。
+  const end = clientSource.indexOf("\n    }", start);
+  assert.notEqual(end, -1, name + " must be a plain function component");
+  return clientSource.slice(start, end + 7);
+}
+
+test("panel seats hand the host a glyph and a page, not a second button or a close affordance", () => {
+  const glyph = sliceComponent("SidebarPanelGlyph");
+  assert.equal(/h\("button"/.test(glyph), false,
+    "the sidebar glyph must not render its own button (the host panel row owns it)");
+  assert.ok(glyph.includes("mneme-paneliglyph"),
+    "the glyph needs its own root class to carry the conflict badge and the semantic color layer");
+  assert.ok(glyph.includes("h(ConflictBadge, { pending })"),
+    "the panel-list entry must keep the pending-conflict badge");
+
+  const main = sliceComponent("MnemeMainPanel");
+  assert.ok(main.includes("h(MemoryExplorer, { t })"),
+    "the center-column page must reuse the same MemoryExplorer");
+  assert.ok(main.includes('className: "mneme-panel"'),
+    "the page needs the fill container (the host main slot only gives min-width:0 + overflow:hidden)");
+  // 面板切换归宿主：PanelRow 点一下就是 layout.selectPanel(id)，openSession /
+  // 新建会话又都是 selectPanel(null)。插件自己再调一次会把用户的导航意图打断
+  // （宿主那边 selectPanel 还会 abort 当前 navigation）。
+  assert.equal(clientSource.includes("ctx.layout.selectPanel"), false,
+    "the plugin must never call layout.selectPanel — the host row and openSession already do");
 });
 
 // The tab era is over: the in-conversation memory tab fought the floating
@@ -1197,14 +1341,17 @@ test("conflict queue: empty-state explainer card", () => {
   }
 });
 
-// 状态卡待处理高亮 + 侧边栏入口 badge（挂 portal 与回退两个按钮）。
-test("conflict queue: actionable status card and sidebar entry badge", () => {
+// 状态卡待处理高亮 + 三个入口的 badge：宿主面板行图标（SidebarPanelGlyph）、
+// 老宿主的 portal 入口（SidebarTopEntry）、footer 回退按钮（SidebarFallbackTrigger）。
+// 三个都吃同一个模块级计数，所以这里锁的是「一个都没漏接」——漏一个的那台宿主
+// 上红点就不出现，而抽屉里仍然显示有待裁决冲突。
+test("conflict queue: actionable status card and every sidebar entry badge", () => {
   assert.ok(clientSource.includes('"mneme-conflict-jump"'), "pending>0 card must carry the highlight class");
   assert.ok(clientSource.includes("mneme-statuscard--actionable"), "highlight CSS must exist");
-  assert.ok((clientSource.match(/h\(ConflictBadge, \{ pending \}\)/g) || []).length === 2,
-    "badge must be wired into both entry buttons");
-  assert.ok((clientSource.match(/= useConflictBadgeCount\(\);/g) || []).length === 2,
-    "both entry components must subscribe to the shared badge count");
+  assert.equal((clientSource.match(/h\(ConflictBadge, \{ pending \}\)/g) || []).length, 3,
+    "badge must be wired into the panel-list glyph and both legacy entry surfaces");
+  assert.equal((clientSource.match(/= useConflictBadgeCount\(\);/g) || []).length, 3,
+    "all three entry components must subscribe to the shared badge count");
   assert.ok(clientSource.includes('"/api/dsh-mneme/dream-status"'), "badge must reuse the dream-status endpoint");
 });
 
