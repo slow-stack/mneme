@@ -77,6 +77,29 @@ export function runChoroT0({ repoRoot, store = null, apply = false, now = () => 
   const repoName = pkg?.name ?? rootPath.split(/[\\/]/).pop() ?? "repo";
   const modules = partitionModules({ files, graph, maxFilesPerPage: plan.maxFilesPerPage, repoName });
 
+  // 模块级依赖边（M1 补口 P8）：文件级边按所属模块聚合，只留跨模块方向；排序
+  // 进快照，库里的边集与页面字节一样可重建。
+  const slugByFile = new Map();
+  for (const mod of modules) {
+    for (const f of mod.files) slugByFile.set(f, mod.slug);
+  }
+  const edgeAgg = new Map();
+  for (const e of graph.edges) {
+    const from = slugByFile.get(e.from);
+    const to = slugByFile.get(e.to);
+    if (!from || !to || from === to) continue;
+    const key = `${from}|${to}`;
+    edgeAgg.set(key, (edgeAgg.get(key) ?? 0) + 1);
+  }
+  const moduleEdges = [...edgeAgg.entries()]
+    .map(([key, weight]) => {
+      const [fromSlug, toSlug] = key.split("|");
+      return { fromSlug, toSlug, weight };
+    })
+    .sort((a, b) =>
+      a.fromSlug < b.fromSlug ? -1 : a.fromSlug > b.fromSlug ? 1 : a.toSlug < b.toSlug ? -1 : 1
+    );
+
   // 页面白名单（D7 正面控制）：plan.pages 非空时只给列出的 slug 建页。
   const whitelist = plan.pages && plan.pages.length > 0 ? new Map(plan.pages.map((p) => [p.path, p])) : null;
   const warnings = [];
@@ -190,6 +213,7 @@ export function runChoroT0({ repoRoot, store = null, apply = false, now = () => 
 
   const repoRow = store.upsertChoroRepo(rootPath, repoName, loaded.fingerprint, gitBaseline, generatedAt);
   store.replaceChoroGraph(repoRow.id, {
+    edges: moduleEdges,
     modules: modules.map((m) => ({
       slug: m.slug,
       title: (whitelist?.get(m.slug)?.title) ?? m.title,

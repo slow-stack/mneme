@@ -21,6 +21,7 @@ import { createApi } from "./api.js";
 import { createStandaloneApi } from "./api-standalone.js";
 // #275 存储生命周期第一批：无损回收（手动入口，不挂启动路径）。
 import { createMaintenance } from "./maintenance.js";
+import { createChoroQueries } from "./wiki/queries.js";
 import { createSettings } from "./settings.js";
 import { createCommandManager } from "./commands.js";
 import { createExecutionRecorder } from "./pipeline-runner.js";
@@ -575,7 +576,9 @@ export const apply = (ctx, config) => {
   }
 
   ctx.inject(["tools"], (toolsCtx) => {
-    disposers.push(createTools(toolsCtx, service, cfg, embedder, sessionGate));
+    // choro（M1）：只读查询对象，chorographyEnabled 关着时工具压根不注册（闸在
+    // createTools 的 hiddenTools，与 organizeEnabled 同款反向语义）。
+    disposers.push(createTools(toolsCtx, service, cfg, embedder, sessionGate, createChoroQueries({ store })));
   });
 
   const summarizer = createSummarizer(ctx, service, cfg, {}, sessionGate);
@@ -602,11 +605,14 @@ export const apply = (ctx, config) => {
     // 本模块一次都不会被调用）。这样「没启用」与「没装配」在 HTTP 面上是两个可区分的
     // 答案（503 unavailable 只该出现在旧宿主/装配缺失上，不该被读成「用户没开」）。
     const extractProfileDraft = createProfileExtractor({ ctx, service, config: cfg, logger: ctx.logger });
+    // chorography 读侧（M1）：与 service 刻意分开——所有权模型相反（spec §3）。
+    // 闸在路由/工具两层（关着 409 / 不注册），queries 本体装配与开关无关。
+    const choro = createChoroQueries({ store });
     const api = createApi(ctx, service, settings, commands ?? {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,
       list: () => []
-    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft);
+    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro);
     disposers.push(api.dispose);
   }
 

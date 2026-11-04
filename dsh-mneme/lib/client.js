@@ -301,6 +301,17 @@ window.__ModuleLoader__.load({
       zh: {
         "memory.panel.empty": "暂无记忆条目",
         "memory.panel.open": "记忆",
+        "wiki.panel.open": "仓库地志",
+        "wiki.empty.noRepo": "还没有登记的仓库。先在仓库目录里跑 `dsh-mneme-choro <仓库路径> --apply` 生成骨架页并登记，然后回到这里。",
+        "wiki.empty.disabled": "chorography（仓库地志）未启用：在「设置」里打开「仓库地志」后重启 DSH 生效。",
+        "wiki.empty.pickRepo": "已登记多个仓库，选一个：",
+        "wiki.search.placeholder": "在页面里检索…",
+        "wiki.state.loading": "加载中…",
+        "wiki.state.pickPage": "从左侧选一个模块页。",
+        "wiki.state.pageMissing": "索引还在、磁盘页面缺失：在仓库目录重跑一次 `dsh-mneme-choro <仓库路径> --apply` 即可重建。",
+        "wiki.state.unavailable": "chorography 查询装配不可用（宿主环境缺件）。",
+        "wiki.state.error": "加载失败",
+        "wiki.tree.title": "模块",
         "memory.tab.all": "全部",
         "memory.tab.preference": "偏好",
         "memory.tab.project": "项目",
@@ -1145,6 +1156,17 @@ window.__ModuleLoader__.load({
       en: {
         "memory.panel.empty": "No memories yet",
         "memory.panel.open": "Memory",
+        "wiki.panel.open": "Repo Atlas",
+        "wiki.empty.noRepo": "No repository registered yet. Run `dsh-mneme-choro <repo-path> --apply` inside the repository to generate skeleton pages and register it, then come back here.",
+        "wiki.empty.disabled": "chorography (Repo Atlas) is disabled: turn it on under Settings and restart DSH to apply.",
+        "wiki.empty.pickRepo": "Multiple repositories registered — pick one:",
+        "wiki.search.placeholder": "Search pages…",
+        "wiki.state.loading": "Loading…",
+        "wiki.state.pickPage": "Pick a module page from the tree.",
+        "wiki.state.pageMissing": "Index exists but the page file is missing: re-run `dsh-mneme-choro <repo-path> --apply` to rebuild.",
+        "wiki.state.unavailable": "chorography queries are unavailable (host wiring missing).",
+        "wiki.state.error": "Failed to load",
+        "wiki.tree.title": "Modules",
         "memory.tab.all": "All",
         "memory.tab.preference": "Preferences",
         "memory.tab.project": "Projects",
@@ -2248,6 +2270,40 @@ window.__ModuleLoader__.load({
       // overflow:hidden，所以 -3px 的偏移不会被裁；这里的 position:relative
       // 只提供定位上下文，不接管尺寸（由宿主的 panelGlyph 决定）。
       ".mneme-paneliglyph{position:relative;display:inline-flex;align-items:center;justify-content:center}",
+      // --- chorography 面板（仓库地志）：顶栏检索 + 左树右文。颜色全部引用
+      // 既有语义层（--dsw-alias-* 正文/边框、--mneme-fg-dim 弱化），不引入新
+      // 字面量色——contrast.test.js 会重算每一条 color 声明。内容渲染挂在
+      // .mneme-panel 根内（#562 的中列整页容器），不新增渲染根。
+      ".mneme-wikibar{flex:none;display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1)}",
+      ".mneme-wikirepo{flex:none;max-width:40%;font-size:13.5px;font-weight:600;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+      ".mneme-wikisearch{flex:1;min-width:0;height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12.5px;outline:none;transition:border-color .12s}",
+      ".mneme-wikisearch:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-state-business-primary) 15%,transparent)}",
+      ".mneme-wikibody{flex:1;min-height:0;display:flex;overflow:hidden}",
+      ".mneme-wikitree{flex:none;width:232px;overflow-y:auto;border-right:1px solid var(--dsw-alias-border-l1);padding:10px 6px}",
+      ".mneme-wikitreeitem{display:block;width:100%;text-align:left;border:none;background:none;cursor:pointer;font-family:inherit;font-size:12.5px;line-height:18px;color:var(--dsw-alias-label-secondary);padding:5px 8px;border-radius:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .12s}",
+      ".mneme-wikitreeitem:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}",
+      ".mneme-wikitreeitem.mneme-active{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary);font-weight:500}",
+      ".mneme-wikipage{flex:1;min-width:0;overflow-y:auto;padding:18px 22px 44px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-wikipage h2,.mneme-wikipage h3,.mneme-wikipage h4,.mneme-wikipage h5{margin:18px 0 8px;color:var(--dsw-alias-label-primary);line-height:1.35}",
+      ".mneme-wikipage h2{font-size:17px;border-bottom:1px solid var(--dsw-alias-border-l1);padding-bottom:6px}",
+      ".mneme-wikipage h3{font-size:15px}",
+      ".mneme-wikipage h4,.mneme-wikipage h5{font-size:13.5px}",
+      ".mneme-wikipage p{margin:6px 0;font-size:13px;line-height:21px;color:var(--dsw-alias-label-secondary)}",
+      ".mneme-wikipage ul,.mneme-wikipage ol{margin:6px 0;padding-left:22px}",
+      ".mneme-wikipage li{font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary);margin:3px 0}",
+      ".mneme-wikipre{margin:10px 0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1));overflow-x:auto;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);white-space:pre}",
+      ".mneme-wikicode{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-active);border-radius:4px;padding:1px 5px}",
+      ".mneme-wikitablerow{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;line-height:19px;color:var(--dsw-alias-label-secondary);white-space:pre;overflow-x:auto}",
+      ".mneme-wikiquote{margin:8px 0;padding:6px 12px;border-left:3px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);font-size:12.5px;line-height:19px}",
+      ".mneme-wikiempty{padding:26px 22px;font-size:13px;line-height:21px;color:var(--dsw-alias-label-secondary);display:flex;flex-direction:column;gap:8px;overflow-y:auto}",
+      ".mneme-wikiemptytitle{font-size:15px;font-weight:600;color:var(--dsw-alias-label-primary)}",
+      ".mneme-wikihits{position:absolute;inset-inline:22px;top:8px;z-index:3;display:flex;flex-direction:column;gap:4px;max-height:46%;overflow-y:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:8px;box-shadow:0 10px 28px color-mix(in srgb,var(--dsw-alias-label-primary) 14%,transparent)}",
+      ".mneme-wikihit{text-align:left;border:none;background:none;cursor:pointer;font-family:inherit;font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary);padding:5px 7px;border-radius:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".mneme-wikihit:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}",
+      ".mneme-wikihitsclose{flex:none;align-self:flex-end;border:none;background:none;cursor:pointer;color:var(--mneme-fg-dim);font-size:15px;line-height:16px;padding:0 4px}",
+      // 相对定位由 .mneme-panel 提供？它没有——检索浮层需要定位上下文，给页面列加
+      // position:relative（不能动 .mneme-panel 本身：记忆面板还挂在同一根上）。
+      ".mneme-wikipage{position:relative}",
       // --- 记忆库页面：居中 sheet，非全屏 ---
       // 从对话直接打开一页记忆库：背板压暗 + 居中圆角卡片（上限 1180×880），
       // 对话仍留在背板之后，任何状态下（含新会话 hero、无 tab 环）都可用。
@@ -10041,6 +10097,194 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.locale.register(NS, dictionaries), "dsh-mneme: dictionaries");
 
       // --- 入口座位 ---
+      // --- chorography（仓库地志）面板（M1，spec §7）---------------------
+      // 浏览页：左模块树 / 右正文 / 顶部检索。数据从 /choro/* 四条读路由来，
+      // 真源是仓库磁盘的 MD。座位无条件注册（P11）：inject 同名二次注册的
+      // cordis 语义没验证过，不赌；chorographyEnabled 关着时页面渲染「未启用」
+      // 空态（路由 409 disabled），开关生效走既有「重启生效」纪律——座位常挂
+      // 的收敛形态就是 D2 拆双 Cordis 条目时的样子。
+      function WikiGlyph({ size }) {
+        // 图形走 currentColor，粗细对比交给宿主的 active 态；不引入新色值。
+        return h("span", { className: "mneme-paneliglyph", "aria-hidden": "true" },
+          h("svg", {
+            width: size || 18, height: size || 18, viewBox: "0 0 24 24",
+            fill: "none", stroke: "currentColor", strokeWidth: 1.8,
+            strokeLinecap: "round", strokeLinejoin: "round"
+          },
+            h("path", { d: "M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z" }),
+            h("path", { d: "M9 4v14" }),
+            h("path", { d: "M15 6v14" })
+          )
+        );
+      }
+
+      // 只读 MD 渲染（P13）：React 文本节点天然转义，不经过 innerHTML，无原始
+      // HTML 通道。frontmatter 折叠不显示；表格按等宽行渲染（知识库页的表都是
+      // 两三列的清单，保真优先于交互）；`code` 拆成等宽 span。
+      function renderWikiMarkdown(content) {
+        const lines = String(content ?? "").split("\n");
+        let i = 0;
+        // frontmatter：首行是 --- 时吃到下一行 ---
+        if (lines[0] && lines[0].trim() === "---") {
+          i = 1;
+          while (i < lines.length && lines[i].trim() !== "---") i++;
+          i++;
+        }
+        const out = [];
+        const inline = (text) => String(text).split(/`([^`]+)`/).map((part, idx) =>
+          idx % 2 === 1 ? h("code", { key: idx, className: "mneme-wikicode" }, part) : part
+        );
+        let list = null; // "ul" | "ol" | null
+        const flushList = () => {
+          if (list) { out.push(h(list, { key: out.length }, listItems)); listItems = []; list = null; }
+        };
+        let listItems = [];
+        let inCode = false;
+        let codeLines = [];
+        for (; i < lines.length; i++) {
+          const line = lines[i];
+          if (line.trim().startsWith("```")) {
+            if (inCode) {
+              out.push(h("pre", { key: out.length, className: "mneme-wikipre" }, codeLines.join("\n")));
+              codeLines = []; inCode = false;
+            } else { flushList(); inCode = true; }
+            continue;
+          }
+          if (inCode) { codeLines.push(line); continue; }
+          const heading = line.match(/^(#{1,6})\s+(.*)$/);
+          if (heading) {
+            flushList();
+            const level = Math.min(heading[1].length + 1, 5);
+            out.push(h(`h${level}`, { key: out.length }, inline(heading[2])));
+            continue;
+          }
+          const ul = line.match(/^\s*[-*]\s+(.*)$/);
+          const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+          if (ul || ol) {
+            const want = ul ? "ul" : "ol";
+            if (list !== want) flushList();
+            list = want;
+            listItems.push(h("li", { key: listItems.length }, inline(ul ? ul[1] : ol[1])));
+            continue;
+          }
+          flushList();
+          if (/^\s*\|/.test(line)) { out.push(h("div", { key: out.length, className: "mneme-wikitablerow" }, inline(line.trim()))); continue; }
+          if (/^>\s?/.test(line)) { out.push(h("blockquote", { key: out.length, className: "mneme-wikiquote" }, inline(line.replace(/^>\s?/, "")))); continue; }
+          if (line.trim() === "") continue;
+          out.push(h("p", { key: out.length }, inline(line)));
+        }
+        flushList();
+        if (inCode && codeLines.length > 0) out.push(h("pre", { key: out.length, className: "mneme-wikipre" }, codeLines.join("\n")));
+        return out;
+      }
+
+      function WikiMainPanel({ t }) {
+        const [state, setState] = useState({ phase: "loading", repos: [], repo: null, modules: [], edges: [], page: null, hits: [], q: "", selected: null, disabled: false, error: null });
+        // apiFetch 是裸 fetch：非 2xx 不抛错，返回 Response。这里统一解 JSON 并把
+        // 状态码带回来——409 disabled（用户没开）/ 503 unavailable（装配缺件）
+        // 各有各的空态文案（#497 的语义分叉在这里接住）。
+        const readJson = async (res) => {
+          let data = {};
+          try { data = await res.json(); } catch { /* 空响应体 */ }
+          return { status: res.status, data };
+        };
+        const load = useCallback(async (repoRef) => {
+          try {
+            const { status, data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/repos`));
+            if (status === 409) { setState((s) => ({ ...s, phase: "disabled" })); return; }
+            if (status === 503) { setState((s) => ({ ...s, phase: "unavailable" })); return; }
+            const repos = data.repos ?? [];
+            if (repos.length === 0) { setState((s) => ({ ...s, phase: "no-repo", repos: [] })); return; }
+            const ref = repoRef ?? (repos.length === 1 ? repos[0].id : null);
+            if (ref === null) { setState((s) => ({ ...s, phase: "pick-repo", repos })); return; }
+            const mod = await readJson(await apiFetch(`/api/dsh-mneme/choro/modules?repo=${encodeURIComponent(ref)}`));
+            if (mod.status !== 200) { setState((s) => ({ ...s, phase: "error", error: `modules ${mod.status}` })); return; }
+            setState((s) => ({ ...s, phase: "ready", repos, repo: mod.data.repo, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null }));
+          } catch (err) {
+            setState((s) => ({ ...s, phase: "error", error: String(err?.message ?? err) }));
+          }
+        }, []);
+        useEffect(() => { load(); }, [load]);
+        const openPage = useCallback(async (slug) => {
+          const repo = state.repo;
+          if (!repo) return;
+          setState((s) => ({ ...s, selected: slug, page: null }));
+          try {
+            const { status, data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/page?repo=${encodeURIComponent(repo.id)}&slug=${encodeURIComponent(slug)}`));
+            if (status !== 200 || data.error) { setState((s) => ({ ...s, page: { error: data.error ?? `page ${status}` } })); return; }
+            setState((s) => ({ ...s, page: data.page }));
+          } catch (err) {
+            setState((s) => ({ ...s, page: { error: String(err?.message ?? err) } }));
+          }
+        }, [state.repo]);
+        const runSearch = useCallback(async (q) => {
+          setState((s) => ({ ...s, q }));
+          const repo = state.repo;
+          if (!repo || !q.trim()) { setState((s) => ({ ...s, hits: [] })); return; }
+          try {
+            const { data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/search?repo=${encodeURIComponent(repo.id)}&q=${encodeURIComponent(q)}`));
+            setState((s) => ({ ...s, hits: data.hits ?? [] }));
+          } catch { setState((s) => ({ ...s, hits: [] })); }
+        }, [state.repo]);
+
+        if (state.phase === "loading") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.state.loading"));
+        if (state.phase === "disabled") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.empty.disabled"));
+        if (state.phase === "unavailable") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.state.unavailable"));
+        if (state.phase === "error") return h("div", { className: "mneme-panel mneme-wikiempty" }, `${t("wiki.state.error")}: ${state.error}`);
+        if (state.phase === "no-repo") {
+          return h("div", { className: "mneme-panel mneme-wikiempty" },
+            h("div", { className: "mneme-wikiemptytitle" }, t("wiki.panel.open")),
+            h("p", null, t("wiki.empty.noRepo")));
+        }
+        if (state.phase === "pick-repo") {
+          return h("div", { className: "mneme-panel mneme-wikiempty" },
+            h("div", { className: "mneme-wikiemptytitle" }, t("wiki.empty.pickRepo")),
+            state.repos.map((r) => h("button", {
+              key: r.id, type: "button", className: "mneme-wikitreeitem",
+              onClick: () => load(r.id)
+            }, `${r.name}`)));
+        }
+        const tree = [];
+        for (const mod of state.modules) {
+          const depth = (mod.slug.match(/-/g) || []).length;
+          tree.push(h("button", {
+            key: mod.slug,
+            type: "button",
+            className: `mneme-wikitreeitem${state.selected === mod.slug ? " mneme-active" : ""}`,
+            style: { paddingLeft: `${8 + Math.min(depth, 4) * 14}px` },
+            title: mod.title,
+            onClick: () => openPage(mod.slug)
+          }, mod.slug));
+        }
+        const pageBody = state.page
+          ? (state.page.error
+            ? h("div", { className: "mneme-wikiempty" }, state.page.error === "page-missing" ? t("wiki.state.pageMissing") : state.page.error)
+            : renderWikiMarkdown(state.page.content))
+          : h("div", { className: "mneme-wikiempty" }, t("wiki.state.pickPage"));
+        return h("div", { className: "mneme-panel" },
+          h("div", { className: "mneme-wikibar" },
+            h("span", { className: "mneme-wikirepo" }, state.repo ? `${state.repo.name}` : ""),
+            h("input", {
+              className: "mneme-wikisearch",
+              placeholder: t("wiki.search.placeholder"),
+              value: state.q,
+              onChange: (e) => runSearch(e.target.value),
+              "aria-label": t("wiki.search.placeholder")
+            })),
+          h("div", { className: "mneme-wikibody" },
+            h("nav", { className: "mneme-wikitree", "aria-label": t("wiki.tree.title") }, tree),
+            h("div", { className: "mneme-wikipage" },
+              state.hits.length > 0 && h("div", { className: "mneme-wikihits" },
+                state.hits.map((hit, idx) => h("button", {
+                  key: `${hit.slug}-${hit.line}-${idx}`,
+                  type: "button",
+                  className: "mneme-wikihit",
+                  onClick: () => { setState((s) => ({ ...s, hits: [] })); openPage(hit.slug); }
+                }, `${hit.slug} · ${hit.section} · L${hit.line}: ${hit.excerpt}`)),
+                h("button", { type: "button", className: "mneme-wikihitsclose", onClick: () => setState((s) => ({ ...s, hits: [] })) }, "×")),
+              pageBody)));
+      }
+
       // 两套宿主形态，二选一，靠宿主是否声明了 sidebar.panellist 判定：
       //  · 宿主内整页面板（首选）：sidebar.panellist 出图标、main 出中列整页。
       //    图标长在宿主自己的面板列表里（PanelRow 自己处理点击与 aria-current），
@@ -10091,9 +10335,24 @@ window.__ModuleLoader__.load({
           name: "main",
           key: "dsh-mneme"
         }, () => h(MnemeMainPanel, { t }));
+        // chorography 第二个座位（M1）：成对规则同上——id 与 key 逐字同为
+        // "dsh-mneme-wiki"。座位无条件注册（P11），内容层自己渲染空态；
+        // D2 拆双 Cordis 条目后这里自然变成可独立禁用的形态。
+        const disposeWikiGlyph = ctx.slots.register({
+          name: "sidebar.panellist",
+          id: "dsh-mneme-wiki",
+          order: 61,
+          label: () => t("wiki.panel.open")
+        }, (props) => h(WikiGlyph, { size: props && props.size }));
+        const disposeWikiMain = ctx.slots.register({
+          name: "main",
+          key: "dsh-mneme-wiki"
+        }, () => h(WikiMainPanel, { t }));
         return () => {
           disposeGlyph();
           disposeMain();
+          disposeWikiGlyph();
+          disposeWikiMain();
           // 座位被撤（宿主折叠该槽 / 换宿主形态）时把回落装回去：两条路径都
           // 只靠各自的 inject 触发，谁不动谁就永远停在「没有入口」的状态。
           mountFooterSeat();

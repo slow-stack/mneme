@@ -892,6 +892,15 @@ export const Config = z.object({
   // 「用户开关 > 轻量预设 > bundle」，同 continuityRescueEnabled / distillRecords.enabled）。
   organizeEnabled: z.boolean().default(false),
 
+  // chorography（仓库地志，spec: docs/specs/2026-11-04-chorography-design.md）的
+  // 暴露闸（opt-in，默认关）：管模型侧三个只读工具（choro_search / read_page /
+  // module_map）与面板浏览页。工具描述常驻模型上下文 = 新增成本，按仓库纪律
+  // opt-in；默认关=工具不存在、面板页空态、行为与 0.10.1 逐字节一致。
+  // **不进 LIGHT_MODE_OFF**（刻意）：轻量档关的是「每轮注入物」与「热路径监听」，
+  // choro 三工具零每轮注入、零热路径挂载，只有被动查询——轻量档用户搜仓库时
+  // 同样受惠，关它没有省出任何东西。
+  chorographyEnabled: z.boolean().default(false),
+
   // --- scope: v0.8.0 A1 存储层（issue #17）--------------------------------
   // 总开关默认关：关闭时写入不标注 scope、去重维持 (type, title) 现状，行为
   // 逐字节不变。开启后**两条写入路径都自动盖章**（*_scope_source='auto'）：

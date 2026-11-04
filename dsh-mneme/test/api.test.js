@@ -760,7 +760,10 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 输入侧预算，两个 int 键都走 INT_RANGES 表）= 110。
   // issue #529 再新增 sleepFailureBackoff（sleep 连续失败退避；顶层布尔键，
   // 不需要 NESTED_FLAG_PATHS 条目）= 111。
-  assert.equal(Object.keys(data.effective).length, 111);
+  // chorography M1 新增 chorographyEnabled（仓库地志只读工具 + 面板页的暴露闸；
+  // 顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 112。
+  assert.equal(Object.keys(data.effective).length, 112);
+  assert.equal(data.effective.chorographyEnabled, false);
   assert.equal(data.effective.dreamSkipInvalid, true);
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, true);

@@ -197,7 +197,10 @@ function parseBody(text) {
 // maintenance 是第 9 个位置参数，默认 null：既有调用点（测试里的 14 处）全是位置传参、
 // 不传它，必须继续工作——不传时 /maintenance/reclaim 回 503 maintenance-unavailable，
 // 而不是把「没接线」伪装成崩溃（#386 第 4 条）。
-export function createApi(ctx, service, settings, commands, embedder, semantic = null, apiToken = "", config = null, maintenance = null, profileExtract = null) {
+// choro（M1）：chorography 读侧查询对象（createChoroQueries 产物）。缺省 null =
+// 宿主内 API 在 headless/测试环境没有接 queries，choro 路由回 503。它与 service
+// 刻意分开传——chorography 的所有权模型与记忆域相反（spec §3），不塞进 service。
+export function createApi(ctx, service, settings, commands, embedder, semantic = null, apiToken = "", config = null, maintenance = null, profileExtract = null, choro = null) {
   const disposers = [];
 
   // #182 注入状态探测：面板状态页的「极简模式下注入按宿主设计关闭」提示需要
@@ -2551,6 +2554,116 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         return;
       }
       run(null);
+    }
+  });
+
+  // --- chorography（仓库地志）M1 读侧路由 -------------------------------
+  // spec §7 消费面的面板数据源。四条全 policy "open"：只读、宿主围栏统一鉴权
+  // （与 /list、/version-check 同级）；**chorographyEnabled 关闭时一律 409
+  // disabled**（#497 先例：路由挂着、逻辑层挡——面板据此渲染「未启用」空态）。
+  // 仓库/模块/页面全部只从 choro_* 表与仓库磁盘读（真源是盘上的 MD），没有
+  // 任何写路径；生成入口在 M2 才有（T1 生成轮同批接）。
+  // choro 参数缺省 null：headless/测试环境没有 queries 时这四条路由回 503
+  // unavailable（语义分叉见 #497：503 = 环境缺件，409 = 用户没开）。
+  function choroGate(req, res) {
+    if (!choro) {
+      sendJson(res, 503, { error: "unavailable", reason: "choro-queries-unavailable" });
+      return false;
+    }
+    if (!config || config.chorographyEnabled !== true) {
+      sendJson(res, 409, { error: "disabled", reason: "chorography-not-enabled" });
+      return false;
+    }
+    return true;
+  }
+  function choroResolveOr4xx(req, res) {
+    const repo = choro.resolveRepo(
+      new URL(req.url, "http://localhost").searchParams.get("repo")
+    );
+    if (!repo || repo.ambiguous) {
+      sendJson(res, repo && repo.ambiguous ? 400 : 404, {
+        error: repo && repo.ambiguous ? "repo-ambiguous" : "repo-not-found",
+        repos: repo && repo.ambiguous ? repo.ambiguous : undefined
+      });
+      return null;
+    }
+    return repo;
+  }
+
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/choro/repos",
+    policy: "open",
+    handler(req, res) {
+      if (!choroGate(req, res)) return;
+      sendJson(res, 200, { repos: choro.listRepos() });
+    }
+  });
+
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/choro/modules",
+    policy: "open",
+    handler(req, res) {
+      if (!choroGate(req, res)) return;
+      const repo = choroResolveOr4xx(req, res);
+      if (!repo) return;
+      const { modules, edges } = choro.moduleMap(repo.id);
+      sendJson(res, 200, {
+        repo: { id: repo.id, name: repo.name, gitBaseline: repo.git_baseline },
+        modules,
+        edges
+      });
+    }
+  });
+
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/choro/page",
+    policy: "open",
+    handler(req, res) {
+      if (!choroGate(req, res)) return;
+      const repo = choroResolveOr4xx(req, res);
+      if (!repo) return;
+      const slug = new URL(req.url, "http://localhost").searchParams.get("slug");
+      if (!slug) {
+        sendJson(res, 400, { error: "slug-required" });
+        return;
+      }
+      const page = choro.readPage(repo.id, slug);
+      if (!page) {
+        sendJson(res, 404, { error: "page-not-found", slug });
+        return;
+      }
+      if (page.error) {
+        // 索引还在、盘上没了：409 让面板知道「重跑一次 T0 就能好」，不是 404 那种
+        // 「这条路本来就不存在」。
+        sendJson(res, 409, {
+          error: page.error,
+          slug: page.slug,
+          relPath: page.relPath,
+          hint: "run `dsh-mneme-choro <repo> --apply` to rebuild"
+        });
+        return;
+      }
+      sendJson(res, 200, { page });
+    }
+  });
+
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/choro/search",
+    policy: "open",
+    handler(req, res) {
+      if (!choroGate(req, res)) return;
+      const repo = choroResolveOr4xx(req, res);
+      if (!repo) return;
+      const url = new URL(req.url, "http://localhost");
+      const hits = choro.search(repo.id, url.searchParams.get("q"), {
+        moduleSlug: url.searchParams.get("module"),
+        limit: Number(url.searchParams.get("limit") ?? 20)
+      });
+      sendJson(res, 200, { q: url.searchParams.get("q"), hits });
     }
   });
 
