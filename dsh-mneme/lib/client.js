@@ -4021,6 +4021,10 @@ window.__ModuleLoader__.load({
       const [profileDraft, setProfileDraft] = react.useState(null);
       const [profileExtracting, setProfileExtracting] = react.useState(false);
       const [profileDraftCopied, setProfileDraftCopied] = react.useState(false);
+      // 复制失败必须**看得见**：announce() 那个 live region 是 1px 裁剪元素，只有屏幕
+      // 阅读器读得到。视力正常的用户看到按钮文字没变、页面也没变化，就会以为复制成功，
+      // 粘贴时拿到旧的剪贴板内容——比不提示更糟。
+      const [profileDraftCopyFailed, setProfileDraftCopyFailed] = react.useState(false);
       // 保存失败要可见（persona 那条一直有，画像这条以前是静默 catch）。
       const [profileError, setProfileError] = react.useState("");
       const [cmdError, setCmdError] = react.useState("");
@@ -4283,11 +4287,13 @@ window.__ModuleLoader__.load({
       function copyProfileDraft() {
         if (profileDraft?.kind !== "draft") return;
         const text = profileDraft.text || "";
+        // 每次尝试先清掉上次的失败提示：失败过以后再成功，红字不能留在屏上。
+        setProfileDraftCopyFailed(false);
         const ok = () => { setProfileDraftCopied(true); announce(t("memory.settings.profileDraftCopied")); setTimeout(() => setProfileDraftCopied(false), 1500); };
         // 剪贴板失败要说话：这个方法唯一的产出就是"文本进了剪贴板"，静默失败
         // 会让用户以为复制成功、粘贴时却拿到旧内容（草稿是只读 <pre>，选中再
         // 复制是她能自己走的退路，得明确告诉她走这条）。
-        const failed = () => announce(t("memory.settings.profileDraftCopyFailed"));
+        const failed = () => { setProfileDraftCopyFailed(true); announce(t("memory.settings.profileDraftCopyFailed")); };
         if (navigator.clipboard?.writeText) {
           navigator.clipboard.writeText(text).then(ok, () => copyProfileDraftFallback(text) ? ok() : failed());
         } else {
@@ -4766,7 +4772,9 @@ window.__ModuleLoader__.load({
               h("button", { type: "button", className: "mneme-btn", onClick: copyProfileDraft },
                 profileDraftCopied ? t("memory.settings.profileDraftCopied") : t("memory.settings.profileDraftCopy")),
               h("button", { type: "button", className: "mneme-btn", onClick: () => setProfileDraft(null) }, t("memory.settings.profileDraftDiscard")),
-              h("span", { className: "mneme-set-desc" }, t("memory.settings.profileDraftCopyHint"))
+              h("span", { className: "mneme-set-desc" }, t("memory.settings.profileDraftCopyHint")),
+              profileDraftCopyFailed ? h("span", { className: "mneme-set-desc", role: "alert", style: { color: "var(--mneme-danger)" } },
+                t("memory.settings.profileDraftCopyFailed")) : null
             )
           ) : null
         ),

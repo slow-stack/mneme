@@ -2268,6 +2268,19 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
   // 复制是这条路径唯一的产出：静默失败等于让用户以为复制成功、粘贴时拿到旧文本。
   assert.ok(clientSource.includes('t("memory.settings.profileDraftCopyFailed")'),
     "a failed copy must say so instead of silently doing nothing");
+  // 光 announce() 不够：那个 live region 是 1px 裁剪元素，只有屏幕阅读器读得到。
+  // 视力正常的用户看到按钮文字不变、页面不变，会以为复制成功，粘贴时拿到旧内容。
+  assert.ok(clientSource.includes("const [profileDraftCopyFailed, setProfileDraftCopyFailed] = react.useState(false)"),
+    "the failed copy needs its own state, not just an announce() to a hidden live region");
+  assert.ok(clientSource.includes("setProfileDraftCopyFailed(true)"),
+    "the failure branch must flip the visible state");
+  const copyFailedIdx = clientSource.indexOf("profileDraftCopyFailed ? h(\"span\"");
+  assert.ok(copyFailedIdx > 0, "the failure must render as visible text near the copy button, not only in the live region");
+  assert.ok(clientSource.slice(copyFailedIdx, copyFailedIdx + 220).includes('role: "alert"'),
+    "the visible failure text should announce itself to assistive tech too");
+  // 颜色走语义层：宿主 label-tertiary 这类低对比层当正文色会掉到 AA 以下（#178）。
+  assert.ok(clientSource.slice(copyFailedIdx, copyFailedIdx + 220).includes('style: { color: "var(--mneme-danger)" }'),
+    "the failure text must use the --mneme-danger semantic layer, not a raw host token");
   // 采用路径没了之后，保存按钮仍不能把 click 事件当参数传进去（保存函数带默认参数）。
   assert.ok(!clientSource.includes("onClick: saveProfile }"), "the save button must not receive the click event as its value argument");
   // apiFetch 是 fetch 的薄壳：非 2xx 不抛。画像这条以前没判 res.ok（同页的 persona

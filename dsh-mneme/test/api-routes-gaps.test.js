@@ -177,6 +177,23 @@ test("entities total counts the whole library, not the returned slice", async ()
   assert.equal(data.total, 5, "total reports every entity, not the slice");
 });
 
+// 计数是装饰性的，不能决定目录能不能显示。此前 total 在 handler 的外层 try 里直接
+// 调 countEntities()，它一抛整条响应就变 500、已读出的切片跟着丢掉——面板把「数不出来
+// 总数」显示成「实体加载失败」，两个消费端都会当成整轮失败。
+test("a failing entity count still returns the slice instead of a 500", async () => {
+  const { routes, service } = setup();
+  for (let i = 0; i < 3; i++) service.createEntity({ name: "e" + i, type: "concept" });
+  service.countEntities = () => { throw new Error("count unavailable"); };
+  const route = handler(routes, "/api/dsh-mneme/entities");
+
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/entities?limit=5"), res);
+  assert.equal(res.statusCode, 200, "a broken count must not fail the directory");
+  const data = JSON.parse(res.body);
+  assert.equal(data.entities.length, 3, "the already-read slice survives");
+  assert.equal(data.total, 3, "total falls back to the slice length");
+});
+
 // ---------------------------------------------------------------------------
 // /api/dsh-mneme/external-api
 // ---------------------------------------------------------------------------

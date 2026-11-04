@@ -1554,8 +1554,17 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const entities = service.listEntities?.({ limit }) ?? [];
         // total 是**全库**实体数，不是本次切片长度：目录带 limit，面板拿它当
         // 「一共抽出多少实体」，填切片长度会让 1.6 万实体永远显示成 500。
-        // 老宿主（service 上没有 countEntities）回落到切片长度，不抛。
-        const total = typeof service.countEntities === "function" ? service.countEntities() : entities.length;
+        // 老宿主（service 上没有 countEntities）回落到切片长度，不抛。计数本身失败也
+        // 只回落、不冒泡：它在外层 try 里，一抛整条响应就变成 500，已经把切片读出来的
+        // 那份列表也跟着丢掉——一个装饰性的总数不该决定目录能不能显示。
+        let total = entities.length;
+        if (typeof service.countEntities === "function") {
+          try {
+            total = service.countEntities();
+          } catch {
+            total = entities.length;
+          }
+        }
         sendJson(res, 200, { entities, total });
       } catch {
         sendJson(res, 500, { error: "internal" });
