@@ -552,7 +552,7 @@ test("entity extraction writes an llm_audit row with the streamed usage tokens",
   });
   const text = await streamEntityText(
     [{ role: "user", content: [{ type: "text", text: "记忆内容" }] }],
-    {}
+    { memoryId: "mem-ok-1" }
   );
   assert.ok(text.includes("entities"), "the extracted text still reaches the extractor");
 
@@ -565,6 +565,34 @@ test("entity extraction writes an llm_audit row with the streamed usage tokens",
   assert.equal(row.input_tokens, 700, "input tokens come from chunk.usage");
   assert.equal(row.output_tokens, 180, "output tokens come from chunk.usage");
   assert.equal(row.total_tokens, 880);
+  // success 行同样必须可归因。此前这里不传 memoryId、也不断言 id，于是
+  // writeAudit("success", null) 省略第三参的缺陷在绿测试下活了很久——活库
+  // 6256 条 success 行 related_memory_ids 100% 空数组，成功的那些抽取反而
+  // 一条都对不上记忆，#405 只修了 error 半边。
+  assert.deepEqual(row.related_memory_ids, ["mem-ok-1"],
+    "a successful extraction is attributable to the memory it read");
+  store.close();
+});
+
+test("entity extraction success row still leaves the id empty when there is none to attribute", async () => {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  const streamEntityText = createEntityStreamAdapter({
+    llm: {
+      async *stream() {
+        yield { type: "text-delta", index: 0, text: '{"entities":[],"relations":[]}' };
+        yield { type: "finish", reason: { kind: "stop" } };
+      }
+    },
+    agentDefaultModel: { currentSelection: () => ({ provider: "mock", model: "mock-model" }) },
+    logger: { warn: () => {} },
+    service
+  });
+  await streamEntityText([{ role: "user", content: [{ type: "text", text: "记忆内容" }] }], {});
+  const row = service.listLlmAudits({ source: "entityExtract" })[0];
+  assert.equal(row.status, "success");
+  assert.deepEqual(row.related_memory_ids, [],
+    "no memoryId → empty, never a fabricated id");
   store.close();
 });
 

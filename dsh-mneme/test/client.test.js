@@ -2211,9 +2211,8 @@ test("update-check status names match the backend classify contract verbatim", (
     "the backend must register the version-check route");
 });
 
-// 画像提取草稿（#497）面板面：路由对齐、四种结局各有自己的话、以及「采用」必须把草稿
-// 文本直接交给保存。最后一条防的是一个具体陷阱——保存函数带默认参数时，把函数本身当
-// onClick 处理器会把 click 事件当成要存的文本存进去。
+// 画像提取草稿（#497）面板面：路由对齐、四种结局各有自己的话、按钮坐在哪张卡上、
+// 以及草稿**只出副本**（2026-11-04 改口径：不再把草稿写进画像字段）。
 test("profile extraction ships its button, distinct outcomes and correct save wiring", () => {
   const apiSource = readFileSync(join(root, "src/api.js"), "utf8");
   assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/profile/extract"'),
@@ -2235,7 +2234,10 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
     "memory.settings.profileDraftTitle",
     "memory.settings.profileDraftRows",
     "memory.settings.profileDraftTruncated",
-    "memory.settings.profileDraftApply",
+    "memory.settings.profileDraftCopy",
+    "memory.settings.profileDraftCopied",
+    "memory.settings.profileDraftCopyHint",
+    "memory.settings.profileDraftCopyFailed",
     "memory.settings.profileDraftDiscard",
     "memory.features.profileExtractEnabled",
     "memory.features.profileExtractEnabled.hint"
@@ -2246,8 +2248,27 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
   assert.ok(/group\.enhance[\s\S]{0,700}"profileExtractEnabled"/.test(clientSource),
     "FEATURE_GROUPS group.enhance must carry profileExtractEnabled");
 
-  // 采用草稿：显式传文本；保存按钮也不能把 click 事件当参数传进去。
-  assert.ok(clientSource.includes("if (await saveProfile(text))"), "applying a draft must commit state only after a verified save");
+  // 位置锁（2026-11-04）：提取按钮属于「Agent 眼中的你」卡，不属于「用户画像」卡。
+  // 此前没有任何用例锁位置——整块 UI 搬走测试也不会红，这正是它被放错地方却一直绿的原因。
+  // 锁法：三处锚点的先后顺序 + 两张卡标题之间不许出现 profileExtract。
+  const profileCardIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))');
+  const personaViewIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.personaView"))');
+  const extractButtonIdx = clientSource.indexOf('t("memory.settings.profileExtract")');
+  assert.ok(profileCardIdx > 0 && personaViewIdx > profileCardIdx && extractButtonIdx > personaViewIdx,
+    "the extract button must render inside the persona-view card, which comes after the user-profile card");
+  assert.ok(!clientSource.slice(profileCardIdx, personaViewIdx).includes("profileExtract"),
+    "the user-profile card must not carry any extract UI");
+
+  // 只出副本（2026-11-04 桉桉定的口径）：草稿不许再走落库路径。此前 applyProfileDraft 会
+  // 直接 PUT /profile —— 把用户手写的那份覆盖掉，且没有撤销。
+  assert.ok(clientSource.includes("function copyProfileDraft()"), "the draft action must be a copy, not a save");
+  assert.ok(!clientSource.includes("if (await saveProfile(text))"), "a draft must never be committed to the profile field");
+  assert.ok(clientSource.includes("copyProfileDraftFallback(text)"),
+    "the draft action must copy the draft text, with a fallback when the clipboard API is unavailable");
+  // 复制是这条路径唯一的产出：静默失败等于让用户以为复制成功、粘贴时拿到旧文本。
+  assert.ok(clientSource.includes('t("memory.settings.profileDraftCopyFailed")'),
+    "a failed copy must say so instead of silently doing nothing");
+  // 采用路径没了之后，保存按钮仍不能把 click 事件当参数传进去（保存函数带默认参数）。
   assert.ok(!clientSource.includes("onClick: saveProfile }"), "the save button must not receive the click event as its value argument");
   // apiFetch 是 fetch 的薄壳：非 2xx 不抛。画像这条以前没判 res.ok（同页的 persona
   // 一直判），于是服务端 403/413 时界面照样闪「画像已保存」。

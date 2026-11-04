@@ -1552,7 +1552,11 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const url = new URL(req.url, "http://localhost");
         const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") ?? 500) || 500));
         const entities = service.listEntities?.({ limit }) ?? [];
-        sendJson(res, 200, { entities, total: entities.length });
+        // total 是**全库**实体数，不是本次切片长度：目录带 limit，面板拿它当
+        // 「一共抽出多少实体」，填切片长度会让 1.6 万实体永远显示成 500。
+        // 老宿主（service 上没有 countEntities）回落到切片长度，不抛。
+        const total = typeof service.countEntities === "function" ? service.countEntities() : entities.length;
+        sendJson(res, 200, { entities, total });
       } catch {
         sendJson(res, 500, { error: "internal" });
       }

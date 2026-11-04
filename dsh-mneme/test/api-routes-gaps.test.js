@@ -162,6 +162,21 @@ test("entities clamps limit to [1, 1000]", async () => {
   }
 });
 
+// total 必须是全库计数，不是本次切片长度。此前 handler 写的是
+// `total: entities.length`，于是 limit=500 时面板永远显示「500 个实体」——
+// 库里一万六千个实体被截断成一个看起来正常的数字，用户据此判断「实体太少」。
+test("entities total counts the whole library, not the returned slice", async () => {
+  const { routes, service } = setup();
+  for (let i = 0; i < 5; i++) service.createEntity({ name: `e${i}`, type: "concept" });
+  const route = handler(routes, "/api/dsh-mneme/entities");
+
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/entities?limit=2"), res);
+  const data = JSON.parse(res.body);
+  assert.equal(data.entities.length, 2, "the slice honours limit");
+  assert.equal(data.total, 5, "total reports every entity, not the slice");
+});
+
 // ---------------------------------------------------------------------------
 // /api/dsh-mneme/external-api
 // ---------------------------------------------------------------------------

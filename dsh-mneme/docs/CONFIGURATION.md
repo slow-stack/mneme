@@ -167,7 +167,7 @@
 | `injectTimePrefix` | `false` | 对话开始注入一次当前时间（#34，v0.7.11 误删后随 #333 恢复） | opt-in；格式与键名与 v0.7.2 一致，存量 feature_flags 恢复即生效 |
 | `personaEnabled` | `false` | 人格段：用户自写的一小段常驻注入文本 | opt-in；只是轻量常驻文本、不引入重型后台路径，故不进 `LIGHT_MODE_OFF` |
 | `personaStrictAddressing` | `false` | 人格寻址口径。关（历史行为）：会话身份没建卡、或该卡被显式关掉时，落 `default` 卡 | 开：这两种情况都不注入人格，`default` 只兜「解析不到会话身份」的无名会话。用途是宿主里跑着自带身份的外部 bot 时，别让某个人格无条件进它每一帧。默认关 = 升级零变化 |
-| `profileExtractEnabled` **light** | `false` | 画像提取草稿：`POST /api/dsh-mneme/profile/extract` 从活跃记忆反向写一段「助手眼中的用户」草稿（面板「用户画像」卡上的按钮） | opt-in；一次调用一轮 LLM + 读上百行记忆，故 `LIGHT_MODE_OFF` 里有它。**只出草稿**：它不写 `user_settings`，采用草稿是面板里另一次显式保存——画像正文必须是用户手写的原文。空库直接报 `no-input`、模型没按格式回报 `unparseable`，两者都不回空草稿 |
+| `profileExtractEnabled` **light** | `false` | 画像提取草稿：`POST /api/dsh-mneme/profile/extract` 从活跃记忆反向写一段「助手眼中的用户」草稿（面板「Agent 眼中的你」卡上的按钮） | opt-in；一次调用一轮 LLM + 读上百行记忆，故 `LIGHT_MODE_OFF` 里有它。**只出草稿副本**：它不写 `user_settings`，面板也只把结果当副本展示、可一键复制（2026-11-04 改口径，此前「采用为画像」会直接覆盖手写画像且无撤销）——画像正文必须是用户自己手写的原文。空库直接报 `no-input`、模型没按格式回报 `unparseable`，两者都不回空草稿 |
 
 ## 巩固（autoDream）
 

@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- **「从记忆提取草稿」搬到它该在的卡上，并且只出副本；实体总数的口径修正；成功抽取的审计行补上归属（三处静默错误的收口）**：三件事都不是新功能，是「界面/数字说了与事实不符的话」。
+
+  - **按钮搬到「Agent 眼中的你」卡**：它原先物理嵌在「用户画像」卡里（那块 UI 从 `profileDraftTitle` 到「采用为画像」整段），而「用户画像」是用户自己手写的字段，「Agent 眼中的你」才是从记忆沉淀出来、可再生成的那一侧——把提取入口放在手写字段下面，等于暗示画像是模型产的。整块移到 `personaView` 卡（`lib/client.js`，与 `injectedPreview` 同屏，草稿可以和真正的注入文本对着看），画像卡只留 textarea + 保存。
+  - **草稿不再写回画像，改成只展示副本（2026-11-04 定的口径）**：原来的「采用为画像」点一下就走 `PUT /profile`，直接覆盖用户手写的那份、且没有撤销——一次手滑就把唯一的手填来源改掉了。改成「复制草稿」：草稿文本交给剪贴板，要落进画像必须用户自己粘贴再点保存。剪贴板 API 不可用（非安全上下文 / 内嵌 webview 未授权）时退回临时 textarea + `execCommand("copy")`，两者都失败就明确说「复制没成功，请选中上面的草稿手动复制」——这条路径唯一的产出就是「文本进了剪贴板」，静默失败会让用户以为复制成功、粘贴时却拿到旧内容。改动全在 `lib/client.js`（该文件无 `src/` 对应物），后端 `profile-extract` 路由与 `src/profile-extract.js` 一个字没动：它本来就只出草稿、从不写 `user_settings`。
+  - **`/entities` 的 `total` 改成全库计数**：此前是 `total: entities.length`（本次切片长度），`limit` 默认 500，于是库里一万六千个实体在面板上永远显示 **500**——一个看起来完全正常的数字，用户据此判断「实体太少」。新增 `store.countEntities()`（同源同表的 `COUNT(*)`）经 `service` 透传给路由，老宿主上没有该方法时回落到切片长度、不抛。面板的大数字改用后端 `total`，分类型小行仍来自最近 500 个切片，两者口径不同所以在卡片脚注里写明「分类计数只统计最近 500 个实体；总数是全库」——把两个数混着看，就又会得出错误的结论。
+  - **实体抽取成功行的 `related_memory_ids` 不再恒空**：`src/index.js` 的 `writeAudit(status, errorMessage, relatedMemoryIds = [])` 三参签名，error 两条路径都传了归属 id、success 那条写的是 `writeAudit("success", null)`——第三参缺席，形参默认值 `[]` 被当成语义值落库。实测活库 6256 条 success 行 100% 空数组：**成功抽到的那些记忆反而一条都对不上**（#405 只修了 error 半边）。改一行补上第三参；判据保持「拿不到 id 就留空，绝不挂不存在的 id 造虚账」。
+  - **为什么这些能躲过测试**：`test/client.test.js` 只锁「按钮存在 + 15 个 i18n key + 路由 + 保存接线」，**不断言按钮挂在哪个 section**——整块 UI 搬走测试一条都不会红；`test/llm-audit.test.js` 的成功用例调 `streamEntityText(..., {})` 不传 `memoryId`、也从不检查 `related_memory_ids`。补的是结构锁而不是字符串锁：①三处锚点（画像卡标题 → personaView 卡标题 → 提取按钮）的先后顺序，且两张卡标题之间不许出现 `profileExtract`；②`saveProfile(text)` 的采用路径被删、改断言 `copyProfileDraftFallback` 与复制失败文案在场；③新增「`limit=2` 时 `total` 仍报 5」与「成功行可归因 / 无 id 时留空不造假」两条。变异自证：把 `writeAudit("success", null, relatedMemoryIds)` 改回省略第三参，新用例当场红在 `a successful extraction is attributable to the memory it read`。
+  - **验证**：全量 2700 tests / 2699 pass / 0 fail / 1 skipped；`check-sync` 85 文件一致；`docs/CONFIGURATION.md` 的 `profileExtractEnabled` 描述同步改成新卡位与新口径。
+
 - **面板补上「从目录引导」入口，并把「哪些配置键只能改文件」摆出来（#386 第 6、7 条）**：这两件事后端早就有了、面板里都没有。`bootstrap` 从 #220 起就在 `src/bootstrap.js` 里（六类确定性产物、零 LLM、吃 `saveWithDedupe` 的 `(type, title, scope)` 去重），但只有 Bearer 数据面一条入口，面板够不着；配置键则只有 `settings.js` 的白名单一张表、`config.js` 的 schema 另一张表，从没被摆在一起对过——「用户能理解、但面板改不到」那批键只能靠读源码 + 手数。
 
   - **`POST /api/dsh-mneme/bootstrap`（`policy: token`）**：与 `/import` 同类（写库、幂等），所以不给 GET 读分支、也不借 `token-write` 的读写双义。判定顺序是「body 形状 → dir → 能力是否接线」：反过来的话，少填一个目录的人会看到「能力没接线」，去查错的方向。协议层口径抽在 `src/bootstrap-http.js`，与 8790 那条共用一份（#411 的纪律：两张皮只许剩鉴权与路径不同）。失败按码分开说——`missing-dir` / `dir-not-found` / `not-a-directory` / `bootstrap-unavailable` 四种情况下用户该做的事完全不同，统一成「引导失败」等于让他自己猜。

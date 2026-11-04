@@ -152,7 +152,10 @@ export function createEntityStreamAdapter({ llm, agentDefaultModel, logger, serv
             return undefined;
           }
         }
-        writeAudit("success", null);
+        // 第三参必须显式传进去：writeAudit 的形参默认值 [] 是给"没有 id 可归因"
+        // 留的，省略第三参等于宣称"这条成功与任何记忆无关"——实测活库 6256 条
+        // success 行 100% 空数组，正是这个省略造成的。#405 只修了 error 半边。
+        writeAudit("success", null, relatedMemoryIds);
         return text;
       })().catch((err) => {
         logger?.warn?.(`[dsh-mneme] entity extraction llm stream failed: ${String(err)}`);

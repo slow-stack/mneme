@@ -322,16 +322,20 @@ window.__ModuleLoader__.load({
         "memory.settings.profileSaved": "画像已保存",
         "memory.settings.profileExtract": "从记忆提取草稿",
         "memory.settings.profileExtracting": "正在提取…",
-        "memory.settings.profileExtractHint": "会花一次模型调用，只在你点这个按钮时发生；提取出来的是草稿，不采用就不进库，你手写的画像也不会被覆盖。",
+        "memory.settings.profileExtractHint": "会花一次模型调用，只在你点这个按钮时发生；提取出来的是草稿副本，只在这里展示——不会写进记忆库，也不会动你自己手写的「用户画像」。想留下它，点「复制草稿」。",
         "memory.settings.profileExtractDisabled": "没有提取：功能开关里的「画像提取草稿」还没打开。",
         "memory.settings.profileExtractEmpty": "库里没有可用的记忆条目，这次没有能提炼的内容（空输入下硬写一段画像只会是编的）。",
         "memory.settings.profileExtractNoRoute": "没有可用的模型：先在宿主里选一个默认模型（或在配置里填 dreamProvider / dreamModel），再点一次。",
         "memory.settings.profileSaveFailed": "画像没存进去",
         "memory.settings.profileExtractFailed": "提取没成：模型没按格式返回，或这次调用失败了。你现有的画像一个字都没被改动。",
-        "memory.settings.profileDraftTitle": "草稿（还没保存）",
+        "memory.settings.profileDraftTitle": "草稿副本（不会自动保存）",
         "memory.settings.profileDraftRows": "依据记忆条数",
+        "memory.status.entitiesSampled": "分类计数只统计最近 500 个实体；总数是全库",
         "memory.settings.profileDraftTruncated": "条目较多，这次只读了前面一部分",
-        "memory.settings.profileDraftApply": "采用为画像",
+        "memory.settings.profileDraftCopy": "复制草稿",
+        "memory.settings.profileDraftCopied": "已复制",
+        "memory.settings.profileDraftCopyHint": "「用户画像」那一栏只由你自己填写；要把它写进去，请粘贴后自己点保存。",
+        "memory.settings.profileDraftCopyFailed": "复制没成功：请选中上面的草稿手动复制。",
         "memory.settings.profileDraftDiscard": "丢弃草稿",
         "memory.settings.persona": "人格定义（beta）",
         "memory.settings.personaHint": "给这位 Agent 一张角色卡：名字、性格、回复要求。开关打开且下方「人格定义」总闸开启时，每轮对话都会注入。",
@@ -368,7 +372,7 @@ window.__ModuleLoader__.load({
         "memory.features.personaStrictAddressing": "严格人格寻址",
         "memory.features.personaStrictAddressing.hint": "开：会话身份没有对应人格卡、或那张卡被关掉时，就不注入人格——默认卡只兜「解析不到会话身份」的会话。宿主里跑着自带身份的 bot（DS Bot 那类）时关掉这种兜底，免得两句「你是谁」撞在同一轮。默认关 = 未命中就落默认卡（历史行为）。",
         "memory.features.profileExtractEnabled": "画像提取草稿",
-        "memory.features.profileExtractEnabled.hint": "打开「设置 → 个性化 → 用户画像」里的「从记忆提取草稿」按钮：读一批活跃记忆、花一次模型调用，产一段「助手眼中的用户」草稿。草稿要你点「采用」才会写进画像，绝不自动覆盖你手写的原文。轻量档预设关（用户显式勾选仍然赢）。",
+        "memory.features.profileExtractEnabled.hint": "打开「设置 → 个性化 → Agent 眼中的你」卡上的「从记忆提取草稿」按钮：读一批活跃记忆、花一次模型调用，产一段「助手眼中的用户」草稿。草稿只在那张卡上展示副本，可一键复制，不会写进记忆库、也不会覆盖你自己填的「用户画像」。轻量档预设关（用户显式勾选仍然赢）。",
         "memory.settings.rules": "规则",
         "memory.settings.rulesHint": "给 Agent 立下必须遵守的规矩，随时增删，下一轮即生效。",
         "memory.settings.ruleAdd": "添加规则",
@@ -1153,16 +1157,20 @@ window.__ModuleLoader__.load({
         "memory.settings.profileSaved": "Profile saved",
         "memory.settings.profileExtract": "Draft from memory",
         "memory.settings.profileExtracting": "Extracting…",
-        "memory.settings.profileExtractHint": "Costs one model call, and only when you press this button. The result is a draft: nothing is stored until you apply it, and your hand-written profile is never overwritten.",
+        "memory.settings.profileExtractHint": "Costs one model call, and only when you press this button. The result is a draft copy shown here only — it is never written to the memory store and never touches the User Profile you wrote yourself. Press “Copy draft” to keep it.",
         "memory.settings.profileExtractDisabled": "Nothing extracted: the “Profile draft from memory” feature switch is still off.",
         "memory.settings.profileExtractEmpty": "No usable memory entries in the store, so there was nothing to draft from (writing a profile out of an empty input would only be invention).",
         "memory.settings.profileExtractNoRoute": "No model available: pick a default model in the host (or set dreamProvider / dreamModel), then try again.",
         "memory.settings.profileSaveFailed": "Profile was not saved",
         "memory.settings.profileExtractFailed": "Extraction failed: the model did not return the required shape, or the call errored. Your existing profile is untouched.",
-        "memory.settings.profileDraftTitle": "Draft (not saved)",
+        "memory.settings.profileDraftTitle": "Draft copy (never saved automatically)",
         "memory.settings.profileDraftRows": "Based on entries",
+        "memory.status.entitiesSampled": "Per-type counts cover the newest 500 entities only; the total is the whole library",
         "memory.settings.profileDraftTruncated": "many entries — only the first batch was read",
-        "memory.settings.profileDraftApply": "Apply as profile",
+        "memory.settings.profileDraftCopy": "Copy draft",
+        "memory.settings.profileDraftCopied": "Copied",
+        "memory.settings.profileDraftCopyHint": "The User Profile field is yours to write; to keep this text, paste it there and save it yourself.",
+        "memory.settings.profileDraftCopyFailed": "Copy failed: select the draft above and copy it manually.",
         "memory.settings.profileDraftDiscard": "Discard draft",
         "memory.settings.persona": "Persona (beta)",
         "memory.settings.personaHint": "Give this agent a character card: name, personality, reply style. Injected every turn when the toggle below and the \"Persona\" master switch are both on.",
@@ -1199,7 +1207,7 @@ window.__ModuleLoader__.load({
         "memory.features.personaStrictAddressing": "Strict persona addressing",
         "memory.features.personaStrictAddressing.hint": "On: when a session's identity has no persona card — or that card is switched off — no persona is injected, so the default card only covers sessions with no resolvable identity. Turn this on when the host runs a bot that brings its own identity (DS Bot and friends), otherwise two \"you are ...\" claims land in the same turn. Off (default): unresolved identities fall back to the default card, as before.",
         "memory.features.profileExtractEnabled": "Profile draft from memory",
-        "memory.features.profileExtractEnabled.hint": "Adds the \"Draft from memory\" button to Settings → Personalization → profile: reads a batch of active memories, spends one model call, and returns an \"as the assistant sees them\" draft. Nothing is written until you press Apply, so your hand-written profile is never overwritten automatically. Off in the lightweight preset (an explicit choice still wins).",
+        "memory.features.profileExtractEnabled.hint": "Adds the \"Draft from memory\" button to the \"You in the agent's eyes\" card under Settings → Personalization: reads a batch of active memories, spends one model call, and returns an \"as the assistant sees them\" draft. The draft is only shown there as a copy you can copy out — it is never written to the memory store and never overwrites the User Profile you wrote yourself. Off in the lightweight preset (an explicit choice still wins).",
         "memory.settings.rules": "Rules",
         "memory.settings.rulesHint": "Rules the agent must follow — add or remove anytime, effective next turn.",
         "memory.settings.ruleAdd": "Add Rule",
@@ -4012,6 +4020,7 @@ window.__ModuleLoader__.load({
       // 话——把「没启用」「库里没东西」「模型没配合」压成同一句「没有草稿」，用户就只能瞎猜。
       const [profileDraft, setProfileDraft] = react.useState(null);
       const [profileExtracting, setProfileExtracting] = react.useState(false);
+      const [profileDraftCopied, setProfileDraftCopied] = react.useState(false);
       // 保存失败要可见（persona 那条一直有，画像这条以前是静默 catch）。
       const [profileError, setProfileError] = react.useState("");
       const [cmdError, setCmdError] = react.useState("");
@@ -4266,16 +4275,42 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // 采用草稿 = 显式写画像。两件事都要对：把草稿文本直接交给保存（不能 setProfile
-      // 之后再调无参保存——那读的是这次渲染里的旧闭包值，会存回旧文本），以及**只有
-      // 真的存下了才提交界面状态**（否则一次 403 就留下「框里是草稿、库里是旧文、
-      // 草稿已被清掉」的三不像，关掉面板后彻底找不回来）。
-      async function applyProfileDraft() {
+      // 草稿只展示副本（桉桉 2026-11-04 定的口径）。这一段以前叫「采用为画像」，
+      // 点一下就直接 PUT /profile —— 把用户手写的那份覆盖掉，且没有撤销。现在改成
+      // 复制：要落进「用户画像」必须由用户自己粘贴再点保存，手写原文一个字都不会被
+      // 后台改掉。剪贴板不可用（无权限 / 非安全上下文）时不许假装成功——退回
+      // execCommand 那条老路，仍然失败就明确让她手动选中复制。
+      function copyProfileDraft() {
         if (profileDraft?.kind !== "draft") return;
-        const text = profileDraft.text;
-        if (await saveProfile(text)) {
-          setProfile(text);
-          setProfileDraft(null);
+        const text = profileDraft.text || "";
+        const ok = () => { setProfileDraftCopied(true); announce(t("memory.settings.profileDraftCopied")); setTimeout(() => setProfileDraftCopied(false), 1500); };
+        // 剪贴板失败要说话：这个方法唯一的产出就是"文本进了剪贴板"，静默失败
+        // 会让用户以为复制成功、粘贴时却拿到旧内容（草稿是只读 <pre>，选中再
+        // 复制是她能自己走的退路，得明确告诉她走这条）。
+        const failed = () => announce(t("memory.settings.profileDraftCopyFailed"));
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(text).then(ok, () => copyProfileDraftFallback(text) ? ok() : failed());
+        } else {
+          copyProfileDraftFallback(text) ? ok() : failed();
+        }
+      }
+
+      // 没有 Clipboard API（非安全上下文 / 内嵌 webview 未授权）时的退路：
+      // 临时 textarea + execCommand("copy")。失败返回 false，由调用方说话。
+      function copyProfileDraftFallback(text) {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          const done = document.execCommand("copy");
+          document.body.removeChild(ta);
+          return done === true;
+        } catch {
+          return false;
         }
       }
 
@@ -4570,35 +4605,7 @@ window.__ModuleLoader__.load({
             saved && h("span", { className: "mneme-saved" }, t("memory.settings.profileSaved")),
             profileError ? h("span", { className: "mneme-saved", style: { color: "var(--dsw-danger, #d33)" } },
               t("memory.settings.profileSaveFailed") + " (" + profileError + ")") : null
-          ),
-          // 从记忆提取草稿（#497）。两种结局都要显眼：草稿（要用户点「采用」才落库）
-          // 与失败原因（开关没开 / 没内容可提 / 模型没配合）。手写的原文在这之上一直
-          // 可见——采用前它不会被任何东西覆盖。
-          h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 8 } },
-            h("button", {
-              type: "button",
-              className: "mneme-btn",
-              disabled: profileExtracting,
-              onClick: extractProfileDraft
-            }, t("memory.settings.profileExtract")),
-            profileExtracting ? h("span", { className: "mneme-saved" }, t("memory.settings.profileExtracting")) : null
-          ),
-          h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractHint")),
-          profileDraft?.kind === "disabled" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractDisabled")) : null,
-          profileDraft?.kind === "empty" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractEmpty")) : null,
-          profileDraft?.kind === "noroute" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractNoRoute")) : null,
-          profileDraft?.kind === "failed" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractFailed")) : null,
-          profileDraft?.kind === "draft" ? h("div", null,
-            h("div", { className: "mneme-featnumlabel" }, t("memory.settings.profileDraftTitle")),
-            h("div", { className: "mneme-set-desc" },
-              t("memory.settings.profileDraftRows") + ": " + profileDraft.rowsUsed
-              + (profileDraft.truncated ? " · " + t("memory.settings.profileDraftTruncated") : "")),
-            h("pre", { className: "mneme-set-input mneme-set-input--area", style: { whiteSpace: "pre-wrap", minHeight: 0 } }, profileDraft.text),
-            h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 6 } },
-              h("button", { type: "button", className: "mneme-btn", onClick: applyProfileDraft }, t("memory.settings.profileDraftApply")),
-              h("button", { type: "button", className: "mneme-btn", onClick: () => setProfileDraft(null) }, t("memory.settings.profileDraftDiscard"))
-            )
-          ) : null
+          )
         ),
         // 人格卡（beta，v1.2 多卡）— who the agent is：多张角色卡按会话身份注入。
         // 卡内开关只是该卡 enabled 半边；总闸 personaEnabled 在功能开关组，双闸同真。
@@ -4730,7 +4737,38 @@ window.__ModuleLoader__.load({
               className: "mneme-btn",
               onClick: () => loadPreview(personaEditing)
             }, t("memory.settings.personaViewRefresh"))
-          )
+          ),
+          // 从记忆提取草稿（#497）。**放在这张卡上而不是「用户画像」卡**：画像那一栏是
+          // 用户自己手填的地方；这一段是从记忆里反推出来的「Agent 眼中的你」，属于可
+          // 沉淀的那一侧。它只出**副本**——不写 user_settings，也不碰手写画像（桉桉
+          // 2026-11-04 定的口径：只展示副本）。要改成手写画像只能自己复制再粘过去。
+          h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 12 } },
+            h("button", {
+              type: "button",
+              className: "mneme-btn",
+              disabled: profileExtracting,
+              onClick: extractProfileDraft
+            }, t("memory.settings.profileExtract")),
+            profileExtracting ? h("span", { className: "mneme-saved" }, t("memory.settings.profileExtracting")) : null
+          ),
+          h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractHint")),
+          profileDraft?.kind === "disabled" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractDisabled")) : null,
+          profileDraft?.kind === "empty" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractEmpty")) : null,
+          profileDraft?.kind === "noroute" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractNoRoute")) : null,
+          profileDraft?.kind === "failed" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractFailed")) : null,
+          profileDraft?.kind === "draft" ? h("div", null,
+            h("div", { className: "mneme-featnumlabel" }, t("memory.settings.profileDraftTitle")),
+            h("div", { className: "mneme-set-desc" },
+              t("memory.settings.profileDraftRows") + ": " + profileDraft.rowsUsed
+              + (profileDraft.truncated ? " · " + t("memory.settings.profileDraftTruncated") : "")),
+            h("pre", { className: "mneme-set-input mneme-set-input--area", style: { whiteSpace: "pre-wrap", minHeight: 0 } }, profileDraft.text),
+            h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 6 } },
+              h("button", { type: "button", className: "mneme-btn", onClick: copyProfileDraft },
+                profileDraftCopied ? t("memory.settings.profileDraftCopied") : t("memory.settings.profileDraftCopy")),
+              h("button", { type: "button", className: "mneme-btn", onClick: () => setProfileDraft(null) }, t("memory.settings.profileDraftDiscard")),
+              h("span", { className: "mneme-set-desc" }, t("memory.settings.profileDraftCopyHint"))
+            )
+          ) : null
         ),
         // 规则 — numbered rows, hover reveals the delete affordance
         h("section", { className: "mneme-set-card" },
@@ -5207,7 +5245,11 @@ window.__ModuleLoader__.load({
             const byType = order.concat("other")
               .filter((k) => counts.has(k))
               .map((k) => [k, counts.get(k)]);
-            setState({ loading: false, error: false, total: list.length, byType });
+            // 大数字用后端回的全库 total；分类型小行仍来自本次切片（最近 500 个），
+            // 两个口径不一样，切片写进 foot 里说清楚——以前 total 取 list.length，
+            // 一万六千个实体永远显示成 500，看着像"实体太少"。
+            const realTotal = typeof j.total === "number" && j.total >= list.length ? j.total : list.length;
+            setState({ loading: false, error: false, total: realTotal, sampled: list.length < realTotal, byType });
           })
           .catch(() => { if (!cancelled) setState({ loading: false, error: true, total: 0, byType: [] }); });
         return () => { cancelled = true; };
@@ -5219,7 +5261,8 @@ window.__ModuleLoader__.load({
         loading: state.loading,
         error: state.error,
         num: state.total.toLocaleString(),
-        rows
+        rows,
+        foot: state.sampled === true ? t("memory.status.entitiesSampled") : null
       });
     }
 
