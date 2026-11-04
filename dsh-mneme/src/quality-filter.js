@@ -15,7 +15,7 @@
 //                       memory system itself, not the user's world)    −45
 //   self_referential    title/content mentions its own type label      −15
 //   short_content       content shorter than minContentLength          −80
-//   repetitive          dedup ratio (unique chars / total) < 0.3       −50
+//   repetitive          trigram repetition ratio > 0.7                 −50
 //   duplicate           bigram similarity to a recent memory > 0.85    −80
 //
 // The meta signal alone lands a well-formed memory in the degraded band
@@ -56,11 +56,33 @@ export function textSimilarity(a, b) {
   return inter / Math.min(A.size, B.size);
 }
 
-/** Fraction of characters that are unique (dedup ratio in [0,1]). */
-export function dedupRatio(text) {
-  const t = String(text);
-  if (!t.length) return 0;
-  return new Set(t).size / t.length;
+// Repetition threshold. Calibrated 2026-11-04 against a real 12,827-row library:
+// the highest trigram ratio among genuine memories was 0.591 (a note where the
+// same install paths repeat), so 0.7 keeps every real memory clear while still
+// catching degenerate fillers (a single char x20 = 0.94, a sentence x5 = 0.79).
+// Do not lower this without re-measuring: 0.6 leaves only 0.009 of headroom.
+export const REPETITION_THRESHOLD = 0.7;
+
+/**
+ * Trigram repetition ratio in [0,1]: the share of 3-char windows that are not
+ * the first occurrence of their own trigram. 0 = every trigram distinct.
+ *
+ * Why this instead of unique-chars / total (the measure shipped in v0.7.12):
+ * that one is a function of LENGTH, not of repetition. Chinese prose draws from
+ * a few hundred common characters, so uniqueChars/total decays toward 0 as the
+ * text grows — measured on a real library it fell below the old 0.3 gate for
+ * 94% of 800-2000 char memories and 100% of those over 2000 chars. Long memories
+ * were being tagged "repetitive" for being long. Trigram repetition is
+ * length-stable: concatenating distinct real memories up to 30,000 chars only
+ * reaches 0.428, while genuinely duplicated text passes 0.6 by the second copy.
+ */
+export function repetitionRatio(text) {
+  const t = String(text).replace(/\s+/g, "");
+  if (t.length < 3) return 0;
+  const total = t.length - 2;
+  const seen = new Set();
+  for (let i = 0; i < total; i++) seen.add(t.slice(i, i + 3));
+  return 1 - seen.size / total;
 }
 
 /**
@@ -103,7 +125,7 @@ export function evaluateMemoryQuality(memory, options = {}) {
     reasons.push(`content shorter than ${minContentLength} chars`);
   }
 
-  if (trimmed.length > 0 && dedupRatio(trimmed) < 0.3) {
+  if (trimmed.length > 0 && repetitionRatio(trimmed) > REPETITION_THRESHOLD) {
     score -= 50;
     tags.push("repetitive");
     reasons.push("repetitive content");
