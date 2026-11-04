@@ -7,6 +7,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # 冷却窗口：不追刚发布的版本，给「发布即翻车 / 供应链投毒」留出暴露期
+    # （zizmor dependabot-cooldown 审计的要求；7 天与周检节奏正好对齐）
+    cooldown:
+      default-days: 7
 
 # npm 生态刻意不纳入：dsh-mneme 的 devDependencies 里 @deepseek-ai/dsh-* 四件是
 # 宿主线的刻意钉子（升级节奏跟宿主发版走，老线兼容由 CI 的 test-host-legacy 腿
