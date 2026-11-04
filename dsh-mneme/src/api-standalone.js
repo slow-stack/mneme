@@ -18,6 +18,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { homedir } from "node:os";
 import { TYPES } from "./store.js";
 import { bootstrapFromDirectory } from "./bootstrap.js";
+import { parseBootstrapJson, readBootstrapDir, bootstrapReply } from "./bootstrap-http.js";
 import { PACKAGE_VERSION } from "./version-check.js";
 import { parseReclaimJson, readReclaimFields, reclaimReply, RECLAIM_UNAVAILABLE } from "./reclaim-http.js";
 import { parseShareBody, shareReply, parseReceiveBody, receiveReply, parseUndoBody, undoReply } from "./share-http.js";
@@ -763,34 +764,29 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
       // --- POST /bootstrap: cold-start memories from repo files (#220) -------
       // 显式收 dir（插件没有工作区根目录概念，不猜路径）；确定性解析零 LLM；
       // 幂等骑 saveWithDedupe 的 (type, title, scope) 去重 + _overwrite 刷新。
+      //
+      // 解析、校验、答复形状全走 bootstrap-http.js：#386 第 6 条给宿主内路由补了
+      // 第二张脸，按 #411 的纪律，两张皮只许剩鉴权与路径不同。这里刻意**不**再
+      // 自己 JSON.parse 一遍——真要写第二份，test/reclaim-http.test.js 那类静态锁
+      // 会转红，而漂移在两边都只表现为「某个错误码不一样了」。
       if (req.method === "POST" && pathname === "/bootstrap") {
         void readBody(req, res).then((text) => {
           if (text === null) return;
-          let body;
-          try {
-            body = JSON.parse(text || "{}");
-          } catch {
-            sendJson(res, 400, { error: "invalid-json" });
+          const parsed = parseBootstrapJson(text);
+          if (!parsed.ok) {
+            sendJson(res, 400, { error: parsed.error });
             return;
           }
-          if (body === null || typeof body !== "object" || Array.isArray(body)) {
-            sendJson(res, 400, { error: "invalid-body" });
+          const dirResult = readBootstrapDir(parsed.body);
+          if (!dirResult.ok) {
+            sendJson(res, 400, { error: dirResult.error });
             return;
           }
-          if (typeof body.dir !== "string" || !body.dir.trim()) {
-            sendJson(res, 400, { error: "missing-dir" });
-            return;
-          }
-          bootstrapFromDirectory({ service, dir: body.dir, logger })
-            .then((summary) => sendJson(res, 200, summary))
-            .catch((error) => {
-              if (error?.code) {
-                sendJson(res, 400, { error: error.code });
-                return;
-              }
-              logger?.warn?.(`[dsh-mneme] standalone API bootstrap failed: ${String(error)}`);
-              sendJson(res, 500, { error: "internal" });
-            });
+          bootstrapReply({
+            bootstrapper: ({ dir }) => bootstrapFromDirectory({ service, dir, logger }),
+            dir: dirResult.dir,
+            warn: (msg) => logger?.warn?.(msg)
+          }).then(({ status, body }) => sendJson(res, status, body));
         });
         return;
       }

@@ -535,6 +535,15 @@ window.__ModuleLoader__.load({
         "memory.settings.mcp.snippet": "{ \"mcpServers\": { \"dsh-mneme\": { \"command\": \"dsh-mneme-mcp\", \"env\": { \"DSH_MNEME_TOKEN\": \"<外部访问 API 的 token>\" } } } }",
         "memory.settings.mcp.copy": "复制",
         "memory.settings.mcp.copied": "已复制",
+        "memory.settings.configKeys.title": "配置键覆盖面",
+        "memory.settings.configKeys.desc": "配置文件里的键，面板能改多少、哪些只能手改。只列键名，不显示任何值。",
+        "memory.settings.configKeys.summary": "schema 里共 {schema} 个键：面板能改 {panel} 个，{file} 个只能改配置文件，另有 {undefaulted} 个登记了却没有默认值。",
+        "memory.settings.configKeys.fileOnlyHead": "只能改配置文件（{n} 个）",
+        "memory.settings.configKeys.undefaultedHead": "面板登记了、但运行时没有默认值（{n} 个）",
+        "memory.settings.configKeys.undefaultedHint": "这些键在白名单里，所以面板上有输入框；但 schema 没给默认值，留空时「当前生效值」里就没有它。填一个值才会生效。",
+        "memory.settings.configKeys.show": "展开清单",
+        "memory.settings.configKeys.hide": "收起清单",
+        "memory.settings.configKeys.loadFailed": "没能取到这份清单（接口暂时不可用）——这不等于「没有只能改文件的键」。",
         "memory.settings.mcp.hint": "数据面走「外部访问 API」（默认 127.0.0.1:8790，Bearer），token 就是上面那张；可用 DSH_MNEME_URL / DSH_MNEME_TOKEN 环境变量或 ~/.dsh-mneme/cli.json 覆盖。command 需在 PATH 上（随 @modusensus/dsh-mneme 安装自带）。",
         "memory.settings.extapi.savedHint": "已保存，重启 DSH 后生效",
         "memory.settings.extapi.invalidPort": "端口需为 1-65535 的数字",
@@ -814,6 +823,19 @@ window.__ModuleLoader__.load({
         "memory.explorer.imported": "已合并 {n} 条编辑",
         "memory.explorer.importFailed": "导入失败",
         "memory.explorer.importNoFile": "请先选择文件",
+        "memory.explorer.bootstrap": "从目录引导…",
+        "memory.explorer.bootstrapTitle": "从目录引导",
+        "memory.explorer.bootstrapHint": "读这个目录里的确定性产物（脚本命令、README、贡献规范、CI 工作流、顶层结构、最近提交），一条规则一条记忆。不调用模型，重复执行只会合并更新、不会重复入库。",
+        "memory.explorer.bootstrapDir": "目录路径",
+        "memory.explorer.bootstrapConfirm": "开始引导",
+        "memory.explorer.bootstraping": "引导中…",
+        "memory.explorer.bootstrapDone": "新建 {n} 条、并入 {m} 条",
+        "memory.explorer.bootstrapNoDir": "请先填写目录路径",
+        "memory.explorer.bootstrapFailed": "引导失败",
+        "memory.explorer.bootstrapErr.missing-dir": "没给目录路径",
+        "memory.explorer.bootstrapErr.dir-not-found": "这个路径不存在",
+        "memory.explorer.bootstrapErr.not-a-directory": "这个路径不是目录",
+        "memory.explorer.bootstrapErr.bootstrap-unavailable": "当前装配下这条能力没接线",
         "memory.explorer.sharePack": "分享记忆包…",
         "memory.explorer.shareTitle": "分享记忆包",
         "memory.explorer.shareHint": "把本机活跃记忆打成一个可外发的包：密钥/PII 整条不发，本机路径抹成 ~，归档与遗忘的不进。",
@@ -1338,6 +1360,15 @@ window.__ModuleLoader__.load({
         "memory.settings.mcp.snippet": "{ \"mcpServers\": { \"dsh-mneme\": { \"command\": \"dsh-mneme-mcp\", \"env\": { \"DSH_MNEME_TOKEN\": \"<token from External API above>\" } } } }",
         "memory.settings.mcp.copy": "Copy",
         "memory.settings.mcp.copied": "Copied",
+        "memory.settings.configKeys.title": "Config key coverage",
+        "memory.settings.configKeys.desc": "How many config-file keys the panel can change, and which ones are file-only. Key names only — no values are shown.",
+        "memory.settings.configKeys.summary": "The schema has {schema} keys: the panel can change {panel}, {file} are file-only, and {undefaulted} are registered without a runtime default.",
+        "memory.settings.configKeys.fileOnlyHead": "File-only ({n})",
+        "memory.settings.configKeys.undefaultedHead": "Registered for the panel but has no runtime default ({n})",
+        "memory.settings.configKeys.undefaultedHint": "These keys are on the whitelist, so the panel shows an input for them, but the schema gives no default — while unset they are absent from the effective snapshot. Set a value for them to take effect.",
+        "memory.settings.configKeys.show": "Show the list",
+        "memory.settings.configKeys.hide": "Hide the list",
+        "memory.settings.configKeys.loadFailed": "Couldn't load this list (endpoint unavailable) — that is not the same as \"no file-only keys\".",
         "memory.settings.mcp.hint": "Data plane is the external API (default 127.0.0.1:8790, Bearer) — the token is the one above; override with DSH_MNEME_URL / DSH_MNEME_TOKEN env vars or ~/.dsh-mneme/cli.json. The command must be on PATH (installed with @modusensus/dsh-mneme).",
         "memory.settings.extapi.savedHint": "Saved. Takes effect after restarting DSH",
         "memory.settings.extapi.invalidPort": "Port must be a number between 1 and 65535",
@@ -1600,6 +1631,19 @@ window.__ModuleLoader__.load({
         "memory.explorer.imported": "Merged {n} edits",
         "memory.explorer.importFailed": "Import failed",
         "memory.explorer.importNoFile": "Choose a file first",
+        "memory.explorer.bootstrap": "Bootstrap from a directory…",
+        "memory.explorer.bootstrapTitle": "Bootstrap from a directory",
+        "memory.explorer.bootstrapHint": "Reads the deterministic artifacts there (script commands, README, contributing rules, CI workflows, top-level layout, recent commits) — one rule, one memory. No model call; running it again merges instead of duplicating.",
+        "memory.explorer.bootstrapDir": "Directory path",
+        "memory.explorer.bootstrapConfirm": "Bootstrap",
+        "memory.explorer.bootstraping": "Bootstrapping…",
+        "memory.explorer.bootstrapDone": "Created {n}, merged {m}",
+        "memory.explorer.bootstrapNoDir": "Enter a directory path first",
+        "memory.explorer.bootstrapFailed": "Bootstrap failed",
+        "memory.explorer.bootstrapErr.missing-dir": "No directory path was given",
+        "memory.explorer.bootstrapErr.dir-not-found": "That path does not exist",
+        "memory.explorer.bootstrapErr.not-a-directory": "That path is not a directory",
+        "memory.explorer.bootstrapErr.bootstrap-unavailable": "This capability is not wired in the current assembly",
         "memory.explorer.sharePack": "Share memories…",
         "memory.explorer.shareTitle": "Memory share pack",
         "memory.explorer.shareHint": "Pack your active memories for someone else: rows holding secrets are dropped whole, home paths become ~, archived and forgotten rows stay out.",
@@ -2506,6 +2550,11 @@ window.__ModuleLoader__.load({
       ".mneme-set-tocchip:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
       ".mneme-set-token{font-family:monospace;font-size:12px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);word-break:break-all;user-select:all}",
       ".mneme-set-hint{font-size:12px;color:var(--mneme-fg-dim)}",
+      // 配置键覆盖清单（#386 第 7 条）：一行一排 chip，长键名换行不截断——
+      // 这张表的用处就是让「memoryQualityFilter.archiveThreshold」这样的名字能被
+      // 完整抄进配置文件，省略号会直接毁掉它的用途。
+      ".mneme-keylist{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}",
+      ".mneme-keychip{font-family:monospace;font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base,transparent);color:var(--mneme-fg-dim);word-break:break-all;user-select:all}",
       // --- 重要性编辑行：与查看态同一份 Lucide 星形（此前是文本星号下拉，角更尖锐且与其他星不统一） ---
       ".mneme-staredit{display:inline-flex;align-items:center;gap:1px;justify-self:start}",
       ".mneme-starbtn{border:none;background:none;cursor:pointer;padding:2px 1px;display:inline-flex;color:var(--dsw-alias-label-secondary);transition:transform .12s}",
@@ -4922,6 +4971,10 @@ window.__ModuleLoader__.load({
           ),
           apiTokenSaved && h("div", { style: { marginTop: 8 } }, h("span", { className: "mneme-saved" }, t("memory.settings.apiTokenSaved")))
         ),
+        // 配置键覆盖面（issue #386 第 7 条）：只读核对表，放在 connect 组尾——
+        // 它与上面的 API Token / 独立服务同属「我在这台机器上能调什么」那一类，
+        // 而不是功能开关（那些在 personal/core/enhance 各组里改）。
+        h(ConfigKeysCard, { t }),
         // —— 帮助：支持与鼓励（图标行 + 检测更新 + star，兼当「关于」收尾） ——
         groupHead("help"),
         // 反馈三入口：新建 issue 预填（版本+平台）/ 邮件 / 浏览已知问题。
@@ -4997,6 +5050,16 @@ window.__ModuleLoader__.load({
     // 上下文裁不住它；运行时拒绝 react-dom 时就地渲染（position:fixed 仍然成立）。
     function MemoryOverlay({ t }) {
       const [open, setOpen] = useOverlayOpen();
+      // 库内是否有请求在飞（目前只有「从目录引导」会置位）。Esc / 背板 / ✕ 三条
+      // 关闭路径都要看它：关掉弹层会把 MemoryExplorer 连同引导弹层一起卸载，
+      // 而 POST 还在飞，回来那句「新建几条、并入几条」就再没有地方显示——
+      // 库写进去了，用户却以为没成功（评审 #4453225573）。
+      const [explorerBusy, setExplorerBusy] = useState(false);
+      // 用 ref 读而不是进 effect 依赖：那个 effect 在 [open] 变化时会
+      // closeBtnRef.current.focus()，若把 explorerBusy 也列进依赖，每次请求
+      // 起落都会重跑一次并抢焦点——用户正打字输目录时会被踢出输入框。
+      const explorerBusyRef = useRef(false);
+      useEffect(() => { explorerBusyRef.current = explorerBusy; }, [explorerBusy]);
       // #178：弹层焦点管理——打开时把焦点移入面板（关闭按钮为入口），
       // Tab 循环圈在面板内（Tab 从最后一个元素出去回到关闭按钮），
       // Esc/关闭时把焦点还给触发元素（侧边栏入口）。
@@ -5005,7 +5068,8 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (!open) return undefined;
         const onKey = (e) => {
-          if (e.key === "Escape") { setOpen(false); return; }
+          // 库内请求在飞时不响应 Esc：见上面 explorerBusy 的注释。
+          if (e.key === "Escape") { if (!explorerBusyRef.current) setOpen(false); return; }
           if (e.key !== "Tab" || !panelRef.current) return;
           const focusables = panelRef.current.querySelectorAll('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])');
           if (focusables.length === 0) return;
@@ -5033,7 +5097,7 @@ window.__ModuleLoader__.load({
       const tree = h(react.Fragment, null,
         h("div", {
           className: "mneme-backdrop",
-          onClick: () => setOpen(false),
+          onClick: () => { if (!explorerBusyRef.current) setOpen(false); },
           "aria-hidden": "true"
         }),
         h("div", { className: "mneme-overlay", role: "region", "aria-label": t("memory.view.label"), ref: panelRef },
@@ -5046,12 +5110,15 @@ window.__ModuleLoader__.load({
               type: "button",
               className: "mneme-footbtn",
               ref: closeBtnRef,
+              // 忙碌时不禁用、只标 aria-disabled：真的 disabled 会把焦点从按钮上
+              // 拿走，而 #178 的 Tab 环靠 closeBtnRef 当入口，焦点落空就出不去。
+              "aria-disabled": String(explorerBusy),
               "aria-label": t("memory.overlay.close"),
               title: t("memory.overlay.close"),
-              onClick: () => setOpen(false)
+              onClick: () => { if (!explorerBusyRef.current) setOpen(false); }
             }, "✕")
           ),
-          h("div", { className: "mneme-overlaybody" }, h(MemoryExplorer, { t }))
+          h("div", { className: "mneme-overlaybody" }, h(MemoryExplorer, { t, onBusyChange: setExplorerBusy }))
         )
       );
       if (reactDom && typeof document !== "undefined") return reactDom.createPortal(tree, document.body);
@@ -5611,6 +5678,76 @@ window.__ModuleLoader__.load({
         rows,
         foot: t("memory.status.mirror.foot")
       });
+    }
+
+    // --- 配置键覆盖面（issue #386 第 7 条）---
+    // 面板能改的键（settings.js 白名单）与 schema 里真有的键是两张表，从没被摆在一起
+    // 对过。这条卡把它们交/差出来，回答一个具体问题：**「我在配置文件里看到的这个键，
+    // 为什么在面板上找不到」**——答案要么是「它只能改文件」（fileOnly），要么是「它
+    // 登记了却没默认值」（undefaulted，见 config-keys.js 对 dreamProvider 的说明）。
+    //
+    // 只显示键名，一个值都不显示：apiToken 的名字出现在「仅配置文件」里正是这条 issue
+    // 想让人看见的（否则用户不知道它存在），值则一律不出服务端。
+    //
+    // 默认收起：这是一张核对表，不是日常要看的东西。做只读清单而不是补一批输入框，
+    // 也是维护者在 issue 里给的接手口径（「做成只读清单就能先关掉大部分价值」）。
+    function ConfigKeysCard({ t }) {
+      const [state, setState] = useState({ loading: true, data: null, failed: false });
+      const [open, setOpen] = useState(false);
+      useEffect(() => {
+        let cancelled = false;
+        apiFetch("/api/dsh-mneme/config-keys")
+          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+          .then((j) => { if (!cancelled) setState({ loading: false, data: j, failed: false }); })
+          .catch(() => { if (!cancelled) setState({ loading: false, data: null, failed: true }); });
+        return () => { cancelled = true; };
+      }, []);
+      const d = state.data;
+      const counts = (d && d.counts) || null;
+      const fileOnly = (d && d.fileOnly) || [];
+      const undefaulted = (d && d.undefaulted) || [];
+      const title = t("memory.settings.configKeys.title");
+      const body = state.loading
+        ? h("div", { className: "mneme-set-hint" }, "…")
+        // 取数失败与「真的没有只读键」必须分开说：把失败画成 0 条，人会以为清单就是空的。
+        : state.failed || !counts
+          ? h("div", { className: "mneme-set-hint", style: { color: "var(--mneme-danger)" } },
+            t("memory.settings.configKeys.loadFailed"))
+          : h(react.Fragment, null,
+            h("div", { className: "mneme-set-hint", style: { marginTop: 4 } },
+              t("memory.settings.configKeys.summary")
+                .replace("{schema}", String(counts.schemaLeaf))
+                .replace("{panel}", String(counts.panelEditable))
+                .replace("{file}", String(counts.fileOnly))
+                // 三类的数字必须都来自服务端算出来的桶：写成 schema − panel 会与展开后
+                // 「只能改文件」那段对不上（评审 #4452245244），因为 schema 之外还多出
+                // 白名单里登记了却没默认值的那几个键。
+                .replace("{undefaulted}", String(counts.undefaulted))),
+            open && h("div", { style: { marginTop: 10 } },
+              // 两段各自的标题也带上条数，收起时只看 summary 就够判断要不要展开。
+              h("div", { className: "mneme-featsubhint", style: { marginTop: 2 } },
+                t("memory.settings.configKeys.fileOnlyHead")
+                  .replace("{n}", String(fileOnly.length))),
+              h("div", { className: "mneme-keylist" },
+                fileOnly.map((k) => h("code", { key: k, className: "mneme-keychip" }, k))),
+              undefaulted.length > 0 && h(react.Fragment, null,
+                h("div", { className: "mneme-featsubhint", style: { marginTop: 10 } },
+                  t("memory.settings.configKeys.undefaultedHead")
+                    .replace("{n}", String(undefaulted.length))),
+                h("div", { className: "mneme-keylist" },
+                  undefaulted.map((k) => h("code", { key: k, className: "mneme-keychip" }, k))),
+                h("div", { className: "mneme-featsubhint", style: { marginTop: 4 } },
+                  t("memory.settings.configKeys.undefaultedHint"))
+              )
+            ),
+            h("button", { type: "button", className: "mneme-btn", style: { marginTop: 10 }, onClick: () => setOpen(!open) },
+              open ? t("memory.settings.configKeys.hide") : t("memory.settings.configKeys.show"))
+          );
+      return h("section", { className: "mneme-set-card" },
+        h("div", { className: "mneme-set-title" }, title),
+        h("div", { className: "mneme-set-desc" }, t("memory.settings.configKeys.desc")),
+        body
+      );
     }
 
     // --- Token 去向三屏（2026-10 可观测性改造）---
@@ -7011,6 +7148,98 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // --- 从目录引导弹层（issue #386 第 6 条）---
+    // 后端能力早在 #220 就实现了（src/bootstrap.js：六类确定性产物，零 LLM，吃
+    // saveWithDedupe 的 (type,title,scope) 去重），但只有 Bearer 数据面一条入口，
+    // 面板够不着——用户照文档找过来，发现产品界面里没有这个东西。
+    //
+    // 与 ImportDialog 的两处刻意的不同：
+    // 1. 成功路径**不**重复 setBusy(false)。这里没有「同键再提交一次会追加正文」的
+    //    风险（bootstrap 是 _overwrite 刷新），但 900ms 的提示阅读时间同样成立；
+    //    更要紧的是这一段里组件仍挂着，按钮若重新可点，人会以为「没反应」再点一次。
+    //    定时器句柄存进 ref，卸载时清掉——否则第二次提交的结果会写进已卸载的组件
+    //    （#386 第 6 条评审）。
+    // 2. 错误按服务端的码分开说。「目录不存在」「不是目录」「能力没接线」三种情况下
+    //    用户该做的事完全不同，统一成一句「引导失败」等于让他自己猜。
+    function BootstrapDialog({ t, onClose, onImported, onBusyChange }) {
+      const [dir, setDir] = useState("");
+      const [busy, setBusy] = useState(false);
+      const [msg, setMsg] = useState("");
+      const [err, setErr] = useState("");
+      const timerRef = useRef(null);
+      useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+      // 忙碌状态要让外面也知道：菜单那个「⋯」在请求进行中若把弹层卸掉，等于绕过
+      // 了下面那两个 disabled 的按钮，请求还在飞、界面已经没了（评审 #4452245292）。
+      useEffect(() => { if (onBusyChange) onBusyChange(busy); }, [busy, onBusyChange]);
+      useEffect(() => () => { if (onBusyChange) onBusyChange(false); }, [onBusyChange]);
+      const submit = () => {
+        if (busy) return;
+        const target = String(dir || "").trim();
+        if (!target) { setErr(t("memory.explorer.bootstrapNoDir")); return; }
+        setBusy(true);
+        // 同步告诉父组件，别等下面那个 effect：effect 要等这次渲染提交后才跑，
+        // 中间那一拍父组件的 bootstrapBusy 还是 false，此时点「⋯」仍会把弹层卸掉，
+        // 请求的成功或失败就再没有地方显示（评审 #4452539705）。
+        if (onBusyChange) onBusyChange(true);
+        setErr("");
+        apiFetch("/api/dsh-mneme/bootstrap", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // 传原串（不 trim）：前后空格在多数文件系统里是合法路径的一部分，
+          // 服务端也只是 trim 判空、回传原值。
+          body: JSON.stringify({ dir })
+        })
+          .then((res) => res.json().then((d) => ({ ok: res.ok, d })))
+          .then(({ ok, d }) => {
+            if (!ok) {
+              const code = d && d.error;
+              const key = "memory.explorer.bootstrapErr." + String(code || "");
+              const localized = t(key);
+              // t() 对未知键原样返回键名——那就退回通用文案，别把键名甩给用户。
+              setErr(localized === key ? t("memory.explorer.bootstrapFailed") : localized);
+              setBusy(false);
+              return;
+            }
+            setMsg(t("memory.explorer.bootstrapDone")
+              .replace("{n}", String((d && d.created) ?? 0))
+              .replace("{m}", String((d && d.merged) ?? 0)));
+            // onImported 同步调，只把 onClose 留在定时器里：切视图会卸载本组件并清掉
+            // timerRef，若刷新也排在那 900ms 之后，这一步就静默丢了——库已经写进去了，
+            // 列表却还是旧的（评审 #4452539711）。
+            onImported();
+            timerRef.current = setTimeout(() => onClose(), 900);
+          })
+          .catch(() => { setBusy(false); setErr(t("memory.explorer.bootstrapFailed")); });
+      };
+      return h("div", { className: "mneme-impdialog", role: "region", "aria-label": t("memory.explorer.bootstrapTitle") },
+        h("div", { className: "mneme-set-title" }, t("memory.explorer.bootstrapTitle")),
+        h("div", { className: "mneme-featsubhint", style: { marginTop: 4 } }, t("memory.explorer.bootstrapHint")),
+        h("div", { className: "mneme-improw" },
+          h("span", { className: "mneme-featnumlabel" }, t("memory.explorer.bootstrapDir")),
+          // 用文本框而不是 <input webkitdirectory>：后者给的是「选了哪个目录里的
+          // 一批文件」，拿不到目录本身，而 bootstrap 要的正是那个目录。
+          h("input", {
+            className: "mneme-set-input",
+            style: { marginBottom: 0, flex: 1, minWidth: 0 },
+            type: "text",
+            value: dir,
+            placeholder: "/path/to/project",
+            // 请求进行中锁住输入框：否则用户改成 B，回来的提示就贴在 B 旁边，
+            // 而它说的是 A 的结果（评审 #4452245279）。
+            disabled: busy,
+            onChange: (e) => { setDir(e.target.value); setErr(""); }
+          })
+        ),
+        err && h("div", { className: "mneme-featsubhint", style: { color: "var(--mneme-danger)", marginTop: 8 } }, err),
+        msg && h("div", { className: "mneme-saved", style: { marginTop: 8 } }, msg),
+        h("div", { className: "mneme-improw", style: { justifyContent: "flex-end" } },
+          h("button", { type: "button", className: "mneme-btn", disabled: busy, onClick: onClose }, t("memory.explorer.importCancel")),
+          h("button", { type: "button", className: "mneme-btn", disabled: busy, onClick: submit },
+            busy ? t("memory.explorer.bootstraping") : t("memory.explorer.bootstrapConfirm"))
+        )
+      );
+    }
+
     // --- 分享包弹层 ---
     // 这一面的支点只有一句：**看见 report 之前不给下载**。服务端一次 POST 就把包和报告
     // 一起交回，所以这一格拦不住靠协议、只能靠界面自己：CLI 那侧没人拦得住，面板至少要让
@@ -7454,7 +7683,7 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function MemoryExplorer({ t }) {
+    function MemoryExplorer({ t, onBusyChange }) {
       const [view, setView] = useState("memory"); // memory | entity | status | settings
       const [items, setItems] = useState([]); // loaded browse pages, chrono desc
       const [total, setTotal] = useState(0); // server count for the current type filter
@@ -7490,6 +7719,21 @@ window.__ModuleLoader__.load({
       const [pendingIds, setPendingIds] = useState(() => new Set());
       const [menuOpen, setMenuOpen] = useState(false);
       const [importOpen, setImportOpen] = useState(false);
+      const [bootstrapOpen, setBootstrapOpen] = useState(false);
+      // 引导请求是否在飞：「⋯」按钮在忙碌时必须不关弹层（评审 #4452245292）。
+      const [bootstrapBusy, setBootstrapBusy] = useState(false);
+      // 一路直接抬到外层 MemoryOverlay：它要在 Esc / 背板 / ✕ 三条关闭路径上一起挡
+      // （评审 #4453225573）。刻意**不**用 useEffect 转报——那要等渲染提交后才跑，
+      // 中间那一拍外层守卫读到的是 false，正是 #4452539705 那条的老毛病。
+      // 走 BootstrapDialog 的回调，它的 submit 里是同步调的。
+      // better-sidebar 那个 tab 注册时不传 onBusyChange，所以这里必须容忍 undefined。
+      // 身份必须稳定：BootstrapDialog 的卸载 effect 依赖 [onBusyChange]，父组件每
+      // 重渲染一次就会先跑 cleanup 调 onBusyChange(false)——而父组件恰好是在
+      // setBootstrapBusy(true) 之后重渲染的，那一抹等于把刚置上的忙碌标记当场抹掉。
+      const reportBootstrapBusy = useCallback((v) => {
+        setBootstrapBusy(v);
+        if (onBusyChange) onBusyChange(v);
+      }, [onBusyChange]);
       const [createOpen, setCreateOpen] = useState(false);
       const [shareOpen, setShareOpen] = useState(false);
       const [receiveOpen, setReceiveOpen] = useState(false);
@@ -7593,7 +7837,10 @@ window.__ModuleLoader__.load({
             .catch(() => { if (!cancelled) setRemoteItems([]); });
         }, 250);
         return () => { cancelled = true; clearTimeout(timer); };
-      }, [query, semantic, searchTopK]);
+        // reloadKey 必须进依赖：导入/引导/接收成功时只递增它，而搜索态下 items 走
+        // remoteItems 那条路——少了这一格，搜索词不变就永远看不到刚进来的新行
+        // （评审 #4452245305）。
+      }, [query, semantic, searchTopK, reloadKey]);
 
       // Live view: while the memory tab is open, quietly re-fetch page 1
       // every 30s (and on every activation) so fresh memories surface
@@ -7785,7 +8032,18 @@ window.__ModuleLoader__.load({
         setSelectedId(target.id);
       };
 
+      // 引导请求在飞时不许离开记忆视图（评审 #4453639221）：`.mneme-xtools` 整块挂在
+      // `view === "memory"` 之下，BootstrapDialog 就在里面。任何离开这个视图的动作都会
+      // 连它一起卸载——请求还在飞、界面已经没了，那句「新建几条、并入几条」就再没有
+      // 地方显示。这里只拦「离开」的路径：jumpToMemory / browseWithFilter 是回到
+      // memory，不拦。
+      const leaveMemory = (key) => {
+        if (bootstrapBusy) return;
+        setView(key);
+      };
+
       const openGraphFor = (name) => {
+        if (bootstrapBusy) return;
         setGraphFocus(name || "");
         setView("entity");
       };
@@ -7814,9 +8072,14 @@ window.__ModuleLoader__.load({
               h("button", {
                 key: s.key,
                 type: "button",
+                // 引导请求在飞时四个视图标签一律禁用（评审 #4453639221）：离开 memory
+                // 会把整个 `.mneme-xtools` 连同里面的 BootstrapDialog 卸掉。onClick 仍
+                // 走 leaveMemory 而不是 setView——disabled 只是第一道，第二道在函数里，
+                // 免得将来有人给标签换一种可点的实现就绕过去了。
+                disabled: bootstrapBusy,
                 className: view === s.key ? "mneme-vtab mneme-active" : "mneme-vtab",
                 "aria-pressed": String(view === s.key),
-                onClick: () => setView(s.key)
+                onClick: () => leaveMemory(s.key)
               },
                 h(Icon, { name: s.key === "memory" ? "database" : s.key === "entity" ? "waypoints" : s.key === "status" ? "activity" : "settings", size: 14, className: "mneme-vtabico" }),
                 s.label
@@ -7843,25 +8106,52 @@ window.__ModuleLoader__.load({
                 "aria-label": t("memory.explorer.more"),
                 "aria-expanded": String(menuOpen),
                 title: t("memory.explorer.more"),
-                onClick: () => { setMenuOpen(!menuOpen); setImportOpen(false); setCreateOpen(false); setShareOpen(false); setReceiveOpen(false); }
+                // 引导请求在飞时整个「⋯」都不给开：菜单与引导弹层共用同一个
+                // 绝对定位锚点、同一层 z-index，弹层排在菜单之后渲染，会把
+                // 菜单顶上的两项导出盖住——它们没有 disabled，却点不到
+                // （评审 #4453225585）。不开菜单，就不存在「可点但被遮住」。
+                // 这也顺带把 #4452245292 那条锁得更死：菜单开不了，就没有
+                // 任何路径能在请求中途把引导弹层卸掉。
+                disabled: bootstrapBusy,
+                onClick: () => {
+                  setMenuOpen(!menuOpen);
+                  setImportOpen(false);
+                  // 引导弹层只在不忙的时候才关：它内部已经用 busy 禁用了取消与提交，
+                  // 这里若照旧卸载，等于给了一条绕过那两道锁的路（评审 #4452245292）。
+                  if (!bootstrapBusy) setBootstrapOpen(false);
+                  setCreateOpen(false);
+                  setShareOpen(false);
+                  setReceiveOpen(false);
+                }
               }, "⋯"),
               menuOpen && h("div", { className: "mneme-menu", role: "menu" },
-                h("button", { type: "button", role: "menuitem", onClick: () => { setCreateOpen(true); setMenuOpen(false); } },
+                // 引导请求在飞时，会挂弹层的那几项一律 disabled：这些弹层共用同一个
+                // 绝对定位锚点，后渲染的会盖住引导弹层，它那句「新建几条、并入几条」
+                // 就没地方看了（评审 #4452539738）。导出两项不挂弹层，照旧可点。
+                h("button", { type: "button", role: "menuitem", disabled: bootstrapBusy, onClick: () => { setCreateOpen(true); setMenuOpen(false); } },
                   t("memory.explorer.newMemory")),
                 h("button", { type: "button", role: "menuitem", onClick: () => { setMenuOpen(false); exportData("json"); } },
                   t("memory.explorer.exportJson")),
                 h("button", { type: "button", role: "menuitem", onClick: () => { setMenuOpen(false); exportData("markdown"); } },
                   t("memory.explorer.exportMarkdown")),
-                h("button", { type: "button", role: "menuitem", onClick: () => { setImportOpen(true); setMenuOpen(false); } },
+                h("button", { type: "button", role: "menuitem", disabled: bootstrapBusy, onClick: () => { setImportOpen(true); setMenuOpen(false); } },
                   t("memory.explorer.importMd")),
-                h("button", { type: "button", role: "menuitem", onClick: () => { setShareOpen(true); setMenuOpen(false); } },
+                h("button", { type: "button", role: "menuitem", disabled: bootstrapBusy, onClick: () => { setBootstrapOpen(true); setMenuOpen(false); } },
+                  t("memory.explorer.bootstrap")),
+                h("button", { type: "button", role: "menuitem", disabled: bootstrapBusy, onClick: () => { setShareOpen(true); setMenuOpen(false); } },
                   t("memory.explorer.sharePack")),
-                h("button", { type: "button", role: "menuitem", onClick: () => { setReceiveOpen(true); setMenuOpen(false); } },
+                h("button", { type: "button", role: "menuitem", disabled: bootstrapBusy, onClick: () => { setReceiveOpen(true); setMenuOpen(false); } },
                   t("memory.explorer.receivePack")),
               ),
               importOpen && h(ImportDialog, {
                 t,
                 onClose: () => setImportOpen(false),
+                onImported: () => setReloadKey((k) => k + 1)
+              }),
+              bootstrapOpen && h(BootstrapDialog, {
+                t,
+                onClose: () => setBootstrapOpen(false),
+                onBusyChange: reportBootstrapBusy,
                 onImported: () => setReloadKey((k) => k + 1)
               }),
               shareOpen && h(ShareDialog, { t, onClose: () => setShareOpen(false) }),

@@ -1413,7 +1413,7 @@ test("panel can create a memory by hand: menu entry wired to the dialog", () => 
   // 入口在「更多操作」菜单里，且菜单项真的调用 setCreateOpen(true)——只断言文案
   // 存在的话，把 onClick 摘掉测试照样绿。
   assert.ok(clientSource.includes('"memory.explorer.newMemory"'), "menu entry label must exist");
-  assert.ok(/role: "menuitem", onClick: \(\) => \{ setCreateOpen\(true\); setMenuOpen\(false\); \}/.test(clientSource),
+  assert.ok(/role: "menuitem", (?:disabled: bootstrapBusy, )?onClick: \(\) => \{ setCreateOpen\(true\); setMenuOpen\(false\); \}/.test(clientSource),
     "the menu item must actually open the create dialog");
   assert.ok(clientSource.includes("const [createOpen, setCreateOpen] = useState(false)"),
     "the dialog needs its own open state");
@@ -2714,6 +2714,256 @@ test("entity graph surfaces the passive-confirmation review surface (issue #24)"
 //   · 现有用例——它们读的是源码字符串，从不执行组件。
 // 所以这里不锁某一个名字，而是把**每个组件里「调了 setter 却没有声明」**这件事整体扫一遍，
 // 才对得起「别再有人把 state 放进隔壁组件」这个意图。
+test("panel exposes the bootstrap entry and the config-key coverage card (issue #386)", () => {
+  // 第 6 条：从目录引导。后端从 #220 就在，缺的是面板入口——所以锁四件事：
+  // 菜单项存在、弹层真的挂在菜单上、请求打的是新路由、错误分码显示。
+  assert.ok(
+    /setBootstrapOpen\(true\); setMenuOpen\(false\)/.test(clientSource),
+    "the overflow menu needs a bootstrap item that opens its dialog"
+  );
+  assert.ok(
+    /bootstrapOpen && h\(BootstrapDialog, \{/.test(clientSource),
+    "the dialog must actually be mounted, not just declared"
+  );
+  // 菜单按钮的 onClick 里必须也关掉它，否则点「⋯」会留下上一个弹层。但它现在带一个
+  // 条件：引导请求在飞时不关（否则等于绕过弹层里那两道 busy 禁用的锁，评审
+  // #4452245292）。所以这里锁的是「有条件地关」，不是无条件关。
+  assert.ok(
+    /setImportOpen\(false\);\s*\n\s*\/\/[\s\S]{0,200}?if \(!bootstrapBusy\) setBootstrapOpen\(false\);/.test(clientSource),
+    "the overflow toggle must close the bootstrap dialog when it is not busy"
+  );
+  // 父组件必须真的把这个标志接下来，否则上面那句恒为真（undefined → !undefined）。
+  assert.ok(
+    /const \[bootstrapBusy, setBootstrapBusy\] = useState\(false\)/.test(clientSource),
+    "the parent needs a bootstrapBusy flag for the guard above to mean anything"
+  );
+  assert.ok(
+    /onBusyChange: reportBootstrapBusy/.test(clientSource),
+    "the dialog must report its busy state up, or the guard reads a stale false"
+  );
+  // 这个转发函数必须同步调外层、且身份稳定：走 useEffect 转报的话要等渲染提交后
+  // 才跑，中间那一拍外层读到 false（#4452539705 的老毛病）；而若每渲染新建一个，
+  // BootstrapDialog 的卸载 effect（依赖 [onBusyChange]）会在父组件每次重渲染时
+  // 先跑 cleanup 调一次 onBusyChange(false)——而父组件正是在置 busy 之后重渲染的。
+  assert.ok(
+    /const reportBootstrapBusy = useCallback\(\(v\) => \{[\s\S]{0,200}?setBootstrapBusy\(v\);[\s\S]{0,200}?onBusyChange\(v\);/.test(clientSource),
+    "the forwarder must set both levels synchronously and keep a stable identity"
+  );
+  // 会挂弹层的菜单项在忙碌时必须禁用（评审 #4452539738）：新建 / 导入 / 引导 / 分享 /
+  // 接收共五处，加上「⋯」按钮自己（见下），再加上四个视图标签（评审 #4453639221，
+  // 源码里那一处在 `.map` 里，一处覆盖四个）。数个数而不是逐个锁字符串——少一处就
+  // 等于留了一条绕过弹层的路，而这条路的代价是用户看不到自己那次引导的结果。
+  assert.equal(
+    clientSource.split("disabled: bootstrapBusy").length - 1,
+    7,
+    "every dialog-mounting menu item, the overflow toggle and the view tabs must be disabled while bootstrap is busy"
+  );
+  // 视图标签离开 memory 会连 `.mneme-xtools` 与其中的 BootstrapDialog 一起卸载
+  // （评审 #4453639221）。两道锁都要有：`disabled` 是第一道，onClick 走 leaveMemory
+  // 是第二道——将来有人给标签换一种可点的实现时，函数里的判断还在。
+  assert.ok(
+    /disabled: bootstrapBusy,[\s\S]{0,300}?onClick: \(\) => leaveMemory\(s\.key\)/.test(clientSource),
+    "view tabs must route through leaveMemory, not setView directly"
+  );
+  assert.ok(
+    /const leaveMemory = \(key\) => \{[\s\S]{0,120}?if \(bootstrapBusy\) return;[\s\S]{0,80}?setView\(key\);/.test(clientSource),
+    "leaveMemory must refuse to switch views while a bootstrap request is in flight"
+  );
+  // 视图标签不是唯一的出口：记忆视图里那个实体 chip（`openGraphFor`）也把 view 切到
+  // "entity"，同样会把 BootstrapDialog 一起卸掉。这条是变异自证抓出来的——四个变异体
+  // 里只有它活下来，说明我先前只锁了标签、漏了这条真实的旁路。
+  assert.ok(
+    /const openGraphFor = \(name\) => \{[\s\S]{0,120}?if \(bootstrapBusy\) return;/.test(clientSource),
+    "the entity chip's graph jump must also refuse to leave memory while bootstrap is busy"
+  );
+  // 「⋯」按钮自己也要禁用（评审 #4453225585）：菜单与引导弹层共用同一个绝对定位锚点、
+  // 同一层 z-index，弹层排在菜单之后渲染，会把菜单顶上那两项导出盖住——它们没有
+  // disabled，却点不到。上一轮我以为「导出项不挂弹层所以照旧可点」就没事了，那是错的：
+  // 可点的是菜单项本身，但它被遮住了。不开菜单，才不存在「可点但被遮住」。
+  assert.ok(
+    /title: t\("memory\.explorer\.more"\),[\s\S]{0,600}?disabled: bootstrapBusy,[\s\S]{0,200}?onClick: \(\) => \{\s*\n\s*setMenuOpen\(!menuOpen\);/.test(clientSource),
+    "the overflow toggle must be disabled while bootstrap is busy, so the dialog never covers its items"
+  );
+  const bsIdx = clientSource.indexOf("function BootstrapDialog");
+  // 切到下一个弹层为止，而不是给一个拍脑袋的字符数：这轮改动静悄悄把窗口撑破了，
+  // 断言于是在一个截断的片段上做，失败信息还指着「输入框没禁用」这种不存在的毛病。
+  const bsEnd = clientSource.indexOf("// --- 分享包弹层 ---", bsIdx);
+  const bsBody = clientSource.slice(bsIdx, bsEnd > bsIdx ? bsEnd : bsIdx + 4200);
+  assert.ok(bsIdx > 0, "BootstrapDialog must exist");
+  // 忙碌状态必须**同步**报上去（评审 #4452539705）：只靠上面那个 useEffect 的话，
+  // 它要等这次渲染提交后才跑，中间那一拍父组件的 bootstrapBusy 还是 false，此时点
+  // 「⋯」仍会把弹层卸掉，请求的成功或失败就再没有地方显示。
+  assert.ok(
+    /setBusy\(true\);[\s\S]{0,400}?onBusyChange\(true\);/.test(bsBody),
+    "busy must be reported up synchronously, not only through the effect"
+  );
+  assert.ok(
+    /apiFetch\("\/api\/dsh-mneme\/bootstrap"/.test(bsBody),
+    "the dialog must POST to the bootstrap route"
+  );
+  assert.ok(
+    /JSON\.stringify\(\{ dir \}\)/.test(bsBody),
+    "the request body carries the raw dir string"
+  );
+  // 请求在飞时锁住三处：输入框、取消、提交。少了输入框那一处，用户改成 B 之后回来的
+  // 提示会贴在 B 旁边、而它讲的是 A 的结果（评审 #4452245279）。断言从 `type: "text"`
+  // 一路看到 `onChange`，而不是只说「附近有个 disabled: busy」——后者底下的按钮也能满足。
+  assert.ok(
+    /type: "text",[\s\S]{0,400}?disabled: busy,[\s\S]{0,400}?onChange: \(e\) => \{ setDir/.test(bsBody),
+    "the dir input must be disabled while the request is in flight"
+  );
+  // 成功路径不再复位 busy（900ms 提示期间按钮不该重新变得可点），且定时器句柄要能清：
+  // 否则第二次提交的结果会写进已经卸载的组件（评审 #4452245256）。断言窗口只取
+  // 「setMsg…到 setTimeout」之间——再往后就是 catch 里的网络错误兜底，那一处复位是对的。
+  const doneIdx = bsBody.indexOf("memory.explorer.bootstrapDone");
+  const timerIdx = bsBody.indexOf("timerRef.current = setTimeout(");
+  assert.ok(timerIdx > doneIdx, "the success branch must schedule its close through the stored ref");
+  const successTail = bsBody.slice(doneIdx, timerIdx);
+  assert.ok(!/setBusy\(false\)/.test(successTail), "the success path must not re-enable the button");
+  assert.ok(/clearTimeout\(timerRef\.current\)/.test(bsBody), "the stored timer must actually be cleared on unmount");
+  // 刷新必须同步调、不能排进定时器（评审 #4452539711）：切视图会卸载本组件并把
+  // timerRef 清掉，若刷新也挂在那 900ms 后面，它就静默丢了——库已经写进去了，
+  // 列表却还是旧的。而这条路径上用户刚看到「新建 N 条」，最容易立刻去翻列表。
+  const importedIdx = bsBody.indexOf("onImported();");
+  assert.ok(importedIdx > 0, "the success path must refresh the list");
+  assert.ok(
+    importedIdx < timerIdx,
+    "onImported must run synchronously, not inside the close timer"
+  );
+  assert.ok(
+    !/setTimeout\(\(\)\s*=>\s*\{?\s*onImported/.test(bsBody),
+    "the refresh must not be deferred into the close timer"
+  );
+  // 错误按服务端的码分开说（missing-dir / dir-not-found / not-a-directory /
+  // bootstrap-unavailable），不能一律「引导失败」——三种情况下用户该做的事不同。
+  assert.ok(
+    /"memory\.explorer\.bootstrapErr\." \+ String\(code/.test(bsBody),
+    "error codes must be mapped to distinct messages"
+  );
+  for (const key of [
+    "memory.explorer.bootstrap",
+    "memory.explorer.bootstrapTitle",
+    "memory.explorer.bootstrapHint",
+    "memory.explorer.bootstrapConfirm",
+    "memory.explorer.bootstrapDone",
+    "memory.explorer.bootstrapNoDir",
+    "memory.explorer.bootstrapFailed",
+    "memory.explorer.bootstrapErr.missing-dir",
+    "memory.explorer.bootstrapErr.dir-not-found",
+    "memory.explorer.bootstrapErr.not-a-directory",
+    "memory.explorer.bootstrapErr.bootstrap-unavailable"
+  ]) {
+    assert.ok(
+      clientSource.split(`"${key}"`).length - 1 >= 2,
+      `i18n key ${key} must exist in both dictionaries`
+    );
+  }
+
+  // 第 7 条：配置键覆盖面只读卡。
+  const ckIdx = clientSource.indexOf("function ConfigKeysCard");
+  assert.ok(ckIdx > 0, "ConfigKeysCard must exist");
+  const ckBody = clientSource.slice(ckIdx, ckIdx + 2900);
+  assert.ok(/apiFetch\("\/api\/dsh-mneme\/config-keys"\)/.test(ckBody), "the card must read the new route");
+  // 取数失败与「真的没有只读键」必须分开说，否则失败会被读成「清单是空的」。
+  assert.ok(
+    !/state\.failed \|\| !counts\s*\?\s*null/.test(ckBody),
+    "a failed fetch must not collapse into an empty list"
+  );
+  assert.ok(/memory\.settings\.configKeys\.loadFailed/.test(ckBody), "the failed branch needs its own copy");
+  // 摘要里的三类数字都必须来自服务端算好的桶：只填 {file} 会让「schema − panel」与
+  // 展开后「只能改文件」那段对不上（评审 #4452245244）。
+  assert.ok(
+    /\.replace\("\{undefaulted\}", String\(counts\.undefaulted\)\)/.test(ckBody),
+    "the summary must report the undefaulted bucket too, not make the reader subtract"
+  );
+  // 只列键名，不渲染任何值。
+  assert.ok(/className: "mneme-keychip"/.test(ckBody), "keys render as chips");
+  assert.ok(!/\.value/.test(ckBody.replace(/display:\s*"flex"[\s\S]{0,80}/g, "")), "the card must not render any key value");
+  for (const key of [
+    "memory.settings.configKeys.title",
+    "memory.settings.configKeys.desc",
+    "memory.settings.configKeys.summary",
+    "memory.settings.configKeys.fileOnlyHead",
+    "memory.settings.configKeys.undefaultedHead",
+    "memory.settings.configKeys.undefaultedHint",
+    "memory.settings.configKeys.show",
+    "memory.settings.configKeys.hide",
+    "memory.settings.configKeys.loadFailed"
+  ]) {
+    assert.ok(
+      clientSource.split(`"${key}"`).length - 1 >= 2,
+      `i18n key ${key} must exist in both dictionaries`
+    );
+  }
+  // 卡片要真的挂到设置页上（connect 组尾、help 组头之前），不是写了没插。
+  const mountIdx = clientSource.indexOf("h(ConfigKeysCard, { t })");
+  const helpIdx = clientSource.indexOf('groupHead("help")');
+  assert.ok(mountIdx > 0, "ConfigKeysCard must be mounted in the settings page");
+  assert.ok(mountIdx < helpIdx, "the card belongs to the end of the connect group, before the help section");
+  // 引导成功只递增 reloadKey；搜索态的列表走 remoteItems 那条 effect，它若不吃
+  // reloadKey，搜索词不变就永远看不到新导入的行（评审 #4452245305）。
+  assert.ok(
+    /\}, \[query, semantic, searchTopK, reloadKey\]\);/.test(clientSource),
+    "the search effect must re-run after an import/bootstrap bumps reloadKey"
+  );
+});
+
+test("the memory overlay refuses to close while a library request is in flight (issue #386)", () => {
+  // 引导请求在飞时，Esc / 背板 / ✕ 三条关闭路径都必须在。少一处，弹层连同
+  // MemoryExplorer 一起卸载，POST 还在飞——回来那句「新建几条、并入几条」就没有
+  // 地方显示，用户会以为没成功，而库其实已经写进去了（评审 #4453225573）。
+  const ovIdx = clientSource.indexOf("function MemoryOverlay");
+  assert.ok(ovIdx > 0, "MemoryOverlay must exist");
+  // 切到下一个模块级定义为止：给字符数会在下一次改动里被悄悄撑破。
+  const ovEnd = clientSource.indexOf("const EXPLORER_TYPES", ovIdx);
+  const ovBody = clientSource.slice(ovIdx, ovEnd > ovIdx ? ovEnd : ovIdx + 2600);
+
+  // 忙碌标志必须从 Explorer 上得来：MemoryOverlay 自己不知道有没有请求在飞。
+  assert.ok(
+    /useState\(false\)/.test(ovBody) && /explorerBusy/.test(ovBody),
+    "the overlay needs its own busy flag"
+  );
+  assert.ok(
+    /h\(MemoryExplorer, \{ t, onBusyChange: setExplorerBusy \}\)/.test(ovBody),
+    "the explorer must report its busy state up to the overlay"
+  );
+  // 用 ref 读、不把 busy 列进那个 effect 的依赖：effect 每次重跑都会
+  // closeBtnRef.current.focus()，请求一起一落就把正在输目录的用户踢出输入框。
+  assert.ok(
+    /const explorerBusyRef = useRef\(false\)/.test(ovBody),
+    "the guard must read through a ref, so busy changes do not re-run the focus effect"
+  );
+  assert.ok(
+    /explorerBusyRef\.current = explorerBusy/.test(ovBody),
+    "the ref must track the state"
+  );
+  assert.ok(
+    !/\[open, explorerBusy\]/.test(ovBody),
+    "explorerBusy must stay out of the focus effect's deps"
+  );
+
+  // 三条关闭路径逐一检查：Esc、背板、✕ 都走同一个守卫。
+  assert.equal(
+    ovBody.split("if (!explorerBusyRef.current) setOpen(false);").length - 1,
+    3,
+    "all three close paths (Escape, backdrop, ✕) must guard on the busy ref"
+  );
+  assert.ok(
+    /if \(e\.key === "Escape"\) \{ if \(!explorerBusyRef\.current\) setOpen\(false\); return; \}/.test(ovBody),
+    "Escape must not close the overlay while a request is in flight"
+  );
+  // ✕ 用 aria-disabled 而不是真的 disabled：真 disabled 会把焦点从按钮上拿走，
+  // 而 #178 的 Tab 环拿 closeBtnRef 当入口，焦点落空就出不去。
+  assert.ok(
+    /"aria-disabled": String\(explorerBusy\)/.test(ovBody),
+    "the close button must announce the blocked state"
+  );
+  assert.ok(
+    !/className: "mneme-footbtn",\s*\n\s*ref: closeBtnRef,\s*\n\s*disabled: /.test(ovBody),
+    "the close button must not be hard-disabled — that would break the #178 focus ring"
+  );
+});
+
 test("every client component declares the setters it calls (issue #553)", () => {
   // 浏览器/宿主全局，不是 React state，不该被要求声明
   const GLOBALS = new Set([

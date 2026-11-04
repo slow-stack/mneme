@@ -177,7 +177,11 @@ async function collectCandidates(root) {
  */
 export async function bootstrapFromDirectory({ service, dir, logger } = {}) {
   if (typeof dir !== "string" || !dir.trim()) throw new BootstrapError("missing-dir");
-  const root = dir.trim();
+  // 只 trim 判空，**不**把 trim 结果当路径（#386 第 6 条评审）：协议层 readBootstrapDir
+  // 刻意回传原串，理由写着「两端空白交给 fs 报 dir-not-found 比静默改写更诚实」；这里
+  // 若再 trim 一次，那个承诺就变成了空话——用户填 " /repo " 会被悄悄换成 "/repo"，
+  // 读的是另一个目录，而他一无所知。路径不合法就让 statSync 去报。
+  const root = dir;
   let st;
   try {
     st = statSync(root);
