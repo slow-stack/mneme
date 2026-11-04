@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+- **记忆库从「侧栏 footer 挤一个入口 + 居中浮层」改成宿主原生面板位：侧栏一颗图标进 `sidebar.panellist`，正文落 `main` 整页（参照 dsh-baleen，用户 2026-11-04 提的）**：此前唯一的完整入口是 `sidebar.footer.action`，点开是一个 `createPortal` 到 `document.body` 的居中浮层——它不是宿主的面板，占着屏幕中央却不参与宿主的布局与导航状态，Esc/焦点环/背板点击都得自己实现一遍，而截图里它看起来又很像「一个新窗口」。宿主早就给了成对的座位：`sidebar.panellist`（侧栏面板列表，list 槽）与 `main`（正文区，keyed 槽），侧栏一行的点击由宿主 `PanelRow` 自己调 `layout.selectPanel(id)`，插件只交一颗图标和一片内容。**main 的 `key` 必须与侧栏的 `id` 逐字相同**（两者都取 `dsh-mneme`）——宿主按 `options.key` 在 keyed 槽里找 entry，对不上会抛 `layout.selectPanel: main panel "…" is not registered`；这条不是防御性写作，是宿主 `layout.js` 里真会抛的那一行。
+
+  - **模板块只交「图标」和「页面」，不自己造按钮、不做关闭**：宿主 `PanelRow` 已经渲染了 `button` + `aria-label` + `Tooltip` + `aria-current` + active 高亮，插件再套一层按钮就是两颗可聚焦元素（Tab 停两次、读屏报两次），而 `onClick` 还得自己去 `selectPanel`——那是宿主自己的活。回到会话也不由我们提供：宿主所有「打开会话」的路径都走 `selectPanel(null)`（`workspace.js` 的 `openSession` / `openWorkspaceSession` 都是 `replaceMain(…, "reveal")`），baleen 的面板同样没有返回按钮。`main` 槽只给出 `min-width:0; overflow:hidden` 的容器，注册者必须自己铺满 `100%` 并自管滚动，所以外层新增 `.mneme-panel`。
+  - **老宿主回落是真的条件回落，不是「两个都装」**：只用 `slots.inject` 判断不了——它对未声明的槽**不抛错也不立即回调**（内部 `specDynamic(key) === undefined` 时静默等待声明），所以新宿主上照样会跑、老宿主上则永远 pending。改法是把「问宿主有没有这套座位」收成一个 `hostHasPanelSeat()`（`slots.spec("sidebar.panellist") !== undefined`），再让 `mountFooterSeat()` 在装之前查一次；两条 `inject` 各自在回调里调它，**谁先声明谁赢，同一时刻至多一份在册**。回落还必须能被装回来：panellist 座位的 disposer 里显式 `mountFooterSeat()`，否则那台宿主在座位被撤（宿主折叠该槽 / 换形态）之后会停在「没有任何入口」的状态——这条路径只有它自己会触发，没有别的代码来救。
+  - **语义色层的根从四个变五个**：`.mneme-paneliglyph` 必须一起挂上 `--mneme-*`，否则那颗冲突红点吃不到 `--mneme-danger`。它长在宿主的 `span.panelGlyph` 里、不在 `.mneme-x` 子树内，靠继承拿不到；而 `test/contrast.test.js` 的四根精确锁正是为这一类「新加的渲染根悄悄绕过 AA 审计」立的，所以改的是选择器本身而不是新加一条规则。
+  - **回归锁补的是「装/卸真的按条件跑」，不是「代码里有这两段字符串」**：用文件里真实的座位代码块起一个假 `ctx`（`spec` 可切换、`register` 记账、`inject` 只登记不自动点火——宿主本来也只在槽已声明时才点火）跑三个场景：新宿主上只该有 panellist + main 且 footer 不装；老宿主上只该有一份 footer；座位消失后 footer 必须自己装回来、且 main 要跟着卸。三个变异体逐个变红：删掉座位消失时的 `mountFooterSeat()` → 红在「回落要能装回来」；去掉装之前的 `hostHasPanelSeat()` 抑制 → 红在「新宿主不该有 footer」；卸载时只卸 glyph 不卸 main → 红在「main 要跟着卸」。另有一条纯结构锁：glyph 组件体内不许出现 `h("button"`、整个 bundle 不许出现 `ctx.layout.selectPanel`（真需要时才加，届时得同时把 layout 放进可选注入）。
+  - **顺手修掉「实体页左侧栏永远 500 个实体」**：真机验证时发现状态页已经显示 16,861，点进实体页左侧栏仍是「500 个实体」——`EntityPanel` 拿 `entities.length` 当总数，而那份列表是 `/entities?limit=500` 取回的最新 500 个。#559 只修了状态页那张卡，这一处当时漏了，而它恰恰是「实体太少了」这个观感最直接的来源（用户点进实体页看到的第一个数字）。改法照抄后端已有的口径：`total` + `totalExact` 两个字段都在，面板只在 `totalExact === true` 时把它当全库数，否则退回切片长度。
+
+    - **数字对了还不够，两个口径必须分开说**：总数向上取全库，但列表本身真的只有 500 行；只改大数字而不同时说明「列表只列最近 500 个」，同一处错位会换个方向复发（用户会问「说有一万六，怎么只列出 500 条」）。所以截断真发生时（`entityTotal > entities.length`）在计数下多一行 `.mneme-xcountnote`，文案走 i18n 双语、颜色走 `--mneme-fg-dim`。这条是条件渲染，不截断时不出现——平时不占地方。
+    - **回归锁锁四件事**：总数取自 `totalExact` 守门的 `total`（不是切片长度）、读不到时退回切片长度、截断时必须出现那句说明、文案中英各一条。变异自证三个：把计数改回 `String(entities.length)` → 红；删掉采样说明那段 → 红；去掉 `totalExact === true` 守门（把回落值也当全库数）→ 红。
+
+  - **验证**：`npm test` 2716 tests / 2715 pass / 0 fail / 1 skipped；`check-sync` 85 文件一致（本改动只碰 `lib/client.js` 与 `test/client.test.js`，前者无 `src/` 对应物、不进 sync）。**真机验证已做**：另起一个隔离 profile（`panel-verify`，junction 指向本车道、`autoDream` 与 `externalApiEnabled` 都关，避免与在跑的宿主抢 8790 端口和重复做梦）跑起来看过——侧栏「全局面板」里第三项就是「记忆」，点开后中列整页铺满，页头四个 tab（记忆/实体/状态/设置）俱在，无浮层无背板无关闭按钮，记忆页与实体页的数据都正常加载。这张单子里的「实体页仍写死 500」就是这轮真机截图里发现的。
+
 - **存量 quality_score 回填（#560 的收尾）：一次性迁移撤回旧重复度度量留下的 repetitive 误判**：上一条只改了判据，管的只是**新写入**——`evaluateMemoryQuality` 全仓只有 `src/service.js` 写路径一处调用，更新路径不重算 `quality_score`，所以库里那批标签与扣分原封不动。本机 12,827 条里有 1,476 条带 `repetitive`，其中 729 条还是归档态。这条迁移在 `createStore` 打开库时跑，跑过就登记，不再跑第二次。
 
   - **口径是「手术式撤销」，不是「整列重算」**：整列重算会顺手把判据没变、但当年没跑到评分的行重新裁一遍——实测会新命中 90 条 `meta`、98 条 `self_referential`，那是双向改写，越过了「只撤除被修掉的那个误判」的范围。所以只取带 `repetitive` 的行，且**用新度量复算仍然不重复**才动；新度量下依旧 > 0.7 的是真重复，标签有效，原样保留。本机 1,476 条在新度量下**全部**不再命中（旧度量里它们的命中和内容无关，只和长度有关），所以这条迁移在本机是全量撤销。

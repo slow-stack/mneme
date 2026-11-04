@@ -233,13 +233,16 @@ test("面板引用的宿主 token 必须真实存在（幻影 token 回归锁）
   assert.deepEqual(unknown, [], "面板引用了宿主快照里没有的 token（幻影名或快照过期）：" + unknown.join(", "));
 });
 
-// 变量层必须挂满四个渲染根：面板不只长在 .mneme-x 下——记忆库 sheet portal 到
-// body（.mneme-overlay）、侧边栏入口在宿主插槽（.mneme-triggerwrap）、顶部入口
-// portal 到宿主侧边栏（.mneme-topentry）。少挂一个，那个根下的文字就退回宿主的
-// 低对比度 token，而且上面的主锁**照样全绿**（主锁只算颜色，不知道变量有没有继承到）。
-test("面板语义色层覆盖四个渲染根", () => {
+// 变量层必须挂满五个渲染根：面板不只长在 .mneme-x 下——老宿主上记忆库 sheet
+// portal 到 body（.mneme-overlay）、侧边栏入口在宿主插槽（.mneme-triggerwrap）、
+// 顶部入口 portal 到宿主侧边栏（.mneme-topentry）；新宿主的侧栏图标长在宿主
+// panelGlyph 里、不在 .mneme-x 子树内（.mneme-paneliglyph），它挂着冲突红点，
+// 必须吃到 --mneme-danger。
+// 少挂一个，那个根下的文字/图形就退回宿主的低对比度 token，而且上面的主锁
+// **照样全绿**（主锁只算颜色，不知道变量有没有继承到）。
+test("面板语义色层覆盖五个渲染根", () => {
   const sel = layer.sel;
-  assert.equal(sel, ".mneme-x,.mneme-overlay,.mneme-triggerwrap,.mneme-topentry");
+  assert.equal(sel, ".mneme-x,.mneme-overlay,.mneme-triggerwrap,.mneme-topentry,.mneme-paneliglyph");
 });
 
 // 图形色的对比度（WCAG 1.4.11，非文字 3:1）。上面那条主锁只看 `color:`，

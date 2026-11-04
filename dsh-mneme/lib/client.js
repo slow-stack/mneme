@@ -395,6 +395,7 @@ window.__ModuleLoader__.load({
         "memory.explorer.tabSettings": "设置",
         "memory.explorer.tabStatus": "状态",
         "memory.entities.count": "{n} 个实体",
+      "memory.entities.countSampled": "列表只列最近 {shown} 个；上方总数是全库",
         "memory.entities.pick": "从左侧选择一个实体，查看它的属性与关系",
         // 搜索框有字但一条没筛出来时用它；与 entities.none（库里真没实体）分开，
         // 否则「暂无实体」会把打错一个字误导成「你还没开抽取」。
@@ -1231,6 +1232,7 @@ window.__ModuleLoader__.load({
         "memory.explorer.tabSettings": "Settings",
         "memory.explorer.tabStatus": "Status",
         "memory.entities.count": "{n} entities",
+      "memory.entities.countSampled": "The list shows the newest {shown} only; the total above is the whole library",
         "memory.entities.pick": "Select an entity to see its attributes and relations",
         "memory.entities.noMatch": "No entities match that search — try another word",
         "memory.entities.none": "No entities yet — turn on entity extraction and people / projects / concepts will accumulate here",
@@ -2022,10 +2024,12 @@ window.__ModuleLoader__.load({
       // / -warning / -success / -warn / --dsw-alias-border），
       // 于是长年吃的是写在 fallback 里的硬编码色。这里按宿主真实 token 现算一组
       // 面板自有语义色：混色基准全是宿主 token，宿主换肤时跟着走，不引入新字面量。
-      // 必须挂四个根——面板不只长在 .mneme-x 下：记忆库 sheet portal 到 body
+      // 必须挂满五个根——面板不只长在 .mneme-x 下：记忆库 sheet portal 到 body
       // （.mneme-overlay）、侧边栏入口在宿主插槽（.mneme-triggerwrap）、顶部入口
-      // portal 到宿主侧边栏（.mneme-topentry）。
-      ".mneme-x,.mneme-overlay,.mneme-triggerwrap,.mneme-topentry{" +
+      // portal 到宿主侧边栏（.mneme-topentry）。第五个根是宿主内整页面板
+      // （.mneme-panel）配套的侧栏图标容器：那颗图标长在宿主的 panelGlyph 里，
+      // 不在 .mneme-x 的子树里，而它右上角的未处理冲突 badge 要吃 --mneme-danger。
+      ".mneme-x,.mneme-overlay,.mneme-triggerwrap,.mneme-topentry,.mneme-paneliglyph{" +
         "--mneme-fg-dim:color-mix(in srgb,var(--dsw-alias-label-primary) 60%,transparent);" +
         "--mneme-graphic-dim:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent);" +
         "--mneme-accent:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
@@ -2065,6 +2069,9 @@ window.__ModuleLoader__.load({
       // 低于详情抽屉(6)，下拉菜单/导入对话框随容器整体上浮。
       ".mneme-xtools{position:absolute;right:14px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:8px;padding:0;z-index:3}",
       ".mneme-xcount{flex:none;font-size:12px;line-height:16px;color:var(--mneme-fg-dim);white-space:nowrap}",
+    // 目录计数下面那行小字：说清「总数是全库、列表只列最近 N 个」，两个口径
+    // 不一样不能只靠一个数字冒充（实体页此前就吃到这个亏）。
+    ".mneme-xcountnote{font-size:11px;line-height:15px;color:var(--mneme-fg-dim);white-space:nowrap}",
       // --- three-column browse layout: hairline separators, no outer box ---
       ".mneme-xmain{flex:1;min-height:0;display:flex;flex-direction:row;overflow:hidden}",
       ".mneme-xside{flex:none;width:264px;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;padding:16px 14px;border-right:1px solid var(--dsw-alias-border-l2);box-sizing:border-box;display:flex;flex-direction:column;gap:8px}",
@@ -2218,6 +2225,15 @@ window.__ModuleLoader__.load({
       ".mneme-set-cmddesc{font-size:12px;line-height:17px;color:var(--mneme-fg-dim);margin-top:1px;word-break:break-word}",
       // --- settings sub-view ---
       ".mneme-set{flex:1;min-height:0;overflow-y:auto;padding:8px 24px 48px;box-sizing:border-box}",
+      // --- 宿主中列整页面板（sidebar.panellist + main 成对座位）---
+      // 宿主把 main 槽渲染在三列 grid 的中列里，那一层只给了 min-width:0 与
+      // overflow:hidden，没有任何尺寸约束——注册者必须自己铺满并自管滚动，
+      // 否则内容会撑破中列（右栏打开时中列更窄，宽度还会变）。
+      ".mneme-panel{box-sizing:border-box;flex:1;min-width:0;min-height:0;width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;background:var(--dsw-alias-bg-layer-1)}",
+      // 侧栏图标容器：badge 用绝对定位挂在它上面。宿主 panelRow 没有
+      // overflow:hidden，所以 -3px 的偏移不会被裁；这里的 position:relative
+      // 只提供定位上下文，不接管尺寸（由宿主的 panelGlyph 决定）。
+      ".mneme-paneliglyph{position:relative;display:inline-flex;align-items:center;justify-content:center}",
       // --- 记忆库页面：居中 sheet，非全屏 ---
       // 从对话直接打开一页记忆库：背板压暗 + 居中圆角卡片（上限 1180×880），
       // 对话仍留在背板之后，任何状态下（含新会话 hero、无 tab 环）都可用。
@@ -2890,6 +2906,12 @@ window.__ModuleLoader__.load({
     //   ④ 关系图谱  the same ego graph the old graph-only tab drew
     function EntityPanel({ t, focusEntity, onJumpMemory }) {
       const [entities, setEntities] = useState(null);
+      // 目录只取最近 500 个（limit=500），可「一共抽出多少实体」问的是全库。
+      // 后端回 total + totalExact（见 src/api.js 的 /entities），这里必须用全库数，
+      // 否则左侧栏永远显示「500 个实体」——那正是「实体太少」这个观感的另一半来源：
+      // 状态页已经在 #559 修正，实体页这一处当时漏了。null = 全库数读不到（老宿主
+      // 或计数失败），此时退回切片长度并如实标成切片口径，不冒充全库。
+      const [entityTotal, setEntityTotal] = useState(null);
       const [railQuery, setRailQuery] = useState("");
       const [entityName, setEntityName] = useState(focusEntity || "");
       const [depth, setDepth] = useState(1);
@@ -2912,8 +2934,12 @@ window.__ModuleLoader__.load({
         let cancelled = false;
         apiFetch("/api/dsh-mneme/entities?limit=500")
           .then((r) => (r.ok ? r.json() : { entities: [] }))
-          .then((j) => { if (!cancelled) setEntities(Array.isArray(j.entities) ? j.entities : []); })
-          .catch(() => { if (!cancelled) setEntities([]); });
+          .then((j) => {
+            if (cancelled) return;
+            setEntities(Array.isArray(j.entities) ? j.entities : []);
+            setEntityTotal(j.totalExact === true && typeof j.total === "number" ? j.total : null);
+          })
+          .catch(() => { if (!cancelled) { setEntities([]); setEntityTotal(null); } });
         return () => { cancelled = true; };
       }, []);
 
@@ -3165,8 +3191,13 @@ window.__ModuleLoader__.load({
             value: railQuery,
             onChange: (e) => setRailQuery(e.target.value)
           }),
+          // 大数字用全库数；全库数读不到（老宿主 / 计数失败）时退回切片长度，
+          // 但那只是「这次取回多少」，所以要多一行脚注说清列表本身只列最近 500 个。
           entities !== null && entities.length > 0 && h("div", { className: "mneme-xcount" },
-            t("memory.entities.count").replace("{n}", String(entities.length)))
+            t("memory.entities.count").replace("{n}", String(entityTotal !== null ? entityTotal : entities.length))),
+          entities !== null && entityTotal !== null && entityTotal > entities.length
+            && h("div", { className: "mneme-xcountnote" },
+              t("memory.entities.countSampled").replace("{shown}", String(entities.length)))
         ),
         h("div", { className: "mneme-entrailbody" },
           entities === null && h("div", { className: "mneme-xempty" }, "…"),
@@ -8593,6 +8624,33 @@ window.__ModuleLoader__.load({
       return h("span", { className: "mneme-entrybadge", "aria-hidden": "true" },
         pending > 99 ? "99+" : String(pending));
     }
+    // --- 宿主内整页面板（新版宿主）：侧栏图标 + 中列整页 ---
+    // 首选承载方式：记忆库直接长在宿主中列里，与会话平级，不再叠一层背板
+    // 浮层。老宿主没声明 sidebar.panellist 时退回 footer.action + 浮层（见 apply）。
+    function SidebarPanelGlyph({ size }) {
+      // 红点复用模块级单例：图标与回落按钮共享同一个计数、同一条 60s 兜底轮询。
+      const pending = useConflictBadgeCount();
+      // 宿主 PanelRow 已经自带 button / aria-label / Tooltip / active 高亮，
+      // 这里只交一颗图形——再造一层按钮会套出两颗可聚焦元素，Tab 要停两次，
+      // 而且 host 的 selectPanel 也轮不到我们调。
+      return h("span", { className: "mneme-paneliglyph" },
+        renderMnemeMark({ size: size || 18 }),
+        h(ConflictBadge, { pending })
+      );
+    }
+
+    function MnemeMainPanel({ t }) {
+      // 进面板 = 用户准备处理冻结冲突：重取一次红点计数。理由与浮层时代
+      // openLibrary 里那次重取相同——裁决走别的路径或后台刚写过库时，计数
+      // 不该等 60s 兜底轮询才对齐。
+      useEffect(() => { conflictBadgeCount.refresh(); }, []);
+      // 不自带「回到会话」按钮：宿主的 openSession / 新建会话都会
+      // selectPanel(null)，用户点侧栏任何会话行就回得去（baleen 同样不做）。
+      return h("div", { className: "mneme-panel" },
+        h(MemoryExplorer, { t })
+      );
+    }
+
     function SidebarFallbackTrigger({ wide, t }) {
       const pending = useConflictBadgeCount();
       // #295 评审：.mneme-trigger 自身 overflow:hidden 且无定位上下文，badge
@@ -9853,13 +9911,26 @@ window.__ModuleLoader__.load({
       const t = ctx.locale.bind(NS);
       ctx.effect(() => ctx.locale.register(NS, dictionaries), "dsh-mneme: dictionaries");
 
-      // 记忆库唯一入口：sidebar.footer.action 注册作为锚点与回退；真实按钮
-      // 由 SidebarTopEntry portal 到侧边栏工作区上方。overlay 从这个常驻
-      // 插槽挂载（portal 到 body），会话切换不影响它的开关状态。
-      // v0.7.15 起不再注册 conversation.view tab——对话内嵌的面板被悬浮
-      // 输入框遮挡、挤压会话布局，sheet 页是更舒服的承载方式。
-      ctx.slots.inject("sidebar.footer.action", () => {
-        return ctx.slots.register({
+      // --- 入口座位 ---
+      // 两套宿主形态，二选一，靠宿主是否声明了 sidebar.panellist 判定：
+      //  · 宿主内整页面板（首选）：sidebar.panellist 出图标、main 出中列整页。
+      //    图标长在宿主自己的面板列表里（PanelRow 自己处理点击与 aria-current），
+      //    插件只管渲染一颗 glyph，不自己造按钮、不自己调 selectPanel。
+      //  · 老宿主回落：没有这两个座位时，footer.action 出按钮 + 居中 sheet，
+      //    并保留 SidebarTopEntry 的 DOM portal（尽量把入口放到面板列表位置）。
+      // 两套都挂同一个模块级 overlay 状态，但不会同时装：panellist 一旦出现就
+      // 先把回落拆掉，否则侧栏会冒出两个记忆入口。
+      // 判定 + 装载都收在两个闭包里：谁都可以问「宿主有没有这套座位」，
+      // 也都可以在条件变化后重装回落——但同一时刻至多一份注册在册。
+      const hostHasPanelSeat = () => typeof ctx.slots.spec === "function"
+        && ctx.slots.spec("sidebar.panellist") !== undefined;
+      let footerSeat = null;
+      const dropFooterSeat = () => {
+        if (footerSeat) { footerSeat(); footerSeat = null; }
+      };
+      const mountFooterSeat = () => {
+        if (footerSeat || hostHasPanelSeat()) return;
+        footerSeat = ctx.slots.register({
           name: "sidebar.footer.action",
           id: "dsh-mneme",
           order: 0,
@@ -9872,6 +9943,41 @@ window.__ModuleLoader__.load({
           }),
           h(MemoryOverlay, { t })
         ));
+      };
+
+      ctx.slots.inject("sidebar.panellist", () => {
+        dropFooterSeat();
+        const disposeGlyph = ctx.slots.register({
+          name: "sidebar.panellist",
+          id: "dsh-mneme",
+          // 排在宿主自己的面板之后（baleen 占 45）：记忆是高频入口，但排在
+          // 已有面板之后不抢位。order 只影响列表排序，不影响可发现性。
+          order: 60,
+          label: () => t("memory.panel.open")
+        }, (props) => h(SidebarPanelGlyph, { size: props && props.size }));
+        // main 的 key 必须与上面侧栏的 id 逐字相同：宿主点面板行时调
+        // layout.selectPanel(id)，它按 options.key 在 main 槽里找 entry，
+        // 对不上直接抛 "main panel ... is not registered"。
+        const disposeMain = ctx.slots.register({
+          name: "main",
+          key: "dsh-mneme"
+        }, () => h(MnemeMainPanel, { t }));
+        return () => {
+          disposeGlyph();
+          disposeMain();
+          // 座位被撤（宿主折叠该槽 / 换宿主形态）时把回落装回去：两条路径都
+          // 只靠各自的 inject 触发，谁不动谁就永远停在「没有入口」的状态。
+          mountFooterSeat();
+        };
+      });
+
+      // 老宿主回落：footer.action 这一格既能当锚点（SidebarTopEntry 靠它挂
+      // portal）也能当兜底按钮，新宿主上则整格不注册——否则侧栏两颗记忆入口。
+      ctx.slots.inject("sidebar.footer.action", () => {
+        mountFooterSeat();
+        return () => {
+          dropFooterSeat();
+        };
       });
 
       // --- better-sidebar 生态 tab（可选软依赖）---
