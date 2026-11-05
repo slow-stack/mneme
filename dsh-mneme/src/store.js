@@ -2690,7 +2690,8 @@ export function createStore(path) {
     //
     // 为什么不带 `embedding != ''`（2026-11-05 实测）：`!= ''` 要读 embedding 列
     // 才能判定，SQLite 就得把 134MB 向量文本整个从磁盘搬一遍——而这里只 SELECT
-    // id，一条文本都不用。副本实测同一条 SQL 265ms → 96ms，每轮检索省约 170ms。
+    // id，一条文本都不用。真库副本实测：这条 SQL 单独跑 265ms → 96ms；落到
+    // 一轮完整检索上是 138ms → 47ms（省约 90ms，其余是解析/打分开销）。
     // 空串行（外部直接 UPDATE 造出来的，setEmbedding 写的是 NULL）由 readVector
     // 兜住：JSON.parse('') 抛错 → 返回 undefined → 跳过，既不计分也不崩。
     const rows = db.prepare(
