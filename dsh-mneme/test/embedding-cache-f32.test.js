@@ -227,6 +227,36 @@ test("库里存在 embedding = '' 的行：searchVector 不崩、不把它算进
   store.close();
 });
 
+// 上面那条锁住「空串行不会崩」，但锁不住「谓词别被加回来」——把 `!= ''` 加回
+// searchVector，8 条全绿：SQL 层先滤掉空串行，readVector 的兜底就永远测不到。
+// 断言「这句 SQL 不含 != ''」是把测试绑在字面量上，正常重构（换行、改别名、
+// 换 ${archivedFilter} 写法）就无辜变红，红了第一反应是删断言，比没有更糟。
+// 这里锁行为：每一行非 NULL 都必须被读一次——这正是摘谓词的目的本身。只要
+// SQL 又开始按 embedding 文本过滤掉行，读取次数立刻掉，跟 SQL 怎么写无关。
+// 顺带把「读缓存命中」也算进增量，所以它同时锁住「别退化成每行都回表」。
+test("摘谓词的目的：每一行非 NULL 的 embedding 都必须被读一次", () => {
+  const store = make();
+  const good = store.save({ type: "project", title: "正常", content: "有向量" });
+  const empty = store.save({ type: "project", title: "空串", content: "外部写的空串" });
+  const broken = store.save({ type: "project", title: "坏 JSON", content: "解析不了" });
+
+  store.setEmbedding(good.id, [1, 0, 0, 0]);
+  store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run("", empty.id);
+  store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run("{not json", broken.id);
+
+  const before = store.embeddingCacheStats();
+  store.searchVector([1, 0, 0, 0], { limit: 10 });
+  const after = store.embeddingCacheStats();
+  const reads = (after.misses - before.misses) + (after.hits - before.hits);
+  assert.equal(
+    reads,
+    3,
+    `三行非 NULL 必须各读一次（实测 ${reads} 次）——少于 3 说明 SQL 又在按 embedding 文本过滤，` +
+      "等于把「只 SELECT id 的查询顺手搬了 134MB 向量列」这个开销又请回来了"
+  );
+  store.close();
+});
+
 test("全部行都是 embedding = '' 时：检索返回空、探针判 unreadable 而非 none", () => {
   const store = make();
   const a = store.save({ type: "project", title: "A", content: "a" });
