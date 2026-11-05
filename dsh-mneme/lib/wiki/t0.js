@@ -9,7 +9,7 @@
 // 失败语义（红线 5）：中途任何一步失败，state.json 不写（保持上一次成功 run 的
 // 内容），库侧 replaceChoroGraph 是单事务——半截失败整体回滚到上一次成功 run。
 // 重跑幂等：同样的输入得到同样的划分、同样的页面字节、同样的行数。
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, realpathSync, readdirSync } from "node:fs";
 import { join, posix, sep, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { loadPlanFromRepo } from "./plan.js";
@@ -20,7 +20,7 @@ import {
 import { partitionModules } from "./partition.js";
 import {
   renderSkeletonPage, renderIndex, extractHumanBlocks, injectHumanBlocks,
-  TEMPLATE_VERSION,
+  TEMPLATE_VERSION, T1_SECTION_START,
 } from "./render.js";
 
 export const CHORO_DIR = ".chorography";
@@ -163,6 +163,21 @@ export function runChoroT0({ repoRoot, store = null, apply = false, now = () => 
     }
   );
 
+  // T0 重跑会把已富化的页退回骨架（P19：富化层不参与字节稳定不变量，重建整页丢弃
+  // 重来）。丢弃本身是设计意图，静默不是：不清点的话，人看到的只是「跑完 T0，语义
+  // 段落没了」，而 .chorography/evidence/*.json 还会变成没人引用的孤儿。这里只报，
+  // 不改字节、不删 evidence——一条只读的清点，dry-run 与 apply 共用。
+  const t1Loss = collectT1Loss(rootPath, pageTargets);
+  if (t1Loss.pages.length > 0) {
+    const names = t1Loss.pages.slice(0, 3).join("、");
+    warnings.push(
+      `${t1Loss.pages.length} 页含 T1 语义段（${names}${t1Loss.pages.length > 3 ? " 等" : ""}）：`
+      + `本次会退回骨架、清空 choro_claims`
+      + `${t1Loss.orphanEvidence > 0 ? `，${t1Loss.orphanEvidence} 份 evidence 文件会变成孤儿（不删）` : ""}。`
+      + "要留住语义段就别在这里重跑 T0；需要时再用 --t1 重新富化。"
+    );
+  }
+
   if (!apply) {
     return {
       dryRun: true,
@@ -181,6 +196,7 @@ export function runChoroT0({ repoRoot, store = null, apply = false, now = () => 
       skippedFiles: graph.skipped,
       unresolvedCount: unresolvedTotal,
       humanBlocksSeen: countExistingHumanBlocks(rootPath, pageTargets),
+      t1Loss: { pages: t1Loss.pages, orphanEvidence: t1Loss.orphanEvidence },
       wouldWrite: [...pageTargets.map((p) => ({ path: p.relPath, bytes: Buffer.byteLength(p.content, "utf8") })),
         { path: indexRelPath, bytes: Buffer.byteLength(indexContent, "utf8") },
         { path: `${CHORO_DIR}/state.json`, bytes: 0 }],
@@ -266,6 +282,7 @@ export function runChoroT0({ repoRoot, store = null, apply = false, now = () => 
     unresolvedCount: unresolvedTotal,
     humanBlocksPreserved,
     bytes,
+    t1Loss: { pages: t1Loss.pages, orphanEvidence: t1Loss.orphanEvidence },
     warnings,
     moduleSummary: modules.map((m) => ({
       slug: m.slug, title: m.title, fileCount: m.fileCount,
@@ -396,6 +413,31 @@ function existingHumanBlockCount(absPath) {
   } catch {
     return 0;
   }
+}
+
+// 重跑 T0 会丢掉的东西：页面里已有的 T1 语义段，以及只被它引用的 evidence 文件。
+// 返回值里的 pages 是相对路径（receipt 里人读），orphanEvidence 是 .chorography/
+// evidence/ 下现有的 .json 个数——T0 apply 会清空 choro_claims，这些文件从此没有
+// 引用者。两者都是「会失去什么」的清点，不构成阻止：丢弃是设计意图，静默才是 bug。
+function collectT1Loss(rootPath, pageTargets) {
+  const pages = [];
+  for (const target of pageTargets) {
+    const abs = join(rootPath, target.relPath);
+    if (!existsSync(abs)) continue;
+    try {
+      if (readFileSync(abs, "utf8").includes(T1_SECTION_START)) pages.push(target.relPath);
+    } catch {
+      /* 读不了就当没有：清点不该让 T0 失败 */
+    }
+  }
+  let orphanEvidence = 0;
+  const evidenceDir = join(rootPath, CHORO_DIR, "evidence");
+  try {
+    orphanEvidence = readdirSync(evidenceDir).filter((name) => name.endsWith(".json")).length;
+  } catch {
+    orphanEvidence = 0;
+  }
+  return { pages, orphanEvidence };
 }
 
 function countExistingHumanBlocks(rootPath, pageTargets) {

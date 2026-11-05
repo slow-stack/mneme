@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+- **chorography M2：T1 语义生成轮——逐模块 headless 会话补四段语义正文 + 溯源 claims**：`dsh-mneme-choro <repo> --t1 --apply`（缺省 dry-run 只列候选；`--module` 单跑 / `--model` 路由 / `--timeout` 墙钟 / `--retry-failed` 拉回失败页）。会话产出的架构/约定/技术栈/构建四段插在骨架页「生成说明」节之前（T0 确定性段落原样保留），claims 落 `choro_claims` 表 + `evidence/<slug>.json` 双处同源。
+
+  - **V1 已实测通过**（T1 的全部前提）：桌面版 headless 通道通——两个必需配方进了真实 runner：①**绕过 `.cmd` wrapper 直接调 exe**（`ELECTRON_RUN_AS_NODE=1 + --expose-internals`，wrapper 在 Git Bash 下路径引号会碎）；②**模型路由走 `--patch` 一次性临时 overlay** 指池模型（bili-scroll 同款、零配置改动；headless 默认路由 deepseek-official 要 API key，MISSING_CREDENTIAL）。overlay 只有 provider/model 名，无 key（红线 4）。
+  - **三重上限在 NDJSON 事件流上增量计数**（工具调用 / 输出字节 / 墙钟，超限即刻 kill）：这里有一个实测坑——初版每个数据块都把整个累积 buffer 重扫一遍，tool_call 被平方级重复计数，11 秒就撞 40 上限的假象；改成按「已计行数」增量扫描。事件形状以 V1 实测为准（`tool_call` 与 `tool_result` 成对，只数前者；最终答案取 `final.text`）。
+  - **输出契约同过同拒**（P16）：章程要求只输出一个 JSON 对象；解析失败或 claims 的 `sourcePath` 不在该模块文件清单里 → 该轮 failed、**一条 claims 都不落**——编造的锚点比没有更伤。首跑真实会话就是这条契约拦下了跨模块引用（`../../tools/build-client.mjs`），章程收紧（跨模块结论写进段落文字、不带锚点）后重跑通过。
+  - **失败记账（P17/P18）**：`choro_pages.fail_count` 列（addColumn 幂等迁移），连续两次到阈值标 `failed`（骨架原样保留），`--retry-failed` 可拉回、成功清零；**环境级失败（起不来 / MISSING_CREDENTIAL）≠ 页失败**——整档中止、页状态与计数都不动，receipt 带原因。
+  - **exe 定位**：`DSH_EXE` 环境变量 > `--dsh-exe` > 进程自身 > 标准安装位；cli.js 在 app.asar 内部，**不能 existsSync 校验**（CLI 是普通 node，没有 asar 支持；exe 自己加载没问题，V1 实测）。
+  - **边界如实声明（P22）**：headless 工具集由宿主管，章程里「只读、不修改文件」是软约束不是安全边界；T1 的硬保证是——人发起（CLI 显式 `--t1 --apply`）、本进程写路径断言在 `.chorography/**`、越界动作 git diff 可见。
+  - **真实冒烟**（dsh-baleen src-client，池模型 deepseek-v4.1-flash）：29s 富化完成、四段全出、33 条 claims 锚点文件存活率 33/33。模型工具路由是 CLI flag（P21：T1 只手动触发，不进 config schema）。
+  - **重跑 T0 不许静默吞掉语义段**（M2 补洞）：T0 重建整页时按 P19 丢弃富化层是设计意图，但**不说一声才是 bug**——实测在 dsh-baleen 上重跑 `--apply`，enriched 页退回 skeleton、`choro_claims` 清空，而 `.chorography/evidence/*.json` 留成孤儿，全程零提示。现在 T0 在 dry-run/apply 之前先清点（页内 `<!-- CHORO:T1:START -->` 计数 + evidence 下 `.json` 计数），命中就进 `warnings` 并在 receipt 带结构化 `t1Loss: { pages, orphanEvidence }`；清点只读，不改字节、不删 evidence，页已退回骨架后自动不再报警（免得变成常驻噪音）。T1 的两个标记因此收进 `src/wiki/render.js`（与 `CHORO:HUMAN` 同住）——写的人是 t1.js，读的人还有 t0.js。
+  - **验证**：新增 9 例（`test/wiki-t1.test.js` 7 例，runner 全部注入 stub——单测绝不真开会话）：dry-run 零会话、快乐路径（富化 + 保留区共存 + 重富化剥旧段）、失败记账与重试、编造锚点拒绝、环境级中止、上限路径、未登记拒绝；`test/wiki-t0.test.js` 2 例锁 t1Loss 清点（dry-run 也出声、evidence 不删、退回骨架后不再报警）与 CLI 解析（`--timeout` 只收正数秒——NaN 混进 spawn 的 timeoutMs 时墙钟上限会静默失效，不报错）。全量 `npm test` 2780 tests / 2779 pass / 0 fail / 1 skipped；check-sync 92 一致。
 - **chorography M1：仓库地志面板（浏览）+ 三个只读工具 + 关键词检索**：消费面第一批落四张脸——**面板**：第二个宿主座位（`sidebar.panellist` + `main`，id/key 逐字同为 `dsh-mneme-wiki`），左模块树 / 右正文 / 顶部检索，只读 MD 渲染（React 文本节点天然转义，零 innerHTML 通道）；**路由**：`/choro/repos|modules|page|search` 四条全 `policy: "open"`（宿主围栏统一鉴权），`chorographyEnabled` 关着统一 409 disabled（#497「路由挂着、逻辑层挡」先例）；**工具**：`choro_search` / `choro_read_page` / `choro_module_map` 走 hiddenTools 闸默认不在场，零写工具（红线 3）；**schema**：`choro_edges` 表补口（spec §7 的 module_map 要依赖边，M0 schema 漏了），replaceChoroGraph 顺手多删多插一段，幂等语义不变。
 
   - **开关语义**：`chorographyEnabled` opt-in 默认关（工具描述常驻模型上下文 = 新增成本，旗标计数锁 111 → 112）；**刻意不进 `LIGHT_MODE_OFF`**——choro 零每轮注入物、零热路径挂载，只有被动查询，轻量档关它省不出任何东西（config.js 键注释写明取舍）。

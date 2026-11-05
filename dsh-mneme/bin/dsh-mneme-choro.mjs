@@ -8,32 +8,43 @@
 // 为什么缺省 dry-run、--apply 才写：会动仓库磁盘的东西先给数字再执行（reclaim 同款
 // 纪律）。dry-run 零写入，receipt 里有「会写哪些文件、各多大」。
 //
+// T1（--t1）沿用同一条纪律，且以「花不花钱」再加一道：dry-run 只列候选模块与跳过
+// 原因，--apply 才真开 headless 会话（吃宿主模型额度）。
+//
 // stdout 纪律：一次成功/dry-run 的 receipt 走 stdout（人读或 --json 机器读），错误
 // 与拒绝走 stderr；exit 0 = dry-run 或成功，exit 1 = 拒绝/失败。
-import { readFileSync } from "node:fs";
+import fs, { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createStore } from "../lib/store.js";
 import { runChoroT0, ChoroRefusal } from "../lib/wiki/t0.js";
+import { createT1, DEFAULT_T1_MODEL, T1Refusal } from "../lib/wiki/t1.js";
 
 const BIN_NAME = "dsh-mneme-choro";
 const PKG = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"));
 
-const USAGE = `${BIN_NAME} — 仓库地志（chorography）T0 确定性骨架生成
+const USAGE = `${BIN_NAME} — 仓库地志（chorography）：T0 确定性骨架 + T1 语义生成轮
 
 用法:
   ${BIN_NAME} <repo-path> [选项]
 
 选项:
   --apply        实际写入 <repo>/.chorography/ 并落库（缺省 dry-run，只报数字）
+  --t1           T1 语义生成轮：逐模块一轮 headless 会话补四段语义正文 + claims。
+                 缺省 dry-run 只列候选；--apply 才开会话（花宿主模型额度）
+  --module <slug>      只跑一个模块（T1）
+  --model <p/m>        T1 模型路由（缺省 xdpool/deepseek-v4.1-flash）
+  --timeout <秒>       T1 单模块墙钟上限（缺省 240s）
+  --retry-failed       把 failed 页拉进来重试（T1；成功后计数清零）
+  --dsh-exe <路径>     DeepSeek Harness 主程序定位（缺省走 DSH_EXE / 标准安装位）
   --db <path>    memory.db 路径（缺省 ~/.dsh/memory/memory.db，前导 ~ 会展开）
   --json         receipt 用机器可读 JSON 输出
   -h, --help     本帮助
   -V, --version  版本
 
 T0 是确定性骨架（零模型、可离线）：文件树 + import 图 → 模块划分 → 骨架页。
-语义段落（架构/约定/技术栈）由 T1 headless 生成轮补（M2，本入口暂无）。
+T1 用 headless 会话补语义段落与溯源 claims（逐模块、三重上限、失败不推进）。
 
 页面里 CHORO:HUMAN 标记块的内容在重生成时逐字节保留；块外手改不保留。
 `;
@@ -45,7 +56,26 @@ function parseArgv(argv) {
     const arg = argv[i];
     if (arg === "--apply") flags.apply = true;
     else if (arg === "--json") flags.json = true;
-    else if (arg === "--db") {
+    else if (arg === "--t1") flags.t1 = true;
+    else if (arg === "--retry-failed") flags.retryFailed = true;
+    else if (arg === "--module" || arg === "--model" || arg === "--dsh-exe") {
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith("--")) {
+        throw new Error(`${arg} 需要一个参数`);
+      }
+      flags[arg.slice(2)] = next;
+      i++;
+    } else if (arg === "--timeout") {
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith("--")) {
+        throw new Error("--timeout 需要一个秒数");
+      }
+      // 现算一次：NaN 会一路混进 spawn 的 timeoutMs，表现成「上限不生效」而不是报错。
+      const secs = Number(next);
+      if (!Number.isFinite(secs) || secs <= 0) throw new Error(`--timeout 需要正数秒：${next}`);
+      flags.timeout = secs;
+      i++;
+    } else if (arg === "--db") {
       const next = argv[i + 1];
       if (next === undefined || next.startsWith("--")) {
         throw new Error("--db 需要一个路径参数");
@@ -70,7 +100,7 @@ function defaultDbPath() {
   return expandHome("~/.dsh/memory/memory.db");
 }
 
-function main() {
+async function main() {
   const argv = process.argv.slice(2);
   let parsed;
   try {
@@ -110,10 +140,26 @@ function main() {
   }
 
   try {
+    if (flags.t1) {
+      // T1 档（M2）：缺省 dry-run 只列候选模块与章程预览（零会话零写入）；
+      // --apply 才真开会话花钱。三重上限与降级表在 createT1 里。
+      const t1 = createT1({ store });
+      const receipt = await t1.runT1({
+        repoRoot: repoPath,
+        model: flags.model ?? DEFAULT_T1_MODEL,
+        moduleSlug: flags.module ?? null,
+        retryFailed: flags.retryFailed === true,
+        dryRun: flags.apply !== true,
+        dshExe: flags["dsh-exe"] ?? null,
+        limits: flags.timeout ? { timeoutMs: flags.timeout * 1000 } : null,
+      });
+      console.log(flags.json ? JSON.stringify(receipt, null, 2) : renderT1Receipt(receipt, { apply: flags.apply === true }));
+      return;
+    }
     const receipt = runChoroT0({ repoRoot: repoPath, store, apply: flags.apply === true });
     console.log(flags.json ? JSON.stringify(receipt, null, 2) : renderReceipt(receipt));
   } catch (err) {
-    if (err instanceof ChoroRefusal) {
+    if (err instanceof ChoroRefusal || err instanceof T1Refusal) {
       console.error(`拒绝运行（${err.code}）：${err.message}`);
     } else {
       console.error(`${BIN_NAME} 失败：${err?.stack ?? String(err)}`);
@@ -123,6 +169,33 @@ function main() {
     try { store.close(); } catch { /* WAL 关闭异常不遮蔽主结果 */ }
   }
   if (process.exitCode) process.exit(process.exitCode);
+}
+
+function renderT1Receipt(r, { apply }) {
+  const lines = [];
+  const head = r.dryRun ? "T1 dry-run（未开任何会话；确认后加 --apply）" : "T1 已跑";
+  lines.push(`${head} · ${r.repoName} · 模型 ${r.model}`);
+  if (r.t1Unavailable) {
+    lines.push(`T1 整档不可用（环境级，页状态未动）：${r.t1Unavailable}`);
+    lines.push("候选模块仍在下面，环境修好后重跑即可。");
+    lines.push("");
+  }
+  if (r.dryRun) {
+    lines.push(`将富化的模块（${r.candidates.length}）：`);
+    for (const c of r.candidates) lines.push(`  ${c.slug.padEnd(24)} ${String(c.fileCount).padStart(4)} 文件 · ${c.status}`);
+    lines.push(`跳过（${r.skipped.length}）：`);
+    for (const s of r.skipped) lines.push(`  ${s.slug} — ${s.reason}`);
+    lines.push(`三重上限：${r.limits.timeoutMs}ms 墙钟 / ${r.limits.maxToolCalls} 次工具 / ${r.limits.maxOutputBytes}B 输出`);
+    lines.push("");
+    lines.push("每个模块一轮 headless 会话，会花宿主模型额度；确认后加 --apply。");
+  } else {
+    lines.push(`富化 ${r.enriched.length} · 失败 ${r.failed.length} · 跳过 ${r.skipped.length}${r.t1Unavailable ? " · 整档中止（见上）" : ""}`);
+    for (const e of r.enriched) lines.push(`  ✓ ${e.slug}（${e.sections.join("/")} · claims ×${e.claims}）`);
+    for (const f of r.failed) lines.push(`  ✗ ${f.slug} — ${f.reason}${f.marked ? "（连续失败达阈值，标记 failed）" : ""}`);
+    for (const s of r.skipped) lines.push(`  · ${s.slug} — ${s.reason}`);
+  }
+  for (const w of r.warnings ?? []) lines.push(`提示：${w}`);
+  return lines.join("\n");
 }
 
 function renderReceipt(r) {
@@ -160,4 +233,22 @@ function renderReceipt(r) {
   return lines.join("\n");
 }
 
-main();
+// 直接运行才进 main（import 只取 parseArgv 做单测时必须安静）：npm 全局安装走
+// node_modules/.bin 的符号链接，argv[1] 是链接路径而非真身，所以 realpath 两侧再比。
+const invokedDirectly = (() => {
+  if (process.argv[1] == null) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error(err?.stack ?? String(err));
+    process.exit(1);
+  });
+}
+
+export { parseArgv };

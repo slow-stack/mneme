@@ -13,6 +13,8 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { runChoroT0, ChoroRefusal } from "../src/wiki/t0.js";
+import { parseArgv } from "../bin/dsh-mneme-choro.mjs";
+import { T1_SECTION_START, T1_SECTION_END } from "../src/wiki/render.js";
 import { createStore } from "../src/store.js";
 import { PlanInvalidError } from "../src/wiki/plan.js";
 
@@ -211,6 +213,67 @@ test("保留区跨重生成逐字节存活（红线 6），页尾按原相对顺
     store.close();
     rmTempBestEffort(root);
   }
+});
+
+// 重跑 T0 会把富化页退回骨架（P19：富化层不参与字节稳定不变量，重建整页丢弃重来）。
+// 丢弃是设计意图，静默不是：这条锁钉的是「丢之前必须说一声」，且清点本身不动任何字节。
+// 曾经的真实现场——D:/dsh-baleen 重跑 T0 --apply 后 modules/src-client.md 的 CHORO:T1
+// 段消失、DB choro_claims 清空，而 .chorography/evidence/src-client.json 的 33 条 claims
+// 还躺在磁盘上无人引用，全程零提示。
+test("重跑 T0 覆盖已富化的页：必须先出声（t1Loss 清点 + warning），evidence 不删", () => {
+  const root = makeFixture();
+  const store = createStore(":memory:");
+  try {
+    runChoroT0({ repoRoot: root, store, apply: true, now: FIXED_NOW });
+    const relPage = ".chorography/modules/src.md";
+    const pagePath = join(root, ".chorography", "modules", "src.md");
+    writeFileSync(pagePath,
+      `${readFileSync(pagePath, "utf8")}\n${T1_SECTION_START}\n## 架构\n\na.js 是入口，b.js 是它的下游。\n${T1_SECTION_END}\n`,
+      "utf8");
+    mkdirSync(join(root, ".chorography", "evidence"), { recursive: true });
+    writeFileSync(join(root, ".chorography", "evidence", "src.json"),
+      JSON.stringify({ slug: "src", claims: [{ statement: "a.js 是入口", sourcePath: "src/a.js" }] }, null, 2) + "\n",
+      "utf8");
+
+    const dry = runChoroT0({ repoRoot: root, store, now: FIXED_NOW });
+    assert.deepEqual(dry.t1Loss.pages, [relPage], "清点出会被退回骨架的页");
+    assert.equal(dry.t1Loss.orphanEvidence, 1, "清点出会变孤儿的 evidence 文件");
+    assert.ok(dry.warnings.some((w) => w.includes("T1 语义段")), "dry-run 也要说一声");
+    assert.ok(readFileSync(pagePath, "utf8").includes(T1_SECTION_START), "dry-run 不动字节");
+
+    const applied = runChoroT0({ repoRoot: root, store, apply: true, now: () => "2026-11-09T00:00:00.000Z" });
+    assert.deepEqual(applied.t1Loss.pages, [relPage], "apply receipt 同样带清点");
+    assert.ok(applied.warnings.some((w) => w.includes("evidence")), "孤儿 evidence 数进 warning");
+    assert.ok(!readFileSync(pagePath, "utf8").includes(T1_SECTION_START), "T1 段确实被丢弃（设计意图）");
+    assert.ok(exists(root, ".chorography/evidence/src.json"), "evidence 不删——孤儿留着当证人");
+
+    // 清点只读：页已退回骨架后再跑，就不再报（否则警告会变成常驻噪音）
+    const clean = runChoroT0({ repoRoot: root, store, now: () => "2026-11-10T00:00:00.000Z" });
+    assert.deepEqual(clean.t1Loss.pages, [], "没有 T1 段时不报警");
+    assert.equal(clean.t1Loss.orphanEvidence, 1, "但孤儿 evidence 仍在，照实报");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
+// CLI 的 --timeout 是「秒」，一路乘 1000 变成 spawn 的 timeoutMs。NaN 混进去不会
+// 报错，只会让墙钟上限静默失效——用户以为设了 60 秒，实际跑到 4 分钟默认值。
+test("CLI 解析：--t1 相关旗标取到值，--timeout 只收正数秒", () => {
+  const { flags } = parseArgv([
+    "D:/repo", "--t1", "--apply", "--module", "src", "--model", "xdpool/m",
+    "--timeout", "60", "--retry-failed", "--dsh-exe", "D:/Harness.exe", "--json",
+  ]);
+  assert.equal(flags.t1, true);
+  assert.equal(flags.apply, true);
+  assert.equal(flags.module, "src");
+  assert.equal(flags.model, "xdpool/m");
+  assert.equal(flags.timeout, 60, "解析出来就是数字，接线处不再二次转换");
+  assert.equal(flags.retryFailed, true);
+  assert.equal(flags["dsh-exe"], "D:/Harness.exe");
+  assert.throws(() => parseArgv(["--t1", "--timeout", "abc"]), /正数秒/);
+  assert.throws(() => parseArgv(["--t1", "--timeout", "0"]), /正数秒/);
+  assert.throws(() => parseArgv(["--t1", "--timeout"]), /需要一个秒数/);
 });
 
 test("plan.yaml 未知键整轮拒绝且零写入（D7 的第一道闸）", () => {
