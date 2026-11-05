@@ -516,9 +516,12 @@ export function createService({ store, mirror, config, onWrite, logger, document
   // Weighted blend factor for hybrid search; exposed so callers can tune it.
   const DEFAULT_HYBRID_WEIGHTS = { vector: 0.6, keyword: 0.4 };
 
-  // Cosine over two plain arrays (shared by the search-time semantic dedup).
+  // Cosine over two numeric vectors (shared by the search-time semantic dedup).
+  // Accepts typed arrays too — the store's cache holds Float32Array, and
+  // `Array.isArray` is false for typed arrays (would score everything 0).
   function cosineVec(a, b) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || !a.length) return 0;
+    const isVec = (v) => Array.isArray(v) || (ArrayBuffer.isView(v) && !(v instanceof DataView));
+    if (!isVec(a) || !isVec(b) || a.length !== b.length || !a.length) return 0;
     let dot = 0, na = 0, nb = 0;
     for (let i = 0; i < a.length; i++) {
       dot += a[i] * b[i];

@@ -1480,33 +1480,92 @@ export function createStore(path) {
   // Issue #202：embedding 解析缓存。检索路径此前每次调用都对全部带向量行
   // JSON.parse（993 × 512 维 ≈ 48 ms/次，且 SQL 拖着 10 MB 的 TEXT），余弦本身
   // 只占 3%。向量只经 setEmbedding 写入（单一失效点），把解析结果按 id 缓存，
-  // 命中即零解析；上限 FIFO 驱逐防大库内存无界（4000 × 512 维 double ≈ 16 MB）。
+  // 命中即零解析。
+  //
+  // 上限为什么不能是固定常量（2026-11-05 实测）：上限 4000、活跃带向量行 6685，
+  // 扫到第 4001 条开始驱逐自己刚填的条目，扫完只剩最后 4000 条，下一轮又从第
+  // 一条 miss——四轮实测命中率恒 0.0%，缓存等于不存在，每次检索都全量重解析
+  // （实测 624 ms）。固定调大只是把复发推到下个月（活跃行近 30 天净增 6156 条，
+  // 上限 20000 也只撑到 2027-01-09），所以上限跟工作集自适应：
+  //   · 每次全量扫（searchVector / vectorDimensionState）在循环前把上限抬到
+  //     「本次扫到的行数 ×1.25」，一次扫完不会被自己的驱逐打断；
+  //   · 内存预算封顶（默认 256 MB），超预算的行仍按 FIFO 驱逐——大库退化回
+  //     「部分命中」，不会无界吃内存。
+  // 存储用 Float32Array（真实总占用 55.5MB → 28.9MB，省 48%；cosine 全量
+  // 25.4ms → 18.0ms，前 50 条排序精度差 0.00e+0）。对外契约不变：
+  // getParsedEmbedding / getEmbeddings 仍返回 number[]，只有内部热路径
+  // （readVector）拿 Float32Array。
   const embeddingCache = new Map();
-  const EMBEDDING_CACHE_MAX = 4000;
+  const EMBEDDING_CACHE_FLOOR = 4000;
+  const EMBEDDING_CACHE_BUDGET_BYTES = 256 * 1024 * 1024;
+  let embeddingCacheCap = EMBEDDING_CACHE_FLOOR;
+  let embeddingCacheHits = 0;
+  let embeddingCacheMisses = 0;
+
+  /** Vector-like = number[] or Float32Array (typed). All cosine guards use this
+   *  instead of Array.isArray, which is false for typed arrays — with the old
+   *  guard every cached vector would silently score 0. */
+  function isVectorLike(v) {
+    return Array.isArray(v) || (ArrayBuffer.isView(v) && !(v instanceof DataView));
+  }
 
   function cacheEmbedding(id, vector) {
-    if (embeddingCache.size >= EMBEDDING_CACHE_MAX && !embeddingCache.has(id)) {
+    if (embeddingCache.size >= embeddingCacheCap && !embeddingCache.has(id)) {
       const oldest = embeddingCache.keys().next().value;
       embeddingCache.delete(oldest);
     }
     embeddingCache.set(id, vector);
   }
 
-  /** Parsed embedding for one id (cache-first); undefined when none/parse
-   *  failure. Single read path shared by searchVector / getEmbedding(s). */
-  function getParsedEmbedding(id) {
+  /** Raise the cap to fit a sweep of `rows` rows (×1.25 headroom), clamped by
+   *  the memory budget. Called before a full scan so the scan itself does not
+   *  evict what it just cached. */
+  function noteSweep(rows, avgDim) {
+    if (!rows || !avgDim) return;
+    const perVector = avgDim * Float32Array.BYTES_PER_ELEMENT;
+    const budgetRows = Math.floor(EMBEDDING_CACHE_BUDGET_BYTES / perVector);
+    const want = Math.ceil(rows * 1.25);
+    embeddingCacheCap = Math.max(EMBEDDING_CACHE_FLOOR, Math.min(budgetRows, want));
+  }
+
+  /** Cache-first read returning Float32Array (internal hot path only).
+   *  undefined when none/parse failure. */
+  function readVector(id) {
     const cached = embeddingCache.get(id);
-    if (cached) return cached;
+    if (cached) { embeddingCacheHits += 1; return cached; }
+    embeddingCacheMisses += 1;
     const row = db.prepare("SELECT embedding FROM memories WHERE id = ?").get(id);
     if (!row?.embedding) return undefined;
     try {
-      const v = JSON.parse(row.embedding);
-      if (Array.isArray(v) && v.length) {
+      const parsed = JSON.parse(row.embedding);
+      if (Array.isArray(parsed) && parsed.length) {
+        const v = new Float32Array(parsed);
         cacheEmbedding(id, v);
         return v;
       }
     } catch { /* corrupt embedding text: treated as absent */ }
     return undefined;
+  }
+
+  /** Parsed embedding for one id (cache-first); undefined when none/parse
+   *  failure. Single read path shared by searchVector / getEmbedding(s).
+   *  Public contract: returns number[] (callers guard with Array.isArray). */
+  function getParsedEmbedding(id) {
+    const v = readVector(id);
+    return v ? Array.from(v) : undefined;
+  }
+
+  /** Cache instrumentation for the regression lock (hit rate must not collapse
+   *  back to 0 when the working set outgrows a fixed cap). */
+  function embeddingCacheStats() {
+    const total = embeddingCacheHits + embeddingCacheMisses;
+    return {
+      size: embeddingCache.size,
+      cap: embeddingCacheCap,
+      hits: embeddingCacheHits,
+      misses: embeddingCacheMisses,
+      hitRate: total ? embeddingCacheHits / total : 0
+    };
   }
 
   // all()/list() 的显式列清单：从实际 schema 派生（迁移后），只排除 embedding
@@ -2372,7 +2431,10 @@ export function createStore(path) {
    *  name; omitting modelHash leaves the column untouched (callers that
    *  predate the column still work, their rows simply read as unknown). */
   function setEmbedding(id, vector, modelHash) {
-    const json = Array.isArray(vector) && vector.length ? JSON.stringify(vector) : null;
+    // isVectorLike 而非 Array.isArray：调用方可能递进 Float32Array（本模块缓存的
+    // 就是它）。旧守卫对 typed array 返回 false，会把「设置向量」读成「清空向量」，
+    // 静默把行改成 NULL。
+    const json = isVectorLike(vector) && vector.length ? JSON.stringify(Array.from(vector)) : null;
     if (json) {
       if (modelHash !== undefined) {
         db.prepare("UPDATE memories SET embedding = ?, embedding_model = ? WHERE id = ?")
@@ -2385,15 +2447,10 @@ export function createStore(path) {
     }
     // Issue #202：单一写入口即单一失效点——重写缓存条目（向量在手上不必重解析），
     // 清空则移除，删除过的 id 不会被下一次 searchVector 的 id 集合选中。
-    if (json) {
-      try {
-        const parsed = JSON.parse(json);
-        if (Array.isArray(parsed) && parsed.length) cacheEmbedding(id, parsed);
-        else embeddingCache.delete(id);
-      } catch { embeddingCache.delete(id); }
-    } else {
-      embeddingCache.delete(id);
-    }
+    // 缓存里存 Float32Array（与 readVector 同一表示），不存 JSON.parse 出来的
+    // number[]，否则写后第一次读还要再转一次。
+    if (json) cacheEmbedding(id, new Float32Array(vector));
+    else embeddingCache.delete(id);
   }
 
   /** Batch fetch stored embeddings by id (v0.5.0 search-time semantic dedup).
@@ -2562,10 +2619,11 @@ export function createStore(path) {
     ).all();
     if (!rows.length) return { state: "none" };
     let sawVector = false;
+    noteSweep(rows.length, dimension);
     for (const row of rows) {
-      // 走 getParsedEmbedding 的解析缓存，不自己 JSON.parse——与 searchVector /
-      // getEmbedding(s) 同一条读路径，缓存热时零解析。
-      const v = getParsedEmbedding(row.id);
+      // 走同一解析缓存，不自己 JSON.parse——与 searchVector / getEmbedding(s)
+      // 同一条读路径，缓存热时零解析。
+      const v = readVector(row.id);
       if (!v || !v.length) continue;
       sawVector = true;
       if (v.length === dimension) return { state: "match" };
@@ -2599,7 +2657,7 @@ export function createStore(path) {
   // --- vector search ------------------------------------------------------
 
   function cosine(a, b) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || !a.length) return 0;
+    if (!isVectorLike(a) || !isVectorLike(b) || a.length !== b.length || !a.length) return 0;
     let dot = 0;
     let na = 0;
     let nb = 0;
@@ -2627,8 +2685,10 @@ export function createStore(path) {
        WHERE ${archivedFilter}forgotten = 0 AND embedding IS NOT NULL AND embedding != ''`
     ).all();
     const scored = [];
+    // 自适应上限：本次要扫这么多行，先让缓存装得下，否则会边扫边驱逐自己。
+    noteSweep(rows.length, vector.length);
     for (const row of rows) {
-      const v = getParsedEmbedding(row.id);
+      const v = readVector(row.id);
       if (!v) continue;
       // distill-tx-embed-gap 顺带修：维度不匹配的行按维度分流，直接跳过。旧路径
       // 喂进 cosine 不等长就 return 0，换了模型/维度的旧向量以 0 分混进结果尾部
@@ -4976,6 +5036,7 @@ export function createStore(path) {
     setEmbedding,
     getEmbeddings,
     getParsedEmbedding,
+    embeddingCacheStats,
     embeddedCount,
     needsEmbedding,
     needsEmbeddingFor,

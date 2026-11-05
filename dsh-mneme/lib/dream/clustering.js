@@ -1,7 +1,12 @@
 // Cosine similarity of two equal-length numeric vectors. Returns 0 for empty
 // or mismatched-length inputs, and for zero-norm vectors (numerically stable).
+// Accepts typed arrays (Float32Array) as well as plain arrays: store.js caches
+// vectors as Float32Array and `Array.isArray` is false for typed arrays — guarding
+// on it alone would silently score every cached vector as 0.
+const isVec = (v) => Array.isArray(v) || (ArrayBuffer.isView(v) && !(v instanceof DataView));
+
 export function cosineSimilarity(a, b) {
-  if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || a.length !== b.length) return 0;
+  if (!isVec(a) || !isVec(b) || a.length === 0 || a.length !== b.length) return 0;
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
