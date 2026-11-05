@@ -35,9 +35,9 @@ jobs:
       run:
         working-directory: dsh-mneme
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -67,13 +67,13 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.node-version == 24
         run: npm run test:coverage
 
-      # v5：codecov-action v4 的引导期（下载/连接 codecov.io）TLS 失败不受
+      # v5 起（现 v7 同一 CLI 路线）：codecov-action v4 的引导期（下载/连接 codecov.io）TLS 失败不受
       # fail_ci_if_error 约束，会把整条腿判死（2026-10-05 ubuntu+node24 连挂三次，
       # 测试与覆盖率本身 fail 0）。v5 走新 CLI 且带 retry_count，引导/上传的
       # 网络抖动可在步内消化——上报失败仍不应挡 merge。
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.node-version == 24
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: dsh-mneme/coverage/lcov.info
@@ -106,9 +106,9 @@ jobs:
       run:
         working-directory: dsh-mneme
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
