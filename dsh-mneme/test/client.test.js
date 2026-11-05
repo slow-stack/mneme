@@ -135,6 +135,24 @@ test("chorography wiki page exposes the rebuild action against /choro/run", () =
   );
 });
 
+// v0.11.1 美化：文件清单的竖线等宽行换成真 table（用户实测反馈「文件名排列
+// 太难看」）。锁渲染器三件事：真 <table>、分隔行（--- | ---:）按对齐元数据消费
+// 而不是画成可见行、数字列右对齐。回归表现：改回竖线等宽行画法 → 红在缺 table。
+test("chorography wiki page renders markdown tables as real aligned tables", () => {
+  assert.ok(
+    clientSource.includes("mneme-wikitable"),
+    "the markdown renderer must emit real table elements"
+  );
+  assert.ok(
+    clientSource.includes("isSepRow"),
+    "the separator row (--- | ---:) must be consumed as alignment metadata, not rendered"
+  );
+  assert.ok(
+    clientSource.includes("mneme-wikinum"),
+    "numeric columns (行数) must be right-aligned via the alignment marker"
+  );
+});
+
 // 上一条锁的是「代码里有没有这两套座位」，这条锁「装/卸真的按条件跑」。
 // 回归表现（都靠字符串锁抓不到）：
 //  · 新宿主上两套都装 → 侧栏两颗记忆入口；
