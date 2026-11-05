@@ -39,3 +39,12 @@ memory.db
 
 # 本机个人工具（dsh 目录镜像滞后监控等，非包内容，不进版本库）
 tools/
+
+# 仓库地志生成物（chorography，见 docs/specs/2026-11-04-chorography-design.md）
+# T0/T1 会重写 index.md、modules/*.md、evidence/*.json 与 state.json，都是可再生成的派生物；
+# 只有 plan.yaml 是人工写的正面控制表，必须进版本库。
+# 忽略目录内容而非整个目录，否则白名单 !.chorography/plan.yaml 不生效。
+# 代价：页内 CHORO:HUMAN 保留区只在本机存活（git clean -fdX 会连它一起删）。
+# 要进版本库的人工内容写 plan.yaml 的 notes，那是随仓库走的；保留区是本地草稿。
+.chorography/*
+!.chorography/plan.yaml
