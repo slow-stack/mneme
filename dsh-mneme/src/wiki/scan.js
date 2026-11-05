@@ -24,10 +24,23 @@ const CODE_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", "
 
 // 默认排除（spec 步 2「跳过 node_modules、构建产物、二进制」）：plan.yaml 的
 // exclude 是追加而不是替代——用户排除是表达意图，这份是卫生底线。
+//
+// 点开头目录整类排除（V2 实测回填，见 docs/plans/2026-11-04-chorography-m0.md）：
+// 会话产物的落盘习惯就是把东西塞进 .qoder-credits / .superpowers / .shots / .zcode /
+// .dsh-ops / .v2c 这类点目录，而里面常常是提问原文、调试快照与第三方工具缓存——
+// baleen 上它们占 15 个模块里的 6 个，study-desk 上占 5 个里的 3 个。逐个点名厂商等于
+// 把一台机器的工具链钉进发布包，换个工具又漏；「点开头即非仓库内容」这条更短的规则
+// 与三处实测的分布一致，也不随工具换代失效。
+// 代价如实写在这里：.vitepress/theme、.docusaurus 这类确实把真源码放在点目录里的仓库
+// 会漏掉那部分，且**拉不回来**——扫描阶段的排除先于 plan.include 白名单生效。
+// 只按目录名判，点开头的**文件**（.eslintrc.json 之类）照旧扫：那是仓库配置，不是产物。
 export const DEFAULT_EXCLUDE_DIRS = Object.freeze([
-  "node_modules", ".git", ".hg", ".svn", "dist", "build", "out", "coverage",
-  ".next", ".nuxt", ".output", ".cache", ".chorography", ".worktrees",
+  "node_modules", "dist", "build", "out", "coverage",
 ]);
+
+function isDefaultExcludedDir(name) {
+  return name.startsWith(".") || DEFAULT_EXCLUDE_DIRS.includes(name);
+}
 
 const BINARY_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".avif", ".bmp", ".pdf",
@@ -71,7 +84,7 @@ function walk(absRoot, relDir, matcher, out) {
   for (const entry of entries) {
     const rel = relDir ? posix.join(relDir, entry.name) : entry.name;
     if (entry.isDirectory()) {
-      if (DEFAULT_EXCLUDE_DIRS.includes(entry.name)) continue;
+      if (isDefaultExcludedDir(entry.name)) continue;
       if (matcher.excludedDir(rel)) continue;
       walk(absRoot, rel, matcher, out);
     } else if (entry.isFile()) {

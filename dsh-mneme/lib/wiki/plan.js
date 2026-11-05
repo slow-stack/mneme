@@ -24,7 +24,9 @@ export const PLAN_PAGE_ALLOWED_KEYS = Object.freeze(["path", "title", "template"
 export const DEFAULT_MAX_FILES_PER_PAGE = 40;
 
 // plan.yaml 不存在时的启发式默认（spec §6 步 1）：全量 include、零 exclude 追加
-// （目录级排除由 scan.js 的默认排除表承担）、无页面白名单（划分结果全建页）。
+// （目录级排除由 scan.js 的默认排除表承担：node_modules/构建产物 + 一切点开头目录，
+// 见 DEFAULT_EXCLUDE_DIRS 上方注释——所以空 plan 也不是「什么都读」）、
+// 无页面白名单（划分结果全建页）。
 export function defaultPlan() {
   return {
     include: null,
