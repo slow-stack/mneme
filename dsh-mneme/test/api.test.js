@@ -762,8 +762,11 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 不需要 NESTED_FLAG_PATHS 条目）= 111。
   // chorography M1 新增 chorographyEnabled（仓库地志只读工具 + 面板页的暴露闸；
   // 顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 112。
-  assert.equal(Object.keys(data.effective).length, 112);
+  // chorography M3 新增 chorographyInject（开局注入档位；枚举键走 ENUMS 表，
+  // 顶层扁平原值 "light"，不需要 NESTED_FLAG_PATHS 条目）= 113。
+  assert.equal(Object.keys(data.effective).length, 113);
   assert.equal(data.effective.chorographyEnabled, false);
+  assert.equal(data.effective.chorographyInject, "light");
   assert.equal(data.effective.dreamSkipInvalid, true);
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, true);

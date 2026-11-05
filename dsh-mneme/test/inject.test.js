@@ -441,3 +441,54 @@ test("throwing surface getter degrades to full-log hot memory instead of a blank
   assert.ok(text.includes("热记忆不该因此整块消失"), "轮次回复应照旧进入");
   assert.equal(getInjectionSnapshot().query, "把投影插件卸了会怎样", "语义查询不受 getter 抛错影响");
 });
+
+// M3 仓库地志（chorography）：注入块折进同一个 memory context（不新开 context），
+// 次序是 时间 → 地志 → 热上下文 → 长期记忆。这三例锁的是「折进来之后仍只有一个块」
+// 与「空串不占位」——后者是宿主契约（空文本 section 被 filter 掉），不是我们自己加的。
+function setupWithChoro(choroText, over = {}) {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  const settings = createSettings(store.db);
+  const contexts = [];
+  const ctx = { systemPrompt: { context(def) { contexts.push(def); return () => {}; } } };
+  const calls = [];
+  const choroInject = {
+    tier: "light",
+    text(cwd) { calls.push(cwd); return typeof choroText === "function" ? choroText(cwd) : choroText; },
+    dispose() {}
+  };
+  const config = { maxInjectedItems: 3, importanceThreshold: 3, ...over };
+  const injector = createInjector(ctx, service, settings, config, null, null, choroInject);
+  return { store, service, contexts, injector, calls, ctx };
+}
+
+test("M3: 地志块折进 memory context，不新开第二个 context", () => {
+  const { contexts } = setupWithChoro("[仓库地志]");
+  assert.equal(contexts.length, 2, "折进来就仍是两块；多开一块会改宿主的装配顺序");
+  assert.equal(contexts[0].name, "memory");
+});
+
+test("M3: 地志块排在热上下文与长期记忆之前，且 cwd 取自 scope.workspace_scope", () => {
+  const { contexts, service, calls } = setupWithChoro("[仓库地志]");
+  service.saveWithDedupe({ type: "preference", title: "语言", content: "用户用中文交流", importance: 5 });
+  const events = [
+    { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "这个仓库怎么组织" }] } },
+    { type: "assistant/message", data: { message: { content: [{ type: "text", text: "按模块分组" }] } } }
+  ];
+  // scope.workspace_scope 不是入参，是 scope.js 现场解析出来的（registry 反查，
+  // header.cwd 兜底）；测试只能提供 header.cwd，才能真验「注入器吃的是那一份口径」。
+  const text = contexts[0].text({ agent: { session: { header: { cwd: "/repo" }, snapshotEvents: () => events } } });
+  const iChoro = text.indexOf("[仓库地志]");
+  const iHot = text.indexOf("[短期上下文]");
+  const iMem = text.indexOf("[记忆库]");
+  assert.ok(iChoro >= 0 && iHot > iChoro && iMem > iHot, "次序 地志 → 热上下文 → 长期记忆：" + text);
+  assert.ok(calls.includes("/repo"), "cwd 只能用 scope.workspace_scope 这一份口径（P27），calls=" + JSON.stringify(calls));
+});
+
+test("M3: 地志为空串时不占位，块首尾不留空行；choroChars 记实际体积", () => {
+  const { contexts, service } = setupWithChoro("");
+  service.saveWithDedupe({ type: "preference", title: "语言", content: "用户用中文交流", importance: 5 });
+  const text = contexts[0].text({});
+  assert.equal(text.startsWith("[记忆库]"), true, "空串拼接不许在块首留下空行：" + JSON.stringify(text.slice(0, 8)));
+  assert.equal(getInjectionSnapshot().choroChars, 0);
+});

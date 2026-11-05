@@ -135,3 +135,53 @@ test("search：按节返回命中与行号，空 q 返回空数组，module 过�
     rmTempBestEffort(root);
   }
 });
+test("repoByCwd：祖先前缀命中、最长 root 胜出、cwd 不存在返回 null", () => {
+  const { root, store, q } = setup();
+  let nested = null;
+  try {
+    // 精确根目录
+    const exact = q.repoByCwd(root);
+    assert.ok(exact, "仓库根命中");
+    // 子目录也要命中——真实会话的 cwd 常常是 D:/repo/src 这种
+    const sub = q.repoByCwd(join(root, "src"));
+    assert.equal(sub.id, exact.id, "子目录按祖先前缀命中同一个仓库");
+    assert.equal(q.repoByCwd(join(root, "no-such-dir")), null, "cwd 不存在 → null（不是抛错，注入在热路径上）");
+    assert.equal(q.repoByCwd(""), null);
+    assert.equal(q.repoByCwd(null), null);
+    // 嵌套仓库：外层先登记，内层后登记 → 内层会话必须被内层抢走（最长前缀）
+    nested = makeFixture();
+    runChoroT0({ repoRoot: nested, store, apply: true, now: FIXED_NOW });
+    const inner = q.repoByCwd(join(nested, "src"));
+    assert.equal(inner.root_path, nested, "嵌套时取最深那层，否则内层会话被外层仓库抢走");
+    assert.equal(q.repoByCwd(root).root_path, root, "外层 cwd 仍落外层");
+  } finally {
+    store.close();
+    if (nested) rmTempBestEffort(nested);
+    rmTempBestEffort(root);
+  }
+});
+
+test("outline：模块名 + 文件数 + 页状态 + 页相对路径，不读正文", () => {
+  const { root, store, q } = setup();
+  try {
+    const repo = q.resolveRepo(undefined);
+    const out = q.outline(repo.id);
+    assert.equal(out.repo.id, repo.id);
+    assert.equal(out.repo.name, "qfix");
+    assert.equal(out.modules.length, 2);
+    const srcMod = out.modules.find((m) => m.slug === "src");
+    assert.equal(srcMod.status, "skeleton");
+    assert.equal(srcMod.relPath, ".chorography/modules/src.md");
+    assert.ok(srcMod.fileCount >= 3);
+    assert.equal(srcMod.parentSlug, null);
+    assert.ok(out.generatedAt, "生成时间由页行的 generated_at 汇总");
+    // 「只注标题级」的机制锁：提纲里不许出现页正文片段（骨架页的节标题/说明行）
+    const serialized = JSON.stringify(out);
+    assert.equal(serialized.includes("## 文件清单"), false, "提纲不含正文节标题");
+    assert.equal(serialized.includes("确定性骨架"), false, "提纲不含页内说明行");
+    assert.equal(q.outline(9999), null, "未知 repo → null");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});

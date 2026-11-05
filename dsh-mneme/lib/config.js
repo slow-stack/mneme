@@ -894,12 +894,27 @@ export const Config = z.object({
 
   // chorography（仓库地志，spec: docs/specs/2026-11-04-chorography-design.md）的
   // 暴露闸（opt-in，默认关）：管模型侧三个只读工具（choro_search / read_page /
-  // module_map）与面板浏览页。工具描述常驻模型上下文 = 新增成本，按仓库纪律
-  // opt-in；默认关=工具不存在、面板页空态、行为与 0.10.1 逐字节一致。
-  // **不进 LIGHT_MODE_OFF**（刻意）：轻量档关的是「每轮注入物」与「热路径监听」，
-  // choro 三工具零每轮注入、零热路径挂载，只有被动查询——轻量档用户搜仓库时
-  // 同样受惠，关它没有省出任何东西。
+  // module_map）、面板浏览页，以及 M3 的开局注入。工具描述常驻模型上下文 = 新增
+  // 成本，按仓库纪律 opt-in；默认关=工具不存在、面板页空态、注入块不渲染，行为与
+  // 0.10.1 逐字节一致。
+  //
+  // 本键仍**不进 LIGHT_MODE_OFF**，但理由收窄成一句：它是「是否启用这个子系统」，
+  // 不是「每轮付多少」。轻量档要付的是下面那条 chorographyInject（把档位压成
+  // off）——两层分开，用户才能在轻量档里保留工具、只关掉每轮那块文本。
   chorographyEnabled: z.boolean().default(false),
+
+  // 开局注入档位（M3，spec §7）：off / light / full，默认 light。
+  // light ≤8 行（模块名 + 文件数 + 页状态 + 页路径，按「还有 N 个」明说截断）；
+  // full 列全部模块；off 不注入但工具照旧可用。
+  // 为什么是枚举而不是布尔：spec 原文就是三档，「开了但只给 6 行」与「全给」是两种
+  // 用法，布尔键表达不了；跟随 chorographyEnabled 隐式开又会丢掉「留工具、去文本」
+  // 这个组合。
+  // 为什么写作 z.union([z.const(...)]) 而不是 z.enum：与 summarizeDedupeMode 同款，
+  // 全仓枚举键统一这一种写法（z.enum 的报错文案与既有键不一致）。
+  // 轻量档**不进 LIGHT_MODE_OFF**：那张表对平铺键一律赋 false，枚举键进去会得到与
+  // schema 不符的 false，而 false !== "off" 时注入照样渲染——静默失效比不关更糟。
+  // 轻量档的压制改在消费侧（src/wiki/inject.js 的 resolveInjectTier 判 lightMode）。
+  chorographyInject: z.union([z.const("off"), z.const("light"), z.const("full")]).default("light"),
 
   // --- scope: v0.8.0 A1 存储层（issue #17）--------------------------------
   // 总开关默认关：关闭时写入不标注 scope、去重维持 (type, title) 现状，行为
