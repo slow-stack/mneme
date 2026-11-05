@@ -25,3 +25,4 @@ id_rsa*
 *.sqlite
 memory.db
 
+.mimosa/
