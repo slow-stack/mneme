@@ -16,6 +16,7 @@
   - **两个 handler 的 promise 链必须 `return`**：invoke/测试 `await route.handler(...)`，不 return 就在响应发出前返回——实测症状是 semantic 恒缺席、body 恒空。/choro/search 与 /choro/run 都改成 `return readBody(...).then(...)`（nudge 同款）。
   - **嵌入对象**：页正文剥 frontmatter / CHORO 标记行后的全文（P40，页级；claims 级留待真有精排需求）。staleness 两维：页 `generated_at` 变了（内容变）、行 `dim` 失配（模型变）。
   - **验证**：新增 10 例（wiki-queries 3：staleness 两维 / dim 失配全量重嵌 / cosine 排序与空查询；wiki-api 3：run 路由 policy+405+快乐路径、闸语义 409/404、semantic 在场与缺席；wiki-store 向量读写随用例覆盖；client 锁 1：按钮打 /choro/run、防连点、T1 留 CLI 的 hint、回执计数）。全量 `npm test` 2814 pass / 0 fail / 1 skipped；check-sync 94 一致。
+  - **桌面实测反馈的美化：文件清单从「竖线等宽行」换成真 table**（用户看截图后拍板）：MD 渲染器解析连续 `|` 行为真表格——表头、对齐元数据（`---:` → 行数列右对齐等宽数字）、路径单元格等宽底色、斑马纹与 hover；分隔行不再画成可见行；引导引言缩小一档。回归锁三件（真 table / 分隔行被消费 / 数字列对齐）。
 ## [0.11.0] - 2026-11-05
 
 - **修复 #573：宽态侧栏的记忆入口落在「更多」行下面，点开「更多」时被菜单盖住**：宿主 0.2.2 起把面板列表的「更多」行（`PanelMoreMenu`）也追加进同一个 `nav.panelList`，于是组尾不再是面板行——我们仍按「追加到末尾」落位，入口就排到了「更多」下面。
