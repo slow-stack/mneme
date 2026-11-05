@@ -1539,6 +1539,38 @@ test("badge store: one poll for both entries, immediate publish after a refresh"
   assert.equal(cleared, 1, "the timer must stop when the last subscriber leaves");
 });
 
+// 通用失效广播（mneme:store-changed）：此前跨组件失效只有 mneme:conflicts-changed
+// 一个事件、三个状态侧监听者，记忆列表与冲突徽章、实体页、归档工作台全都不在
+// 名单里——裁决/删除之后要关面板重开才能看到落地（用户 2026-11-06 反馈）。
+// 本用例锁四类回归：(a) 事件名不被改名；(b) 发布点数量——新增改库动作忘了广播
+// 时这里先红（ledger 见断言消息）；(c) 此前漏订的数据视图都订阅了；(d) 裁决
+// 路径精准信号与通用信号并存，砍掉任何一个都会让现有监听者失去各自语义。
+test("store-changed broadcast: every mutation publishes, missed views subscribe", () => {
+  assert.ok(
+    clientSource.includes('new CustomEvent("mneme:store-changed"'),
+    "the broadcast must dispatch an event literally named mneme:store-changed"
+  );
+  // 发布点 ledger（lookahead 排除 helper 定义形参那一处）：conflict-resolve /
+  // memory-delete / memory-archive|restore|edit（applyMemoryUpdate 一处按分支发
+  // 一种）/ workbench restore / import×3 / create / pack-undo / reclaim = 10 处发布。
+  const dispatches = clientSource.match(/broadcastStoreChanged\((?!reason\b)/g) || [];
+  assert.equal(
+    dispatches.length, 10,
+    `every store-mutating action must publish exactly once (got ${dispatches.length}; ` +
+    "if you added a mutation, add its broadcast and bump this ledger)"
+  );
+  const subscribers = clientSource.match(/addEventListener\("mneme:store-changed"/g) || [];
+  assert.equal(
+    subscribers.length, 7,
+    `memory list, entities, workbench, conflict queue, badge hook and both dream-status consumers must subscribe (got ${subscribers.length})`
+  );
+  assert.ok(
+    clientSource.includes('broadcastStoreChanged("conflict-resolve")')
+      && clientSource.includes('new CustomEvent("mneme:conflicts-changed")'),
+    "resolve must keep emitting the precise conflicts-changed signal alongside the generic one"
+  );
+});
+
 // --- issue #179：注入预览（状态页卡片 + /inject-preview 端点透传的旁路快照） ---
 test("a11y+preview: inject preview card is wired on the status tab", () => {
   assert.ok(clientSource.includes('"/api/dsh-mneme/inject-preview"'), "card must fetch the preview endpoint");
@@ -1666,8 +1698,8 @@ test("panel can create a memory by hand: menu entry wired to the dialog", () => 
   // 弹层必须挂在树上并接上回调：onCreated 同时刷新列表与选中新行（并入既有条目时
   // 返回的 id 是被并入那一行，也该滚进视野）。
   assert.ok(/createOpen && h\(CreateDialog, \{/.test(clientSource), "the dialog must be mounted conditionally");
-  assert.ok(/onCreated: \(d\) => \{ setReloadKey\(\(k\) => k \+ 1\); if \(d && d\.id\) setSelectedId\(d\.id\); \}/.test(clientSource),
-    "creating must refresh the list and select the resulting row");
+  assert.ok(/onCreated: \(d\) => \{ setReloadKey\(\(k\) => k \+ 1\); broadcastStoreChanged\("create"\); if \(d && d\.id\) setSelectedId\(d\.id\); \}/.test(clientSource),
+    "creating must refresh the list, publish the invalidation broadcast and select the resulting row");
   // 打后端的路由是 /create，不是 standalone 的 /memories：面板与工具必须走同一条
   // saveWithDedupe 路径，否则「同标题并入」的提示在面板上会失灵。
   assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/create"'),

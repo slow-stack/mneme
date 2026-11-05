@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- **面板跨组件失效广播：改库动作后记忆列表/实体页/状态工作台即时重取，不再「关面板重开才看到变化」**（用户 2026-11-06 反馈：裁决完冲突要关掉插件面板才能看到败者归档落地）。
+
+  - **病灶不是没刷新，是没广播**：全面板此前唯一的跨组件失效机制是 `mneme:conflicts-changed`（一个派发点、三个状态侧监听者，全是状态页小组件）；记忆列表与冲突徽章只靠弹层成功回调、手动刷新按钮与 30s 首页合并续命，实体页与归档工作台干脆只有挂载时取一次。tab 切换本就卸载重挂，所以症状集中在同一次打开的面板内。
+  - **新增 `broadcastStoreChanged` 助手派发 `mneme:store-changed`**，10 处改库动作的成功路径统一发布：冲突裁决、删除、编辑/归档/恢复（applyMemoryUpdate 一处按分支发一种）、工作台恢复、导入×3、建条、整包撤销、回收确认模式。各动作自己的本地刷新（reloadKey / 列表过滤）保留——偶发的重复 GET 换「永远不陈旧」，划算。
+  - **订阅方**：MemoryExplorer（一个 reloadKey 带动浏览列表、搜索、冲突徽章三份 effect）、EntityPanel（目录/图谱/属性三层全挂重取游标）、ConflictsQueue（参与记忆被删时联表侧会失真）、WorkbenchSection、侧栏红点 hook 与两处 dream-status 消费者（涉及冲突的记忆被删除/恢复同样改变 pending 集）。`mneme:conflicts-changed` 原样保留——它是裁决专属的精准信号，语义更窄，已有监听者不必搬家。
+  - **回归锁**：`test/client.test.js` 新增一例锁事件名、发布点 ledger（新增改库动作忘了广播时先红）、订阅方数量与裁决双信号并存；onCreated 的既有原样锁同步带上广播。
+  - **验证**：全量 `npm test` 2809 tests / 2808 pass / 0 fail / 1 skipped；test/client.test.js 100 例全绿（含新增锁）；test/client-share.test.js 全绿。
+
 ## [0.11.0] - 2026-11-05
 
 - **修复 #573：宽态侧栏的记忆入口落在「更多」行下面，点开「更多」时被菜单盖住**：宿主 0.2.2 起把面板列表的「更多」行（`PanelMoreMenu`）也追加进同一个 `nav.panelList`，于是组尾不再是面板行——我们仍按「追加到末尾」落位，入口就排到了「更多」下面。
