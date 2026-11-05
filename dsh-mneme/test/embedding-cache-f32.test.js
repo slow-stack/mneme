@@ -12,7 +12,9 @@ import { cosineSimilarity } from "../src/dream/clustering.js";
 //     自适应。下面的用例锁住「工作集超过下限时仍接近全命中」这条行为，而不是
 //     锁某个具体常量——锁常量等于允许它再次变成硬编码。
 //
-// 二、缓存里存 Float32Array（真实占用 55.5MB → 28.9MB）。但 `Array.isArray`
+// 二、缓存里存 Float32Array。同一口径（GC 后 heapUsed + arrayBuffers，6730
+//     条 1024 维全常驻）实测 number[] 56.4MB → Float32Array 29.7MB，省 47%。
+//     但 `Array.isArray`
 //     对 typed array 返回 false，而 cosine / cosineSimilarity / setEmbedding
 //     历史上全用它当守卫 —— 换存储而不同步改守卫，会把每个相似度算成 0、
 //     把「设置向量」读成「清空向量」。这类静默归零没有任何报错，所以必须有
@@ -90,7 +92,7 @@ test("Float32 与 number[] 等价：getParsedEmbedding / getEmbeddings 仍返回
   store.setEmbedding(id, written);
   const one = store.getParsedEmbedding(id);
   assert.ok(Array.isArray(one), "对外契约是 number[]，调用方用 Array.isArray 守卫");
-  // 数值等价而非逐位相等：缓存按 Float32 存（省 48% 内存），双精度原值不保留，
+  // 数值等价而非逐位相等：缓存按 Float32 存（省 47% 内存），双精度原值不保留，
   // 回读带 ~1e-7 的单精度舍入。对余弦分数（0..1）与排序没有可观测影响
   // （下面「排序不变」那条用例把这一点钉死），但这是对外可见的精度变化，
   // 必须写成断言而不是假装不存在——用精确 deepEqual 会把它变成一颗定时炸弹。

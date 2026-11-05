@@ -1491,8 +1491,13 @@ export function createStore(path) {
   //     「本次扫到的行数 ×1.25」，一次扫完不会被自己的驱逐打断；
   //   · 内存预算封顶（默认 256 MB），超预算的行仍按 FIFO 驱逐——大库退化回
   //     「部分命中」，不会无界吃内存。
-  // 存储用 Float32Array（真实总占用 55.5MB → 28.9MB，省 48%；cosine 全量
-  // 25.4ms → 18.0ms，前 50 条排序精度差 0.00e+0）。对外契约不变：
+  // 存储用 Float32Array。同一口径（GC 后 heapUsed + arrayBuffers，6730 条
+  // 1024 维全常驻）实测：number[] 56.4MB → Float32Array 29.7MB（heap 1.9 +
+  // arrayBuffers 27.8），省 26.7MB / 47%。注意 heapUsed 不统计 TypedArray 的
+  // 底层 ArrayBuffer，只看 heapUsed 会读成「省 96%」的假象；旧实现若保持上限
+  // 4000 则装不下工作集（常驻 31.9MB 但命中率 0%），两者不可比，所以对照组是
+  // 把旧上限抬到 20000 让工作集全常驻。cosine 全量 25.4ms → 18.0ms，前 50 条
+  // 排序精度差 0.00e+0。对外契约不变：
   // getParsedEmbedding / getEmbeddings 仍返回 number[]，只有内部热路径
   // （readVector）拿 Float32Array。
   const embeddingCache = new Map();
