@@ -385,6 +385,13 @@ window.__ModuleLoader__.load({
         "memory.features.personaStrictAddressing.hint": "开：会话身份没有对应人格卡、或那张卡被关掉时，就不注入人格——默认卡只兜「解析不到会话身份」的会话。宿主里跑着自带身份的 bot（DS Bot 那类）时关掉这种兜底，免得两句「你是谁」撞在同一轮。默认关 = 未命中就落默认卡（历史行为）。",
         "memory.features.profileExtractEnabled": "画像提取草稿",
         "memory.features.profileExtractEnabled.hint": "打开「设置 → 个性化 → Agent 眼中的你」卡上的「从记忆提取草稿」按钮：读一批活跃记忆、花一次模型调用，产一段「助手眼中的用户」草稿。草稿只在那张卡上展示副本，可一键复制，不会写进记忆库、也不会覆盖你自己填的「用户画像」。轻量档预设关（用户显式勾选仍然赢）。",
+        "memory.features.chorographyEnabled": "仓库地志（chorography）",
+        "memory.features.chorographyEnabled.hint": "读一遍仓库写成一份带页码的志书：确定性骨架零模型、可以随时重建；语义段由 CLI 的 headless 会话逐模块补。打开后有四个入口——模型侧三个只读工具、面板「仓库地志」浏览页、每轮的开局提纲注入、/choro 命令。关着时它们全部不存在（模型工具列表里根本没有，注入块不渲染，/choro 不注册）。默认关。",
+        "memory.features.chorographyInject": "开局注入档位",
+        "memory.features.chorographyInject.hint": "每轮往上下文里塞地志提纲的份量：light 只列文件数最多的 6 个模块（约 8 行）、full 列全部模块、off 不注入（工具与面板页仍可用）。只注模块名 / 文件数 / 页状态 / 页相对路径，不含正文；正文要模型自己用 choro_read_page 取。轻量档预设压成 off。",
+        "memory.features.chorographyInject.off": "off（不注入）",
+        "memory.features.chorographyInject.light": "light（前 6 个模块）",
+        "memory.features.chorographyInject.full": "full（全部模块）",
         "memory.settings.rules": "规则",
         "memory.settings.rulesHint": "给 Agent 立下必须遵守的规矩，随时增删，下一轮即生效。",
         "memory.settings.ruleAdd": "添加规则",
@@ -1240,6 +1247,13 @@ window.__ModuleLoader__.load({
         "memory.features.personaStrictAddressing.hint": "On: when a session's identity has no persona card — or that card is switched off — no persona is injected, so the default card only covers sessions with no resolvable identity. Turn this on when the host runs a bot that brings its own identity (DS Bot and friends), otherwise two \"you are ...\" claims land in the same turn. Off (default): unresolved identities fall back to the default card, as before.",
         "memory.features.profileExtractEnabled": "Profile draft from memory",
         "memory.features.profileExtractEnabled.hint": "Adds the \"Draft from memory\" button to the \"You in the agent's eyes\" card under Settings → Personalization: reads a batch of active memories, spends one model call, and returns an \"as the assistant sees them\" draft. The draft is only shown there as a copy you can copy out — it is never written to the memory store and never overwrites the User Profile you wrote yourself. Off in the lightweight preset (an explicit choice still wins).",
+        "memory.features.chorographyEnabled": "Repo atlas (chorography)",
+        "memory.features.chorographyEnabled.hint": "Reads a repository once and writes it up as a paginated atlas: the deterministic skeleton costs no model and can be rebuilt any time; the semantic sections are added per module by a headless session in the CLI. Turning it on enables four entry points — three read-only tools for the model, the atlas panel page, the per-turn outline injection, and the /choro command. With it off none of them exist (the tools are absent from the model's tool list, the injection block is not rendered, /choro is not registered). Off by default.",
+        "memory.features.chorographyInject": "Opening injection tier",
+        "memory.features.chorographyInject.hint": "How much of the atlas outline goes into context every turn: light lists the six modules with the most files (about 8 lines), full lists every module, off injects nothing (tools and the panel page still work). Only module name / file count / page status / page path are injected, never page bodies — the model fetches those with choro_read_page. The lightweight preset forces off.",
+        "memory.features.chorographyInject.off": "off (no injection)",
+        "memory.features.chorographyInject.light": "light (top 6 modules)",
+        "memory.features.chorographyInject.full": "full (all modules)",
         "memory.settings.rules": "Rules",
         "memory.settings.rulesHint": "Rules the agent must follow — add or remove anytime, effective next turn.",
         "memory.settings.ruleAdd": "Add Rule",
@@ -3572,7 +3586,12 @@ window.__ModuleLoader__.load({
         // 人格定义页（beta）：注入总闸。分组随 enhance（行为开关，非座位闸门）；
         // 人格内容在设置页「个性化」区的人格卡。
         // 严格寻址是同一条链上的第二个口径开关（只在总闸打开时起作用）。
-        "personaEnabled", "personaStrictAddressing", "profileExtractEnabled"] },
+        "personaEnabled", "personaStrictAddressing", "profileExtractEnabled",
+        // chorography（仓库地志）的暴露闸（M1 就有的键，M3 才上 UI）：它是「是否
+        // 启用这个子系统」而不是「每轮付多少」，所以和上面这些行为开关同组；
+        // 每轮付出多少由紧随组尾的 choroSub 档位管。放组末是因为子块按组尾渲染
+        // ——档位下拉要贴着它的总闸。
+        "chorographyEnabled"] },
       { key: "group.dream", items: ["sleepModeEnabled"] },
       // v0.8.0 A4（issue #17）：作用域隔离组——标注总开关 + 严格硬过滤。
       { key: "group.scope", items: ["scopeEnabled", "strictScope"] }
@@ -3596,6 +3615,9 @@ window.__ModuleLoader__.load({
     // 蒸馏思考强度（issue #315）：比 entity 多一个 off（显式关思考，思考型模型
     // 蒸馏防推理烧预算）。后端枚举含 off，面板必须能选到，否则操作者用不上。
     const SUMMARIZE_REASONING = ["off", "none", "low", "medium", "high"];
+    // 地志注入档位（M3）：与后端 settings.js 的 FEATURE_FLAG_ENUMS.chorographyInject
+    // 同一份取值。light 是默认档，off 才是不注入。
+    const CHORO_TIERS = ["off", "light", "full"];
 
     function FeatureRow({ name, hint, on, disabled, onToggle, sub, tag }) {
       return h("div", { className: "mneme-featrow", style: sub ? { paddingLeft: 18, opacity: 0.86 } : undefined },
@@ -4013,6 +4035,24 @@ window.__ModuleLoader__.load({
         h("div", { className: "mneme-featsubhint" }, t("memory.features.distillRecords.retentionDays.hint"))
       );
 
+      // chorography M3：开局注入的档位。挂在 chorographyEnabled 下（总闸关着时
+      // 不展开——没启用子系统就没有「注入多少」可谈）。枚举键没有通用渲染器，
+      // 与上面几个子块同款手写下拉。轻量档（lightMode）在消费侧压成 off，
+      // 面板不因此灰掉：那是运行时预设，不是用户选择。
+      const choroSub = eff.chorographyEnabled && h("div", { className: "mneme-featsub" },
+        h("div", { className: "mneme-featnum" },
+          h("span", { className: "mneme-featnumlabel" }, t("memory.features.chorographyInject")),
+          h("select", {
+            className: "mneme-select",
+            value: eff.chorographyInject || "light",
+            disabled: busy,
+            onChange: (e) => put({ chorographyInject: e.target.value })
+          },
+            CHORO_TIERS.map((r) => h("option", { key: r, value: r }, t(`memory.features.chorographyInject.${r}`))))
+        ),
+        h("div", { className: "mneme-featsubhint" }, t("memory.features.chorographyInject.hint"))
+      );
+
       if (error && !state) return h("section", { className: "mneme-set-card" },
         h("div", { className: "mneme-set-title" }, t("memory.features.title")),
         h("div", { className: "mneme-set-hint" }, error));
@@ -4047,7 +4087,7 @@ window.__ModuleLoader__.load({
                 // 子块按组尾追加。distillSub 紧跟在 core 组最后一行
                 // （distillRecords.enabled）之后，天数行才贴着它的总闸。
                 g.key === "group.core" && h(react.Fragment, null, distillSub, summarizeSub),
-                g.key === "group.enhance" && h(react.Fragment, null, embedSub, entitySub),
+                g.key === "group.enhance" && h(react.Fragment, null, embedSub, entitySub, choroSub),
                 g.key === "group.dream" && h(react.Fragment, null, dreamSub, sleepSub)
               );
               const firstScreen = FEATURE_GROUPS.filter((g) => FEATURE_FIRST_SCREEN.includes(g.key));

@@ -5,8 +5,8 @@
 // 真源纪律（spec §4 / P12）：页面正文永远读仓库磁盘的 MD（root_path + DB 里的
 // rel_path），库里的表只是索引与状态账。slug 只从 DB 白名单解析，路径拼装零用户
 // 输入——面板与工具传进来的 slug 查不到模块行就返回 null，绝不用它拼路径。
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, existsSync, realpathSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 
 export function createChoroQueries({ store }) {
   const db = store.db;
@@ -136,5 +136,85 @@ export function createChoroQueries({ store }) {
     return hits;
   }
 
-  return { listRepos, resolveRepo, moduleMap, readPage, search };
+  /**
+   * 按会话工作目录找已登记仓库（M3 开局注入的唯一入口）。
+   *
+   * 三个刻意的取舍：
+   * 1. **祖先前缀匹配**而不是精确相等——真实会话的 cwd 常常是仓库子目录
+   *    （`D:/repo/src`），精确相等会让绝大部分会话匹配不到，等于逼用户
+   *    「必须在仓库根开会话」这条暗规则。
+   * 2. 两侧都做 realpath 归一：Windows 上盘符大小写、8.3 短名、符号链接
+   *    会让同一个目录写出不同字符串；t0 落库时存的就是 realpath。
+   * 3. **最长前缀胜出**——仓库嵌套（子模块、`.worktrees/`）时取最深那层，
+   *    否则内层会话会被外层仓库抢走。
+   * cwd 不存在或不是目录时返回 null（不是抛错）：注入在热路径上，失败只
+   * 意味着「本帧不注入」。
+   */
+  function repoByCwd(cwd) {
+    const raw = String(cwd ?? "").trim();
+    if (raw === "") return null;
+    let normalized;
+    try {
+      normalized = realpathSync(resolve(raw));
+    } catch {
+      return null;
+    }
+    const cmp = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
+    const target = cmp(normalized);
+    const rows = db.prepare("SELECT * FROM choro_repos ORDER BY id").all();
+    let best = null;
+    for (const row of rows) {
+      const root = cmp(String(row.root_path ?? ""));
+      if (root === "") continue;
+      const hit = target === root || target.startsWith(root.endsWith(sep) ? root : root + sep);
+      if (!hit) continue;
+      if (!best || root.length > cmp(String(best.root_path)).length) best = row;
+    }
+    return best ?? null;
+  }
+
+  /**
+   * 注入与 /choro 共用的最小提纲（M3）：模块名 + 文件数 + 页状态 + 页相对路径。
+   * **不读页正文**——spec §7 要求「只注标题级不注正文」，正文走 readPage。
+   * parentSlug 单独解出来给渲染层做层级缩进（DB 里存的是 parent_id）。
+   */
+  function outline(repoId) {
+    const repo = db.prepare(
+      "SELECT id, root_path, name, git_baseline, plan_fingerprint, updated_at FROM choro_repos WHERE id = ?"
+    ).get(repoId);
+    if (!repo) return null;
+    const rows = db.prepare(
+      `SELECT m.id, m.slug, m.title, m.parent_id, m.file_count,
+              p.status AS page_status, p.rel_path AS page_rel_path, p.generated_at
+         FROM choro_modules m
+         LEFT JOIN choro_pages p ON p.module_id = m.id
+        WHERE m.repo_id = ? ORDER BY m.slug`
+    ).all(repoId);
+    const slugById = new Map(rows.map((r) => [r.id, r.slug]));
+    let generatedAt = null;
+    const modules = rows.map((r) => {
+      if (r.generated_at && (generatedAt === null || r.generated_at > generatedAt)) generatedAt = r.generated_at;
+      return {
+        slug: r.slug,
+        title: r.title,
+        fileCount: r.file_count,
+        parentSlug: r.parent_id === null || r.parent_id === undefined ? null : slugById.get(r.parent_id) ?? null,
+        status: r.page_status ?? null,
+        relPath: r.page_rel_path ?? null,
+      };
+    });
+    return {
+      repo: {
+        id: repo.id,
+        name: repo.name,
+        rootPath: repo.root_path,
+        gitBaseline: repo.git_baseline,
+        updatedAt: repo.updated_at,
+      },
+      generatedAt: generatedAt ?? repo.updated_at ?? null,
+      modules,
+    };
+  }
+
+  return { listRepos, resolveRepo, moduleMap, readPage, search, repoByCwd, outline };
 }

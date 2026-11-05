@@ -93,7 +93,7 @@ function extractRounds(ctx, maxRounds) {
   }
 }
 
-export function createInjector(ctx, service, settings, config, gate = null, sessionGate = null) {
+export function createInjector(ctx, service, settings, config, gate = null, sessionGate = null, choroInject = null) {
   const language = langOf(config);
   const baseMaxItems = config.maxInjectedItems ?? 5;
   const threshold = config.importanceThreshold ?? 3;
@@ -405,9 +405,19 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
         // #333（issue #34 恢复）：时间前缀只在会话首轮出现（per-session 闩锁），
         // 排在整个记忆块的最前——模型先知道「今天几号」，再看热上下文与长期记忆。
         const timePrefix = renderTimePrefix(ctx);
-        // 拼接次序：时间 → 热上下文 → 长期记忆（三者都可能为空，逐级判空拼接）。
+        // M3 仓库地志（chorography）：只注标题级提纲，档位 off/light/full。
+        // cwd 用 scope.workspace_scope——那是全仓唯一的 cwd 口径（registry 反查，
+        // header.cwd 兜底），另读一份就是两张皮且重犯 #487 的 Proxy 陷阱（P27）。
+        // 取不到 cwd / 仓库没登记 / 渲染失败一律空串：本块在热路径上，不能抛。
+        const choroText = choroInject && typeof choroInject.text === "function"
+          ? choroInject.text(scope?.workspace_scope ?? null)
+          : "";
+        // 拼接次序：时间 → 地志 → 热上下文 → 长期记忆（四者都可能为空，逐级判空）。
+        // 地志排在热上下文之前：它是「这个仓库由哪些模块组成」的稳定背景，
+        // 而热上下文是「刚才聊到哪」，越靠近正文越晚——稳定的在前，易变的在后。
         const withHot = !hotText ? body : body ? `${hotText}\n\n${body}` : hotText;
-        const finalBody = !timePrefix ? withHot : withHot ? `${timePrefix}\n\n${withHot}` : timePrefix;
+        const withChoro = !choroText ? withHot : withHot ? `${choroText}\n\n${withHot}` : choroText;
+        const finalBody = !timePrefix ? withChoro : withChoro ? `${timePrefix}\n\n${withChoro}` : timePrefix;
         // Issue #179：旁路缓存一帧——面板「注入预览」卡据此展示构成与体积。
         // chars 为条目内容的截断后近似值（与 render 同一函数计长），totalChars
         // 是本次实际返回块的精确长度。maxItems 反映自适应收缩后的生效值。
@@ -424,6 +434,8 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
           // 「注入预览」卡据此展示判定是否生效与标记数。
           gate: gateFrame ? { state: gateFrame.state, nFlagged: gateFrame.flaggedIds ? gateFrame.flaggedIds.size : null, judged: gateFrame.judged ?? null } : null,
           hotChars: hotText.length,
+          // M3：地志块实际占的字符数（0 = 本帧没注入），面板据此区分「关」与「没匹配到仓库」。
+          choroChars: choroText.length,
           entries: candidates.map((m) => ({
             id: m.id,
             type: m.type,

@@ -301,7 +301,7 @@ function statDir(path) {
   }
 }
 
-function gitHead(repoRoot) {
+export function gitHead(repoRoot) {
   try {
     const out = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" });
     return out.trim() || null;

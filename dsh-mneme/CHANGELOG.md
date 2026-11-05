@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+- **chorography M3：开局注入 + 过期提示 + `/choro` 命令**：spec §10 的消费面收尾。会话工作目录命中已登记仓库时，每轮往 systemPrompt 里塞一小块**标题级**提纲（模块名 / 文件数 / 页状态 / 页相对路径，约 8 行），档位 `chorographyInject` = `light`（默认，前 6 个模块）/ `full`（全部）/ `off`；`/choro` 给主动查看，且**只提示过期、绝不自动重跑**（spec §2 D6）。
+
+  - **折进既有 memory context，不新开第三个 context**（P24）：宿主 `@deepseek-ai/dsh-system-prompt` 的 context 只按 `order` 排序、**同 order 没有 name 兜底**（V3 实读源码确认），多开一块就多一份拼装抖动；spec §7 也明写「与 mneme 现有 systemPrompt 注入合并成一次拼装」。拼接次序 `时间 → 地志 → 热上下文 → 长期记忆`——地志是稳定背景，热上下文每轮都变，稳定在前。
+  - **宿主侧没有任何体积上限**（V3 实测，本机 asar 解包读源码）：`renderPrompt` 只是 `sections.map(...).join("\n\n")`，没有 token/字符预算、没有截断、没有超限报错。所以上限只能自己兜：`light` 900 字符 / `full` 6000 字符，**逐行累加截断而不是拼完再切**——切在行中间会让最后一条模块行变成半句话，模型读到的路径就可能是断的。空文本 context 被宿主 `filter(text.length > 0)` 过滤、不占位，所以「不注入」就是返回空串。
+  - **`chorographyInject` 不进 `LIGHT_MODE_OFF`**（P26）：那张表对平铺键一律赋 `false`，枚举值塞进去会得到与 schema 不符的 `false`，而 `false !== "off"` 时注入照样渲染——比不关更糟。改为在消费侧判 `config.lightMode === true` 即 `off`（`wiki/inject.js` 的 `resolveInjectTier`）。**但档位不是命令闸**：轻量档下 `resolveInjectTier` 同样返回 `off`，若拿它当 `/choro` 的开关，用户会听到「没开，去设置里打开」而设置里明明是开着的——`/choro` 只认 `chorographyEnabled`（档位管注入，命令管子系统开没开，实测复现后拆开的）。`chorographyEnabled` 本身仍不进轻量档，但理由收窄成一句：它是「是否启用这个子系统」，不是「每轮付多少」，键注释与 CONFIGURATION.md 同步改写。
+  - **热路径不 fork git**（P29）：注入块只吃 DB 已有的行，生成时间写进去但不重算基线；真过期判定（`git rev-parse HEAD` vs `choro_repos.git_baseline`）只放在 `/choro` 里——那是人主动敲的，付得起一次 rev-parse。注入器带**渲染**缓存（每轮仍查一次 DB 取键，那是索引查询不是 fork git），键 `tier|lang|repoId|outline.generatedAt`——**不是仓库行的 `updated_at`**：T1 富化只推 `choro_pages.generated_at`、不动仓库行，若按仓库行做键，用户刚跑完 `--t1 --apply` 注入块还会写着「骨架」而 `/choro` 已经报「已有语义段」。不额外挂失效回调（热路径上少一条回调就少一处能崩的地方）。
+  - **三态过期，不许把「读不到」说成「没过期」**：`/choro` 分别报 基线一致 / 可能已过期（附两个短 sha）/ 读不到 HEAD（不是 git 仓库或 git 不可用）。
+  - **按 cwd 找仓库复用既有 scope 口径**（P27/P28）：注入侧直接吃注入器已经解析好的 `scope.workspace_scope`（workspaceRegistry 反查优先、`header.cwd` 兜底），不新写一处 registry 读取（#487：cordis 4 的 ctx 是 Proxy，裸读未 inject 的属性会抛）。匹配用**祖先前缀**而非精确相等（会话 cwd 常在子目录），多仓嵌套时最长 root 胜出；Windows 上按小写比较。
+  - **注入永不抛**（P31）：取 cwd / 查仓库 / 渲染任一步失败都退化成空串 + 一条 warn，不让一块附属信息把整轮 systemPrompt 搞崩。从仓库读来的标题与路径过一次 `escapePromptVars`——宿主 `interpolate()` 扫到非法 `{{…}}` 会**抛错崩整轮装配**；转义只做在注入这一层，`/choro` 的 UI 回执直接用未转义文本（它不进宿主模板）。
+  - **面板补上总闸 + 档位**（M1 留的洞）：`chorographyEnabled` 此前面板里没有任何一行，而空态的文案却让用户「去设置里打开」。现在它挂在 `group.enhance` 组末，档位下拉作组尾子块（枚举键没有通用渲染器，与 `summarizeSub` / `distillSub` 同款手写）。
+  - **`/choro` 只读**（P33）：不做 rebuild、不写档位、不落任何数据；参数一律不带（重建与富化都在 CLI）。返回值走 DSH 的 CommandResult 契约，**只作 UI 回执、不进模型上下文**——要模型看见提纲，靠的是开局注入。
+  - **两处口径级修正**（端到端冒烟里看出来的）：① 注入行原来把页路径直接粘在右括号后（`（3 文件）.chorography/modules/src.md`），补一个分隔空格；② `light` 与 `full` 原来各按各的排序（后者按 slug 字母序），同一份地志在两个档位下次序不同、读起来像被重扫过——统一按文件数降序 + slug 升序。`/choro` 提纲超 6000 字符时的截断语也从「另有 N 个模块（总数）」改成**差额**：报总数会让读者以为大部分模块都看不到。
+
 - **chorography M2：T1 语义生成轮——逐模块 headless 会话补四段语义正文 + 溯源 claims**：`dsh-mneme-choro <repo> --t1 --apply`（缺省 dry-run 只列候选；`--module` 单跑 / `--model` 路由 / `--timeout` 墙钟 / `--retry-failed` 拉回失败页）。会话产出的架构/约定/技术栈/构建四段插在骨架页「生成说明」节之前（T0 确定性段落原样保留），claims 落 `choro_claims` 表 + `evidence/<slug>.json` 双处同源。
 
   - **V1 已实测通过**（T1 的全部前提）：桌面版 headless 通道通——两个必需配方进了真实 runner：①**绕过 `.cmd` wrapper 直接调 exe**（`ELECTRON_RUN_AS_NODE=1 + --expose-internals`，wrapper 在 Git Bash 下路径引号会碎）；②**模型路由走 `--patch` 一次性临时 overlay** 指池模型（bili-scroll 同款、零配置改动；headless 默认路由 deepseek-official 要 API key，MISSING_CREDENTIAL）。overlay 只有 provider/model 名，无 key（红线 4）。

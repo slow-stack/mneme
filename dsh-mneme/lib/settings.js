@@ -360,7 +360,10 @@ const FEATURE_FLAG_ENUMS = {
     // Issue #125：dream 候选集构造方式（window 默认 = 现状；hybrid 并入向量组）。
     dreamCandidateMode: ["window", "hybrid"],
     // 本地嵌入池化：auto = 按模型族判定（BGE → cls），可显式覆盖为 cls / mean。
-    localEmbedPooling: ["auto", "cls", "mean"]
+    localEmbedPooling: ["auto", "cls", "mean"],
+  // M3 开局注入档位（spec §7）：轻量档在消费侧压成 off，见 wiki/inject.js 的
+  // resolveInjectTier——LIGHT_MODE_OFF 对平铺键一律赋 false，枚举值进去会静默失效。
+  chorographyInject: ["off", "light", "full"]
 };
 const FEATURE_FLAG_STRING_MAX = 200;
 

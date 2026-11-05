@@ -415,5 +415,59 @@ export const STR = {
     en: () => "# document index — dsh-mneme\n\n<!-- Machine-owned as a whole and rebuildable from the memory store at any time (which is why it carries no generation timestamp). Annotations belong in the memory store (memory_save). managed = the file sits inside documentDir. -->\n\n"
   },
 
+
+  // --- wiki/inject.js + choro-command.js：仓库地志（chorography M3） ---------------
+  // 注入块是三句话要说清的东西：这是哪个仓库、什么时候生成的、下面这几行怎么读。
+  // 生成时间必须出现——地志是快照不是真相，读者得知道它可能是旧的（spec §2 D6：
+  // 过期只提示、绝不自动重跑，所以「提示」的唯一落点就是这里）。
+  choroBlockHeader: {
+    zh: (repo, count, date) => `[仓库地志] ${repo}：${count} 个模块，生成于 ${date}。以下是标题级提纲（不含正文）：`,
+    en: (repo, count, date) => `[Repo atlas] ${repo}: ${count} modules, generated ${date}. Title-level outline only (no page bodies):`
+  },
+  choroBlockLine: {
+    zh: (title, files, status, relPath) => `- ${title}（${files} 文件${status ? " · " + status : ""}） ${relPath}`,
+    en: (title, files, status, relPath) => `- ${title} (${files} files${status ? " · " + status : ""}) ${relPath}`
+  },
+  choroBlockMore: {
+    zh: (rest) => `- ……另有 ${rest} 个模块，需要时用 choro_module_map 看全表`,
+    en: (rest) => `- ...${rest} more modules; use choro_module_map for the full list`
+  },
+  choroStatusEnriched: { zh: "已有语义段", en: "enriched" },
+  choroStatusFailed: { zh: "生成失败", en: "failed" },
+  choroStatusStale: { zh: "可能已过期", en: "possibly stale" },
+
+  // /choro：只读回执。三条路径各自说清「看到了什么」——不写盘、不重建（P33）。
+  choroCommandDescription: {
+    zh: "仓库地志：看当前仓库的模块提纲、过期状态与用法",
+    en: "Repo atlas: show the module outline, staleness and usage hints for this repo"
+  },
+  choroCommandInputHint: { zh: "（无参数）", en: "(no arguments)" },
+  choroCommandUsage: {
+    zh: {
+      off: "chorography（仓库地志）没开。在设置的「仓库地志」里打开后重启 DSH；开之前只有空态，没有数据可看。",
+      noCwd: "拿不到这个会话的工作目录，无法判断你在哪个仓库里。",
+      noRepo: (cwd) => `当前工作目录没有登记过地志：${cwd}\n生成一份：dsh-mneme-choro <仓库路径> --apply（确定性骨架，零模型）`,
+      title: (repo, count, date) => `仓库地志 · ${repo}（${count} 个模块，生成于 ${date}）`,
+      empty: "这个仓库还没扫出任何模块（可能全部被 plan.yaml 的 include/exclude 排掉了）。",
+      truncated: (rest) => `……另有 ${rest} 个模块。完整提纲用工具 choro_module_map 看。`,
+      fresh: (head) => `基线一致：当前 HEAD 就是 ${head}，地志没过期。`,
+      stale: (baseline, head) => `⚠️ 可能已过期：地志基线 ${baseline}，当前 HEAD ${head}。它只提示、不会自己重跑——要更新就手动跑 dsh-mneme-choro <仓库路径> --apply。`,
+      noGit: "读不到当前 HEAD（不是 git 仓库或 git 不可用），没法判断是否过期。",
+      hint: "正文按模块读：先 choro_search 找命中，再 choro_read_page 取整页。重建、富化都走 CLI，不在这条命令里。"
+    },
+    en: {
+      off: "Chorography (repo atlas) is off. Turn on the atlas switch in settings, then restart DSH; until then there is nothing to read.",
+      noCwd: "Cannot determine the working directory of this session, so the repo cannot be resolved.",
+      noRepo: (cwd) => `No atlas registered for this working directory: ${cwd}\nBuild one: dsh-mneme-choro <repo path> --apply (deterministic skeleton, no model)`,
+      title: (repo, count, date) => `Repo atlas · ${repo} (${count} modules, generated ${date})`,
+      empty: "No modules were produced for this repo (plan.yaml include/exclude may have filtered everything).",
+      truncated: (rest) => `...${rest} more modules. Use the choro_module_map tool for the full outline.`,
+      fresh: (head) => `Baseline matches: HEAD is ${head}, the atlas is not stale.`,
+      stale: (baseline, head) => `Possibly stale: atlas baseline ${baseline}, current HEAD ${head}. It only warns and never rebuilds itself — rerun dsh-mneme-choro <repo path> --apply to refresh.`,
+      noGit: "Cannot read HEAD (not a git repo, or git unavailable), so staleness is unknown.",
+      hint: "Read bodies per module: choro_search to locate, choro_read_page to load a whole page. Rebuilds and enrichment stay in the CLI, not in this command."
+    }
+  },
+
   prompts: PROMPTS
 };

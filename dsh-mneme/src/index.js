@@ -22,6 +22,9 @@ import { createStandaloneApi } from "./api-standalone.js";
 // #275 存储生命周期第一批：无损回收（手动入口，不挂启动路径）。
 import { createMaintenance } from "./maintenance.js";
 import { createChoroQueries } from "./wiki/queries.js";
+// chorography M3：开局注入块与 /choro 只读回执。两者都只吃 queries 读侧，不写任何东西。
+import { createChoroInject } from "./wiki/inject.js";
+import { registerChoroCommand } from "./choro-command.js";
 import { createSettings } from "./settings.js";
 import { createCommandManager } from "./commands.js";
 import { createExecutionRecorder } from "./pipeline-runner.js";
@@ -564,8 +567,26 @@ export const apply = (ctx, config) => {
   // a torn-down context.
   disposers.push(() => semantic.dispose());   // #118 重试计时器 + boot 回填计时器(搬入 semantic.js 后由它自持)
 
+  // chorography M3：地志提纲折进 memory context（不新开 context——宿主侧同 order 无
+  // 兜底排序，多一块就多一份拼装抖动；spec §7 也要求「合并成一次拼装」）。档位由
+  // chorographyInject 决定，off / 未匹配到仓库 / 渲染失败一律返回空串，宿主会过滤
+  // 掉空文本，整块消失且不占位。
+  //
+  // 预算是 0：注入块只在 memory context 里多几行，本身不做检索、不 fork git——
+  // 真过期判定留给 /choro（P29）。所以这里不需要额外的「热路径」闸，chorographyEnabled
+  // 与 chorographyInject 两个开关在 resolveInjectTier 里已经判完。
+  const choroInject = createChoroInject({
+    choro: createChoroQueries({ store }),
+    config: cfg,
+    logger: ctx.logger,
+    language: () => langOf(cfg)
+  });
+  disposers.push(() => choroInject.dispose());
+
   ctx.inject(["systemPrompt"], (promptCtx) => {
-    if (cfg.autoInject) disposers.push(createInjector(promptCtx, service, settings, cfg, preInjectGate, sessionGate));
+    if (cfg.autoInject) {
+      disposers.push(createInjector(promptCtx, service, settings, cfg, preInjectGate, sessionGate, choroInject));
+    }
   });
 
   // #249 N3：压缩边缘双落点。触发靠宿主自己落的压缩事件（订阅 + pre-step 追加），
@@ -580,6 +601,22 @@ export const apply = (ctx, config) => {
     // createTools 的 hiddenTools，与 organizeEnabled 同款反向语义）。
     disposers.push(createTools(toolsCtx, service, cfg, embedder, sessionGate, createChoroQueries({ store })));
   });
+
+  // chorography M3：/choro 只读回执。与 /mo-run 同形（ctx.commands.register），
+  // 但这里**不持有任何状态**、不写盘、不重建——spec §2 D6「只手动触发，过期只提示」
+  // 决定了这条命令只能看，不能改。位置必须在 disposers 声明之后（同 actionNudge 的
+  // TDZ 注释），否则插件加载时会直接抛 ReferenceError。
+  if (cfg.chorographyEnabled === true) {
+    const disposeChoro = registerChoroCommand({
+      ctx,
+      choro: createChoroQueries({ store }),
+      config: cfg,
+      enabled: true,
+      language: () => langOf(cfg)
+    });
+    if (disposeChoro) disposers.push(disposeChoro);
+    else ctx.logger?.info?.("[dsh-mneme] chorographyEnabled=true 但宿主没有命令注册表，/choro 未注册");
+  }
 
   const summarizer = createSummarizer(ctx, service, cfg, {}, sessionGate);
   disposers.push(summarizer.dispose);
