@@ -2616,10 +2616,12 @@ export function createStore(path) {
    */
   function vectorDimensionState(dimension) {
     if (!Number.isInteger(dimension) || dimension <= 0) return { state: "invalid" };
-    // 与 searchVector 的 WHERE 谓词逐条相同（顺序不同、语义等价）——同源行集，同步改。
+    // 与 searchVector 的行集逐条相同（顺序不同、语义等价）——同源行集，同步改。
+    // 同样不带 `embedding != ''`：只取 id，读 embedding 列纯属白搬；空串行由
+    // readVector 返回 undefined，落到下面 sawVector 分支（不影响 unreadable 判定）。
     const rows = db.prepare(
       `SELECT id FROM memories
-       WHERE embedding IS NOT NULL AND embedding != ''
+       WHERE embedding IS NOT NULL
          AND forgotten = 0 AND archived = 0`
     ).all();
     if (!rows.length) return { state: "none" };
@@ -2685,9 +2687,15 @@ export function createStore(path) {
     // Issue #202：只取 id 列（~40 KB）而非 SELECT *（~11 MB）——向量从缓存取，
     // 缓存未命中时按 id 点查 embedding 再解析回填。SQL 里保留 embedding 的
     // IS NOT NULL 过滤，保证「有向量的行」集合始终以库为准（删除/清空即时生效）。
+    //
+    // 为什么不带 `embedding != ''`（2026-11-05 实测）：`!= ''` 要读 embedding 列
+    // 才能判定，SQLite 就得把 134MB 向量文本整个从磁盘搬一遍——而这里只 SELECT
+    // id，一条文本都不用。副本实测同一条 SQL 265ms → 96ms，每轮检索省约 170ms。
+    // 空串行（外部直接 UPDATE 造出来的，setEmbedding 写的是 NULL）由 readVector
+    // 兜住：JSON.parse('') 抛错 → 返回 undefined → 跳过，既不计分也不崩。
     const rows = db.prepare(
       `SELECT id FROM memories
-       WHERE ${archivedFilter}forgotten = 0 AND embedding IS NOT NULL AND embedding != ''`
+       WHERE ${archivedFilter}forgotten = 0 AND embedding IS NOT NULL`
     ).all();
     const scored = [];
     // 自适应上限：本次要扫这么多行，先让缓存装得下，否则会边扫边驱逐自己。

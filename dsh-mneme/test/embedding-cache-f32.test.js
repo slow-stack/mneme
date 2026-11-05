@@ -185,3 +185,62 @@ test("searchVector 的分数本身正确：缓存路径的 cosine 不得归零",
   );
   store.close();
 });
+
+// 摘掉 searchVector 的 `embedding != ''` 谓词（2026-11-05）：`!= ''` 要读 embedding
+// 列才能判定，SQLite 就得把整列向量文本搬一遍——而这条 SQL 只 SELECT id，一条
+// 文本都不用。副本实测 265ms → 96ms。摘掉的前提是「空串行不会把检索搞崩」，
+// 而库里现在 0 条空串纯属现状（setEmbedding 写 NULL，能造出空串的只有外部直接
+// UPDATE）。所以必须把「空串行存在时」的行为钉死，否则这是在拆一个「目前恰好
+// 为真」的假设。
+test("库里存在 embedding = '' 的行：searchVector 不崩、不把它算进结果", () => {
+  const store = make();
+  const good = store.save({ type: "project", title: "正常", content: "有向量" });
+  const empty = store.save({ type: "project", title: "空串", content: "外部写的空串" });
+  const broken = store.save({ type: "project", title: "坏 JSON", content: "解析不了" });
+
+  store.setEmbedding(good.id, [1, 0, 0, 0]);
+  // 绕过 setEmbedding 直接写列——只有外部直接 UPDATE 才造得出这两种行。
+  store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run("", empty.id);
+  store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run("{not json", broken.id);
+
+  const query = [1, 0, 0, 0];
+  const hits = store.searchVector(query, { limit: 10 });
+
+  assert.equal(hits.length, 1, `只有一条可解析向量参与（实测 ${hits.length} 条）`);
+  assert.equal(hits[0].id, good.id, "入选的必须是那条可解析的向量");
+  assert.ok(Math.abs(hits[0].score - 1) < 1e-6, `正常行分数仍须为 1（实测 ${hits[0].score}）`);
+
+  // 空串行必须仍被 SQL 选中（IS NOT NULL 为真），再由 readVector 兜住——
+  // 否则这里测的是「SQL 没选它」，掩盖了 readVector 的兜底能力。
+  const selected = store.db.prepare(
+    "SELECT id FROM memories WHERE forgotten = 0 AND archived = 0 AND embedding IS NOT NULL"
+  ).all().map((r) => r.id);
+  assert.equal(selected.length, 3, "三行都有非 NULL 的 embedding 文本，SQL 全部选中");
+  assert.ok(selected.includes(empty.id), "空串行确实进了候选集（不是被 SQL 过滤掉）");
+
+  // 维度探针同一行集：空串行不能让 unreadable 判定失真。
+  assert.deepEqual(
+    store.vectorDimensionState(4),
+    { state: "match" },
+    "空串行存在时仍应判出 match（可解析的那条同维）"
+  );
+  store.close();
+});
+
+test("全部行都是 embedding = '' 时：检索返回空、探针判 unreadable 而非 none", () => {
+  const store = make();
+  const a = store.save({ type: "project", title: "A", content: "a" });
+  const b = store.save({ type: "project", title: "B", content: "b" });
+  store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run("", a.id);
+  store.db.prepare("UPDATE memories SET embedding = ? WHERE id = ?").run("", b.id);
+
+  assert.deepEqual(store.searchVector([1, 0], { limit: 5 }), [], "没有可解析向量就没有结果，不崩");
+  // 行集非空（两行都有非 NULL 文本）但零条可解析 = unreadable，不是 none。
+  // none 会让人以为「库里没有向量」，实际是「有文本却读不出来」。
+  assert.deepEqual(
+    store.vectorDimensionState(2),
+    { state: "unreadable" },
+    "有行却零条可解析 → unreadable（谓词摘掉后这条判定更依赖 readVector 的兜底）"
+  );
+  store.close();
+});
