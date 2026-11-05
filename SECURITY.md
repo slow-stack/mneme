@@ -10,11 +10,11 @@ We actively maintain the latest minor version. Security fixes are backported to 
 
 | Version | Supported | Status |
 |---|---|---|
-| 0.10.x | ✅ Yes | Active development |
-| 0.9.x | ⚠️ Best-effort | Critical fixes only |
-| < 0.9.0 | ❌ No | Please upgrade to 0.10.x |
+| 0.11.x | ✅ Yes | Active development |
+| 0.10.x | ⚠️ Best-effort | Critical fixes only |
+| < 0.10.0 | ❌ No | Please upgrade to 0.11.x |
 
-**End-of-life notice**: 0.9.x is in best-effort maintenance (critical fixes only). Its end-of-life date will be announced in advance; after that date no security fixes will be provided for 0.9.x. Security support for 0.8.x and below is no longer provided — please upgrade to 0.10.x.
+**End-of-life notice**: 0.10.x is in best-effort maintenance (critical fixes only). Its end-of-life date will be announced in advance; after that date no security fixes will be provided for 0.10.x. Security support for 0.9.x and below has ended — please upgrade to 0.11.x.
 
 ---
 
@@ -86,7 +86,7 @@ The plugin can optionally start its own HTTP server (`externalApiEnabled`, defau
 **Out of scope** — we will not act on:
 - Social engineering or phishing against maintainers or users
 - DoS claims that require unrealistic local resource exhaustion with no product defect
-- Vulnerabilities present only in unsupported versions (`< 0.9.0`)
+- Vulnerabilities present only in unsupported versions (`< 0.10.0`)
 - Best-practice hardening suggestions with no demonstrable security impact
 
 Not sure whether your finding is in scope? Report it anyway via the private channel — we will triage and respond.
@@ -396,11 +396,11 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 
 | 版本 | 支持状态 | 说明 |
 |---|---|---|
-| 0.10.x | ✅ 支持 | 活跃开发中 |
-| 0.9.x | ⚠️ 尽力维护 | 仅关键修复 |
-| < 0.9.0 | ❌ 不支持 | 请升级至 0.10.x |
+| 0.11.x | ✅ 支持 | 活跃开发中 |
+| 0.10.x | ⚠️ 尽力维护 | 仅关键修复 |
+| < 0.10.0 | ❌ 不支持 | 请升级至 0.11.x |
 
-**停止维护通知**：0.9.x 处于尽力维护阶段（仅关键修复）。停止维护的具体日期将提前公布；该日期之后将不再提供 0.9.x 的安全修复。0.8.x 及更早版本的安全支持已终止——请升级至 0.10.x。
+**停止维护通知**：0.10.x 处于尽力维护阶段（仅关键修复）。停止维护的具体日期将提前公布；该日期之后将不再提供 0.10.x 的安全修复。0.9.x 及更早版本的安全支持已终止——请升级至 0.11.x。
 
 ---
 
@@ -472,7 +472,7 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 **不受理范围**——以下问题我们不予处理：
 - 针对维护者或用户的社工 / 钓鱼类问题
 - 仅通过不现实的本地资源耗尽触发、且无产品缺陷支撑的 DoS 声明
-- 仅存在于不支持版本（`< 0.9.0`）的问题
+- 仅存在于不支持版本（`< 0.10.0`）的问题
 - 无可证明安全影响的"最佳实践建议"类问题
 
 不确定你的发现是否在受理范围内？仍请通过私有渠道提交——我们会评估并回复。
