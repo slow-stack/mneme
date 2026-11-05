@@ -360,6 +360,32 @@ test("sidebar entry portals into the host panel list with footer fallback", () =
   );
 });
 
+// Issue #573：宿主 0.2.2 起把面板列表的「更多」行（PanelMoreMenu）也追加进同一个
+// nav.panelList，于是组尾不再是面板行。仍按「追加到组尾」落位时，入口会排到
+// 「更多」下面，菜单一展开就把入口盖住——用户看到的是「记忆入口不见了」。
+// 回归表现：入口掉到「更多」之后、或展开菜单后入口被遮。
+// 落位改成「插在『更多』之前」，判据与其余几处一致走 [class*=] 前缀，不写死
+// 宿主哈希类名；老宿主没有该行时必须原样退回追加组尾，不能整块不落位。
+test("sidebar entry lands above the host's More row, not below it", () => {
+  assert.ok(
+    clientSource.includes(`list.querySelector('[class*="moreAnchor"]')`),
+    "the More row must be located by class prefix like every other host class"
+  );
+  assert.ok(
+    clientSource.includes("list.insertBefore(created, more)"),
+    "the wide entry must insert before the More row so the expanded menu cannot cover it"
+  );
+  assert.ok(
+    clientSource.includes("created.nextElementSibling === more"),
+    "placement must stay idempotent against the More anchor so the observer never writes on steady state"
+  );
+  // 老宿主没有「更多」行：追加组尾的分支必须还在，否则那些宿主上入口根本不落位。
+  assert.ok(
+    clientSource.includes("created === list.lastElementChild"),
+    "hosts without a More row must keep the append-to-tail fallback"
+  );
+});
+
 // Issue #130: ecosystem plugins (task board, skill explorer, …) inject their
 // own entries right after the New-Session row, and late inserters land above
 // earlier ones — a fixed "before regionArea" slot degrades into the tail of
