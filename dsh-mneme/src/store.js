@@ -1138,6 +1138,10 @@ export function createStore(path) {
   addColumn("memories", "content_history", "ALTER TABLE memories ADD COLUMN content_history TEXT");
   addColumn("memories", "quality_score", "ALTER TABLE memories ADD COLUMN quality_score REAL");
 
+  // chorography（M2，实现计划 P17）：T1 生成轮的页级失败计数。T0 建的表没有它
+  // （M0 只写 skeleton），存量库经 PRAGMA 检查后补列，幂等。
+  addColumn("choro_pages", "fail_count", "ALTER TABLE choro_pages ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0");
+
   // v0.8.0 A1（issue #17）scope 隔离存储层：四列全部可空、不带 DEFAULT——存量行
   // 零重写，读侧把 NULL 视为未标注（= 全局可见）。是否落值由 scopeEnabled 门控
   // （service/tools 层），存储层只负责归一化（normalizeScopeText/normalizeOccurredAt）。
@@ -4650,6 +4654,59 @@ export function createStore(path) {
     });
   }
 
+  // T1 的页级读写（实现计划 P16–P18）：与 replaceChoroGraph 的整仓替换并存——
+  // T1 是逐模块的（一轮只动一页），整仓替换会把其他页的富化状态抹掉。
+  function choroPageBySlug(repoId, slug) {
+    return db.prepare(
+      `SELECT p.id, p.module_id, p.rel_path, p.status, p.git_baseline, p.template_version,
+              p.generated_at, p.human_block_count, p.fail_count, m.slug
+         FROM choro_pages p JOIN choro_modules m ON p.module_id = m.id
+        WHERE m.repo_id = ? AND m.slug = ?`
+    ).get(repoId, String(slug));
+  }
+
+  // 单页失败记账（spec 步 12「失败两次即记 failed」）：首次失败只计数、状态不动
+  // （骨架仍是当前有效产物），第二次到阈值才把 status 推成 failed。generatedAt
+  // 不动——失败不推进 state（红线 5）的页级口径。
+  function recordChoroPageFailure(pageId, failThreshold = 2) {
+    db.prepare("UPDATE choro_pages SET fail_count = fail_count + 1 WHERE id = ?").run(pageId);
+    const row = db.prepare("SELECT fail_count, status FROM choro_pages WHERE id = ?").get(pageId);
+    if (row.fail_count >= failThreshold) {
+      db.prepare("UPDATE choro_pages SET status = 'failed' WHERE id = ?").run(pageId);
+      row.status = "failed";
+    }
+    return row;
+  }
+
+  // 富化成功：skeleton → enriched，generatedAt 推进、失败计数清零（成功重置的是
+  // 「连续失败」的连续性，不是历史）。
+  function markChoroPageEnriched(pageId, generatedAt) {
+    db.prepare(
+      "UPDATE choro_pages SET status = 'enriched', generated_at = ?, fail_count = 0 WHERE id = ?"
+    ).run(generatedAt, pageId);
+  }
+
+  // 单页 claims 整页替换（P20 的表侧）：T1 一轮产出的 claims 删旧插新；evidence/
+  // JSON 由 t1.js 同步写盘（两处同源同写）。
+  function saveChoroPageClaims(pageId, claims) {
+    return runAtomically(() => {
+      db.prepare("DELETE FROM choro_claims WHERE page_id = ?").run(pageId);
+      const ins = db.prepare(
+        `INSERT INTO choro_claims
+           (page_id, statement, kind, source_path, start_line, end_line, confidence, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const claim of claims) {
+        ins.run(
+          pageId, claim.statement, claim.kind,
+          claim.sourcePath ?? null, claim.startLine ?? null, claim.endLine ?? null,
+          claim.confidence ?? null, claim.createdAt
+        );
+      }
+      return claims.length;
+    });
+  }
+
   return {
     db,
     count,
@@ -4819,6 +4876,10 @@ export function createStore(path) {
     choroRepoByRoot,
     upsertChoroRepo,
     replaceChoroGraph,
+    choroPageBySlug,
+    recordChoroPageFailure,
+    markChoroPageEnriched,
+    saveChoroPageClaims,
     close() {
       db.close();
     }

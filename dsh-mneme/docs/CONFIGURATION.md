@@ -315,7 +315,7 @@
 | `disableMemorySearch` | `false` | 对模型隐藏 `memory_search` 工具（v0.8.5） | 慢/轻量模型的工具往返节流；隐藏即不可调 |
 | `disableMemoryArchive` | `false` | 对模型隐藏 `memory_archive` 工具 | 同上 |
 | `organizeEnabled` | `false` | 对模型开放 `memory_organize` 工具（#231：先 dryRun 出比对报告，agent 判断后 apply 落库） | 与上面两个**反向**：那两个藏默认在场的工具，本键开默认不在场的能力。关 = 工具根本不注册（模型看不到就不会调）。dryRun→apply 是两步协议，弱模型容易漏 `run_id` 或跳过报告，所以 `LIGHT_MODE_OFF` 里有它；apply 只能引用一次真实报告、且一份报告只许落地一次 |
-| `chorographyEnabled` | `false` | chorography（仓库地志，spec 见 docs/specs/）暴露闸：对模型开放三个只读工具（`choro_search` / `choro_read_page` / `choro_module_map`）+ 面板「仓库地志」浏览页 | 与 `organizeEnabled` 同款反向语义：关 = 工具根本不注册、面板页空态，行为与旧版逐字节一致。**刻意不进 `LIGHT_MODE_OFF`**：choro 零每轮注入物、零热路径挂载，只有被动查询——轻量档关它省不出任何东西。检索是关键词子串（M1）；生成走 `dsh-mneme-choro` CLI（T1 headless 生成轮在 M2） |
+| `chorographyEnabled` | `false` | chorography（仓库地志，spec 见 docs/specs/）暴露闸：对模型开放三个只读工具（`choro_search` / `choro_read_page` / `choro_module_map`）+ 面板「仓库地志」浏览页 | 与 `organizeEnabled` 同款反向语义：关 = 工具根本不注册、面板页空态，行为与旧版逐字节一致。**刻意不进 `LIGHT_MODE_OFF`**：choro 零每轮注入物、零热路径挂载，只有被动查询——轻量档关它省不出任何东西。检索是关键词子串（M1）；生成走 `dsh-mneme-choro` CLI（T0 确定性骨架 + `--t1` headless 语义富化，本档已齐） |
 | `actionPipelineEnabled` | `false` | M.O. 只读视图的门控：做法图谱 + 对话行结算卡 | opt-in beta；只是纯 UI 入口、不引入重型后台路径，故不进 `LIGHT_MODE_OFF`。写账另有独立的执行记账键（`/mo-run`），看图 ≠ 写账 |
 | `actionRunEnabled` | `false` | M.O. 执行记账：`/mo-run` 开一次执行窗口，窗口内命令执行才可能被记成一条 run | opt-in beta；挂在热路径（每个会话事件都过一次监听），故 `LIGHT_MODE_OFF` 里有它 |
 | `actionNudgeEnabled` | `false` | M.O. 自动沉淀：每轮结束（`turn/end`）后挖一次「这个项目重复走的动作」，结果落成 `memoryDir/proposals/<项目键>/` 里的提议，等人确认 | opt-in beta；三个 M.O. 键里最重的一条——挂 `session/event` 且要**同步解压 zstd 会话日志**（本机 118 份实测 16.2s，单次预算 `budgetMs`=4s 兜底），故 `LIGHT_MODE_OFF` 里有它。**永不自动落草稿**：`materialize` 恒 false，进仓库必须是人的显式动作 |
