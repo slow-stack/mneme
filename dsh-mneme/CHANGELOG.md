@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-11-05
+
 - **修复 #573：宽态侧栏的记忆入口落在「更多」行下面，点开「更多」时被菜单盖住**：宿主 0.2.2 起把面板列表的「更多」行（`PanelMoreMenu`）也追加进同一个 `nav.panelList`，于是组尾不再是面板行——我们仍按「追加到末尾」落位，入口就排到了「更多」下面。
 
   - **落位改成插在「更多」之前**：`place()` 先在列表里找 `[class*="moreAnchor"]`（与既有 `panelRow` / `regionArea` 同一套前缀判据，不写死宿主哈希类名），命中就 `insertBefore(created, more)`，没命中（老宿主没有这一行）原样退回 `appendChild`。幂等判据同步换成 `created.nextElementSibling === more`——稳态下观察器一次 DOM 写都不做，否则 `insertBefore` 会自激成 mutation 风暴（该坑在 `place()` 上方的注释里记着）。
