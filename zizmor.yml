@@ -1,0 +1,10 @@
+# zizmor 审计政策（security.yml 的 workflow-hygiene job 读这里，本地 `uvx zizmor .` 同样生效）：
+# 本仓的供应链姿态是「GitHub 官方 actions 钉大版本 tag + dependabot 周检升级」，
+# 不做全量 hash 钉死——官方 actions/* 只要 ref-pin；第三方动作（codecov、zizmor、
+# osv-scanner reusable）的 tag 是可变引用，一律 hash 钉死（在 uses 行带 # vX.Y.Z 注释）。
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "actions/*": ref-pin
+        "*": hash-pin
