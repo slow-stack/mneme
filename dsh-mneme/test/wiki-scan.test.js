@@ -19,7 +19,7 @@ function makeRepo(files) {
   return root;
 }
 
-test("文件清单：默认排除 node_modules/.git/dist 与二进制/锁文件", () => {
+test("文件清单：默认排除 node_modules/dist 与二进制/锁文件", () => {
   const root = makeRepo({
     "src/a.js": "export const a = 1;\n",
     "node_modules/pkg/index.js": "module.exports = 1;\n",
@@ -27,10 +27,37 @@ test("文件清单：默认排除 node_modules/.git/dist 与二进制/锁文件"
     "logo.png": "binary-ish",
     "package-lock.json": "{}",
     "README.md": "# x\n",
-    ".git/config": "",
   });
   try {
     assert.deepEqual(listFiles(root), ["README.md", "src/a.js"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// 锁的回归类型：默认排除表退化成「逐个点名已知的点目录」。V2 在三仓实测到的会话产物
+// 目录是 .qoder-credits / .superpowers / .shots / .zcode / .dsh-ops / .v2c——点名法每换一个
+// 工具就漏一批（baleen 15 模块里 6 个、study-desk 5 个里 3 个都曾是这样混进来的），
+// 所以规则改成「点开头目录整类」，本用例用一份从未在任何名单里出现过的 .whatever 来锁这条。
+// 反向断言同样重要：点开头的**文件**是仓库配置（.eslintrc.json），必须照旧进清单。
+test("文件清单：点开头目录整类排除（任意深度），点开头文件照旧扫描", () => {
+  const root = makeRepo({
+    "README.md": "# x\n",
+    "src/a.js": "export const a = 1;\n",
+    ".git/config": "",
+    ".whatever/session.md": "# 会话产物\n",
+    "nested/.qoder-credits/report.json": "{}",
+    "src/.shots/notes.md": "# 调试快照\n",
+    ".eslintrc.json": "{}",
+    "src/.prettierrc.json": "{}",
+  });
+  try {
+    assert.deepEqual(listFiles(root), [
+      ".eslintrc.json",
+      "README.md",
+      "src/.prettierrc.json",
+      "src/a.js",
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

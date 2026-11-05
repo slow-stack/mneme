@@ -145,7 +145,7 @@ T1 语义，逐模块花钱，可跳过：
 - V2 import 图在三个真实仓库上划出的模块对不对——这是产品成败的判据，只能人工判。
 - V3 与宿主现有 `systemPrompt` 注入的先后顺序与体积上限。
 - V4 复用记忆的 embedder 时，模型版本是否被记忆侧锁死，换模型会不会让 `choro_vectors` 整体失效。
-- V5 `.chorography/` 默认提交进仓库还是加进 `.gitignore`（本设计倾向提交，因为 Markdown 就是真源；但提交意味着别人 clone 会看到几十个生成页，这条要本人拍）。
+- V5 `.chorography/` 默认提交进仓库还是加进 `.gitignore` —— **已定（2026-11-05，维护者拍）：走 `.gitignore`**。只忽略目录内容、用 `!.chorography/plan.yaml` 把人工控制表反选回来（忽略整个目录会让白名单失效）；代价如实记：页内 `CHORO:HUMAN` 保留区只在本机存活，`git clean -fdX` 会连它一起删。规则先落在本仓（#572），两个邻仓 baleen / study-desk 同步补上。
 
 ## 12. 明确不做
 

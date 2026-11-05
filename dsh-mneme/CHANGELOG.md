@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- **chorography 收口：`.chorography/` 走 `.gitignore`，扫默认排除改为点开头目录整类**：spec §11 的最后两条待实测落地。
+
+  - **V5 已定（维护者拍）：生成物不入库**。`docs/specs/2026-11-04-chorography-design.md` §11 原本倾向「提交，因为 Markdown 就是真源」，实际取舍反过来：别人 clone 不该看到几十个生成页。规则先落在本仓（#572）——**忽略目录内容而不是整个目录**（`.chorography/*` + `!.chorography/plan.yaml`），因为忽略整个目录会让白名单失效、`plan.yaml` 这张人工正面控制表一起进不去。代价如实写进注释：页内 `CHORO:HUMAN` 保留区只在本机存活，`git clean -fdX` 会连它一起删。baleen / study-desk 两个邻仓同步补同一段。
+  - **点开头目录整类排除**（`src/wiki/scan.js` 的 `isDefaultExcludedDir`）：V2 在三仓实测到的会话产物目录是 `.qoder-credits` / `.superpowers` / `.shots` / `.zcode` / `.dsh-ops` / `.v2c`，全是提问原文、调试快照与第三方工具缓存——baleen 上它们占 15 个模块里的 6 个，study-desk 上占 5 个里的 3 个。逐条点名等于把一台机器的工具链钉进发布包，换个工具又漏一批；「点开头即非仓库内容」更短、与实测分布一致、不随工具换代失效。`DEFAULT_EXCLUDE_DIRS` 里 8 个点前缀条目随之删掉，只剩 `node_modules` / `dist` / `build` / `out` / `coverage`。
+  - **代价与边界写进注释**：`.vitepress/theme`、`.docusaurus` 这类确实把真源码放在点目录里的仓库会漏掉那部分，且**拉不回来**——扫描阶段的排除先于 `plan.include` 白名单生效（plan 的 `include` 只能收窄，不能把被默认表排除的路径捞回来）。只按目录名判，点开头的**文件**（`.eslintrc.json` 之类）是仓库配置不是产物，照旧扫描。
+  - **验证**：`test/wiki-scan.test.js` 新增一例锁这两面——用一份从未进过任何名单的 `.whatever` 证明规则不是点名法，同时在 `nested/` 与 `src/` 两级各放一个点目录证明任意深度生效，再用 `.eslintrc.json` / `src/.prettierrc.json` 反向锁「点开头文件照旧进清单」。全量 `npm test` 2807 tests / 2806 pass / 0 fail / 1 skipped；check-sync 94 一致。
+
 - **chorography M3：开局注入 + 过期提示 + `/choro` 命令**：spec §10 的消费面收尾。会话工作目录命中已登记仓库时，每轮往 systemPrompt 里塞一小块**标题级**提纲（模块名 / 文件数 / 页状态 / 页相对路径，约 8 行），档位 `chorographyInject` = `light`（默认，前 6 个模块）/ `full`（全部）/ `off`；`/choro` 给主动查看，且**只提示过期、绝不自动重跑**（spec §2 D6）。
 
   - **折进既有 memory context，不新开第三个 context**（P24）：宿主 `@deepseek-ai/dsh-system-prompt` 的 context 只按 `order` 排序、**同 order 没有 name 兜底**（V3 实读源码确认），多开一块就多一份拼装抖动；spec §7 也明写「与 mneme 现有 systemPrompt 注入合并成一次拼装」。拼接次序 `时间 → 地志 → 热上下文 → 长期记忆`——地志是稳定背景，热上下文每轮都变，稳定在前。
