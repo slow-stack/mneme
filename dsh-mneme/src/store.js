@@ -534,6 +534,85 @@ CREATE TABLE IF NOT EXISTS continuity_proposals (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_continuity_session_kind ON continuity_proposals(session_id, kind);
 CREATE INDEX IF NOT EXISTS idx_continuity_status ON continuity_proposals(status, updated_at);
+
+-- ============================================================
+-- chorography（仓库地志，spec: docs/specs/2026-11-04-chorography-design.md）。
+-- 与记忆行物理隔离的硬边界落在这组表上：wiki 的行永不进 memories /
+-- saveWithDedupe / dream / 质量过滤的任何池子（spec §3）——autoDream 的
+-- 「对核心知识库长期参考价值较低」归档理由一旦够得着 wiki 行，机器生成页就会
+-- 被巩固流程自己归档掉（dream-archive-guardrail 测的正是这个语义）。
+-- M0 只有 T0 确定性骨架（零模型）；choro_claims / choro_vectors 此时是空壳，
+-- 分别在 M2（T1 生成轮出 claims）与 M1/M2（embedder 接入）开始灌数据。
+--
+-- 仓库登记（实现计划 P2 补口）：spec §5 的 choro_modules.repo_id 指向这里；
+-- 消费面「按工作目录匹配已登记仓库」（spec §7）也要求登记行。root_path 存
+-- realpath——Windows 上大小写不同的两条路径指向同一目录，登记表按 realpath
+-- 收敛成一行。唯一性照本仓惯例走独立索引，不进 CREATE TABLE。
+CREATE TABLE IF NOT EXISTS choro_repos (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  root_path        TEXT NOT NULL,
+  name             TEXT NOT NULL,
+  plan_fingerprint TEXT,              -- 上次成功 run 的 plan.yaml 内容 sha256
+  git_baseline     TEXT,              -- 上次成功 run 的 HEAD
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_repos_root ON choro_repos(root_path);
+
+-- 模块划分与依赖边。fingerprint = 模块文件集 + 边集的内容 sha256：幂等语义靠
+-- replaceChoroGraph 的整仓替换，不靠逐行 diff，所以本表没有「上次见过的划分」
+-- 之外的账要记。
+CREATE TABLE IF NOT EXISTS choro_modules (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_id     INTEGER NOT NULL,
+  slug        TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  parent_id   INTEGER,                -- 最近祖先模块（目录包含关系），无则 NULL
+  file_count  INTEGER NOT NULL DEFAULT 0,
+  fingerprint TEXT,
+  updated_at  TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_modules_repo_slug ON choro_modules(repo_id, slug);
+
+-- 页面 ↔ baseline ↔ 状态。rel_path 是仓库相对路径（.chorography/modules/<slug>.md）：
+-- 真源在仓库磁盘的 MD 里（spec §4），本表只做索引与状态账，删了可以整表重算。
+CREATE TABLE IF NOT EXISTS choro_pages (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  module_id         INTEGER NOT NULL,
+  rel_path          TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'skeleton',  -- skeleton | enriched | stale | failed
+  git_baseline      TEXT,
+  template_version  TEXT,
+  generated_at      TEXT,
+  human_block_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_pages_module ON choro_pages(module_id);
+
+-- 溯源知识卡（M2 起写）：陈述 + 出处锚点（相对路径#Lx-Ly）。kind 限定五类
+-- （spec §5），不在别处发明第六类。
+CREATE TABLE IF NOT EXISTS choro_claims (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  page_id     INTEGER NOT NULL,
+  statement   TEXT NOT NULL,
+  kind        TEXT NOT NULL,          -- architecture | convention | tech-stack | setup | unknown
+  source_path TEXT,
+  start_line  INTEGER,
+  end_line    INTEGER,
+  confidence  TEXT,
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_choro_claims_page ON choro_claims(page_id);
+
+-- 向量壳（M1/M2 接 embedder 后灌）：owner_id 指向 choro_claims 或 choro_pages
+-- （spec §5 的多态指向）。向量与记忆向量不共表、不共查询——两边换模型版本的
+-- 节奏不同（V4 待实测项），混表会让其中一边被另一边的模型版本绑死。
+CREATE TABLE IF NOT EXISTS choro_vectors (
+  owner_id   INTEGER NOT NULL,
+  dim        INTEGER NOT NULL,
+  model      TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_vectors_owner_model ON choro_vectors(owner_id, model);
 `;
 
 // Exported for API-layer type validation (standalone API POST /memories and
@@ -4456,6 +4535,96 @@ export function createStore(path) {
     });
   }
 
+  /* --------------------- chorography（仓库地志，M0 只写不读） --------------------- */
+  // 消费面（检索 / 注入）在 M1 才接，这里只落写入口。时间戳由调用方传：一次 run
+  // 的所有行共用同一个时刻（生成的页正文里也引用它），由 t0.js 的单一时钟保证，
+  // store 不自取 now()——两处时钟会把「同一 run」拆成两个版本。
+
+  function choroRepoByRoot(rootPath) {
+    return db.prepare("SELECT * FROM choro_repos WHERE root_path = ?").get(rootPath) ?? undefined;
+  }
+
+  // 登记或刷新仓库行。created_at 只在首次插入时落（ON CONFLICT 不碰它）；
+  // plan_fingerprint / git_baseline 永远反映上次成功 run——失败 run 不写这两格
+  // （红线 5「失败不推进 state」，库侧与 state.json 同一口径）。
+  function upsertChoroRepo(rootPath, name, planFingerprint, gitBaseline, updatedAt) {
+    db.prepare(
+      `INSERT INTO choro_repos (root_path, name, plan_fingerprint, git_baseline, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(root_path) DO UPDATE SET
+         name = excluded.name,
+         plan_fingerprint = excluded.plan_fingerprint,
+         git_baseline = excluded.git_baseline,
+         updated_at = excluded.updated_at`
+    ).run(rootPath, name, planFingerprint, gitBaseline, updatedAt, updatedAt);
+    return choroRepoByRoot(rootPath);
+  }
+
+  // 整仓替换（实现计划 P7）：一次成功 run 的模块/页面/claims 全量重写。幂等语义
+  // 在这里成型：重跑同一划分 = 删了重插同样内容，行不翻倍；划分变了也不会留孤儿行
+  // （旧模块的页面与 claims 随模块一起删）。事务包住删除与插入，半截失败整体回滚，
+  // 库里保持上一次成功 run 的完整图。
+  // 父链两段式落（先全插再补 parent_id）：父模块的行号在插入前不存在，按 slug 排序
+  // 的单遍插入会遇到「父在后」的顺序问题，两段式与顺序无关。
+  function replaceChoroGraph(repoId, snapshot) {
+    return runAtomically(() => {
+      db.prepare(
+        `DELETE FROM choro_claims WHERE page_id IN (
+           SELECT p.id FROM choro_pages p JOIN choro_modules m ON p.module_id = m.id
+           WHERE m.repo_id = ?)`
+      ).run(repoId);
+      db.prepare(
+        "DELETE FROM choro_pages WHERE module_id IN (SELECT id FROM choro_modules WHERE repo_id = ?)"
+      ).run(repoId);
+      db.prepare("DELETE FROM choro_modules WHERE repo_id = ?").run(repoId);
+
+      const insModule = db.prepare(
+        `INSERT INTO choro_modules (repo_id, slug, title, parent_id, file_count, fingerprint, updated_at)
+         VALUES (?, ?, ?, NULL, ?, ?, ?)`
+      );
+      const ids = new Map();
+      for (const mod of snapshot.modules) {
+        const info = insModule.run(
+          repoId, mod.slug, mod.title, mod.fileCount, mod.fingerprint, snapshot.updatedAt
+        );
+        ids.set(mod.slug, Number(info.lastInsertRowid));
+      }
+      const setParent = db.prepare("UPDATE choro_modules SET parent_id = ? WHERE id = ?");
+      for (const mod of snapshot.modules) {
+        if (mod.parentSlug == null) continue;
+        const parentId = ids.get(mod.parentSlug);
+        if (parentId != null) setParent.run(parentId, ids.get(mod.slug));
+      }
+
+      const insPage = db.prepare(
+        `INSERT INTO choro_pages
+           (module_id, rel_path, status, git_baseline, template_version, generated_at, human_block_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      );
+      const insClaim = db.prepare(
+        `INSERT INTO choro_claims
+           (page_id, statement, kind, source_path, start_line, end_line, confidence, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const page of snapshot.pages) {
+        const moduleId = ids.get(page.moduleSlug);
+        if (moduleId == null) continue; // 划分与页面同源生成，走到这里说明调用方组装错了
+        const pageInfo = insPage.run(
+          moduleId, page.relPath, page.status, page.gitBaseline,
+          page.templateVersion, page.generatedAt, page.humanBlockCount
+        );
+        for (const claim of page.claims ?? []) {
+          insClaim.run(
+            Number(pageInfo.lastInsertRowid), claim.statement, claim.kind,
+            claim.sourcePath ?? null, claim.startLine ?? null, claim.endLine ?? null,
+            claim.confidence ?? null, snapshot.updatedAt
+          );
+        }
+      }
+      return { modules: snapshot.modules.length, pages: snapshot.pages.length };
+    });
+  }
+
   return {
     db,
     count,
@@ -4621,6 +4790,10 @@ export function createStore(path) {
     getContinuityProposal,
     listContinuityProposals,
     countContinuityProposals,
+    // chorography（仓库地志）：M0 只写不读，消费面 M1 接（见上面注释块）。
+    choroRepoByRoot,
+    upsertChoroRepo,
+    replaceChoroGraph,
     close() {
       db.close();
     }
