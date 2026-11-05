@@ -29,6 +29,7 @@ permissions:
 jobs:
   prep:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Validate version format
         env:
@@ -39,7 +40,8 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@v7
+      # 本工作流要推分支、开 PR，默认凭据必须留下——artipacked 在此是唯一合理豁免
+      - uses: actions/checkout@v7 # zizmor: ignore[artipacked]
 
       - uses: actions/setup-node@v7
         with:
@@ -64,7 +66,13 @@ jobs:
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Run release-prep (version bump + badge + placeholder rows)
-        run: node scripts/release-prep.mjs "${{ inputs.version }}" "${{ steps.tests.outputs.count }}"
+        env:
+          # inputs / steps.outputs 内插进 run 都是 zizmor 的 template-injection 反模式
+          # （与下面 VERSION 走 env 同一个理由）：env 注入的值在 shell 里是普通变量，
+          # 不重解析。version 虽有上一步的正则卡格式，仍走 env 让扫描器零推理。
+          VERSION: ${{ inputs.version }}
+          TEST_COUNT: ${{ steps.tests.outputs.count }}
+        run: node scripts/release-prep.mjs "$VERSION" "$TEST_COUNT"
 
       - name: Create release-prep branch + PR
         env:
@@ -126,7 +134,9 @@ jobs:
             echo "- [ ] 跨 minor 时把 SECURITY.md 中英两张支持版本表挪一格（活跃开发 / 尽力维护 / 不支持三段一起挪，含停止维护那段通知）"
           } > commit-msg.txt
           git commit -F commit-msg.txt
-          git push origin "HEAD:refs/heads/$BRANCH" $FORCE
+          # ${FORCE:+"$FORCE"}：FORCE 为空 → 不产生参数；非空 → 单个整体参数。
+          # 写 $FORCE 裸引用会被 shellcheck SC2086 拦（workflow-hygiene 联动检查）
+          git push origin "HEAD:refs/heads/$BRANCH" ${FORCE:+"$FORCE"}
           # PR 正文走 --body-file：多行中文塞进 --body 需要一堆 $'\n' 转义，
           # 读的人看不懂、改的人不敢动。写成文件既好读也不受 shell 引号规则摆布。
           {
