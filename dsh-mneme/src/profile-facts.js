@@ -49,6 +49,24 @@ export class ProfileFactsError extends Error {
 }
 
 /**
+ * 单个 op 的形状谓词；批量口径（路由层 400 闸）与解析层共用这一份——两处各抄
+ * 一遍的话，改形状就会漏一边（评审 P3：同一谓词两份皮，P1 的洞因此要修两处）。
+ * add 与 update 都必须带非空 content：update 缺 content 时 `String(undefined)`
+ * 会把「undefined」三个字母写进事实正文并从此每帧注入（评审 P1 实测复现的洞）。
+ */
+function isValidFactOp(o) {
+  return !!o && typeof o === "object"
+    && (o.op === "add" || o.op === "update" || o.op === "archive")
+    && (o.op !== "add" && o.op !== "update" || (typeof o.content === "string" && o.content.trim()))
+    && (o.op === "add" || typeof o.id === "string" && o.id.trim());
+}
+
+/** 批量口径：待写入的 op 批必须非空且逐个形状合格（空批走「没什么可改」，不进这条）。 */
+export function isValidFactOps(ops) {
+  return Array.isArray(ops) && ops.length > 0 && ops.every(isValidFactOp);
+}
+
+/**
  * 从模型输出里取 ops 数组。先剥 markdown 围栏，再退到「第一个 [ 或 { 到最后一个
  * ] 或 }」的宽取——与 parseProfileDraft 同款两步。形状校验：op 只认 add/update/
  * archive；add 必须带非空 content；update/archive 必须带 id（id 是否真实存在由
@@ -73,13 +91,9 @@ export function parseFactOps(text) {
       continue;
     }
     const ops = Array.isArray(value) ? value : (value && typeof value === "object" && Array.isArray(value.ops) ? value.ops : null);
-    if (!ops) continue;
-    if (!ops.every((o) => o && typeof o === "object"
-      && (o.op === "add" || o.op === "update" || o.op === "archive")
-      && (o.op !== "add" || (typeof o.content === "string" && o.content.trim()))
-      && (o.op === "add" || typeof o.id === "string" && o.id.trim()))) {
-      continue;
-    }
+    // 空 ops 是合法的「没什么可改」（runFor 会以 ok + opsApplied:0 收尾），所以
+    // 这里只验逐 op 形状、不要求非空——非空是批量写入口径（isValidFactOps）。
+    if (!ops || !ops.every(isValidFactOp)) continue;
     return ops;
   }
   return null;
@@ -95,7 +109,9 @@ function collectInputRows(store, agentKey, cursor) {
     const content = String(row.content ?? "").slice(0, DEFAULT_ROW_CHARS);
     if (content.length < String(row.content ?? "").length) truncated = true;
     const size = `${row.type} ${row.title} ${content}`.length;
-    if (chars + size > DEFAULT_TOTAL_CHARS) {
+    // 首行保底：单行就超总预算时也收进来（截断已如实标记）——否则游标永远
+    // 推不进、这张卡变成永久 noop（评审 P3：首行即超预算的死角）。
+    if (rows.length && chars + size > DEFAULT_TOTAL_CHARS) {
       truncated = true;
       break;
     }
@@ -183,12 +199,20 @@ export function createProfileFacts({ ctx, service, store, config, logger }) {
               at, agentKey, runId, factId: prev.id, op: op.op,
               before: prev.content, after: op.op === "update" ? nextContent : null, actor
             });
-            if (op.op === "update") activeContents.delete(String(prev.content ?? "").trim());
+            if (op.op === "update") {
+              // 去重集合要跟上新值：同批 [update A→B, add B] 不收新值的话会落两条
+              // 相同的活跃事实，而 dupsSkipped 还是 0（评审 P2 实测复现）。
+              activeContents.delete(String(prev.content ?? "").trim());
+              activeContents.add(nextContent);
+            }
             applied += 1;
           } else {
             failures.push({ op: op.op ?? null, id: op.id ?? null, reason: "unsupported op" });
           }
         } catch (error) {
+          // 逐 op 吞错是刻意的：一条 journal 写失败不该把整批已落的事实回滚掉
+          // （失败进 failures 由回执如实报）。代价是与「单事务」注释的原子粒度
+          // 有出入——真故障通常连 COMMIT 一起失败，这里只是收窄那道缝。
           failures.push({ op: op.op ?? null, id: op.id ?? null, reason: String(error?.message ?? error) });
         }
       }

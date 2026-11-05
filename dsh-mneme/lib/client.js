@@ -3842,6 +3842,10 @@ window.__ModuleLoader__.load({
           }
           setState(await res.json());
           setSaveError("");
+          // 功能开关即改即存：别的卡在读同一份 effective 快照（画像事实卡的
+          // 「立即更新」按钮禁用态）——广播让它们重读，不然按提示开了开关还得
+          // 关面板重开才解禁，正是本车道广播工作项要消灭的那类体验。
+          try { window.dispatchEvent(new CustomEvent("mneme:features-changed")); } catch { /* 非浏览器环境 */ }
           announce(t("memory.features.restartHint"));
           setSavedTick(true);
           setTimeout(() => setSavedTick(false), 1800);
@@ -4743,26 +4747,34 @@ window.__ModuleLoader__.load({
         }
       }, []);
       // 切卡先清行再取：上一张卡的事实留在屏上会被当成这张的（同 loadPreview 的
-      // 单一所有者纪律——这里没有直接写数据，都交给 loadFacts）。
+      // 单一所有者纪律——这里没有直接写数据，都交给 loadFacts）。维护轮结局一并
+      // 清：A 卡跑完的「已更新 N 条」不该显示在 B 卡下（评审 P3：跨卡残留）。
       react.useEffect(() => {
         setFactsRows(null);
         setFactsEditId(null);
         setFactsEditDraft("");
         setFactsNotice(null);
+        setFactsRunEnd(null);
         loadFacts(factsAgent);
       }, [factsAgent, loadFacts]);
-      // 总闸快照：features 由功能开关卡管写，这里只读不写、失败不猜。
+      // 总闸快照：features 由功能开关卡管写，这里只读不写、失败不猜。功能开关卡
+      // 即改即存并广播 mneme:features-changed——不监听的话，按提示开了「自动事实」
+      // 还得关面板重开才解禁（正是广播工作项要消灭的那类体验）。
       react.useEffect(() => {
         let cancelled = false;
-        apiFetch("/api/dsh-mneme/features")
-          .then((res) => (res.ok ? res.json() : null))
-          .then((j) => {
-            if (cancelled) return;
-            const eff = (j && j.effective) || {};
-            setFactsFlag(eff.profileFactsEnabled === true);
-          })
-          .catch(() => {}); // 读失败保持 null：按钮不锁死，409 兜底
-        return () => { cancelled = true; };
+        const loadFlag = () => {
+          apiFetch("/api/dsh-mneme/features")
+            .then((res) => (res.ok ? res.json() : null))
+            .then((j) => {
+              if (cancelled) return;
+              const eff = (j && j.effective) || {};
+              setFactsFlag(eff.profileFactsEnabled === true);
+            })
+            .catch(() => {}); // 读失败保持 null：按钮不锁死，409 兜底
+        };
+        loadFlag();
+        window.addEventListener("mneme:features-changed", loadFlag);
+        return () => { cancelled = true; window.removeEventListener("mneme:features-changed", loadFlag); };
       }, []);
       // 人工修正统一入口：一张卡上的小批量 ops 一次 POST，回来重取 GET 让账本跟上，
       // 并刷新注入预览（事实段是注入文本的一部分，预览别停在编辑前）。

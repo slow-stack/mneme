@@ -7,6 +7,8 @@ import { timingSafeEqual, randomBytes } from "node:crypto";
 import { TYPES } from "./store.js";
 import { TYPE_FILE, renderMirrorText, renderFileHeader, parseHumanEdits, MIRROR_READONLY_TYPES } from "./mirror.js";
 import { langOf } from "./lang.js";
+// op 形状谓词单一份（评审 P3：两份皮会让形状修洞漏一边）。
+import { isValidFactOps } from "./profile-facts.js";
 import { computeHeat } from "./heat.js";
 import { EFFORT_REJECT_RE, describeStreamFailure, resolveRoute, withEffortFallback } from "./dream.js";
 // Issue #521：面板要按归一化原因显示 skipped，归一化只有一份实现（住在
@@ -656,13 +658,18 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const agent = typeof body.agent === "string" ? body.agent.trim() : "";
         const ops = Array.isArray(body.ops) ? body.ops : [];
         if (!ops.length) return sendJson(res, 400, { error: "ops required" });
-        if (!ops.every((o) => o && typeof o === "object"
-          && (o.op === "add" || o.op === "update" || o.op === "archive")
-          && (o.op !== "add" || (typeof o.content === "string" && o.content.trim()))
-          && (o.op === "add" || typeof o.id === "string" && o.id.trim()))) {
-          return sendJson(res, 400, { error: "invalid ops" });
+        // 形状谓词与解析层共用一份（isValidFactOps）：update 与 add 同样必须带
+        // content——缺了会把「undefined」写进事实正文并从此每帧注入。
+        if (!isValidFactOps(ops)) return sendJson(res, 400, { error: "invalid ops" });
+        let result;
+        try {
+          result = facts.applyManualOps(agent, ops);
+        } catch (error) {
+          // /run 有完整的错误映射，这条写路径也不能把同步异常（SQLite I/O）裸抛
+          // 给宿主——500 + 一句 internal，与 GET 分支的 try/catch 同款。
+          ctx.logger?.warn?.(`dsh-mneme: profile-facts apply failed: ${String(error?.message ?? error)}`);
+          return sendJson(res, 500, { error: "internal" });
         }
-        const result = facts.applyManualOps(agent, ops);
         sendJson(res, 200, {
           applied: result.applied,
           failures: result.failures,

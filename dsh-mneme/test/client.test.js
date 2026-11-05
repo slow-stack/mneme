@@ -2674,6 +2674,13 @@ test("profile facts card ships management UI, run outcomes and never touches the
   // 只在 run 后刷新会让「改完一条、预览还是旧的」。
   assert.ok(factsSlice.includes("loadPreview(personaEditing)"),
     "both apply and run success paths must refresh the injected preview");
+  // 总闸快照要跟着功能开关走：FeaturesCard 即改即存并广播 mneme:features-changed，
+  // 事实卡监听重读——不然按提示开了「自动事实」，按钮还得关面板重开才解禁
+  // （评审 P2：快照 effect 是 [] 依赖，监听缺失等于回到「重开才生效」的老病）。
+  assert.ok(clientSource.includes('new CustomEvent("mneme:features-changed")'),
+    "FeaturesCard must broadcast a features-changed event when a save lands");
+  assert.ok(clientSource.includes('addEventListener("mneme:features-changed", loadFlag)'),
+    "the facts card must re-read its flag snapshot when features change");
 });
 
 // 复制的竞态（CodeRabbit #559 第二轮）：剪贴板是异步的，回调属于哪一份草稿必须能认出来。

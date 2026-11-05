@@ -14,7 +14,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { createApi } from "../src/api.js";
-import { createProfileFacts, ProfileFactsError, parseFactOps } from "../src/profile-facts.js";
+import { createProfileFacts, ProfileFactsError, parseFactOps, isValidFactOps } from "../src/profile-facts.js";
 import { renderUserSettingsBlock, resolveFactsCard } from "../src/user-settings.js";
 
 // 假的 ctx.llm：协议与 profile-extract.test.js 的 fakeLlm 同款（用量嵌在 chunk.usage）。
@@ -73,6 +73,12 @@ test("解析器：围栏 JSON 可取；未知 op / 缺 content / 非 JSON 一律
   assert.equal(parseFactOps('{"ops":[{"op":"delete","id":"x"}]}'), null, "delete 不在 v1 op 集里");
   assert.equal(parseFactOps('{"ops":[{"op":"add"}]}'), null, "add 缺 content = 形状不合格");
   assert.equal(parseFactOps('{"ops":[{"op":"update"}]}'), null, "update 缺 id = 形状不合格");
+  // update 缺 content 是评审 P1 实测复现的洞：String(undefined) 会把「undefined」
+  // 写进事实正文并从此每帧注入。谓词一份皮，解析层与 /apply 的 400 闸同源。
+  assert.equal(parseFactOps('{"ops":[{"op":"update","id":"x"}]}'), null, "update 缺 content 同样不合格");
+  assert.equal(isValidFactOps([{ op: "update", id: "x" }]), false);
+  assert.equal(isValidFactOps([{ op: "update", id: "x", content: "  " }]), false, "空白 content 不算有");
+  assert.equal(isValidFactOps([]), false, "空数组走「没什么可改」的合法路径，但谓词口径是待写入批必须非空");
   const bare = parseFactOps('[{"op":"add","content":"裸数组也收"}]');
   assert.equal(bare[0].content, "裸数组也收", "宽取对裸数组同样生效");
 });
@@ -165,6 +171,22 @@ test("update/archive 只认本卡的事实：LLM 幻觉出的 id 落进 failures
   assert.equal(receipt.opsApplied, 0);
   assert.equal(receipt.detail.failures.length, 2);
   assert.equal(store.listProfileFacts("botA", { includeArchived: true })[0].content, "botA 卡的事实", "别卡的行不许被动");
+  store.close();
+});
+
+test("同批 [update A→B, add B] 只落一条：去重集合要跟上 update 的新值（评审 P2）", () => {
+  const { store, facts } = setup(okOps([]));
+  facts.applyManualOps("", [{ op: "add", content: "旧表述 A" }]);
+  const id = store.listProfileFacts("", { includeArchived: false })[0].id;
+  const out = facts.applyManualOps("", [
+    { op: "update", id, content: "新表述 B" },
+    { op: "add", content: "新表述 B" }
+  ]);
+  assert.equal(out.applied, 1, "update 落地，add 撞上去重集被跳过");
+  assert.equal(out.dupsSkipped, 1);
+  const active = store.listProfileFacts("", { includeArchived: false });
+  assert.equal(active.length, 1, "不收新值的话这里会是两条相同事实");
+  assert.equal(active[0].content, "新表述 B");
   store.close();
 });
 
@@ -378,6 +400,10 @@ test("apply：405 / 400（空 ops 与非法 op）/ 200（applied+failures+回读
   res = new FakeRes();
   await route.handler(httpReq("POST", { agent: "", ops: [{ op: "nuke" }] }, "/api/dsh-mneme/profile-facts/apply"), res);
   assert.equal(res.statusCode, 400, "非法 op 形状在路由层就拒，不进领域层");
+
+  res = new FakeRes();
+  await route.handler(httpReq("POST", { agent: "", ops: [{ op: "update", id: "x" }] }, "/api/dsh-mneme/profile-facts/apply"), res);
+  assert.equal(res.statusCode, 400, "update 缺 content 在 400 闸就拒（评审 P1：会写成 undefined 正文）");
 
   res = new FakeRes();
   await route.handler(httpReq("POST", {
