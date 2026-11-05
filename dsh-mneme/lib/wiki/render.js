@@ -17,6 +17,12 @@ export const TEMPLATE_VERSION = "1";
 export const HUMAN_START = "<!-- CHORO:HUMAN:START -->";
 export const HUMAN_END = "<!-- CHORO:HUMAN:END -->";
 
+// T1 语义段的包装标记。写的人是 t1.js，读的人还有 t0.js——重跑 T0 时它要能认出
+// 「这页已经被富化过」，否则 enriched → skeleton 的退回是静默的。标记随页面格式
+// 走，所以与 HUMAN 标记同住这里，t1.js 转出给调用方。
+export const T1_SECTION_START = "<!-- CHORO:T1:START -->";
+export const T1_SECTION_END = "<!-- CHORO:T1:END -->";
+
 /** 抽出全部保留区。返回 { blocks: string[]（含标记本身，原样）, count }。 */
 export function extractHumanBlocks(pageText) {
   if (typeof pageText !== "string") return { blocks: [], count: 0 };
