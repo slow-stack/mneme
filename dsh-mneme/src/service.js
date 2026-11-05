@@ -1849,6 +1849,27 @@ export function createService({ store, mirror, config, onWrite, logger, document
         candidates = merged;
       }
     }
+    // pin 池取数修复：pin 类行被混合合并的封顶挡在候选池外面。
+    // `merged.length >= poolSize` 在 pin 筛选**之前**就封顶（生产 maxItems=5 →
+    // poolSize=10，向量路一次正好返回 10 条即 break），规则窗口里那些
+    // constraint/preference 于是一条都进不了 candidates，pin 池只能从那 10 条里
+    // 碰运气选——而本文件注释（:1919）与 issue #249 验收都写着「pin 不占
+    // maxItems 名额」。实测真库 maxItems=5 时 pin shown 只有 2/5，补回后恒 5/5；
+    // maxItems=10（poolSize=20）时前后都是 5/5——所以这不是多给名额，只是把被
+    // 向量路吃掉的那部分补回来。
+    // 两条纪律：①只在 pin 预算 > 0 时补，预算关时 candidates 与改前逐字节一致；
+    // ②只补到候选池尾部，后面的 strictScope（:1902）与 scopeState（:1912）两道
+    // 闸门照旧作用其上，「pin 池 eligible 取自过滤之后的候选」这条位置纪律不变。
+    if (candidates !== items) {
+      const pinBudget = Math.max(0, Math.min(5, Math.floor(config?.pinnedInjectBudget ?? 0)));
+      if (pinBudget > 0) {
+        const knownIds = new Set(candidates.map((m) => m.id));
+        const spilledPins = items.filter(
+          (m) => PINNED_MEMORY_TYPES.has(m.type) && m.graphHint !== true && !knownIds.has(m.id)
+        );
+        if (spilledPins.length) candidates = [...candidates, ...spilledPins];
+      }
+    }
     // Topic-ranked selection (v0.5.0 2.2): when the current query's vector is
     // available the whole candidate list is re-ordered by similarity to that
     // vector, so the injected slots go to memories on the current topic
