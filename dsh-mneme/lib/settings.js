@@ -247,6 +247,11 @@ const FEATURE_FLAG_BOOLEANS = [
   // Issue #497：画像提取草稿（POST /profile/extract）。默认关——每次调用一次 LLM 且
   // 读上百行记忆；产物只回草稿，绝不写 user_settings。进 LIGHT_MODE_OFF（预设关）。
   "profileExtractEnabled",
+  // 「Agent 眼中的你」自动事实（2026-11-06）：dream 后逐卡维护 + 手动轮 + 注入段，
+  // 事实住 profile_facts 独立三表，绝不写 user_settings（#497 口径不变）。默认关，
+  // 进 LIGHT_MODE_OFF（自动维护轮与低资源档互斥）。顶层扁平键，与 config.js schema
+  // 成对出现（计数锁 test/api.test.js 钉住）。
+  "profileFactsEnabled",
   // #539：逐会话无痕默认关闭；子代理开关受总开关约束。手动 session id 名单留在配置，
   // 不进入只支持标量的 feature_flags 白名单。
   "sessionGateEnabled",

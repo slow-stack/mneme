@@ -2611,6 +2611,71 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
   assert.ok(clientSource.includes('"no-route" ? "noroute"'), "no-route must map to its own panel outcome, not the generic failure");
 });
 
+// 「Agent 眼中的你」自动事实（2026-11-06）面板面：路由对齐、维护轮的五种结局各有
+// 自己的话、卡片坐在 personaView 与规则卡之间、以及**事实绝不落 user_settings**。
+// 最后这条是 #497「草稿按钮写画像」的镜像教训：事实管理块的写路径只许是
+// /profile-facts/apply（写 profile_facts 三表），任何 PUT /profile 的捷径都会把手填
+// 画像原文覆盖掉——那次是草稿按钮，这次是事实管理，一个动机：图省事。
+test("profile facts card ships management UI, run outcomes and never touches the hand-filled profile", () => {
+  const apiSource = readFileSync(join(root, "src/api.js"), "utf8");
+  for (const pathLiteral of [
+    'path: "/api/dsh-mneme/profile-facts"',
+    'path: "/api/dsh-mneme/profile-facts/apply"',
+    'path: "/api/dsh-mneme/profile-facts/run"'
+  ]) {
+    assert.ok(apiSource.includes(pathLiteral), `the backend must register ${pathLiteral}`);
+  }
+  assert.ok(clientSource.includes("apiFetch(`/api/dsh-mneme/profile-facts?agent="),
+    "the panel must load facts per card");
+  assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/profile-facts/apply"'),
+    "panel edits must go through the apply route");
+  assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/profile-facts/run"'),
+    "the manual run must go through the run route");
+
+  // 维护轮的五种结局（ok / noop / 功能关 / 没配模型 / 失败）各有一句人话：
+  // 「跑完没变化」与「压根没跑」必须可区分（#493 同一条教训：故障被读成空结果）。
+  for (const key of [
+    "memory.settings.factsTitle",
+    "memory.settings.factsRun",
+    "memory.settings.factsRunOk",
+    "memory.settings.factsRunNoop",
+    "memory.settings.factsRunDisabled",
+    "memory.settings.factsRunNoRoute",
+    "memory.settings.factsRunFailed",
+    "memory.features.profileFactsEnabled",
+    "memory.features.profileFactsEnabled.hint"
+  ]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  assert.ok(/group\.enhance[\s\S]{0,1200}"profileFactsEnabled"/.test(clientSource),
+    "FEATURE_GROUPS group.enhance must carry profileFactsEnabled");
+
+  // 位置锁：事实卡是 personaView 之后、规则卡之前的独立一张——塞回 personaView 卡
+  // 内部或搬到规则卡后面都不会红，所以先钉住先后顺序（同 profile-extract 的位置锁）。
+  const personaViewIdx = clientSource.indexOf('t("memory.settings.personaView"))');
+  const rulesCardIdx = clientSource.indexOf('t("memory.settings.rules"))');
+  const factsCardIdx = clientSource.indexOf('t("memory.settings.factsTitle")');
+  assert.ok(personaViewIdx > 0 && factsCardIdx > personaViewIdx && rulesCardIdx > factsCardIdx,
+    "the facts card must sit between the persona-view card and the rules card");
+
+  // 手填画像神圣：事实域的全部面板代码（loadFacts 起到事实卡渲染止）里不许出现
+  // PUT /profile 的路径字面量。断言的是**带闭引号**的精确串——/profile-facts/* 的
+  // 路径都以 /profile 开头，不带闭引号的话这个断言会自己误伤自己。
+  const handlersStart = clientSource.indexOf("const loadFacts");
+  const factsSlice = clientSource.slice(handlersStart, factsCardIdx);
+  assert.ok(handlersStart > 0 && factsSlice.length > 0, "the facts handlers must exist");
+  assert.ok(!factsSlice.includes('"/api/dsh-mneme/profile"'),
+    "the facts domain must never write the hand-filled profile (PUT /profile is off-limits here)");
+  for (const fragment of ["/api/dsh-mneme/profile-facts?agent=", "/api/dsh-mneme/profile-facts/apply", "/api/dsh-mneme/profile-facts/run"]) {
+    assert.ok(factsSlice.includes(fragment), `the facts handlers must call ${fragment}`);
+  }
+  // 人工 apply 成功后注入预览必须跟着刷新：事实段是注入文本的一部分，
+  // 只在 run 后刷新会让「改完一条、预览还是旧的」。
+  assert.ok(factsSlice.includes("loadPreview(personaEditing)"),
+    "both apply and run success paths must refresh the injected preview");
+});
+
 // 复制的竞态（CodeRabbit #559 第二轮）：剪贴板是异步的，回调属于哪一份草稿必须能认出来。
 // 复制 A 还没落地时又提取出草稿 B，A 的回调就会在 B 上打勾或报错——B 一个字都没被复制过，
 // 而「已复制」会挂 1.5 秒，于是同一屏上可能出现「已复制」和「复制没成功」两句相反的话。

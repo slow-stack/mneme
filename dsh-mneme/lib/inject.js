@@ -93,7 +93,7 @@ function extractRounds(ctx, maxRounds) {
   }
 }
 
-export function createInjector(ctx, service, settings, config, gate = null, sessionGate = null, choroInject = null) {
+export function createInjector(ctx, service, settings, config, gate = null, sessionGate = null, choroInject = null, factsInject = null) {
   const language = langOf(config);
   const baseMaxItems = config.maxInjectedItems ?? 5;
   const threshold = config.importanceThreshold ?? 3;
@@ -331,7 +331,9 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
   // 一致（老用户零变化）。personaStrictAddressing 打开时，「有身份但没建卡」与
   // 「卡被显式关掉」都不注入人格——default 只兜「这一帧解析不到身份」的会话。
   function renderUserSettings(ctx) {
-    return renderUserSettingsBlock({ settings, config, agentId: sessionAgentId(ctx) }).text;
+    // factsInject 是 profile-facts 域的读口（index.js 接线，面板预览路由传同一份）：
+    // 开关与事实有无的判定都在 renderUserSettingsBlock 内部，「关」等于零读数。
+    return renderUserSettingsBlock({ settings, config, agentId: sessionAgentId(ctx), factsProvider: factsInject }).text;
   }
 
   // #249 能力说明的系统提示段。order 150 = 插件指引段的既有惯例
