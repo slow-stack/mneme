@@ -3905,8 +3905,16 @@ export function createStore(path) {
   // 同处，见 injectCandidates 的位置纪律）。存储层越薄，越不会被绕过。
 
   /**
-   * 全部 pin 行，按 pin 先后（created_at ASC）——注入就按这个序前置，
-   * 「老还没变」的稳定偏好因此排在最近才钉的后面而不是前面。
+   * 全部 pin 行，按 pin 先后（created_at ASC）——注入就按这个序前置，**先钉的
+   * 排在最前**。预算不够（钉的条数 > pinnedInjectBudget）时，被 eligible.slice
+   * 取走的是最早钉的那几条，最近才钉的排后面、先被挤掉。
+   *
+   * 这个方向和「稳定偏好」的理由是一致的：pin 表达的是「这条我要长期带着」，
+   * 越早做出这个承诺、越久没被撤回，就越该占住名额；若反过来让新钉的优先，
+   * pin 就退化成「最近关注」清单，和 updated_at DESC 那个错误排序键同病。
+   *
+   * 注意排序键是「什么时候钉的」，不是内容的 updated_at——一条 10 月的老记忆
+   * 今天才钉，它在 pin 序里是新的、在内容上是老的，两个轴不要混。
    * 次键 rowid：同毫秒连钉两条时 UUID 主键排序是随机的，回执要可复现。
    */
   function listPinned() {
