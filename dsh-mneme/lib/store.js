@@ -603,14 +603,19 @@ CREATE TABLE IF NOT EXISTS choro_claims (
 );
 CREATE INDEX IF NOT EXISTS idx_choro_claims_page ON choro_claims(page_id);
 
--- 向量壳（M1/M2 接 embedder 后灌）：owner_id 指向 choro_claims 或 choro_pages
--- （spec §5 的多态指向）。向量与记忆向量不共表、不共查询——两边换模型版本的
--- 节奏不同（V4 待实测项），混表会让其中一边被另一边的模型版本绑死。
+-- 向量壳（收尾档 P36/P38 落地）：owner_id 指向 choro_pages（v1 只做页级；
+-- claims 级留待真有精排需求）。向量与记忆向量不共表、不共查询——两边换模型
+-- 版本的节奏不同（V4 的答案在此：model/dim 记行内，**不锁死**——dim 失配 =
+-- 惰性全量重嵌，代价只是几十页重嵌而不是作废记忆向量）。
+-- vector 存 JSON 数组（与 memories.embedding 同款 TEXT 形态）；source_generated_at
+-- 记嵌入时刻页面的 generated_at——页面富化/重建后该值变化，检索侧据此判 staleness。
 CREATE TABLE IF NOT EXISTS choro_vectors (
-  owner_id   INTEGER NOT NULL,
-  dim        INTEGER NOT NULL,
-  model      TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  owner_id            INTEGER NOT NULL,
+  dim                 INTEGER NOT NULL,
+  model               TEXT NOT NULL,
+  vector              TEXT,
+  source_generated_at TEXT,
+  created_at          TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_vectors_owner_model ON choro_vectors(owner_id, model);
 
@@ -1141,6 +1146,10 @@ export function createStore(path) {
   // chorography（M2，实现计划 P17）：T1 生成轮的页级失败计数。T0 建的表没有它
   // （M0 只写 skeleton），存量库经 PRAGMA 检查后补列，幂等。
   addColumn("choro_pages", "fail_count", "ALTER TABLE choro_pages ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0");
+  // chorography 收尾档（P36）：v0.11.0 的 choro_vectors 是空壳表（spec §5 漏了
+  // 向量本体列），存量库经 PRAGMA 检查补列。
+  addColumn("choro_vectors", "vector", "ALTER TABLE choro_vectors ADD COLUMN vector TEXT");
+  addColumn("choro_vectors", "source_generated_at", "ALTER TABLE choro_vectors ADD COLUMN source_generated_at TEXT");
 
   // v0.8.0 A1（issue #17）scope 隔离存储层：四列全部可空、不带 DEFAULT——存量行
   // 零重写，读侧把 NULL 视为未标注（= 全局可见）。是否落值由 scopeEnabled 门控
@@ -4707,6 +4716,31 @@ export function createStore(path) {
     });
   }
 
+  // --- chorography 向量（收尾档 P36–P38）---------------------------------
+  // 一页一行（saveChoroPageVector 先删后插）；dim 失配由检索侧判（查询向量
+  // 的 dim ≠ 行 dim → 该行按 stale 处理，惰性全量重嵌）。
+  function getChoroPageVectors(repoId) {
+    return db.prepare(
+      `SELECT v.owner_id, v.dim, v.model, v.vector, v.source_generated_at,
+              m.slug, m.title, p.generated_at AS page_generated_at
+         FROM choro_vectors v
+         JOIN choro_pages p ON v.owner_id = p.id
+         JOIN choro_modules m ON p.module_id = m.id
+        WHERE m.repo_id = ?`
+    ).all(repoId);
+  }
+
+  function saveChoroPageVector(pageId, { vector, dim, model, sourceGeneratedAt, createdAt }) {
+    return runAtomically(() => {
+      db.prepare("DELETE FROM choro_vectors WHERE owner_id = ?").run(pageId);
+      db.prepare(
+        `INSERT INTO choro_vectors (owner_id, dim, model, vector, source_generated_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(pageId, dim, model, JSON.stringify(vector), sourceGeneratedAt, createdAt);
+      return { owner_id: pageId, dim };
+    });
+  }
+
   return {
     db,
     count,
@@ -4880,6 +4914,8 @@ export function createStore(path) {
     recordChoroPageFailure,
     markChoroPageEnriched,
     saveChoroPageClaims,
+    getChoroPageVectors,
+    saveChoroPageVector,
     close() {
       db.close();
     }

@@ -315,6 +315,13 @@ window.__ModuleLoader__.load({
         "memory.panel.empty": "暂无记忆条目",
         "memory.panel.open": "记忆",
         "wiki.panel.open": "仓库地志",
+        "wiki.rebuild": "重建骨架",
+        "wiki.rebuilding": "重建中…",
+        "wiki.rebuild.done": "重建完成",
+        "wiki.rebuild.failed": "重建失败",
+        "wiki.rebuild.hint": "重跑 T0 确定性骨架（秒级；T1 语义富化请用 CLI --t1）。注意：富化页会退回骨架，语义段需重新生成",
+        "wiki.rebuild.modules": "个模块",
+        "wiki.rebuild.pages": "页",
         "wiki.empty.noRepo": "还没有登记的仓库。先在仓库目录里跑 `dsh-mneme-choro <仓库路径> --apply` 生成骨架页并登记，然后回到这里。",
         "wiki.empty.disabled": "chorography（仓库地志）未启用：在「设置」里打开「仓库地志」后重启 DSH 生效。",
         "wiki.empty.pickRepo": "已登记多个仓库，选一个：",
@@ -1177,6 +1184,13 @@ window.__ModuleLoader__.load({
         "memory.panel.empty": "No memories yet",
         "memory.panel.open": "Memory",
         "wiki.panel.open": "Repo Atlas",
+        "wiki.rebuild": "Rebuild skeleton",
+        "wiki.rebuilding": "Rebuilding…",
+        "wiki.rebuild.done": "Rebuilt",
+        "wiki.rebuild.failed": "Rebuild failed",
+        "wiki.rebuild.hint": "Re-runs the deterministic T0 skeleton (seconds; T1 semantic enrichment stays on the CLI --t1). Note: enriched pages fall back to skeleton — regenerate semantics afterwards",
+        "wiki.rebuild.modules": "modules",
+        "wiki.rebuild.pages": "pages",
         "wiki.empty.noRepo": "No repository registered yet. Run `dsh-mneme-choro <repo-path> --apply` inside the repository to generate skeleton pages and register it, then come back here.",
         "wiki.empty.disabled": "chorography (Repo Atlas) is disabled: turn it on under Settings and restart DSH to apply.",
         "wiki.empty.pickRepo": "Multiple repositories registered — pick one:",
@@ -2303,6 +2317,11 @@ window.__ModuleLoader__.load({
       // .mneme-panel 根内（#562 的中列整页容器），不新增渲染根。
       ".mneme-wikibar{flex:none;display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1)}",
       ".mneme-wikirepo{flex:none;max-width:40%;font-size:13.5px;font-weight:600;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+      // 重建骨架按钮（收尾档 P34）与回执行：语义色层，无新字面量色。
+      ".mneme-wikibtn{flex:none;height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);cursor:pointer;font-family:inherit;font-size:12px;line-height:26px;transition:border-color .12s}",
+      ".mneme-wikibtn:hover{border-color:var(--dsw-alias-state-business-primary)}",
+      ".mneme-wikibtn:disabled{opacity:.5;cursor:default}",
+      ".mneme-wikirebuildnote{flex:1;min-width:0;font-size:11.5px;line-height:16px;color:var(--mneme-fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
       ".mneme-wikisearch{flex:1;min-width:0;height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12.5px;outline:none;transition:border-color .12s}",
       ".mneme-wikisearch:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-state-business-primary) 15%,transparent)}",
       ".mneme-wikibody{flex:1;min-height:0;display:flex;overflow:hidden}",
@@ -10315,7 +10334,7 @@ window.__ModuleLoader__.load({
       }
 
       function WikiMainPanel({ t }) {
-        const [state, setState] = useState({ phase: "loading", repos: [], repo: null, modules: [], edges: [], page: null, hits: [], q: "", selected: null, disabled: false, error: null });
+        const [state, setState] = useState({ phase: "loading", repos: [], repo: null, modules: [], edges: [], page: null, hits: [], q: "", selected: null, disabled: false, error: null, rebuilding: false, rebuildNote: null });
         // apiFetch 是裸 fetch：非 2xx 不抛错，返回 Response。这里统一解 JSON 并把
         // 状态码带回来——409 disabled（用户没开）/ 503 unavailable（装配缺件）
         // 各有各的空态文案（#497 的语义分叉在这里接住）。
@@ -10362,6 +10381,35 @@ window.__ModuleLoader__.load({
             setState((s) => ({ ...s, hits: data.hits ?? [] }));
           } catch { setState((s) => ({ ...s, hits: [] })); }
         }, [state.repo]);
+        // 重建骨架（收尾档 P34）：POST /choro/run（token-write），T0 apply 秒级
+        // 同步回执。T1 语义富化是长任务，不上 HTTP——按钮旁的空态/提示会引导去
+        // CLI（t1Loss 警告也从服务端原样透出）。
+        const rebuild = useCallback(async () => {
+          const repo = state.repo;
+          if (!repo || state.rebuilding) return;
+          setState((s) => ({ ...s, rebuilding: true, rebuildNote: null }));
+          try {
+            const { status, data } = await readJson(await apiFetch("/api/dsh-mneme/choro/run", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ repo: repo.id })
+            }));
+            if (status !== 200 || !data.ok) {
+              setState((s) => ({ ...s, rebuilding: false, rebuildNote: `${t("wiki.rebuild.failed")}: ${data.detail ?? data.error ?? status}` }));
+              return;
+            }
+            const r = data.receipt ?? {};
+            const loss = (r.warnings ?? []).find((w) => /T1|语义/.test(w));
+            setState((s) => ({
+              ...s,
+              rebuilding: false,
+              rebuildNote: `${t("wiki.rebuild.done")}: ${r.moduleCount ?? "?"} ${t("wiki.rebuild.modules")} / ${r.pageCount ?? "?"} ${t("wiki.rebuild.pages")}${loss ? ` — ${loss}` : ""}`
+            }));
+            await load(repo.id);
+          } catch (err) {
+            setState((s) => ({ ...s, rebuilding: false, rebuildNote: `${t("wiki.rebuild.failed")}: ${String(err?.message ?? err)}` }));
+          }
+        }, [state.repo, state.rebuilding, load, t]);
 
         if (state.phase === "loading") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.state.loading"));
         if (state.phase === "disabled") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.empty.disabled"));
@@ -10406,7 +10454,15 @@ window.__ModuleLoader__.load({
               value: state.q,
               onChange: (e) => runSearch(e.target.value),
               "aria-label": t("wiki.search.placeholder")
-            })),
+            }),
+            h("button", {
+              type: "button",
+              className: "mneme-wikibtn",
+              disabled: state.rebuilding,
+              title: t("wiki.rebuild.hint"),
+              onClick: rebuild
+            }, state.rebuilding ? t("wiki.rebuilding") : t("wiki.rebuild")),
+            state.rebuildNote && h("span", { className: "mneme-wikirebuildnote" }, state.rebuildNote)),
           h("div", { className: "mneme-wikibody" },
             h("nav", { className: "mneme-wikitree", "aria-label": t("wiki.tree.title") }, tree),
             h("div", { className: "mneme-wikipage" },
