@@ -8773,8 +8773,10 @@ window.__ModuleLoader__.load({
     // 入口形状跟着宿主 v0.2 的侧边栏走，分两态：
     //  · 展开态：宿主把「插件 / 自动化任务」这类全局面板渲染成 nav.panelList
     //    里的 panelRow（36px 行高、透明底、图标 + 标题）。我们把按钮 portal 进
-    //    同一组并原样套用宿主 panelRow 的实时类名，于是它是该组的第三行——低调，
-    //    而不是 v0.8.10 那样长得像第二个高亮「新会话」按钮。
+    //    同一组并原样套用宿主 panelRow 的实时类名，于是它是该组的一行——低调，
+    //    而不是 v0.8.10 那样长得像第二个高亮「新会话」按钮。落点是「更多」行
+    //    之前而不是组尾：宿主 0.2.2 起把「更多」追加进同一个 nav，组尾已不再是
+    //    面板行，落在它下面会被展开的菜单盖住（#573）。
     //  · 收起态（Windows 标题栏）：panelList / regionArea / footArea 被宿主
     //    display:none，只有开关与「新会话」被改成固定在标题栏上。我们把按钮搬回
     //    标题栏、并排在「新会话」右侧（84px / 120px 的算法见上面 CSS 注释），
@@ -8919,6 +8921,12 @@ window.__ModuleLoader__.load({
           const list = findPanelList(region);
           return list ? list.querySelector('[class*="panelRow"]:not(.mneme-topentry-native)') : null;
         };
+        // 面板列表里的「更多」行（宿主 PanelMoreMenu 的锚点）。宿主 0.2.2 起先渲染
+        // 面板行、再把「更多」追加进同一个 nav，于是列表最后一项不再是面板行——
+        // 我们的入口若仍 appendChild 到末尾就会落在它下面，菜单一展开就盖住入口
+        // （#573）。按 [class*=] 前缀找，和其余几处一样不写死哈希类名；老宿主
+        // 没有这行时返回 null，退回追加到末尾的老行为。
+        const findMoreAnchor = (list) => list.querySelector('[class*="moreAnchor"]');
         // 占位锚点：新会话行（现役外壳里 newSession 按钮嵌在 logoRow 内，
         // 旧外壳是根的直接子按钮）。判定与生态插件的 sidebar-entry-core
         // 一致；锚点不可靠时回退到 regionArea 之前的旧位置。
@@ -8944,6 +8952,14 @@ window.__ModuleLoader__.load({
           // 列表时退回「新会话」行之后，由 .mneme-topentry-native 兜住低调行样式。
           const list = wide ? findPanelList(region) : null;
           if (list) {
+            // 落在面板组末尾、但在「更多」行之前（#573）；没有「更多」行时组尾
+            // 就是终点，退回老行为。
+            const more = findMoreAnchor(list);
+            if (more) {
+              if (created.parentElement === list && created.nextElementSibling === more) return;
+              list.insertBefore(created, more);
+              return;
+            }
             if (created.parentElement === list && created === list.lastElementChild) return;
             list.appendChild(created);
             return;

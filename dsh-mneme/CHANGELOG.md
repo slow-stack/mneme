@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **修复 #573：宽态侧栏的记忆入口落在「更多」行下面，点开「更多」时被菜单盖住**：宿主 0.2.2 起把面板列表的「更多」行（`PanelMoreMenu`）也追加进同一个 `nav.panelList`，于是组尾不再是面板行——我们仍按「追加到末尾」落位，入口就排到了「更多」下面。
+
+  - **落位改成插在「更多」之前**：`place()` 先在列表里找 `[class*="moreAnchor"]`（与既有 `panelRow` / `regionArea` 同一套前缀判据，不写死宿主哈希类名），命中就 `insertBefore(created, more)`，没命中（老宿主没有这一行）原样退回 `appendChild`。幂等判据同步换成 `created.nextElementSibling === more`——稳态下观察器一次 DOM 写都不做，否则 `insertBefore` 会自激成 mutation 风暴（该坑在 `place()` 上方的注释里记着）。
+  - **回归锁**：`test/client.test.js` 新增一例，同时钉住「找 moreAnchor」「插在它之前」「对着它幂等」，以及老宿主那条追加组尾的分支必须还在——少了它，没有「更多」行的宿主上入口根本不落位。
+  - **验证**：全量 `npm test` 2808 tests / 2807 pass / 0 fail / 1 skipped；check-sync 94 一致。
+
 - **chorography 收口：`.chorography/` 走 `.gitignore`，扫默认排除改为点开头目录整类**：spec §11 的最后两条待实测落地。
 
   - **V5 已定（维护者拍）：生成物不入库**。`docs/specs/2026-11-04-chorography-design.md` §11 原本倾向「提交，因为 Markdown 就是真源」，实际取舍反过来：别人 clone 不该看到几十个生成页。规则先落在本仓（#572）——**忽略目录内容而不是整个目录**（`.chorography/*` + `!.chorography/plan.yaml`），因为忽略整个目录会让白名单失效、`plan.yaml` 这张人工正面控制表一起进不去。代价如实写进注释：页内 `CHORO:HUMAN` 保留区只在本机存活，`git clean -fdX` 会连它一起删。baleen / study-desk 两个邻仓同步补同一段。
