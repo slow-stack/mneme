@@ -76,7 +76,10 @@ const MEMORY_PROVENANCE = (m) => {
   return parts.length ? ` | ${parts.join(" | ")}` : "";
 };
 
-export function createTools(ctx, service, config, embedder, sessionGate = null) {
+// choro（M1）：chorography 只读查询对象（createChoroQueries 产物）。缺省 null =
+// 装配层没接（headless/测试），三个 choro_* 工具走 hiddenTools 闸根本不注册。
+// 它与 service 刻意分开传——chorography 的所有权模型与记忆域相反（spec §3）。
+export function createTools(ctx, service, config, embedder, sessionGate = null, choro = null) {
   const toolsRegistry = ctx.tools;
   let registration = REGISTERED_TOOLS.get(toolsRegistry);
   if (!registration) {
@@ -89,6 +92,16 @@ export function createTools(ctx, service, config, embedder, sessionGate = null) 
   // flag 关闭时恒返回 null——写入不标注，检索不加权，行为与 A1 前完全一致。
   // logger 透传：registry 反查失败时 warnOnce 才有出口（否则静默降级无观测）。
   const resolveSessionScope = createScopeResolver({ ctx, config, logger: ctx.logger });
+  // choro 工具共用的 repo 解析（M1）：不带 repo 且只有一个登记仓时自动收敛；
+  // 多仓歧义时把可选清单带回给模型（render 层会把它转成人话）。三个 execute 里
+  // 都先走这里，错误形状统一 { error, ... }，output.schema 容忍多余键由
+  // additionalProperties:false + render 兜底——错误分支直接透传给渲染层判。
+  const resolveChoroRepo = (ref) => {
+    const row = choro ? choro.resolveRepo(ref) : null;
+    if (!row) return { error: "no-repos", hint: "run `dsh-mneme-choro <repo> --apply` first (registers the repository)" };
+    if (row.ambiguous) return { error: "repo-ambiguous", repos: row.ambiguous, hint: "pass repo id or name" };
+    return row;
+  };
   // #249 能力说明（injectGuidanceEnabled）：开启时给「何时用」最有歧义的两个
   // 工具补一句判断指引。工具描述常驻、不进每轮上下文，这个位子零注入成本；
   // 关闭时描述逐字节不变，也不动其他工具的文案。
@@ -1032,6 +1045,111 @@ export function createTools(ctx, service, config, embedder, sessionGate = null) 
           ...(report.reason ? { reason: report.reason } : {})
         };
       }
+    }),
+
+    // --- chorography（仓库地志）只读工具（M1，spec §7）------------------
+    // 三个全只读（红线 3：写操作一个不注册——生成只走 dsh-mneme-choro CLI，
+    // 那是人按的按钮，不是模型的权利）。默认不在场：chorographyEnabled 关着时
+    // 走下面的 hiddenTools 闸，模型连名字都看不到（与 memory_organize 同款反向
+    // 语义）。执行器包 sessionGate 由注册循环统一做——仓库地志是文档不是会话
+    // 派生内容，无痕会话里被一并关掉是保守取向，可接受。
+    defineTool({
+      name: "choro_module_map",
+      description: "Show the chorography module map of a registered repository: module list (slug, title, file count, status) and cross-module dependency edges. Read-only. Use it to orient yourself in a codebase before reading pages; requires the user to have enabled chorography and generated the wiki (T0 skeleton).",
+      parameters: {
+        repo: { type: "string", description: "Repository id or display name; omit when exactly one repository is registered" }
+      },
+      output: {
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            repo: { type: "string", required: true },
+            modules: { type: "array", required: true, items: { type: "object", additionalProperties: true } },
+            edges: { type: "array", required: true, items: { type: "object", additionalProperties: true } }
+          }
+        },
+        render: (_args, value) => {
+          const mods = value.modules ?? [];
+          const edges = value.edges ?? [];
+          const lines = mods.map((m) =>
+            `- ${m.slug} — ${m.title}（${m.file_count} 文件${m.page_status ? `，页 ${m.page_status}` : "，无页"}）`
+          );
+          for (const e of edges) lines.push(`  ↳ ${e.from_slug} → ${e.to_slug} ×${e.weight}`);
+          return TEXT_OUTPUT(`${mods.length} modules, ${edges.length} edges:\n${lines.join("\n")}`);
+        }
+      },
+      async execute(args) {
+        const repo = resolveChoroRepo(args?.repo);
+        if (repo.error) return repo;
+        const { modules, edges } = choro.moduleMap(repo.id);
+        return { repo: repo.name, modules, edges };
+      }
+    }),
+
+    defineTool({
+      name: "choro_read_page",
+      description: "Read one chorography wiki page (module skeleton: file list, entries, internal/external dependencies) of a registered repository by slug. Use choro_module_map first to learn the slugs. Read-only.",
+      parameters: {
+        slug: { type: "string", description: "Page slug as listed by choro_module_map" },
+        repo: { type: "string", description: "Repository id or display name; omit when exactly one repository is registered" }
+      },
+      output: {
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            slug: { type: "string", required: true },
+            content: { type: "string", required: true }
+          }
+        },
+        render: (_args, value) => TEXT_OUTPUT(value.content)
+      },
+      async execute(args) {
+        const repo = resolveChoroRepo(args?.repo);
+        if (repo.error) return repo;
+        const page = choro.readPage(repo.id, args?.slug);
+        if (!page) return { error: "page-not-found", slug: String(args?.slug ?? ""), hint: "use choro_module_map to list slugs" };
+        if (page.error) return page;
+        return { slug: page.slug, content: page.content };
+      }
+    }),
+
+    defineTool({
+      name: "choro_search",
+      description: "Keyword search over a repository's chorography wiki pages. Returns matching sections with page slug, section title, line number and excerpt (case-insensitive substring; matches frontmatter too — sections let you tell metadata hits from body hits). Read-only.",
+      parameters: {
+        query: { type: "string", description: "Keyword substring to search for" },
+        repo: { type: "string", description: "Repository id or display name; omit when exactly one repository is registered" },
+        module: { type: "string", description: "Restrict to one module slug" },
+        limit: { type: "integer", description: "Max hits (default 20, cap 100)" }
+      },
+      output: {
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            hits: { type: "array", required: true, items: { type: "object", additionalProperties: true } }
+          }
+        },
+        render: (_args, value) => {
+          const hits = value.hits ?? [];
+          if (hits.length === 0) return TEXT_OUTPUT("0 hits.");
+          return TEXT_OUTPUT(hits
+            .map((hit) => `${hit.slug} · ${hit.section} · L${hit.line}: ${hit.excerpt}`)
+            .join("\n"));
+        }
+      },
+      async execute(args) {
+        const repo = resolveChoroRepo(args?.repo);
+        if (repo.error) return repo;
+        return {
+          hits: choro.search(repo.id, args?.query, {
+            moduleSlug: args?.module ?? null,
+            limit: args?.limit
+          })
+        };
+      }
     })
   ];
 
@@ -1046,6 +1164,14 @@ export function createTools(ctx, service, config, embedder, sessionGate = null) 
   // 注册。仍走同一个闸门而不是在数组里条件展开——模型看不到就不会调，这比在描述里
   // 劝它别用可靠（上面那段 v0.8.5 的定性对两个方向都成立）。
   if (config?.organizeEnabled !== true) hiddenTools.add("memory_organize");
+  // chorography 三个只读工具（M1）：默认不在场，chorographyEnabled 打开才注册。
+  // 与 organizeEnabled 同款反向语义；queries 未装配（null）时同样藏——「开了开关
+  // 但装配缺件」与「没开」对模型都是不可见，可区分性由面板路由的 409/503 负责。
+  if (config?.chorographyEnabled !== true || !choro) {
+    hiddenTools.add("choro_module_map");
+    hiddenTools.add("choro_read_page");
+    hiddenTools.add("choro_search");
+  }
 
   for (const tool of tools) {
     if (hiddenTools.has(tool.name)) {

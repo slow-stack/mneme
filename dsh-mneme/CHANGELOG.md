@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- **chorography M1：仓库地志面板（浏览）+ 三个只读工具 + 关键词检索**：消费面第一批落四张脸——**面板**：第二个宿主座位（`sidebar.panellist` + `main`，id/key 逐字同为 `dsh-mneme-wiki`），左模块树 / 右正文 / 顶部检索，只读 MD 渲染（React 文本节点天然转义，零 innerHTML 通道）；**路由**：`/choro/repos|modules|page|search` 四条全 `policy: "open"`（宿主围栏统一鉴权），`chorographyEnabled` 关着统一 409 disabled（#497「路由挂着、逻辑层挡」先例）；**工具**：`choro_search` / `choro_read_page` / `choro_module_map` 走 hiddenTools 闸默认不在场，零写工具（红线 3）；**schema**：`choro_edges` 表补口（spec §7 的 module_map 要依赖边，M0 schema 漏了），replaceChoroGraph 顺手多删多插一段，幂等语义不变。
+
+  - **开关语义**：`chorographyEnabled` opt-in 默认关（工具描述常驻模型上下文 = 新增成本，旗标计数锁 111 → 112）；**刻意不进 `LIGHT_MODE_OFF`**——choro 零每轮注入物、零热路径挂载，只有被动查询，轻量档关它省不出任何东西（config.js 键注释写明取舍）。
+  - **座位常挂（实现计划 P11）**：inject 同名二次注册的 cordis 语义没验证过，不赌——wiki 座位挂在 #562 的 panellist inject 块内，内容层按路由 409 渲染「未启用」空态，开关生效走既有重启纪律；两个座位的清理并入同一把扫帚（client.test.js 锁四个 dispose 一起跑）。
+  - **检索口径（P10）**：关键词子串、大小写不敏感、按 `## ` 分节返回命中与行号；frontmatter 的 sourceFiles 与正文清单都会命中——两层是契约不是巧合，节名（「页首」vs「文件清单（N 个）」）让调用方区分。向量留给 embedder 接入（V4）之后再上。
+  - **读侧真源纪律（P12）**：正文永远读仓库磁盘的 MD（root_path + DB rel_path），slug 只从 DB 白名单解析——路径拼装零用户输入，`../etc/passwd` 形态的 slug 走未知页 404；盘上缺页如实报 page-missing（409 + 重跑指引），不伪造内容。
+  - **验证**：新增 13 例（wiki-queries 4 / wiki-tools 4 / wiki-api 4 / client 座位锁 1 + 行为锁口径更新为「记忆 + 地志两对座位」）；SECURITY.md 双语开放读清单同步（security-doc 双向比对，漏一条 CI 就红）；`docs-config-keys` 文档锁补 CONFIGURATION.md 行。全量 `npm test` 2770 pass / 0 fail / 1 skipped；check-sync 91 文件一致。
 - **chorography（仓库地志）M0：T0 确定性骨架 + `choro_*` 五表 + `dsh-mneme-choro` CLI**：对标 Qoder 知识库/Repo Wiki 的 mneme 子系统第一批（spec：仓库根 `docs/specs/2026-11-04-chorography-design.md`，实现计划与 P1–P7 决策：仓库根 `docs/plans/2026-11-04-chorography-m0.md`）。读一个 JS/TS 仓库，把文件树 + import 图（ESM 静态/副作用/动态、CJS require、Vue SFC `<script>`、workspace/exports）编译成模块划分与仓库内 `<repo>/.chorography/` 的骨架页（frontmatter 带源文件清单与 git 基线），全程零模型零网络可离线；语义段落（架构/约定/技术栈）由 M2 的 headless 生成轮补。「生成吃宿主模型额度、不要求额外模型商 key」是整条线成立的前提（用户 2026-11-04 拍板），T0 这一步刻意一分钱不花。
 
   - **与记忆行物理隔离是硬边界不是实现细节**：wiki 行永不进 saveWithDedupe / dream / 质量过滤的任何池子——autoDream 的「对核心知识库长期参考价值较低」归档理由一旦够得着 wiki 行，机器生成页就会被巩固流程自己归档掉（`dream-archive-guardrail` 测的正是这个语义）。五张 `choro_*` 表在 store.js 独立成段，`replaceChoroGraph` 整仓替换（重跑幂等 = 单事务删了重插，划分变了不留孤儿行）。

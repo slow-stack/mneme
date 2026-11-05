@@ -43,3 +43,20 @@ README（readme-claims 锁的存在使新增能力声明要配证据，M1 一起
 
 V2（import 图在三个真实仓库上的模块划分准不准）跑法：M0 收尾后对
 dsh-baleen / dsh-study-desk / 本仓各跑一次 `--apply`，人判划分；结果记回本文件。
+
+### V2 结果（2026-11-05 实测，临时 DB，三仓 `.chorography/` 已落盘待人判）
+
+- **dsh-baleen**（175 文件）：默认启发式 15 模块——代码模块形状正确
+  （lib-adapters 7 文件 6 边 / src-client 16 文件 21 边 / test 40 文件），
+  但 9 个是会话产物目录（superpowers-sdd-* ×5、docs×2、.qoder-credits）。
+  写 plan.yaml（include: src/lib/test*/package.json）重跑 → **8 模块全代码**，
+  正控演示成立（D7 的存在理由被证实：目录初稿没有能力分辨「代码」与「躺在
+  仓库里的会话产物」）。
+- **dsh-study-desk**（58 文件）：5 模块里 3 个是 .shots / .v2c / .qoder-credits
+  ——同理收口。点开头目录默认不排除（.shots 可能是截图资产，属用户资产不是
+  垃圾），是否把「明显会话产物的 dot 目录」进默认排除表**留给维护者拍**。
+- **mneme 本仓**（460 文件 → 38 模块）：lib/ 与 src/ 互为 sync 副本，默认扫描
+  全部翻倍（lib 40+29 续、src 40+28 续）——本仓用 plan.yaml 必须排除 lib/
+  （或 src/）；超限切块（-2 续）是字典序不是语义，靠 include 收窄或调
+  max_files_per_page。结论：**文档没有发现划分算法错误，发现的是默认启发式
+  的固有边界——正面控制（plan.yaml）就是为这个边界存在的**。

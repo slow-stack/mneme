@@ -192,6 +192,10 @@ const FEATURE_FLAG_BOOLEANS = [
   // 反向——那两个藏默认在场的工具，本键开默认不在场的能力（默认关=工具根本不存在，
   // 行为逐字节不变）。面板可启停=线上回滚开关。
   "organizeEnabled",
+  // chorography（仓库地志）的暴露闸：开默认不在场的三个只读工具 + 面板浏览页
+  // （默认关=模型工具列表里根本没有它们，行为逐字节不变）。同 organizeEnabled
+  // 的反向语义——见 config.js 的键注释。
+  "chorographyEnabled",
   // 嵌套对象开关：config.js 里是 memoryQualityFilter / llmAudit 对象的 enabled
   // 子字段。kv 按点号键平铺存（"memoryQualityFilter.enabled": false），index.js
   // 合并时展开回嵌套对象，api.js 的 effective 从对象子字段取值。

@@ -613,6 +613,19 @@ CREATE TABLE IF NOT EXISTS choro_vectors (
   created_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_vectors_owner_model ON choro_vectors(owner_id, model);
+
+-- 模块间依赖边（M1 补口，实现计划 P8）：spec §7 的 choro_module_map 要画依赖图，
+-- M0 schema 漏了这张。只记跨模块边（from_slug ≠ to_slug），模块内部边不进库——
+-- 模块页正文里已经有完整文件级清单，库只存图需要的那一层。
+CREATE TABLE IF NOT EXISTS choro_edges (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  repo_id   INTEGER NOT NULL,
+  from_slug TEXT NOT NULL,
+  to_slug   TEXT NOT NULL,
+  weight    INTEGER NOT NULL DEFAULT 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_edges_triple ON choro_edges(repo_id, from_slug, to_slug);
+CREATE INDEX IF NOT EXISTS idx_choro_edges_to ON choro_edges(repo_id, to_slug);
 `;
 
 // Exported for API-layer type validation (standalone API POST /memories and
@@ -4576,6 +4589,7 @@ export function createStore(path) {
       db.prepare(
         "DELETE FROM choro_pages WHERE module_id IN (SELECT id FROM choro_modules WHERE repo_id = ?)"
       ).run(repoId);
+      db.prepare("DELETE FROM choro_edges WHERE repo_id = ?").run(repoId);
       db.prepare("DELETE FROM choro_modules WHERE repo_id = ?").run(repoId);
 
       const insModule = db.prepare(
@@ -4621,7 +4635,18 @@ export function createStore(path) {
           );
         }
       }
-      return { modules: snapshot.modules.length, pages: snapshot.pages.length };
+      // 跨模块边（P8）：from/to 都是模块 slug，只存 from≠to 的；同向多条文件级
+      // 边聚合为一条带 weight 的模块级边。
+      const insEdge = db.prepare(
+        "INSERT INTO choro_edges (repo_id, from_slug, to_slug, weight) VALUES (?, ?, ?, ?)"
+      );
+      let edgeCount = 0;
+      for (const edge of snapshot.edges ?? []) {
+        if (edge.fromSlug === edge.toSlug) continue;
+        insEdge.run(repoId, edge.fromSlug, edge.toSlug, edge.weight ?? 1);
+        edgeCount++;
+      }
+      return { modules: snapshot.modules.length, pages: snapshot.pages.length, edges: edgeCount };
     });
   }
 

@@ -82,6 +82,36 @@ test("memory entry registers the host panel seats and keeps the footer fallback"
   );
 });
 
+// chorography（仓库地志）第二个座位（M1）：与记忆面板同一个 panellist inject 块
+// 里注册，成对规则逐字相同——id 与 main 的 key 必须同为 "dsh-mneme-wiki"，否则
+// 宿主点面板行直接抛 "main panel … is not registered"（#562 在记忆座位上实测过
+// 的同一堵墙）。座位无条件注册（P11）：inject 同名二次注册的 cordis 语义没验证
+// 过，不赌；开关关时由内容层渲染空态（路由 409 disabled），生效走重启纪律。
+test("chorography wiki entry registers its own seat pair in the same panellist block", () => {
+  assert.ok(
+    clientSource.includes('id: "dsh-mneme-wiki"'),
+    "the wiki sidebar seat must use its own id"
+  );
+  assert.ok(
+    clientSource.includes('key: "dsh-mneme-wiki"'),
+    "the wiki main seat key must match the wiki sidebar id verbatim"
+  );
+  assert.ok(
+    clientSource.includes("h(WikiMainPanel, { t })"),
+    "the wiki main seat must render WikiMainPanel"
+  );
+  assert.ok(
+    clientSource.includes('phase: "disabled"'),
+    "with chorographyEnabled off the wiki page must render the disabled empty state (409 from /choro/repos)"
+  );
+  // wiki 座位与记忆座位的清理在同一把扫帚下：漏一个就留下一个挂着的 glyph，
+  // 宿主折叠该槽后指向一个死面板。
+  assert.ok(
+    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);\s*disposeWikiGlyph\(\);\s*disposeWikiMain\(\);/.test(clientSource),
+    "the panellist cleanup must dispose both seat pairs"
+  );
+});
+
 // 上一条锁的是「代码里有没有这两套座位」，这条锁「装/卸真的按条件跑」。
 // 回归表现（都靠字符串锁抓不到）：
 //  · 新宿主上两套都装 → 侧栏两颗记忆入口；
@@ -118,7 +148,8 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
   // spec 存在时点火：一把全点会把新座位的注册塞进老宿主，测出来的就不是真行为。
   const fire = (ctx, key) => ctx.injected.filter((i) => i.key === key).map((i) => i.cb());
 
-  // 新宿主：panellist 已声明。只该有 panellist + main 两份注册。
+  // 新宿主：panellist 已声明。panellist + main 各两份（记忆 + chorography 两个
+  // 座位，M1），每对各自 id/key 逐字同名；footer 回落不装。
   {
     const { ctx, regs } = makeCtx((key) => (key === "sidebar.panellist" ? { kind: "list" } : undefined));
     const api = boot(ctx, (k) => k, () => null);
@@ -126,8 +157,11 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
     const disposes = fire(ctx, "sidebar.panellist");
     fire(ctx, "sidebar.footer.action");
     assert.equal(disposes.length, 1);
-    assert.equal(alive(regs, "sidebar.panellist"), 1, "exactly one panel-list seat");
-    assert.equal(alive(regs, "main"), 1, "the main seat must be registered alongside it");
+    const ids = (name) => regs.filter((r) => r.alive && r.opts.name === name).map((r) => r.opts.id ?? r.opts.key).sort();
+    assert.equal(alive(regs, "sidebar.panellist"), 2, "memory + wiki glyphs");
+    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
+    assert.equal(alive(regs, "main"), 2, "memory + wiki pages");
+    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
     assert.equal(alive(regs, "sidebar.footer.action"), 0, "the footer fallback must not mount on a host that has the seat");
   }
 
