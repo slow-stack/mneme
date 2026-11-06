@@ -43,13 +43,21 @@ export function escapePromptVars(config, text) {
  * - 开：不注入人格（`source: "none"`）。default 退回它的本意：只兜「这一帧解析不到
  *   身份」的会话（无名会话本来就是 default 卡的受众）。
  * 默认关是有意的：这是一次口径变更，不能让老用户的注入文本在升级后静默变化。
+ *
+ * 严格模式有一格例外（#587）：`byAgent` **整体为空**时仍回落 default。两种处境必须
+ * 分开——「建了卡、只是没这张身份的卡」是真该按 none 处理（否则关掉一张卡等于没关），
+ * 而「一张身份卡都没建」时 default 是用户手里唯一的一张卡，按 none 处理等于把它永久
+ * 废掉，且面板不报错。DS Bot 这类宿主里所有 bot 会话共用 `agentPreset: "standard"`
+ * （`ds-bot/src/host/roster.js:72-80` 强制写入），用户按 bot 名字建卡永远不会命中，
+ * 于是必然落进后一种处境：开了严格寻址就把唯一那张卡静默关死。
  */
 export function resolvePersonaCard(settings, agentId, { strict = false } = {}) {
   const store = settings.getPersona();
   const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "";
   const card = id ? store.byAgent[id] : null;
   if (card && card.enabled === true) return { card, source: "byAgent" };
-  if (id && strict) return { card: {}, source: "none" };
+  // 严格模式只在「确实建过身份卡」时才拒绝兜底：一张都没建时兜底是唯一的出路。
+  if (id && strict && Object.keys(store.byAgent).length > 0) return { card: {}, source: "none" };
   return { card: store.default, source: "default" };
 }
 
@@ -57,13 +65,15 @@ export function resolvePersonaCard(settings, agentId, { strict = false } = {}) {
  * 按会话身份取自动事实卡（resolvePersonaCard 的镜像，形状不同：facts 没有
  * enabled 位，「卡存在」就是非空数组）。strict 语义与人格一致：有身份但没这张
  * 身份的卡时不落 default——两个 bot 对用户的认知不互串是 store 层分区（输入行）
- * 与本层寻址（输出注入）共同守住的边界。
+ * 与本层寻址（输出注入）共同守住的边界。与人格同一条例外（#587）：`byAgent` 整体
+ * 为空时仍落 default，「一张都没建」不等于「这一张没建」。
  */
 export function resolveFactsCard(factsStore, agentId, { strict = false } = {}) {
   const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "";
-  const card = id ? (factsStore?.byAgent?.[id] ?? null) : null;
+  const byAgent = factsStore?.byAgent ?? {};
+  const card = id ? (byAgent[id] ?? null) : null;
   if (card && card.length) return { facts: card, source: "byAgent" };
-  if (id && strict) return { facts: [], source: "none" };
+  if (id && strict && Object.keys(byAgent).length > 0) return { facts: [], source: "none" };
   return { facts: factsStore?.default ?? [], source: "default" };
 }
 
