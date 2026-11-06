@@ -248,6 +248,18 @@ The last two arrive through the devDependency chain `c8` → `test-exclude`; the
 | Tag normalization bypassed the sanitizer | **Medium** | ✅ Fixed (reuse `sanitize` in `normalizeTags`) |
 | `setMemoryTags` not atomic on failure | **Medium** | ✅ Fixed (SAVEPOINT rollback) |
 
+### 2026-11-05 — Accidental local tool-state exposure (`feat/choro-panel-run-and-vectors`)
+
+| Finding | Severity | Status |
+|---|---|---|
+| A local scanning hook's state directory (`.mimosa/`, 22 files) reached a feature branch through a coarse `git add`; removed two commits later, but still reachable from that branch's history | **Medium** | ✅ Ignore rule added to both `.gitignore` files (#580); branch history rebuilt 2026-11-06 so no reachable commit carries it — tree content unchanged |
+
+**What leaked.** The files were the hook's own bookkeeping: session-id filenames, one `PostToolUse` record naming a temporary file under the local user profile, and bundled snapshots of this plugin's own module-loader output. **No credentials, API tokens, memory rows, library contents, or user text.** The disclosure is limited to local directory structure, one local temporary path, and one session identifier.
+
+**What was not done, and why.** Git does not collect unreachable objects immediately, and the pull request keeps its pre-rewrite refs, so two of the blobs stay retrievable by anyone who recorded their object ids. A repository-wide history rewrite plus a force-push of `main` was rejected: it would invalidate every existing clone and every recorded object id to withdraw content that is already public and carries no secret. The honest record is this entry, not a claim of erasure.
+
+**Residual risk.** A local username, a temporary directory path, and a session id are public. Nothing in the memory library, the API surface, or any credential is affected.
+
 ### Ongoing
 
 - Automated scanning in CI ([`.github/workflows/security.yml`](.github/workflows/security.yml)): gitleaks for secrets, dependency-review for PR dependency diffs, OSV-Scanner for the lockfile; GitHub Dependabot alerts and secret scanning are enabled repository-side
@@ -633,6 +645,18 @@ Token 是**写**面上的锁，不是把整个 API 围起来的墙。
 | `autoTag` 可能给已遗忘记忆打标签 | **中** | ✅ 已修复（打标前过滤 `forgotten`） |
 | Tag 规范化绕过 sanitizer | **中** | ✅ 已修复（`normalizeTags` 复用 `sanitize`） |
 | `setMemoryTags` 失败时非原子 | **中** | ✅ 已修复（SAVEPOINT 回滚） |
+
+### 2026-11-05 — 本地工具状态误入库（`feat/choro-panel-run-and-vectors`）
+
+| 发现 | 严重程度 | 状态 |
+|---|---|---|
+| 本地扫描钩子的状态目录（`.mimosa/`，22 个文件）被一次粗粒度 `git add` 带进功能分支；两个提交后移除，但仍可从该分支历史取到 | **中** | ✅ 两处 `.gitignore` 均加入忽略规则（#580）；2026-11-06 重建分支历史，已无可达提交携带它——树内容未变 |
+
+**泄露了什么。** 这些文件是钩子自己的记账：以会话 id 命名的文件名、一条点名本机用户目录下临时文件的 `PostToolUse` 记录，以及本插件模块加载产物的打包快照。**不含凭据、API token、记忆行、库内容或用户文本。** 暴露面限于本机目录结构、一条本地临时路径与一个会话 id。
+
+**没有做什么，以及为什么。** Git 不会立刻回收不可达对象，且 PR 保留着重写前的 ref，其中两个 blob 仍可被记录过其对象 id 的人取到。全仓历史重写并强推 `main` 被否决：为撤回一份已经公开、且不含任何秘密的内容，代价是作废每一个既有 clone 和每一个已记录的对象 id。诚实的记录是这一条，而不是宣称已抹除。
+
+**残留风险。** 本机用户名、一条临时目录路径、一个会话 id 处于公开状态。记忆库、API 面与任何凭据均不受影响。
 
 ### 持续进行
 
