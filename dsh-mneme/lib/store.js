@@ -1978,6 +1978,11 @@ export function createStore(path) {
       db.prepare("DELETE FROM memory_provenance WHERE memory_id = ?").run(id);
       // #512：铸造记录同理——它也只是指着记忆行的索引，行没了索引就没有指代对象。
       db.prepare("DELETE FROM memory_mints WHERE memory_id = ?").run(id);
+      // #249 第二批：pin 行同理，理由与前两条完全一致（本表建表时也没抄
+      // REFERENCES ... ON DELETE CASCADE，清理不挂驱动默认）。注意这一条**只
+      // 防攒垃圾**，不修「回落被卡住」——注入侧判据看的是「有几条能用的」
+      // 而不是「表里有几行」，见 service.js 注入段与 pinnedStats.source 三档。
+      db.prepare("DELETE FROM pinned_memories WHERE memory_id = ?").run(id);
       db.prepare("DELETE FROM memories WHERE id = ?").run(id);
       // Mirror sync must reflect the deletion; bump desired generation so a
       // crash between the delete and syncMirror leaves a recoverable debt.
@@ -2045,6 +2050,8 @@ export function createStore(path) {
         const marks = chunk.map(() => "?").join(", ");
         db.prepare(`DELETE FROM memory_provenance WHERE memory_id IN (${marks})`).run(...chunk);
         db.prepare(`DELETE FROM memory_mints WHERE memory_id IN (${marks})`).run(...chunk);
+        // 同 remove()：pin 行防攒垃圾（不修卡回落的那个判据问题）。
+        db.prepare(`DELETE FROM pinned_memories WHERE memory_id IN (${marks})`).run(...chunk);
         deleted += db.prepare(`DELETE FROM memories WHERE id IN (${marks})`).run(...chunk).changes;
       }
       incrementGeneration();

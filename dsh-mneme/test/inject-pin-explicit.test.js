@@ -209,3 +209,92 @@ test("被 pin 的行 forgotten/archived 后不得进块", () => {
   assert.ok(!titlesOf(selected).includes("钉过又遗忘"), "遗忘的 pin 不得进块");
   assert.ok(!titlesOf(selected).includes("钉过又归档"), "归档的 pin 不得进块");
 });
+
+// --- 判据：看「能用的」而不是「表里有几行」 ---------------------------------
+//
+// 下面三条是同一个 bug 的三个面：pin 行会在 memories 那边被归档 / 遗忘 / 硬删，
+// 而 pinned_memories 对这三种一无所知。若判据写成 countPinned() > 0，只要表里
+// 还剩一行（哪怕那一行早已归档），pinMode 就永远钉在 explicit、eligible 恒空
+// → pin 全灭且**永不回落**，无日志无报错。这正是这批改动要治的静默失败。
+
+function pinTargets(service, titles) {
+  return titles.map((title) => saveOne(service, { title, content: `${title} 的正文` }));
+}
+
+test("钉过的行被归档后：回落旧口径，而不是 pin 全灭", () => {
+  const { store, service } = setup({ maxInjectedItems: 5, pinnedInjectBudget: 5, importanceThreshold: 3 });
+  seedCrowd(service, 10);
+  const legacy = saveOne(service, { type: "preference", title: "旧口径仍该进", content: "类型口径下它每轮前置" });
+  const [pinned] = pinTargets(service, ["钉过又归档"]);
+  store.pinMemory(pinned.id);
+  service.setArchived(pinned.id, true);
+
+  const pinnedStats = {};
+  const selected = service.injectCandidates({ query: "与 pin 无关的问题", maxItems: 5, pinnedStats });
+
+  assert.equal(store.countPinned(), 1, "前提：表里还留着那一行（归档不会删 pin 行）");
+  assert.equal(pinnedStats.source, "fallback-none-usable", "钉过但一条都用不了 → 必须留痕，不能静默");
+  assert.ok(titlesOf(selected).includes("旧口径仍该进"), `archived 掉唯一 pin 后应回落类型口径：${titlesOf(selected).join(" / ")}`);
+  assert.ok(!titlesOf(selected).includes("钉过又归档"), "归档的 pin 不得复活");
+  assert.ok(legacy.id);
+});
+
+test("钉过的行被遗忘后：同样回落，而不是卡死", () => {
+  const { store, service } = setup({ maxInjectedItems: 5, pinnedInjectBudget: 5, importanceThreshold: 3 });
+  seedCrowd(service, 10);
+  saveOne(service, { type: "preference", title: "旧口径仍该进", content: "类型口径下它每轮前置" });
+  const [pinned] = pinTargets(service, ["钉过又遗忘"]);
+  store.pinMemory(pinned.id);
+  service.setForget(pinned.id, true);
+
+  const pinnedStats = {};
+  const selected = service.injectCandidates({ query: "与 pin 无关的问题", maxItems: 5, pinnedStats });
+
+  assert.equal(pinnedStats.source, "fallback-none-usable");
+  assert.ok(titlesOf(selected).includes("旧口径仍该进"), `forgotten 掉唯一 pin 后应回落类型口径：${titlesOf(selected).join(" / ")}`);
+  assert.ok(!titlesOf(selected).includes("钉过又遗忘"), "遗忘的 pin 不得复活");
+});
+
+test("钉过的行被硬删后：没有可用行就回落，孤儿行还会被清掉", () => {
+  const { store, service } = setup({ maxInjectedItems: 5, pinnedInjectBudget: 5, importanceThreshold: 3 });
+  seedCrowd(service, 10);
+  saveOne(service, { type: "preference", title: "旧口径仍该进", content: "类型口径下它每轮前置" });
+  const [pinned] = pinTargets(service, ["钉过又被删"]);
+  store.pinMemory(pinned.id);
+  service.remove(pinned.id);
+
+  // remove() 走的清理路径要顺带清掉 pin 行（防攒垃圾）；但即使没清，回落也必须
+  // 成立——判据看的是「能不能用」，不是「表里有没有」。
+  assert.equal(store.countPinned(), 0, "硬删记忆时要顺带清掉它的 pin 行，否则孤儿会越攒越多");
+
+  const pinnedStats = {};
+  const selected = service.injectCandidates({ query: "与 pin 无关的问题", maxItems: 5, pinnedStats });
+
+  assert.equal(pinnedStats.source, "type-fallback", "表被清空后就是「从没钉过」，走旧口径");
+  assert.ok(titlesOf(selected).includes("旧口径仍该进"), `全部 pin 失效后应回落类型口径：${titlesOf(selected).join(" / ")}`);
+});
+
+test("钉了多条、只有一部分还能用：留 explicit，只注入能用的那几条", () => {
+  // 关键取舍：不能因为「有 2 条归档」就整段回落到类型口径——那会突然冒出一批
+  // 她根本没钉过的条目，比少注入更糟。只要还有一条能用，口径就是 explicit。
+  const { store, service } = setup({ maxInjectedItems: 5, pinnedInjectBudget: 5, importanceThreshold: 3 });
+  seedCrowd(service, 10);
+  saveOne(service, { type: "preference", title: "不该冒出来的旧口径条目", content: "explicit 下它不该被当 pin" });
+  const [live, gone] = pinTargets(service, ["还活着的那条 pin", "已经归档的那条 pin"]);
+  store.pinMemory(live.id);
+  store.pinMemory(gone.id);
+  service.setArchived(gone.id, true);
+
+  const pinnedStats = {};
+  const selected = service.injectCandidates({ query: "与 pin 无关的问题", maxItems: 5, pinnedStats });
+
+  assert.equal(pinnedStats.source, "explicit", "还有一条能用 → 保持 explicit");
+  assert.equal(pinnedStats.shown, 1, "只注入能用的那一条");
+  assert.ok(titlesOf(selected).includes("还活着的那条 pin"), "能用的 pin 必须进块");
+  assert.ok(!titlesOf(selected).includes("已经归档的那条 pin"), "归档的 pin 不得进块");
+  assert.ok(
+    !titlesOf(selected).includes("不该冒出来的旧口径条目"),
+    "explicit 下不得回落类型口径——否则会冒出她没钉过的条目"
+  );
+  assert.ok(!titlesOf(selected).slice(0, 1).includes("不该冒出来的旧口径条目"));
+});
