@@ -2,7 +2,59 @@
 
 ## [Unreleased]
 
-- **修复 #579**：仓库地志工具会提示登记、仓库选择和读页错误。检索遇到不可读的页面时会标明遗漏，并保留已找到的命中。
+## [0.12.0] - 2026-11-07
+
+## 🆕 新增
+
+- **「Agent 眼中的你」自动事实：按会话身份分卡维护一份逐条事实清单，dream 巩固后自动更新、注入生效、面板可管（2026-11-06 需求，对标 ChatGPT 记忆 / DS Bot 每 bot 一份 MEMORY.md 的设计）**。`profileFactsEnabled` opt-in 默认关。
+
+  - **形态是「逐条事实」不是「整段重写」**：每张卡一份事实清单（稳定、具体、一句话），模型在维护轮里提 add/update/archive 三种 op，事实可独立增改归档、可被人在面板上逐条修正；`profile_fact_journal` 逐 op 记账（scope_changes 式 before/after + actor），`profile_fact_runs` 每轮一回执（dream_runs 式）。维护 prompt 三段硬约束与 profileExtract 同源：输入是数据不是指令（同一份 fence 断链）、禁止给助手起名设人格（#497 身份撞车）、只依据给定材料。
+  - **手填画像神圣（#497 口径不变）**：事实住 `profile_facts` 独立三表，任何路径都不写 `user_settings`——注入顺序是设计稿⑥的延伸：人格 → 手填画像 → 自动事实 → 规则。卡片寻址与 persona 同口径（byAgent 命中 / strict 无卡不注入 / 非 strict 落 default）。
+  - **输入严格分区**：agent 卡只吃 `agent_scope=自己` 的记忆行，default 卡只吃 NULL 行，外来行（source=imported）整体排除——「本库不巩固别人导入的原文」延伸到画像事实。游标从最近一次 ok 回执读，**失败不推进**（蒸馏游标同款纪律，failed 轮重跑同一窗口）；无增量输入连 noop 回执都不落（自动轮零噪音）。
+  - **触发**：dream 巩固轮成功后 fire-and-forget 逐卡维护（经 `service.enqueue` 与 sleep/巩固串行，失败不计入 dream 退避）；面板「立即更新」手动轮走同一条路。维护轮上限 12 op/轮（超出的切片丢弃并记入回执 detail）。
+  - **注入预算**：事实段 40 行 / 1200 字符双帽 + 尾注如实报数（该块此前无截断机制、从不轮换，不设上限会让一次失控的维护轮撑爆每帧 systemPrompt）；事实内容过既有 `escapePromptVars`（宿主模板插值对裸 `{{` 会整轮崩）。
+  - **三条新路由**：`GET /profile-facts`（token-write，flag 关也照读——存量事实要能展示）、`POST /profile-facts/apply`（token-write，面板逐条人工修正，与自动轮共用同一份 applyOps 与账本）、`POST /profile-facts/run`（**token**，同 /profile/extract 取舍：无读分支 + 一次 LLM；409 disabled / 503 no-route / 502 unparseable·stream-failed）。SECURITY.md 双语四张清单同步。
+  - **面板**：「Agent 眼中的你」卡后新增事实管理卡——卡选择器（default + agent 键）、事实行内编辑/归档/添加、最近变更 8 条（op + before→after + actor 徽章）、最近一轮回执状态行、维护轮五种结局各有一句人话（ok·N 条 / noop / 功能关 / 先去选模型 / 失败可重试）；apply 与 run 成功路径都刷新注入预览（事实段是注入文本的一部分）。功能开关进 enhance 组。
+  - **分享包不含事实**（v1 明确出界）：事实是本实例 agent 对本用户的认知，跨库语义未定。
+  - **验证**：新增 `test/profile-facts.test.js` 17 例（ops 解析形状、跨卡守卫、去重跳过、no-route/noop/unparseable 可区分、失败不推进游标、重跑即 noop、scope 分区与外来行排除、autoPassCandidates、账本裁剪、注入顺序/strict 寻址/关闸零读数/截断尾注/花括号转义、HTTP 面 405/400/401/409/503/502）；`test/client.test.js` 新增面板锁（三路由对齐、五种结局 i18n、卡片位置、事实域切片内无 PUT /profile 字面量——#497 的镜像锁）；旗标计数锁 113 → **114**；docs-config-keys 锁补 CONFIGURATION.md 行。全量 `npm test` 2827 tests / 2826 pass / 0 fail / 1 skipped；check-sync 95 一致。
+
+- **pin 从「按类型推断」改成用户亲手钉的显式事实：新表 `pinned_memories` + `memory_pin` / `memory_unpin`，钉住的行在注入时优先占位，不再依赖它恰好是 `constraint` / `preference`**（默认 `pinnedInjectBudget = 0`，预算关时注入序列与改前逐条相同——这条线不改变任何人的现有行为）。
+
+  - **为什么另开一张表**：pin 是「用户与记忆之间的一条关系」，不是记忆自身的属性。独立表回退只需一条 `DROP`，不必碰主表 31 列；`created_at` 还能给出 pin 顺序。幂等靠 `CREATE TABLE IF NOT EXISTS`，本表没有回填步骤所以不登记 `applied_migrations`。外泄面为零——mirror / share 都不 `SELECT` 本表。
+  - **pin 池此前会被向量路的封顶挤出候选池**：pin 筛选发生在 hybrid 合并**之后**，而合并结果已按 `poolSize` 封顶（生产 `maxItems=5` → `poolSize=10`，向量路一次正好返回 10 条即 break），规则窗口里的 `constraint` / `preference` 一条都进不了候选池，pin 只能从那 10 条里碰运气。修法：合并块之后、topic 重排之前，把被 `poolSize` 挤掉的 pin 类行补到候选池**尾部**；只在预算 > 0 时补，`strictScope` 与 `scopeState` 两道闸门照旧作用其上。真库副本实测（6733 条有向量行、1024 维、`maxItems=5`）：pin 注入 2/5 → 5/5、注入总条数 7 → 10，前 5 位新进的三条之外原有条目只后移、无一条被挤出注入块；无向量路径改前改后都 5/5、10 条且逐条同序。
+  - **判据从「表里有几行」改成「有几条能用的」**：旧判据 `countPinned() > 0` 是错的——pin 行会在 `memories` 那边被归档、遗忘、硬删，而 `pinned_memories` 对这三种一无所知。只要表里还剩一行（哪怕早已归档），判据就一直判 explicit，可选集恒为空，pin 全灭且**永不回落到旧的类型口径**，无日志无报错。`pinnedStats.source` 因此三档：`explicit` / `fallback-none-usable`（钉过但一条都用不了，静默降级必须留痕）/ `type-fallback`（从没钉过，升级即等价）。**不整段回落**：若因为「有 3 条归档」就回落类型口径，会突然冒出一批用户根本没钉过的条目，那比少注入更糟。
+  - **`memory_pin` 回执补上「暂停作用域」**：描述文案、README 与 render 文案三处都写着「遗忘 / 归档 / 暂停作用域都优先于 pin，回执如实报告」，而 `execute` 只算了遗忘与归档两项，被按下作用域的行因此报 `injectable: true` 而实际一条都没注入。改法：回执改用 `service.filterPaused([target])`，与注入侧共用同一个出口，以后改闸不会漏掉回执这一侧——注入侧本身没坏，坏的是回执另写了一份判据。
+  - **不做**：`PINNED_MEMORY_TYPES` 保持原样不动——它在 write-admission 还承担写入配额豁免语义，与注入侧是两件不同的事，本线只把注入侧解耦。
+  - **验收**：存量库升级后新表为空 → 回落旧类型口径，两档 `maxItems`（5 / 10）在真库副本上逐条 id 相同；预算 0 时任何路径都不改注入序列；归档 / 遗忘 / 硬删三种场景各有用例；向量路填满 `poolSize` 时 pin 仍拿满预算；暂停作用域下回执如实为 false；全量 2858 用例 / 2857 通过 / 0 失败 / 1 跳过。
+- **chorography 收尾：面板「重建骨架」入口 + 页级向量检索（V4 落地）**：spec 消费面最后两块——**生成触发点**（spec §3「现在生成」）落成面板按钮 + `POST /choro/run`（`token-write`，T0 apply 秒级同步回执；t1Loss 警告原样透出——T0 重建会把 enriched 页退回骨架，M2 补洞的清点在按钮回执里看得见）；**向量检索**（spec §5 的 `choro_vectors` 空壳就此启用）：`choro_vectors` 补 `vector` / `source_generated_at` 列（addColumn 幂等），检索时**惰性物化**（P37：host 侧 /choro/search 先嵌查询拿 `expectDim`，再补嵌缺页/过期页），余弦 Top-N 以独立 `semantic` 数组返回（P39：两路分数量纲不同，不与 keyword `hits` 混排序）。
+
+  - **V4 的答案（P38）**：`model` / `dim` 记行内、**不与记忆向量锁死**——查询向量维度与任一行失配 = 换了 embedder 模型，本轮 `fresh` 检查被 `dimDrift` 压过、全量重嵌；代价是几十页重嵌而不是作废记忆向量。embedder 缺席（CLI / 未配置）→ `semantic: null`，检索静默退关键词。
+  - **两个 handler 的 promise 链必须 `return`**：invoke/测试 `await route.handler(...)`，不 return 就在响应发出前返回——实测症状是 semantic 恒缺席、body 恒空。/choro/search 与 /choro/run 都改成 `return readBody(...).then(...)`（nudge 同款）。
+  - **嵌入对象**：页正文剥 frontmatter / CHORO 标记行后的全文（P40，页级；claims 级留待真有精排需求）。staleness 两维：页 `generated_at` 变了（内容变）、行 `dim` 失配（模型变）。
+  - **验证**：新增 10 例（wiki-queries 3：staleness 两维 / dim 失配全量重嵌 / cosine 排序与空查询；wiki-api 3：run 路由 policy+405+快乐路径、闸语义 409/404、semantic 在场与缺席；wiki-store 向量读写随用例覆盖；client 锁 1：按钮打 /choro/run、防连点、T1 留 CLI 的 hint、回执计数）。全量 `npm test` 2814 pass / 0 fail / 1 skipped；check-sync 94 一致。
+  - **桌面实测反馈的美化：文件清单从「竖线等宽行」换成真 table**（用户看截图后拍板）：MD 渲染器解析连续 `|` 行为真表格——表头、对齐元数据（`---:` → 行数列右对齐等宽数字）、路径单元格等宽底色、斑马纹与 hover；分隔行不再画成可见行；引导引言缩小一档。回归锁三件（真 table / 分隔行被消费 / 数字列对齐）。
+
+## 🎨 面板
+
+- **面板跨组件失效广播：改库动作后记忆列表/实体页/状态工作台即时重取，不再「关面板重开才看到变化」**（用户 2026-11-06 反馈：裁决完冲突要关掉插件面板才能看到败者归档落地）。
+
+  - **病灶不是没刷新，是没广播**：全面板此前唯一的跨组件失效机制是 `mneme:conflicts-changed`（一个派发点、三个状态侧监听者，全是状态页小组件）；记忆列表与冲突徽章只靠弹层成功回调、手动刷新按钮与 30s 首页合并续命，实体页与归档工作台干脆只有挂载时取一次。tab 切换本就卸载重挂，所以症状集中在同一次打开的面板内。
+  - **新增 `broadcastStoreChanged` 助手派发 `mneme:store-changed`**，10 处改库动作的成功路径统一发布：冲突裁决、删除、编辑/归档/恢复（applyMemoryUpdate 一处按分支发一种）、工作台恢复、导入×3、建条、整包撤销、回收确认模式。各动作自己的本地刷新（reloadKey / 列表过滤）保留——偶发的重复 GET 换「永远不陈旧」，划算。
+  - **订阅方**：MemoryExplorer（一个 reloadKey 带动浏览列表、搜索、冲突徽章三份 effect）、EntityPanel（目录/图谱/属性三层全挂重取游标）、ConflictsQueue（参与记忆被删时联表侧会失真）、WorkbenchSection、侧栏红点 hook 与两处 dream-status 消费者（涉及冲突的记忆被删除/恢复同样改变 pending 集）。`mneme:conflicts-changed` 原样保留——它是裁决专属的精准信号，语义更窄，已有监听者不必搬家。
+  - **回归锁**：`test/client.test.js` 新增一例锁事件名、发布点 ledger（新增改库动作忘了广播时先红）、订阅方数量与裁决双信号并存；onCreated 的既有原样锁同步带上广播。
+  - **验证**：全量 `npm test` 2809 tests / 2808 pass / 0 fail / 1 skipped；test/client.test.js 100 例全绿（含新增锁）；test/client-share.test.js 全绿。
+
+## 🐛 修复
+
+- **修复 #590：严格寻址把「一张身份卡都没建」也判成「没有这张卡」，唯一那张人格卡静默失效**：`personaStrictAddressing` 开时，`resolvePersonaCard` 把两种完全不同的处境都判成 `source: "none"`——① 建了卡、但没有这张身份的卡（按 none 处理是合理的）；② 一张身份卡都没建（按 none 处理等于把 default 永久废掉，而面板不报错）。第 2 种在 DS Bot 这类宿主里是**必然**：所有 bot 会话共用同一个 `agentPreset`、且会话建成就不可变，用户按 bot 名字建卡永远不会命中，于是一开严格寻址，唯一那张人格卡就静默失效——症状正是「第一次派任务时它不知道自己是谁、人设与回复格式如何」。
+
+  - **判据改成「有没有键」而不是「有没有可用的卡」**：严格模式只在 `Object.keys(byAgent).length > 0` 时才拒绝兜底。一张 `enabled=false` 的卡也算用户已经做过分区——否则「关掉唯一那张身份卡」会重新落回 default，「关掉这张卡」这个动作又变成没意义。`resolveFactsCard` 是同一处语义的镜像，同改。
+  - **回归锁三件**：一张都没建 → 严格模式下仍落 default、建一张后例外立即失效；身份卡全被关掉仍算「建过卡」（锁住判据不被改成「有可用卡才算」）；事实侧同口径（含「关着的卡也算建过」）。变异自证三处：去掉「建过卡」前提 → pass 33 / fail 1；判据换成「有 enabled 卡才算」→ pass 32 / fail 2；facts 侧去掉前提 → pass 33 / fail 1。全量 2842 tests / 2841 pass / 0 fail / 1 skipped。
+- **修复 #579：仓库地志的三个只读工具在错误分支返回 schema 之外的字段，宿主直接判 `invalid output`，面板只剩一句与真实原因无关的报错**：`choro_module_map` / `choro_read_page` / `choro_search` 的 `output.schema` 是 `additionalProperties: false` 且只声明了成功形状，而 `resolveChoroRepo` 与读页 / 检索的失败分支返回 `{ error, hint }`、`{ error, slug, relPath }` 这类对象——错误载荷原样穿过宿主校验，用户看到的是「缺 `value.repo`」「`value.error` 不是已声明的属性」。
+
+  - **改走宿主工具错误路径（抛错），而不是继续扩 schema**：仓库里既有的工具错误本来就是 `throw`（参数校验、记忆不存在等），扩 schema 等于把「错误」写进「正常返回」的形状里，每加一个错误码就要多改一处契约。
+  - **检索不再把「读不到」答成「没匹配」**：`src/wiki/queries.js` 的检索循环对读不到的页原先静默 `continue`，于是「三页里两页读不了」会退化成「0 hits」——这是同一个 issue 里最危险的一条。现在保留已读到的命中、把读不到的页单独列出；无命中且有页读不到时明确报「检索不完整」。
+  - **回归测试**：`test/wiki-tools.test.js` 重写（错误与成功两条路径都用临时库，覆盖「仓库行存在但本机路径不可达」「页记录存在但文件读不了」「真正未知的仓库 id」三类且必须互相可区分），`test/wiki-api.test.js` 补闸语义；16 例全过。
 - **修复 #593 留下的两处旁路：显式钉住的行仍会被文档升格吸收静默归档；`memory_pin` 回执在 `pinnedInjectBudget=0`（默认关闭）时仍报 `injectable: true`**。#593 把 pin 从「按类型推断」改成显式存储（`pinned_memories` 表），但两处消费方没跟上：吸收只拿得到记忆行、拿不到 pin 表，于是退回按类型猜；回执只看了遗忘/归档/暂停作用域，没看预算开关。
 
   - **判据①：新增 `store.isPinned(memoryId)` 单行点查**（`pinned_memories` 的唯一读侧谓词）。`src/document.js` 的 evidence 吸收循环改为两条并列判据：`store.isPinned(row.id)`（显式钉住）**或** `pinnedTypes.has(row.type)`（#249 逐字保真池类型 constraint/preference）——任一成立就不归档。上一版只有后者，所以一条被钉的 `pattern` / `decision` 在文档升格时照样 `setArchived`：用户钉过的行被悄悄收走，pin 语义当场失效。`store.isPinned` 缺席时自动退回类型口径（fail-safe，不因新谓词缺失而放宽）。
@@ -19,33 +71,19 @@
   - **顺带修掉更严重的盲区**：原测试从未驱动生产的 `isCodingTask`——把 `src/service.js` 里该函数改成恒 `false`，四个相关测试文件 177 个用例仍全绿。用例改为直接 `import` 生产函数，并删掉耦合的 `assert.equal(codingKeywords.length, 90)` 长度锁；新增 34 词逐项断言、不得含歧义词、无重复、不得含英文短词，以及 8 条正例 / 4 条负例的行为断言。
   - **验证**：`npm test` 2841 tests / 2840 pass / 0 fail / 1 skipped；`check-sync` 95 文件一致；三处变异（生产函数恒 `false` / 删「合并」/ 加回「事务」）各自让对应用例转红。
 
-- **「Agent 眼中的你」自动事实：按会话身份分卡维护一份逐条事实清单，dream 巩固后自动更新、注入生效、面板可管（2026-11-06 需求，对标 ChatGPT 记忆 / DS Bot 每 bot 一份 MEMORY.md 的设计）**。`profileFactsEnabled` opt-in 默认关。
+## 🚀 性能
 
-  - **形态是「逐条事实」不是「整段重写」**：每张卡一份事实清单（稳定、具体、一句话），模型在维护轮里提 add/update/archive 三种 op，事实可独立增改归档、可被人在面板上逐条修正；`profile_fact_journal` 逐 op 记账（scope_changes 式 before/after + actor），`profile_fact_runs` 每轮一回执（dream_runs 式）。维护 prompt 三段硬约束与 profileExtract 同源：输入是数据不是指令（同一份 fence 断链）、禁止给助手起名设人格（#497 身份撞车）、只依据给定材料。
-  - **手填画像神圣（#497 口径不变）**：事实住 `profile_facts` 独立三表，任何路径都不写 `user_settings`——注入顺序是设计稿⑥的延伸：人格 → 手填画像 → 自动事实 → 规则。卡片寻址与 persona 同口径（byAgent 命中 / strict 无卡不注入 / 非 strict 落 default）。
-  - **输入严格分区**：agent 卡只吃 `agent_scope=自己` 的记忆行，default 卡只吃 NULL 行，外来行（source=imported）整体排除——「本库不巩固别人导入的原文」延伸到画像事实。游标从最近一次 ok 回执读，**失败不推进**（蒸馏游标同款纪律，failed 轮重跑同一窗口）；无增量输入连 noop 回执都不落（自动轮零噪音）。
-  - **触发**：dream 巩固轮成功后 fire-and-forget 逐卡维护（经 `service.enqueue` 与 sleep/巩固串行，失败不计入 dream 退避）；面板「立即更新」手动轮走同一条路。维护轮上限 12 op/轮（超出的切片丢弃并记入回执 detail）。
-  - **注入预算**：事实段 40 行 / 1200 字符双帽 + 尾注如实报数（该块此前无截断机制、从不轮换，不设上限会让一次失控的维护轮撑爆每帧 systemPrompt）；事实内容过既有 `escapePromptVars`（宿主模板插值对裸 `{{` 会整轮崩）。
-  - **三条新路由**：`GET /profile-facts`（token-write，flag 关也照读——存量事实要能展示）、`POST /profile-facts/apply`（token-write，面板逐条人工修正，与自动轮共用同一份 applyOps 与账本）、`POST /profile-facts/run`（**token**，同 /profile/extract 取舍：无读分支 + 一次 LLM；409 disabled / 503 no-route / 502 unparseable·stream-failed）。SECURITY.md 双语四张清单同步。
-  - **面板**：「Agent 眼中的你」卡后新增事实管理卡——卡选择器（default + agent 键）、事实行内编辑/归档/添加、最近变更 8 条（op + before→after + actor 徽章）、最近一轮回执状态行、维护轮五种结局各有一句人话（ok·N 条 / noop / 功能关 / 先去选模型 / 失败可重试）；apply 与 run 成功路径都刷新注入预览（事实段是注入文本的一部分）。功能开关进 enhance 组。
-  - **分享包不含事实**（v1 明确出界）：事实是本实例 agent 对本用户的认知，跨库语义未定。
-  - **验证**：新增 `test/profile-facts.test.js` 17 例（ops 解析形状、跨卡守卫、去重跳过、no-route/noop/unparseable 可区分、失败不推进游标、重跑即 noop、scope 分区与外来行排除、autoPassCandidates、账本裁剪、注入顺序/strict 寻址/关闸零读数/截断尾注/花括号转义、HTTP 面 405/400/401/409/503/502）；`test/client.test.js` 新增面板锁（三路由对齐、五种结局 i18n、卡片位置、事实域切片内无 PUT /profile 字面量——#497 的镜像锁）；旗标计数锁 113 → **114**；docs-config-keys 锁补 CONFIGURATION.md 行。全量 `npm test` 2827 tests / 2826 pass / 0 fail / 1 skipped；check-sync 95 一致。
+- **修复 #594：检索热路径上两处「同一条查询本该更便宜」的缺陷，向量缓存命中率从恒 0% 到 100%，单轮检索快 5.6 倍**：两处都是真实库副本实测，线上库全程只读。
 
-- **面板跨组件失效广播：改库动作后记忆列表/实体页/状态工作台即时重取，不再「关面板重开才看到变化」**（用户 2026-11-06 反馈：裁决完冲突要关掉插件面板才能看到败者归档落地）。
+  - **向量解析缓存上限写死 4000，小于工作集 → 命中率恒 0**：活跃带向量行已 6730，扫到第 4001 条就开始驱逐自己刚填的条目，扫完只剩最后 4000 条，下一轮又从第一条 miss——四轮实测命中率恒 0.0%，缓存等于不存在，每次检索全量重解析（约 6730 条 × 1024 维 `JSON.parse`）。固定调大只是把复发推到下个月（活跃行近 30 天净增 6156 条），所以上限改成**跟工作集自适应**、再用内存预算封顶。对照（同一 WAL 快照、同一 query、同一库）：旧实现 1.8–2.4s / 新实现第二轮起 370–424ms。
+  - **存储改 `Float32Array`**：真实占用 55.5MB → 29.7MB（省 47%），前 50 条排序与冷解析逐位一致、分数最大差 `0.00e+0`。**必须同步改三处 `Array.isArray` 守卫**——typed array 返回 `false`，只换存储不改守卫会让 `cosine` / `cosineSimilarity` / `setEmbedding` 把每个相似度静默算成 0、把「设置向量」读成「清空向量」。对外契约不变（`getParsedEmbedding` / `getEmbeddings` 仍返回 `number[]`）。
+  - **只取 id 的扫描却带着 `embedding != ''` 谓词**：`searchVector` 与 `vectorDimensionState` 的 SQL 只 `SELECT id`，但 `embedding != ''` 要读 `embedding` 列才能判定，SQLite 就得把整列向量文本（约 134MB）从磁盘搬一遍、读完一条都不用。摘掉后 SQL 层 265ms → 96ms、单轮检索约 138ms → 47ms。**只摘这两处**；三处统计类查询（`embeddedCount` / `embeddingModelBreakdown` / `embeddingDimensionBreakdown`）保留谓词——它们要数「已索引」条数，空串行若被算进分母会变成新的假数。摘谓词的前提是空串行不会把检索搞崩（库里现在 0 条空串，`setEmbedding` 写 NULL，能造出空串的只有外部直接 `UPDATE`），所以锁住：`readVector` 对 `JSON.parse('')` 抛错返回 `undefined`，空串行既不计分也不崩。
+  - **三条口径陷阱写进注释，防止被当证据引用错**：`heapUsed` **不统计** TypedArray 底层 ArrayBuffer——只看它会把省 47% 读成省 96%，必须按 `heap + arrayBuffers` 计；旧实现保持上限 4000 时只装得下 4000/6730 条、常驻 31.9MB 但命中率 0%，与「装满」的 29.7MB 不可比，对照组必须把旧上限抬到能装下工作集；「SQL 层 265ms → 96ms」不等于「每轮检索省 170ms」，落到一轮完整检索上只省约 90ms，两个口径分开写。
+  - **测试 9 例**（6 条缓存行为 + 2 条空串 / 坏 JSON 护栏 + 1 条读取次数锁），变异四条均咬住：自适应退回固定上限 / `cosine` 守卫退回 `Array.isArray` / `setEmbedding` 守卫退回 / 独立基准分数。变异实验还暴露过一个真实缺口——只比「缓存路径与冷路径是否一致」**测不出两边一起错**，补了一条独立基准分数锁。**刻意不写「断言这句 SQL 不含 `!= ''`」的结构锁**：那会把测试绑在字面量上，换行、改别名、换 `${archivedFilter}` 写法都会无辜变红，红了第一反应是删断言；改为锁行为——数 `embeddingCacheStats` 的读取增量，断言三行非 NULL 必须各读一次（当前实现 3 次绿，谓词加回后 2 次红）。全量 2848 tests / 2847 pass / 0 fail / 1 skipped。
+### 贡献者 / Thanks
 
-  - **病灶不是没刷新，是没广播**：全面板此前唯一的跨组件失效机制是 `mneme:conflicts-changed`（一个派发点、三个状态侧监听者，全是状态页小组件）；记忆列表与冲突徽章只靠弹层成功回调、手动刷新按钮与 30s 首页合并续命，实体页与归档工作台干脆只有挂载时取一次。tab 切换本就卸载重挂，所以症状集中在同一次打开的面板内。
-  - **新增 `broadcastStoreChanged` 助手派发 `mneme:store-changed`**，10 处改库动作的成功路径统一发布：冲突裁决、删除、编辑/归档/恢复（applyMemoryUpdate 一处按分支发一种）、工作台恢复、导入×3、建条、整包撤销、回收确认模式。各动作自己的本地刷新（reloadKey / 列表过滤）保留——偶发的重复 GET 换「永远不陈旧」，划算。
-  - **订阅方**：MemoryExplorer（一个 reloadKey 带动浏览列表、搜索、冲突徽章三份 effect）、EntityPanel（目录/图谱/属性三层全挂重取游标）、ConflictsQueue（参与记忆被删时联表侧会失真）、WorkbenchSection、侧栏红点 hook 与两处 dream-status 消费者（涉及冲突的记忆被删除/恢复同样改变 pending 集）。`mneme:conflicts-changed` 原样保留——它是裁决专属的精准信号，语义更窄，已有监听者不必搬家。
-  - **回归锁**：`test/client.test.js` 新增一例锁事件名、发布点 ledger（新增改库动作忘了广播时先红）、订阅方数量与裁决双信号并存；onCreated 的既有原样锁同步带上广播。
-  - **验证**：全量 `npm test` 2809 tests / 2808 pass / 0 fail / 1 skipped；test/client.test.js 100 例全绿（含新增锁）；test/client-share.test.js 全绿。
+- **@Oscar-Williams**：#579 的修复（PR #595）——把三个仓库地志只读工具的错误分支改走宿主工具错误路径，让检索在遇到读不到的页时保留已找到的命中并标明遗漏，并补上错误与成功两条路径的回归测试（用临时库跑）。本版唯一的外部代码贡献。
 
-- **chorography 收尾：面板「重建骨架」入口 + 页级向量检索（V4 落地）**：spec 消费面最后两块——**生成触发点**（spec §3「现在生成」）落成面板按钮 + `POST /choro/run`（`token-write`，T0 apply 秒级同步回执；t1Loss 警告原样透出——T0 重建会把 enriched 页退回骨架，M2 补洞的清点在按钮回执里看得见）；**向量检索**（spec §5 的 `choro_vectors` 空壳就此启用）：`choro_vectors` 补 `vector` / `source_generated_at` 列（addColumn 幂等），检索时**惰性物化**（P37：host 侧 /choro/search 先嵌查询拿 `expectDim`，再补嵌缺页/过期页），余弦 Top-N 以独立 `semantic` 数组返回（P39：两路分数量纲不同，不与 keyword `hits` 混排序）。
-
-  - **V4 的答案（P38）**：`model` / `dim` 记行内、**不与记忆向量锁死**——查询向量维度与任一行失配 = 换了 embedder 模型，本轮 `fresh` 检查被 `dimDrift` 压过、全量重嵌；代价是几十页重嵌而不是作废记忆向量。embedder 缺席（CLI / 未配置）→ `semantic: null`，检索静默退关键词。
-  - **两个 handler 的 promise 链必须 `return`**：invoke/测试 `await route.handler(...)`，不 return 就在响应发出前返回——实测症状是 semantic 恒缺席、body 恒空。/choro/search 与 /choro/run 都改成 `return readBody(...).then(...)`（nudge 同款）。
-  - **嵌入对象**：页正文剥 frontmatter / CHORO 标记行后的全文（P40，页级；claims 级留待真有精排需求）。staleness 两维：页 `generated_at` 变了（内容变）、行 `dim` 失配（模型变）。
-  - **验证**：新增 10 例（wiki-queries 3：staleness 两维 / dim 失配全量重嵌 / cosine 排序与空查询；wiki-api 3：run 路由 policy+405+快乐路径、闸语义 409/404、semantic 在场与缺席；wiki-store 向量读写随用例覆盖；client 锁 1：按钮打 /choro/run、防连点、T1 留 CLI 的 hint、回执计数）。全量 `npm test` 2814 pass / 0 fail / 1 skipped；check-sync 94 一致。
-  - **桌面实测反馈的美化：文件清单从「竖线等宽行」换成真 table**（用户看截图后拍板）：MD 渲染器解析连续 `|` 行为真表格——表头、对齐元数据（`---:` → 行数列右对齐等宽数字）、路径单元格等宽底色、斑马纹与 hover；分隔行不再画成可见行；引导引言缩小一档。回归锁三件（真 table / 分隔行被消费 / 数字列对齐）。
 ## [0.11.0] - 2026-11-05
 
 - **修复 #573：宽态侧栏的记忆入口落在「更多」行下面，点开「更多」时被菜单盖住**：宿主 0.2.2 起把面板列表的「更多」行（`PanelMoreMenu`）也追加进同一个 `nav.panelList`，于是组尾不再是面板行——我们仍按「追加到末尾」落位，入口就排到了「更多」下面。
