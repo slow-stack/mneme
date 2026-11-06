@@ -135,6 +135,43 @@ test("暂停作用域只开观察档（enforce 关）时，injectable 仍报 tru
   );
 });
 
+test("pinnedInjectBudget=0（默认，pin 池整体关闭）时 injectable 必须报 false", async () => {
+  // #593 遗留缺口：pin 池由 pinnedInjectBudget 开关（src/service.js:1885 的
+  // pinnedBudget > 0 才读表选路），默认 0。上一版只看遗忘/归档/暂停作用域，
+  // 预算为 0 的一条照样报 true——钉住成功但一条都不会被注入，正是「返回成功
+  // 不等于生效」。这里把默认档（不传任何 config）与显式 0 两档一起锁。
+  const { store, service, byName } = setupPinReceipt({ pinnedInjectBudget: 0 });
+  const target = store.save({ type: "preference", title: "预算关着", content: "x", importance: 5 });
+  const receipt = await byName.memory_pin.execute({ id: target.id }, undefined);
+  assert.equal(receipt.pinned, true, "钉的动作确实成功了，两件事分开报");
+  assert.equal(receipt.injectable, false, "预算 0 = pin 池关闭，此刻不会经 pin 通道注入，回执必须报 false");
+
+  // 这里不断言「注入序列里一定没有它」：预算 0 关掉的是 **pin 通道**，不是这条记忆
+  // 本身——它仍可能靠自己的重要性走常规候选路进块（既有用例
+  // inject-pin-explicit.test.js:176 锁的是「注入序列与改前逐字节一致」，不是「不出现」）。
+});
+
+test("autoInject=false（注入器未注册）时 injectable 必须报 false", async () => {
+  // #596 评审指出的第二处：autoInject 是 pin 通道的总闸，关着时 src/index.js:617
+  // 根本不注册注入器——pin 段一行都跑不到，回执照样报 true 就是同一个「返回成功
+  // 不等于生效」。判据按「只有显式 false 才算关」写，故这里显式传 false。
+  const { store, byName } = setupPinReceipt({ autoInject: false });
+  const target = store.save({ type: "preference", title: "注入器没挂", content: "x", importance: 5 });
+  const receipt = await byName.memory_pin.execute({ id: target.id }, undefined);
+  assert.equal(receipt.pinned, true, "钉的动作照样成功，两件事分开报");
+  assert.equal(receipt.injectable, false, "autoInject 关 = 注入器不存在，此刻不可能经 pin 通道注入");
+
+  // 反例：不显式传 autoInject 时不能因为 config 里没这个键就误报 false
+  // （createTools 的测试直连场景拿不到已填 defaults 的 config）。
+  const on = setupPinReceipt({});
+  const t2 = on.store.save({ type: "preference", title: "默认开", content: "y", importance: 5 });
+  assert.equal(
+    (await on.byName.memory_pin.execute({ id: t2.id }, undefined)).injectable,
+    true,
+    "未显式关 autoInject 时必须报 true（预算 5 已满足）"
+  );
+});
+
 test("遗忘或归档的 pin：injectable 报 false（原有两项不能被这次改动弄丢）", async () => {
   const { store, byName } = setupPinReceipt({});
   const target = store.save({ type: "preference", title: "会被归档", content: "x", importance: 5 });
