@@ -289,6 +289,19 @@ window.__ModuleLoader__.load({
       return fetch(path, { ...opts, headers });
     }
 
+    // 通用失效广播：任何改库动作（裁决/删除/编辑/归档/导入/接收/建条/回收…）
+    // 成功后派发一次。此前跨组件失效只有 mneme:conflicts-changed 一个事件、
+    // 三个状态侧监听者——记忆列表与冲突徽章、实体页、归档工作台全都不在名单里，
+    // 用户裁决完冲突要关掉面板重开才能看到败者归档。数据视图一律订阅本事件
+    // 立即重取；各动作自己的本地刷新（reloadKey / 列表过滤）保留，偶发的重复
+    // GET 换「永远不陈旧」，划算。与 mneme:conflicts-changed 并存不合并：后者
+    // 是裁决专属的精准信号，语义更窄，已有监听者不必搬家。
+    function broadcastStoreChanged(reason) {
+      try {
+        window.dispatchEvent(new CustomEvent("mneme:store-changed", { detail: { reason: reason || "" } }));
+      } catch { /* 非浏览器环境 */ }
+    }
+
     // ⚠️ 'betterSidebar' 绝不能进模块级 inject（issue #88 实锤）：loader 对
     // inject 声明的服务是硬等待——未安装 better-sidebar 的环境里整个 entry
     // 永远 pending（"1 entry did not activate" → Failed to load plugins）。
@@ -3032,6 +3045,9 @@ window.__ModuleLoader__.load({
       const dragRef = useRef(null); // { id, moved }
       const viewRef = useRef({ x: 0, y: 0, k: 1 }); // pan/zoom viewport, viewBox units
       const [frame, setFrame] = useState(0); // re-render tick driven by the simulation
+      // 通用失效广播的重取游标：记忆行的增删改会连带实体属性/关联记忆/关系边，
+      // 目录与各层数据的 effect 依赖都带上它（见下方订阅 effect）。
+      const [dataTick, setDataTick] = useState(0);
 
       useEffect(() => {
         let cancelled = false;
@@ -3044,6 +3060,14 @@ window.__ModuleLoader__.load({
           })
           .catch(() => { if (!cancelled) { setEntities([]); setEntityTotal(null); } });
         return () => { cancelled = true; };
+      }, [dataTick]);
+
+      // 通用失效广播订阅：实体抽取随写入发生，本页签对别处的改库（删除记忆、
+      // 裁决冲突、导入）无从感知——不订阅的话，切回来之前图谱一直是旧的。
+      useEffect(() => {
+        const onChanged = () => setDataTick((k) => k + 1);
+        window.addEventListener("mneme:store-changed", onChanged);
+        return () => window.removeEventListener("mneme:store-changed", onChanged);
       }, []);
 
       useEffect(() => {
@@ -3077,7 +3101,7 @@ window.__ModuleLoader__.load({
         }
       }, []);
 
-      useEffect(() => { load(entityName, depth); }, [load, entityName, depth]);
+      useEffect(() => { load(entityName, depth); }, [load, entityName, depth, dataTick]);
 
       // Layer data for the selected entity: current attrs + related memories.
       useEffect(() => {
@@ -3094,7 +3118,7 @@ window.__ModuleLoader__.load({
           .then((j) => { if (!cancelled) setRelated(Array.isArray(j.items) ? j.items : []); })
           .catch(() => {});
         return () => { cancelled = true; };
-      }, [entityName]);
+      }, [entityName, dataTick]);
 
       // issue #24 块4 复核面：只在展开时取，收起时不发请求。
       const loadBoosted = useCallback(async () => {
@@ -5746,6 +5770,8 @@ window.__ModuleLoader__.load({
             setResult(r.body);
             setArmed(false);
             setRunning(false);
+            // 回收确认模式真的删了行：主列表/实体页/工作台的计数都变了，广播重取。
+            broadcastStoreChanged("reclaim");
           })
           .catch(() => { setResultError(t("memory.status.maint.failed")); setRunning(false); });
       };
@@ -6099,7 +6125,14 @@ window.__ModuleLoader__.load({
         };
         loadConflicts();
         window.addEventListener("mneme:conflicts-changed", loadConflicts);
-        return () => { cancelled = true; window.removeEventListener("mneme:conflicts-changed", loadConflicts); };
+        // 通用失效广播：KPI 第 4 格的待确认计数不只随裁决变——涉及冲突的
+        // 记忆被删除/恢复也一样，两个事件都听，取数只有一次 GET。
+        window.addEventListener("mneme:store-changed", loadConflicts);
+        return () => {
+          cancelled = true;
+          window.removeEventListener("mneme:conflicts-changed", loadConflicts);
+          window.removeEventListener("mneme:store-changed", loadConflicts);
+        };
       }, []);
 
       const loading = !stats && !statsError;
@@ -6446,9 +6479,15 @@ window.__ModuleLoader__.load({
         };
         loadOnce();
         // #295 评审：裁决完成后队列会广播 mneme:conflicts-changed，这里重取
-        // 计数，状态卡的「待确认冲突」不再停留旧值。
+        // 计数，状态卡的「待确认冲突」不再停留旧值。涉及冲突的记忆被删除/
+        // 恢复同样改变计数，通用失效广播一并听。
         window.addEventListener("mneme:conflicts-changed", loadOnce);
-        return () => { cancelled = true; window.removeEventListener("mneme:conflicts-changed", loadOnce); };
+        window.addEventListener("mneme:store-changed", loadOnce);
+        return () => {
+          cancelled = true;
+          window.removeEventListener("mneme:conflicts-changed", loadOnce);
+          window.removeEventListener("mneme:store-changed", loadOnce);
+        };
       }, []);
       // #495：这张卡的标题是「最近巩固」，取数就该是巩固轮，而不是 runs[0]。
       // organize 与巩固共用 dream_runs，一次 agent 主动整理会写两行（dryRun 报告 +
@@ -6602,6 +6641,14 @@ window.__ModuleLoader__.load({
           .catch(() => { setItems([]); setLoadError(true); });
       };
       useEffect(() => { load(); }, []);
+      // 参与记忆在别处被删除/编辑时（通用失效广播），队列联表出的那一侧会失真
+      // ——重取，宁可多一次 GET 也不把「已失联」装成「还在」。
+      useEffect(() => {
+        const onChanged = () => load(true);
+        window.addEventListener("mneme:store-changed", onChanged);
+        return () => window.removeEventListener("mneme:store-changed", onChanged);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
       // #177：空队列不再整块消失——空态教育卡要渲染（原 return null 已移除）。
       if (!items) return null;
       const resolve = (id, winner) => {
@@ -6622,6 +6669,10 @@ window.__ModuleLoader__.load({
             // 读一次 dream-status，不广播的话状态卡停留在旧计数。同页两个组件
             // 用一个 window 事件对齐（比提升状态到 StatusPanel 少动三处）。
             try { window.dispatchEvent(new CustomEvent("mneme:conflicts-changed")); } catch { /* 非浏览器环境 */ }
+            // 裁决会归档败者、给胜者追加已否决注记——记忆列表、实体页、归档
+            // 工作台的数据全变了，走通用失效广播让它们立刻重取（用户反馈：
+            // 以前要关面板重开才能看到裁决落地）。
+            broadcastStoreChanged("conflict-resolve");
             load(true);
           })
           .catch(() => {})
@@ -6789,6 +6840,13 @@ window.__ModuleLoader__.load({
         return () => { cancelled = true; };
       }, [wbReload]);
       useEffect(() => { load(); }, [load]);
+      // 工作台三份列表（活动流/沉淀/归档）都读库：别处改库（裁决/删除/导入…）
+      // 广播过来就整组重取——此前只有本组件自己的恢复按钮会刷新它。
+      useEffect(() => {
+        const onChanged = () => setWbReload((k) => k + 1);
+        window.addEventListener("mneme:store-changed", onChanged);
+        return () => window.removeEventListener("mneme:store-changed", onChanged);
+      }, []);
 
       const restore = (id) => {
         setRestoring(id);
@@ -6801,6 +6859,8 @@ window.__ModuleLoader__.load({
           .then(() => {
             setArchived((cur) => (cur || []).filter((m) => m.id !== id));
             setArchivedTotal((n) => Math.max(0, n - 1));
+            // 恢复让行回到主列表：记忆页与实体页不知道这次 /update，广播让它们重取。
+            broadcastStoreChanged("memory-restore");
           })
           .catch(() => {})
           .finally(() => setRestoring(""));
@@ -8105,6 +8165,16 @@ window.__ModuleLoader__.load({
         return () => { cancelled = true; };
       }, [reloadKey]);
 
+      // 通用失效广播订阅：任何改库动作（裁决/删除/编辑/导入/恢复…）都让首页
+      // 与冲突徽章立刻重取。此前列表只靠弹层成功回调、手动刷新与 30s 首页合并
+      // 续命——裁决冲突后徽章与败者归档要关面板重开才更新（用户反馈的病灶）。
+      // reloadKey 同时驱动浏览列表、搜索与上面这份 pendingIds，一个游标全带上。
+      useEffect(() => {
+        const onChanged = () => setReloadKey((k) => k + 1);
+        window.addEventListener("mneme:store-changed", onChanged);
+        return () => window.removeEventListener("mneme:store-changed", onChanged);
+      }, []);
+
       // One query string behind every browse-list fetch (initial page,
       // loadMore, auto-refresh): the type filter, importance floor and time
       // window always travel together, so counts and pagination stay
@@ -8301,6 +8371,8 @@ window.__ModuleLoader__.load({
             setRemoteItems((cur) => (cur ? cur.filter((m) => m.id !== id) : cur));
             setTotal((n) => Math.max(0, n - 1));
             setSelectedId(null);
+            // 删除同样广播：冲突队列的联表侧、实体页的关联记忆都引用这条 id。
+            broadcastStoreChanged("memory-delete");
             setToastMsg(t("memory.explorer.deleted"));
             setTimeout(() => setToastMsg(""), 2500);
           })
@@ -8313,7 +8385,10 @@ window.__ModuleLoader__.load({
 
       // 编辑保存 / 归档的本地落账：替换或移除对应行；镜像由后端重渲染。
       // 归档从所有视图移除（列表默认只看未归档），并清空选中。
+      // 调用点在服务端提交成功之后，所以这里同时是通用失效广播的发布点：
+      // 其它页签（实体/状态工作台/冲突队列）不知道这次 /update，不广播就陈旧。
       const applyMemoryUpdate = (updated, { archived = false, restored = false } = {}) => {
+        broadcastStoreChanged(archived ? "memory-archive" : restored ? "memory-restore" : "memory-edit");
         if (archived) {
           setItems((cur) => cur.filter((m) => m.id !== updated.id));
           setRemoteItems((cur) => (cur ? cur.filter((m) => m.id !== updated.id) : cur));
@@ -8488,26 +8563,26 @@ window.__ModuleLoader__.load({
               importOpen && h(ImportDialog, {
                 t,
                 onClose: () => setImportOpen(false),
-                onImported: () => setReloadKey((k) => k + 1)
+                onImported: () => { setReloadKey((k) => k + 1); broadcastStoreChanged("import"); }
               }),
               bootstrapOpen && h(BootstrapDialog, {
                 t,
                 onClose: () => setBootstrapOpen(false),
                 onBusyChange: reportBootstrapBusy,
-                onImported: () => setReloadKey((k) => k + 1)
+                onImported: () => { setReloadKey((k) => k + 1); broadcastStoreChanged("import"); }
               }),
               shareOpen && h(ShareDialog, { t, onClose: () => setShareOpen(false) }),
               receiveOpen && h(ReceiveDialog, {
                 t,
                 onClose: () => setReceiveOpen(false),
-                onImported: () => setReloadKey((k) => k + 1)
+                onImported: () => { setReloadKey((k) => k + 1); broadcastStoreChanged("import"); }
               }),
               createOpen && h(CreateDialog, {
                 t,
                 onClose: () => setCreateOpen(false),
                 // 新建后既刷新列表也选中新行：并入既有条目时 action 是 merged，
                 // 返回的 id 就是被并入那一行——两种情况都该把它滚进视野。
-                onCreated: (d) => { setReloadKey((k) => k + 1); if (d && d.id) setSelectedId(d.id); }
+                onCreated: (d) => { setReloadKey((k) => k + 1); broadcastStoreChanged("create"); if (d && d.id) setSelectedId(d.id); }
               })
             )
           ),
@@ -8753,6 +8828,7 @@ window.__ModuleLoader__.load({
           // （toast 形状照详情抽屉里 restored 那一条的先例，不带行号免得漂）。
           setSelectedId(null);
           setReloadKey((k) => k + 1);
+          broadcastStoreChanged("pack-undo");
           setToastMsg(t("memory.explorer.undoPackDone").replace("{n}", String(n)));
           setTimeout(() => setToastMsg(""), 2500);
         }
@@ -8839,9 +8915,13 @@ window.__ModuleLoader__.load({
         const unsubscribe = conflictBadgeCount.subscribe(setPending);
         const onChanged = () => { conflictBadgeCount.refresh(); };
         window.addEventListener("mneme:conflicts-changed", onChanged);
+        // 涉及冲突的记忆在别处被删除/恢复时 pending 集同样会变——裁决广播
+        // 之外的第二条失效路径（此前只能等 60s 兜底轮询）。
+        window.addEventListener("mneme:store-changed", onChanged);
         return () => {
           unsubscribe();
           window.removeEventListener("mneme:conflicts-changed", onChanged);
+          window.removeEventListener("mneme:store-changed", onChanged);
         };
       }, []);
       return pending;
