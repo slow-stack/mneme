@@ -498,7 +498,7 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
       description:
         "Pin a memory so it is injected at the top of the memory block every turn, regardless of its type or how it ranks against other memories. " +
         "Use this only when the user explicitly says an entry must always be present (a hard rule, a standing preference); it is not a way to mark something as important — importance already affects ranking. " +
-        "Pinned entries still obey forgetting, archiving, the scope gate and the pinnedInjectBudget gate, so a pinned entry that is forgotten, archived, in a paused scope, or pinned while pinnedInjectBudget is 0 is not injected — the receipt reports this as injectable: false. " +
+        "Pinned entries still obey forgetting, archiving, the scope gate and the two injection switches: when autoInject is off the host registers no injector at all, and when pinnedInjectBudget is 0 the pin pool is off (its default). In either case a pinned entry is not injected through the pin channel, and the receipt reports injectable: false. The receipt answers \"is the pin channel open right now\", not \"is this memory kept out of every block\": a row reported false can still be picked up by the ordinary candidate path on its own merits. " +
         "Pass unpin: true to release it. Pin order is first-pinned-first, so the oldest pin holds its slot when the budget is tight.",
       parameters: {
         id: { type: "string", required: true, description: "Memory id to pin (or unpin with unpin: true)" },
@@ -516,8 +516,12 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
             // 回显它才看得出「这次其实没改变顺序」。
             created_at: { type: "string" },
             note: { type: "string" },
-            // 钉着 ≠ 会注入。遗忘/归档/暂停作用域/pinnedInjectBudget=0 都优先于 pin，
-            // 把这件事放进回执，而不是让用户以为钉完就一定出现在上下文里。
+            // 钉着 ≠ 会注入。遗忘/归档/暂停作用域/autoInject 关/pinnedInjectBudget=0
+            // 都优先于 pin，把这件事放进回执，而不是让用户以为钉完就一定出现在上下文里。
+            // 回执回答的是「pin 这条通道此刻开不开」：报 false 不等于这条记忆一定不在
+            // 上下文里——它仍可能凭自身重要性走常规候选路进块。
+            // autoInject 是这条通道的总闸：关着时宿主根本不注册注入器
+            // （src/index.js:617 的 if (cfg.autoInject)），pin 段自然也不执行。
             injectable: { type: "boolean", required: true }
           }
         },
@@ -526,7 +530,7 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
           const when = value.created_at ? ` (pinned at ${value.created_at})` : "";
           const blocked = value.injectable
             ? ""
-            : " It will not be injected while it is forgotten, archived, inside a paused scope, or while pinnedInjectBudget is 0 (the pin pool is off by default).";
+            : " The pin channel is closed right now (forgotten, archived, inside a paused scope, autoInject off, or pinnedInjectBudget is 0 — the pin pool is off by default), so it is not placed at the top of the block; the ordinary candidate path can still pick it up on its own merits.";
           return TEXT_OUTPUT(`Memory ${value.memory_id} is pinned${when}.${blocked}`);
         }
       },
@@ -544,11 +548,20 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
         // 预算为 0 的一条回执照样报 injectable: true——钉住的动作确实成功了，但它此刻
         // 一条都不会被注入，这正是「返回成功不等于生效」。预算 0 必须报 false。
         //
+        // 同一类谎话的第二处（CodeRabbit 在 #596 指出）：autoInject 才是 pin 通道的总闸
+        // ——关着时 src/index.js:617 根本不注册注入器，pin 段无从执行，而回执仍会报
+        // true。config schema 里它的默认值是 true（src/config.js:10），所以按「只有显式
+        // false 才算关」判：拿不到已填 defaults 的 config（测试直连 createTools）时不会
+        // 被误报成 false。
+        //
         // 仍然没建模的：候选池侧的 type / importance / codingGate 闸（一条被钉的
         // document 行同样进不了注入块）。那几道闸随候选池变化，回执不做猜测；
-        // 这里只回答「pin 这条通道此刻开不开」。
+        // 这里只回答「pin 这条通道此刻开不开」——报 false 也不等于这条记忆一定不在
+        // 上下文里，它仍可能凭自身重要性走常规候选路进块。
         const pinnedBudget = Math.max(0, Math.min(5, Math.floor(config?.pinnedInjectBudget ?? 0)));
+        const autoInjectOn = config?.autoInject !== false;
         const injectable =
+          autoInjectOn &&
           pinnedBudget > 0 &&
           !target.forgotten &&
           !target.archived &&
