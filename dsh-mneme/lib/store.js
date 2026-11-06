@@ -631,6 +631,58 @@ CREATE TABLE IF NOT EXISTS choro_edges (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_edges_triple ON choro_edges(repo_id, from_slug, to_slug);
 CREATE INDEX IF NOT EXISTS idx_choro_edges_to ON choro_edges(repo_id, to_slug);
+
+-- profile_facts：「Agent 眼中的你」自动事实（2026-11-06 需求，对标 DS Bot 每 bot
+-- 一份 MEMORY.md 事实清单的设计）。与手填画像（user_settings.profile）**物理分离**
+-- ——那是用户的原文，模型只有读权（profile-extract #497 的「只出草稿不落库」口径
+-- 不变）；本表是 agent 侧对用户的独立认知，模型可在 dream 轮里增改、用户可在面板
+-- 上逐条修正。agent_key='' 是 default 卡（解析不到会话身份的会话），非空值是会话
+-- 身份，与 persona byAgent 同一取值域（session.header.agentPreset）。
+-- 输入行严格分区不互串：agent 卡只吃 agent_scope=自己 的记忆行，default 卡只吃
+-- agent_scope IS NULL 的行；外来行（source=imported）整体排除（memory-source.js
+-- 那条「本库不巩固别人导入的原文」延伸到画像事实：导入的包不该改写本库对用户的认知）。
+CREATE TABLE IF NOT EXISTS profile_facts (
+  id                TEXT PRIMARY KEY,
+  agent_key         TEXT NOT NULL DEFAULT '',
+  content           TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'active',  -- active | archived
+  source_memory_ids TEXT NOT NULL DEFAULT '[]',      -- JSON：这条事实的出处记忆 id
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_profile_facts_card ON profile_facts(agent_key, status);
+
+-- 逐 op 账本（scope_changes 式）：谁（auto 轮 / 面板人工）、何时、把哪条事实从什么
+-- 改成了什么。审计纪律同 dream_runs / llm_audit_logs：只记账，不触发任何 hook。
+CREATE TABLE IF NOT EXISTS profile_fact_journal (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  at        TEXT NOT NULL,
+  agent_key TEXT NOT NULL DEFAULT '',
+  run_id    TEXT,                                -- auto 轮的回执 id；人工操作为 NULL
+  fact_id   TEXT,
+  op        TEXT NOT NULL,                       -- add | update | archive | restore | delete
+  before    TEXT,
+  after     TEXT,
+  actor     TEXT NOT NULL DEFAULT 'auto'         -- auto | manual
+);
+CREATE INDEX IF NOT EXISTS idx_profile_fact_journal_card ON profile_fact_journal(agent_key, id);
+
+-- 每轮回执（dream_runs 式）：游标（该卡消费到 memories.updated_at 的哪一刻）、
+-- 输入条数、落地 op 数。游标从最近一次 ok 轮读取——failed 轮不推进游标，下次
+-- 重跑同一窗口（与蒸馏游标同款纪律：失败不消费）。
+CREATE TABLE IF NOT EXISTS profile_fact_runs (
+  id             TEXT PRIMARY KEY,
+  agent_key      TEXT NOT NULL DEFAULT '',
+  trigger_source TEXT NOT NULL,                   -- auto | manual
+  status         TEXT NOT NULL,                   -- ok | noop | failed
+  cursor         TEXT,                            -- 本轮消费到的 memories.updated_at
+  input_count    INTEGER NOT NULL DEFAULT 0,
+  ops_applied    INTEGER NOT NULL DEFAULT 0,
+  detail         TEXT,
+  started_at     TEXT NOT NULL,
+  finished_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_profile_fact_runs_card ON profile_fact_runs(agent_key, started_at);
 `;
 
 // Exported for API-layer type validation (standalone API POST /memories and
@@ -4741,6 +4793,147 @@ export function createStore(path) {
     });
   }
 
+  // --- 「Agent 眼中的你」自动事实（2026-11-06，profile-facts 域）---
+  // 三张表只服务本域，写路径全部走 runAtomically：facts 与记忆主表零交叉，不需要
+  // service.transaction 的 pendingEmbed/pendingEntity 截断语义（那层是给写记忆行用的）。
+
+  function parseFactIds(text) {
+    if (!text) return [];
+    try {
+      const v = JSON.parse(text);
+      return Array.isArray(v) ? v.map((x) => String(x)) : [];
+    } catch { return []; }
+  }
+
+  function listProfileFacts(agentKey, { includeArchived = false } = {}) {
+    const rows = db.prepare(
+      `SELECT * FROM profile_facts WHERE agent_key = ? ${includeArchived ? "" : "AND status = 'active'"} ORDER BY updated_at DESC, id DESC`
+    ).all(agentKey);
+    return rows.map((r) => ({ ...r, source_memory_ids: parseFactIds(r.source_memory_ids) }));
+  }
+
+  /** 全库活跃事实按卡分组（注入 provider 的读口，见 src/profile-facts.js）。 */
+  function listActiveFactsGrouped() {
+    const rows = db.prepare(
+      "SELECT agent_key, content FROM profile_facts WHERE status = 'active' ORDER BY updated_at DESC"
+    ).all();
+    const grouped = { default: [], byAgent: {} };
+    for (const r of rows) {
+      if (r.agent_key === "") grouped.default.push(r.content);
+      else (grouped.byAgent[r.agent_key] ??= []).push(r.content);
+    }
+    return grouped;
+  }
+
+  function getProfileFact(id) {
+    const r = db.prepare("SELECT * FROM profile_facts WHERE id = ?").get(id);
+    return r ? { ...r, source_memory_ids: parseFactIds(r.source_memory_ids) } : undefined;
+  }
+
+  function insertProfileFact({ id, agentKey, content, sourceMemoryIds = [], at }) {
+    db.prepare(
+      "INSERT INTO profile_facts (id, agent_key, content, status, source_memory_ids, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, ?)"
+    ).run(id, agentKey, String(content), JSON.stringify(sourceMemoryIds ?? []), at, at);
+  }
+
+  /** 返回更新后的行；id 不存在返回 undefined，由调用方记入 failures。 */
+  function updateProfileFact(id, { content, status, sourceMemoryIds, at }) {
+    const cur = getProfileFact(id);
+    if (!cur) return undefined;
+    const next = {
+      content: content ?? cur.content,
+      status: status ?? cur.status,
+      source_memory_ids: sourceMemoryIds ?? cur.source_memory_ids,
+      updated_at: at
+    };
+    db.prepare("UPDATE profile_facts SET content = ?, status = ?, source_memory_ids = ?, updated_at = ? WHERE id = ?")
+      .run(next.content, next.status, JSON.stringify(next.source_memory_ids), next.updated_at, id);
+    return { ...cur, ...next };
+  }
+
+  function insertProfileFactJournal({ at, agentKey, runId = null, factId = null, op, before = null, after = null, actor = "auto" }) {
+    db.prepare(
+      "INSERT INTO profile_fact_journal (at, agent_key, run_id, fact_id, op, before, after, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).run(at, agentKey, runId, factId, op, before, after, actor);
+  }
+
+  function listProfileFactJournal(agentKey, { limit = 20 } = {}) {
+    return db.prepare("SELECT * FROM profile_fact_journal WHERE agent_key = ? ORDER BY id DESC LIMIT ?")
+      .all(agentKey, limit);
+  }
+
+  /** 每卡只留最近 keep 条：账本是审计事实不是检索面，无界增长没有读者。 */
+  function pruneProfileFactJournal(agentKey, keep = 200) {
+    return db.prepare(
+      `DELETE FROM profile_fact_journal WHERE agent_key = ? AND id NOT IN (
+         SELECT id FROM profile_fact_journal WHERE agent_key = ? ORDER BY id DESC LIMIT ?)`
+    ).run(agentKey, agentKey, keep).changes;
+  }
+
+  function insertProfileFactRun({ id, agentKey, triggerSource, status, cursor = null, inputCount = 0, opsApplied = 0, detail = null, startedAt, finishedAt }) {
+    db.prepare(
+      `INSERT INTO profile_fact_runs (id, agent_key, trigger_source, status, cursor, input_count, ops_applied, detail, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, agentKey, triggerSource, status, cursor, inputCount, opsApplied, detail, startedAt, finishedAt);
+  }
+
+  function listProfileFactRuns(agentKey, { limit = 10 } = {}) {
+    return db.prepare("SELECT * FROM profile_fact_runs WHERE agent_key = ? ORDER BY started_at DESC, id DESC LIMIT ?")
+      .all(agentKey, limit);
+  }
+
+  /** 该卡最近一次 ok 轮的游标。failed 轮不消费——下次重跑同一窗口（蒸馏游标同款纪律）。 */
+  function profileFactsCursor(agentKey) {
+    const row = db.prepare(
+      "SELECT cursor FROM profile_fact_runs WHERE agent_key = ? AND status = 'ok' ORDER BY started_at DESC, id DESC LIMIT 1"
+    ).get(agentKey);
+    return row ? row.cursor : null;
+  }
+
+  /**
+   * 增量输入行：活跃（未归档未遗忘）+ 排除外来行（source IS NULL OR 那一支是三值
+   * 逻辑必填，与 list() 的 excludeImported 同一个坑）+ 严格 scope 分区——agent 卡
+   * 只吃 agent_scope=自己 的行，default 卡只吃 agent_scope IS NULL 的行。
+   * updated_at 是 ISO 串，字典序即时间序，`>` 即「游标之后」（单调时间戳纪律）。
+   */
+  function listFactInputRows(agentKey, { since = null, limit = 120 } = {}) {
+    const scopeClause = agentKey ? "agent_scope = ?" : "agent_scope IS NULL";
+    const params = [IMPORTED_SOURCE, ...(agentKey ? [agentKey] : [])];
+    if (since) params.push(since);
+    params.push(limit);
+    return db.prepare(
+      `SELECT id, type, title, content, importance, updated_at FROM memories
+       WHERE forgotten = 0 AND archived = 0 AND (source IS NULL OR source <> ?)
+         AND ${scopeClause}
+         ${since ? "AND updated_at > ?" : ""}
+       ORDER BY updated_at DESC LIMIT ?`
+    ).all(...params);
+  }
+
+  function countFactInputRows(agentKey, { since = null } = {}) {
+    const scopeClause = agentKey ? "agent_scope = ?" : "agent_scope IS NULL";
+    const params = [IMPORTED_SOURCE, ...(agentKey ? [agentKey] : [])];
+    if (since) params.push(since);
+    return db.prepare(
+      `SELECT COUNT(*) AS n FROM memories
+       WHERE forgotten = 0 AND archived = 0 AND (source IS NULL OR source <> ?)
+         AND ${scopeClause}
+         ${since ? "AND updated_at > ?" : ""}`
+    ).get(...params).n;
+  }
+
+  /**
+   * 自动轮要维护的卡：有 scope 行的记忆身份 ∪ 存量卡片。存量卡即使输入行被清空
+   * 也保留在名单里（手动轮还可能对它做人工修正后的再维护）；'' 由调用方固定追加。
+   */
+  function listFactCardKeys() {
+    return db.prepare(
+      `SELECT DISTINCT agent_scope AS k FROM memories WHERE agent_scope IS NOT NULL
+       UNION
+       SELECT DISTINCT agent_key FROM profile_facts WHERE agent_key <> ''`
+    ).all().map((r) => r.k);
+  }
+
   return {
     db,
     count,
@@ -4916,6 +5109,22 @@ export function createStore(path) {
     saveChoroPageClaims,
     getChoroPageVectors,
     saveChoroPageVector,
+    // 「Agent 眼中的你」自动事实（2026-11-06）：读口与写口都只给 domain 层
+    // （src/profile-facts.js）和 API 层用，记忆主表路径不经此。
+    listProfileFacts,
+    listActiveFactsGrouped,
+    getProfileFact,
+    insertProfileFact,
+    updateProfileFact,
+    insertProfileFactJournal,
+    listProfileFactJournal,
+    pruneProfileFactJournal,
+    insertProfileFactRun,
+    listProfileFactRuns,
+    profileFactsCursor,
+    listFactInputRows,
+    countFactInputRows,
+    listFactCardKeys,
     close() {
       db.close();
     }

@@ -1,5 +1,5 @@
 // dsh-mneme/src/user-settings.js
-// 「用户设置」注入块（人格 / 画像 / 规则）的唯一渲染处。
+// 「用户设置」注入块（人格 / 画像 / 自动画像事实 / 规则）的唯一渲染处。
 //
 // 为什么要单独成模块：面板「Agent 眼中的画像」那张卡原本自己在前端拼了一份 profile +
 // rules 的列表，注释写着「注入生效文本」——但它没有表头、没有「- 用户画像：」前缀，
@@ -7,9 +7,17 @@
 // 「看着像」。现在注入器与预览路由调同一个函数，前端只显示后端给的文本。
 //
 // 顺序是设计口径（人格设计稿⑥）：特化指令（人格）先出，画像与规则后出、后写覆盖占
-// 上风，rules 恒最硬。改这个顺序等于改提示词权重，别顺手调。
+// 上风，rules 恒最硬。改这个顺序等于改提示词权重，别顺手调。自动画像事实（2026-11-06，
+// src/profile-facts.js）插在画像之后、规则之前——它是「画像的 agent 侧补充」，与
+// 手填画像物理分离（模型对 user_settings.profile 永远只有读权）。
 
 import { STR, langOf } from "./lang.js";
+
+// 事实段的注入预算（本块此前无任何截断机制——它是「身份文本」，从不轮换）。
+// 不设上限的话，一次失控的维护轮能把每帧 systemPrompt 撑爆；行数与总字符双帽，
+// 截断不静默（尾注如实说还剩几条，与 #164① 同一纪律）。
+const PROFILE_FACTS_MAX_LINES = 40;
+const PROFILE_FACTS_MAX_CHARS = 1200;
 
 /**
  * 提示词变量转义：宿主模板插值对 `{{`/`}}` 会按变量名解析并在缺失时抛错，整轮崩掉。
@@ -46,11 +54,28 @@ export function resolvePersonaCard(settings, agentId, { strict = false } = {}) {
 }
 
 /**
- * 渲染整块「用户设置」。`agentId` 是会话身份（解析不到传 null → 走 default 兜底）。
- * 返回 `{ text, source, agent, configGate }`：`text` 为最终注入文本（全空时 ""），
- * `configGate` 是 personaEnabled 的现值——面板要靠它解释「卡开着为什么没生效」。
+ * 按会话身份取自动事实卡（resolvePersonaCard 的镜像，形状不同：facts 没有
+ * enabled 位，「卡存在」就是非空数组）。strict 语义与人格一致：有身份但没这张
+ * 身份的卡时不落 default——两个 bot 对用户的认知不互串是 store 层分区（输入行）
+ * 与本层寻址（输出注入）共同守住的边界。
  */
-export function renderUserSettingsBlock({ settings, config, agentId = null }) {
+export function resolveFactsCard(factsStore, agentId, { strict = false } = {}) {
+  const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "";
+  const card = id ? (factsStore?.byAgent?.[id] ?? null) : null;
+  if (card && card.length) return { facts: card, source: "byAgent" };
+  if (id && strict) return { facts: [], source: "none" };
+  return { facts: factsStore?.default ?? [], source: "default" };
+}
+
+/**
+ * 渲染整块「用户设置」。`agentId` 是会话身份（解析不到传 null → 走 default 兜底）。
+ * `factsProvider` 是 profile-facts 域的读口（返回 `{ default: [...], byAgent: {...} }`），
+ * 可选；**开关与 provider 双闸**——profileFactsEnabled 关着时连 provider 都不调，
+ * 「关」必须是零读数而不是「读了不渲染」。返回 `{ text, source, agent, configGate }`：
+ * `text` 为最终注入文本（全空时 ""），`configGate` 是 personaEnabled 的现值——面板
+ * 要靠它解释「卡开着为什么没生效」。
+ */
+export function renderUserSettingsBlock({ settings, config, agentId = null, factsProvider = null }) {
   const language = langOf(config);
   const profile = settings.getProfile().trim();
   const rules = settings.getRules();
@@ -66,13 +91,34 @@ export function renderUserSettingsBlock({ settings, config, agentId = null }) {
         ...(typeof persona.replyStyle === "string" && persona.replyStyle.trim() ? [STR.personaReplyStyleLine[language](persona.replyStyle.trim())] : [])
       ]
     : [];
+  // 事实段：开关关 / 无 provider / 该卡没事实三种情况都不渲染，注入文本与
+  // 未启用事实时逐字节一致（老用户零变化）。
+  const factsResolved = config?.profileFactsEnabled === true && typeof factsProvider === "function"
+    ? resolveFactsCard(factsProvider(), agentId, { strict: config?.personaStrictAddressing === true })
+    : { facts: [], source: "none" };
+  const factLines = [];
+  if (factsResolved.facts.length) {
+    let chars = 0;
+    let shown = 0;
+    for (const fact of factsResolved.facts) {
+      const line = STR.profileFactLine[language](String(fact));
+      if (shown >= PROFILE_FACTS_MAX_LINES || chars + line.length > PROFILE_FACTS_MAX_CHARS) break;
+      factLines.push(line);
+      chars += line.length;
+      shown += 1;
+    }
+    const remaining = factsResolved.facts.length - shown;
+    if (remaining > 0) factLines.push(STR.profileFactsTruncated[language](remaining));
+    if (factLines.length) factLines.unshift(STR.profileFactsHeader[language](factsResolved.facts.length));
+  }
   const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : null;
-  if (!profile && !rules.length && !personaLines.length) {
+  if (!profile && !rules.length && !personaLines.length && !factLines.length) {
     return { text: "", source: resolved.source, agent: id, configGate: enabled };
   }
   const lines = [STR.userSettingsHeader[language]];
   lines.push(...personaLines);
   if (profile) lines.push(STR.profileLine[language](profile));
+  lines.push(...factLines);
   for (const rule of rules) lines.push(STR.ruleLine[language](rule));
   return { text: escapePromptVars(config, lines.join("\n")), source: resolved.source, agent: id, configGate: enabled };
 }

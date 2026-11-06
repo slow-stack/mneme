@@ -399,12 +399,48 @@ window.__ModuleLoader__.load({
         "memory.settings.personaViewSourceNone": "按当前寻址口径，这个身份不会注入任何人格——默认卡只兜「解析不到会话身份」的会话。",
         "memory.settings.personaViewGateOff": "总闸「人格定义（beta）」现在是关的：下面这段里不会出现人格，只有画像与规则。",
         "memory.settings.personaViewRefresh": "刷新预览",
+        "memory.settings.factsTitle": "自动事实（Agent 眼中的你）",
+        "memory.settings.factsHint": "Agent 在巩固（dream）后从新记忆里提炼的「对你的了解」，按会话身份分卡，与人格卡同域，注在预览里手填画像之后。这里可以逐条修正；删除只是归档，随时可恢复。你自己填的用户画像不受影响。",
+        "memory.settings.factsEmpty": "这张卡还没有事实。有新的对话记忆并跑过巩固后，Agent 对你的了解会出现在这里；也可以在下面手动添加。",
+        "memory.settings.factsUnavailable": "读不到事实（请求失败或后端版本过旧）。这里不显示猜测的内容。",
+        "memory.settings.factsAddPlaceholder": "例如：用户偏好简洁直给的回答",
+        "memory.settings.factsAdd": "添加事实",
+        "memory.settings.factsRowEdit": "编辑这条事实",
+        "memory.settings.factsRowSave": "保存",
+        "memory.settings.factsRowCancel": "取消",
+        "memory.settings.factsRowDelete": "删除这条事实（归档，可恢复）",
+        "memory.settings.factsApplyDone": "事实已更新",
+        "memory.settings.factsApplyError": "没存进去：请求失败了，请再试一次。",
+        "memory.settings.factsApplyFailures": "{n} 条没存进去",
+        "memory.settings.factsApplyDups": "跳过 {n} 条重复",
+        "memory.settings.factsGateOff": "功能开关里的「自动事实」没开：dream 轮不会自动维护这份清单，但这里的增改与下面的手动更新照常可用。",
+        "memory.settings.factsRun": "立即更新",
+        "memory.settings.factsRunning": "正在更新…",
+        "memory.settings.factsRunOk": "已更新 {n} 条事实",
+        "memory.settings.factsRunNoop": "没有新记忆，事实已是最新",
+        "memory.settings.factsRunDisabled": "功能开关里的「自动事实」还没打开，先到功能开关区打开它。",
+        "memory.settings.factsRunNoRoute": "没有可用的模型：先在宿主里选一个默认模型（或在配置里填 dreamProvider / dreamModel），再点一次。",
+        "memory.settings.factsRunFailed": "更新没成：模型没按格式返回，或这次调用失败了。稍后可重试。",
+        "memory.settings.factsJournalTitle": "最近变更",
+        "memory.settings.factsJournalEmpty": "还没有变更记录",
+        "memory.settings.factsOpAdd": "新增",
+        "memory.settings.factsOpUpdate": "修改",
+        "memory.settings.factsOpArchive": "归档",
+        "memory.settings.factsActorAuto": "自动",
+        "memory.settings.factsActorManual": "手动",
+        "memory.settings.factsRunLast": "最近一轮：",
+        "memory.settings.factsRunCounts": "输入 {input} 条 · 应用 {ops} 项操作",
+        "memory.settings.factsRunStatusOk": "成功",
+        "memory.settings.factsRunStatusNoop": "无变更",
+        "memory.settings.factsRunStatusFailed": "失败",
         "memory.features.personaEnabled": "人格定义（beta）",
         "memory.features.personaEnabled.hint": "把「设置 → 个性化」里的人格卡注入到每轮对话。默认关（beta）；总闸与人格卡内的开关同时打开才生效。",
         "memory.features.personaStrictAddressing": "严格人格寻址",
         "memory.features.personaStrictAddressing.hint": "开：会话身份没有对应人格卡、或那张卡被关掉时，就不注入人格——默认卡只兜「解析不到会话身份」的会话。宿主里跑着自带身份的 bot（DS Bot 那类）时关掉这种兜底，免得两句「你是谁」撞在同一轮。默认关 = 未命中就落默认卡（历史行为）。",
         "memory.features.profileExtractEnabled": "画像提取草稿",
         "memory.features.profileExtractEnabled.hint": "打开「设置 → 个性化 → Agent 眼中的你」卡上的「从记忆提取草稿」按钮：读一批活跃记忆、花一次模型调用，产一段「助手眼中的用户」草稿。草稿只在那张卡上展示副本，可一键复制，不会写进记忆库、也不会覆盖你自己填的「用户画像」。轻量档预设关（用户显式勾选仍然赢）。",
+        "memory.features.profileFactsEnabled": "自动事实",
+        "memory.features.profileFactsEnabled.hint": "每次 dream（巩固）轮后，把这一窗口里沉淀的新记忆再读一遍，按会话身份卡维护一份「Agent 眼中的你」事实清单（设置 → 个性化 → 自动事实），注入在手填画像之后。事实住独立的表，不会覆盖你自己填的「用户画像」；面板上可逐条修正或删除（删除=归档，可恢复）。轻量档预设关（用户显式勾选仍然赢）。",
         "memory.features.chorographyEnabled": "仓库地志（chorography）",
         "memory.features.chorographyEnabled.hint": "读一遍仓库写成一份带页码的志书：确定性骨架零模型、可以随时重建；语义段由 CLI 的 headless 会话逐模块补。打开后有四个入口——模型侧三个只读工具、面板「仓库地志」浏览页、每轮的开局提纲注入、/choro 命令。关着时它们全部不存在（模型工具列表里根本没有，注入块不渲染，/choro 不注册）。默认关。",
         "memory.features.chorographyInject": "开局注入档位",
@@ -1268,12 +1304,48 @@ window.__ModuleLoader__.load({
         "memory.settings.personaViewSourceNone": "Under the current addressing mode this identity injects no persona at all — the default card only covers sessions with no resolvable identity.",
         "memory.settings.personaViewGateOff": "The master switch “Persona (beta)” is off: the block below contains profile and rules only.",
         "memory.settings.personaViewRefresh": "Refresh preview",
+        "memory.settings.factsTitle": "Auto facts (you, as the agent sees you)",
+        "memory.settings.factsHint": "What the agent learned about you, distilled from new memories after each dream run — split into cards by session identity (same domain as persona cards) and injected after your handwritten profile in the preview. Fix entries here one by one; deleting only archives a fact and can be undone. The User Profile you wrote yourself is never touched.",
+        "memory.settings.factsEmpty": "No facts on this card yet. After new conversation memories go through a dream run, what the agent picked up about you shows up here; you can also add one below.",
+        "memory.settings.factsUnavailable": "Could not read the facts (request failed or backend too old). Nothing is guessed here.",
+        "memory.settings.factsAddPlaceholder": "e.g. The user prefers short, direct answers",
+        "memory.settings.factsAdd": "Add fact",
+        "memory.settings.factsRowEdit": "Edit this fact",
+        "memory.settings.factsRowSave": "Save",
+        "memory.settings.factsRowCancel": "Cancel",
+        "memory.settings.factsRowDelete": "Delete this fact (archived, restorable)",
+        "memory.settings.factsApplyDone": "Facts updated",
+        "memory.settings.factsApplyError": "Not saved: the request failed. Please try again.",
+        "memory.settings.factsApplyFailures": "{n} not saved",
+        "memory.settings.factsApplyDups": "skipped {n} duplicates",
+        "memory.settings.factsGateOff": "The “Auto facts” feature switch is off: dream runs will not maintain this list, but editing here and the manual update below keep working.",
+        "memory.settings.factsRun": "Update now",
+        "memory.settings.factsRunning": "Updating…",
+        "memory.settings.factsRunOk": "Updated {n} facts",
+        "memory.settings.factsRunNoop": "No new memories — facts are already up to date",
+        "memory.settings.factsRunDisabled": "The “Auto facts” feature switch is off; turn it on in the feature switches section first.",
+        "memory.settings.factsRunNoRoute": "No model available: pick a default model in the host (or set dreamProvider / dreamModel), then try again.",
+        "memory.settings.factsRunFailed": "Update failed: the model did not return the required shape, or the call errored. You can retry later.",
+        "memory.settings.factsJournalTitle": "Recent changes",
+        "memory.settings.factsJournalEmpty": "No changes recorded yet",
+        "memory.settings.factsOpAdd": "Add",
+        "memory.settings.factsOpUpdate": "Edit",
+        "memory.settings.factsOpArchive": "Archive",
+        "memory.settings.factsActorAuto": "auto",
+        "memory.settings.factsActorManual": "manual",
+        "memory.settings.factsRunLast": "Last run: ",
+        "memory.settings.factsRunCounts": "input {input} · applied {ops} ops",
+        "memory.settings.factsRunStatusOk": "ok",
+        "memory.settings.factsRunStatusNoop": "no change",
+        "memory.settings.factsRunStatusFailed": "failed",
         "memory.features.personaEnabled": "Persona (beta)",
         "memory.features.personaEnabled.hint": "Inject the persona card (Settings → Personalization) into every turn. Off by default (beta); both this switch and the card's own toggle must be on.",
         "memory.features.personaStrictAddressing": "Strict persona addressing",
         "memory.features.personaStrictAddressing.hint": "On: when a session's identity has no persona card — or that card is switched off — no persona is injected, so the default card only covers sessions with no resolvable identity. Turn this on when the host runs a bot that brings its own identity (DS Bot and friends), otherwise two \"you are ...\" claims land in the same turn. Off (default): unresolved identities fall back to the default card, as before.",
         "memory.features.profileExtractEnabled": "Profile draft from memory",
         "memory.features.profileExtractEnabled.hint": "Adds the \"Draft from memory\" button to the \"You in the agent's eyes\" card under Settings → Personalization: reads a batch of active memories, spends one model call, and returns an \"as the assistant sees them\" draft. The draft is only shown there as a copy you can copy out — it is never written to the memory store and never overwrites the User Profile you wrote yourself. Off in the lightweight preset (an explicit choice still wins).",
+        "memory.features.profileFactsEnabled": "Auto facts",
+        "memory.features.profileFactsEnabled.hint": "After each dream (consolidation) run, the memories settled in that window are read once more to maintain a per-identity-card list of facts the agent holds about you (Settings → Personalization → Auto facts), injected after the handwritten profile. Facts live in their own tables and never overwrite the User Profile you wrote yourself; any fact can be fixed or removed in the panel (removing = archiving, restorable). Off in the lightweight preset (an explicit choice still wins).",
         "memory.features.chorographyEnabled": "Repo atlas (chorography)",
         "memory.features.chorographyEnabled.hint": "Reads a repository once and writes it up as a paginated atlas: the deterministic skeleton costs no model and can be rebuilt any time; the semantic sections are added per module by a headless session in the CLI. Turning it on enables four entry points — three read-only tools for the model, the atlas panel page, the per-turn outline injection, and the /choro command. With it off none of them exist (the tools are absent from the model's tool list, the injection block is not rendered, /choro is not registered). Off by default.",
         "memory.features.chorographyInject": "Opening injection tier",
@@ -3638,6 +3710,10 @@ window.__ModuleLoader__.load({
         // 人格内容在设置页「个性化」区的人格卡。
         // 严格寻址是同一条链上的第二个口径开关（只在总闸打开时起作用）。
         "personaEnabled", "personaStrictAddressing", "profileExtractEnabled",
+        // 自动事实（profile_facts）：dream 后的自动维护闸。展示与人工修正不受它管
+        // （GET/apply 在 flag 关时照常放行，存量事实要能看能改），它只决定「自动做梦
+        // 维护」与面板「立即更新」这两条 LLM 路径开不开。
+        "profileFactsEnabled",
         // chorography（仓库地志）的暴露闸（M1 就有的键，M3 才上 UI）：它是「是否
         // 启用这个子系统」而不是「每轮付多少」，所以和上面这些行为开关同组；
         // 每轮付出多少由紧随组尾的 choroSub 档位管。放组末是因为子块按组尾渲染
@@ -3766,6 +3842,10 @@ window.__ModuleLoader__.load({
           }
           setState(await res.json());
           setSaveError("");
+          // 功能开关即改即存：别的卡在读同一份 effective 快照（画像事实卡的
+          // 「立即更新」按钮禁用态）——广播让它们重读，不然按提示开了开关还得
+          // 关面板重开才解禁，正是本车道广播工作项要消灭的那类体验。
+          try { window.dispatchEvent(new CustomEvent("mneme:features-changed")); } catch { /* 非浏览器环境 */ }
           announce(t("memory.features.restartHint"));
           setSavedTick(true);
           setTimeout(() => setSavedTick(false), 1800);
@@ -4615,6 +4695,203 @@ window.__ModuleLoader__.load({
         savePersonaCards(personaDefault, next);
       };
 
+      // 「Agent 眼中的你」自动事实（profile_facts 三表）：展示与人工修正独立于手填
+      // 画像（#497 口径：user_settings 神圣，这里一个字都不写它）。增改删全走
+      // POST /apply（删除=归档，可恢复），与 dream 自动轮共用后端同一份 applyOps
+      // 与同一本账——前端不复述任何判据，也不自己维护第二份事实列表。
+      const [factsCards, setFactsCards] = react.useState([]); // 卡清单是全局的，不随选中卡变化
+      const [factsRows, setFactsRows] = react.useState(null); // null = 还没读到/读失败（fail-closed，不拿旧卡的行冒充这张卡）
+      const [factsJournal, setFactsJournal] = react.useState([]);
+      const [factsRuns, setFactsRuns] = react.useState([]);
+      const [factsAgent, setFactsAgent] = react.useState(""); // "" = default 卡
+      const [factsEditId, setFactsEditId] = react.useState(null);
+      const [factsEditDraft, setFactsEditDraft] = react.useState("");
+      const [factsNew, setFactsNew] = react.useState("");
+      const [factsBusy, setFactsBusy] = react.useState(false); // apply 提交中
+      const [factsRunning, setFactsRunning] = react.useState(false); // 手动维护轮进行中
+      // apply 的一次性回执：{kind, text}。failures / dupsSkipped 必须如实摆出来——
+      // 把失败装成成功，人会以为删掉的事实在下一轮不会再来。
+      const [factsNotice, setFactsNotice] = react.useState(null);
+      // 手动维护轮的结局文案（profileDraft 的 kind 分支同款）：把「没启用」「没配模型」
+      // 「模型不配合」压成一句「失败」，用户就只能瞎猜该去修什么。
+      const [factsRunEnd, setFactsRunEnd] = react.useState(null);
+      // 总闸快照只管「立即更新」按钮的可用性：null = 还没读到（读失败不猜，按钮保持
+      // 可用，点下去由后端 409 disabled 兜底）；事实的展示与人工修正不受这个闸管。
+      const [factsFlag, setFactsFlag] = react.useState(null);
+      // 与 loadPreview 同一套序号守卫：先切 A 再切 B，A 的响应后到不能盖掉 B 的。
+      const factsSeq = react.useRef(0);
+      const loadFacts = react.useCallback(async (agentKey) => {
+        const seq = ++factsSeq.current;
+        try {
+          const res = await apiFetch(`/api/dsh-mneme/profile-facts?agent=${encodeURIComponent(agentKey)}`);
+          const body = await res.json().catch(() => null);
+          if (seq !== factsSeq.current) return;
+          if (res.ok && body && Array.isArray(body.facts)) {
+            setFactsCards(Array.isArray(body.cards) ? body.cards.filter((k) => typeof k === "string") : []);
+            setFactsRows(body.facts);
+            setFactsJournal(Array.isArray(body.journal) ? body.journal : []);
+            setFactsRuns(Array.isArray(body.runs) ? body.runs : []);
+          } else {
+            // 503 unavailable / 后端过旧：行清空走「读不到」文案；卡清单是全局的，
+            // 保留上次读到的，选择器不至于闪空。
+            setFactsRows(null);
+            setFactsJournal([]);
+            setFactsRuns([]);
+          }
+        } catch {
+          if (seq === factsSeq.current) {
+            setFactsRows(null);
+            setFactsJournal([]);
+            setFactsRuns([]);
+          }
+        }
+      }, []);
+      // 切卡先清行再取：上一张卡的事实留在屏上会被当成这张的（同 loadPreview 的
+      // 单一所有者纪律——这里没有直接写数据，都交给 loadFacts）。维护轮结局一并
+      // 清：A 卡跑完的「已更新 N 条」不该显示在 B 卡下（评审 P3：跨卡残留）。
+      react.useEffect(() => {
+        setFactsRows(null);
+        setFactsEditId(null);
+        setFactsEditDraft("");
+        setFactsNotice(null);
+        setFactsRunEnd(null);
+        loadFacts(factsAgent);
+      }, [factsAgent, loadFacts]);
+      // 总闸快照：features 由功能开关卡管写，这里只读不写、失败不猜。功能开关卡
+      // 即改即存并广播 mneme:features-changed——不监听的话，按提示开了「自动事实」
+      // 还得关面板重开才解禁（正是广播工作项要消灭的那类体验）。
+      react.useEffect(() => {
+        let cancelled = false;
+        const loadFlag = () => {
+          apiFetch("/api/dsh-mneme/features")
+            .then((res) => (res.ok ? res.json() : null))
+            .then((j) => {
+              if (cancelled) return;
+              const eff = (j && j.effective) || {};
+              setFactsFlag(eff.profileFactsEnabled === true);
+            })
+            .catch(() => {}); // 读失败保持 null：按钮不锁死，409 兜底
+        };
+        loadFlag();
+        window.addEventListener("mneme:features-changed", loadFlag);
+        return () => { cancelled = true; window.removeEventListener("mneme:features-changed", loadFlag); };
+      }, []);
+      // 人工修正统一入口：一张卡上的小批量 ops 一次 POST，回来重取 GET 让账本跟上，
+      // 并刷新注入预览（事实段是注入文本的一部分，预览别停在编辑前）。
+      async function applyFactsOps(ops) {
+        if (factsBusy) return null;
+        setFactsBusy(true);
+        try {
+          const res = await apiFetch("/api/dsh-mneme/profile-facts/apply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agent: factsAgent, ops })
+          });
+          const body = await res.json().catch(() => null);
+          if (!res.ok || !body || !Array.isArray(body.facts)) {
+            setFactsNotice({ kind: "fail", text: t("memory.settings.factsApplyError") });
+            announce(t("memory.settings.factsApplyError"));
+            return null;
+          }
+          const fails = Array.isArray(body.failures) ? body.failures : [];
+          const dups = Number(body.dupsSkipped) || 0;
+          let text = t("memory.settings.factsApplyDone");
+          let kind = "ok";
+          if (fails.length || dups > 0) {
+            const parts = [];
+            if (fails.length) parts.push(t("memory.settings.factsApplyFailures").replace("{n}", String(fails.length)));
+            if (dups > 0) parts.push(t("memory.settings.factsApplyDups").replace("{n}", String(dups)));
+            text = parts.join(" · ");
+            kind = fails.length ? "fail" : "dup";
+          }
+          setFactsNotice({ kind, text });
+          announce(text);
+          await loadFacts(factsAgent);
+          loadPreview(personaEditing);
+          return body;
+        } catch {
+          setFactsNotice({ kind: "fail", text: t("memory.settings.factsApplyError") });
+          announce(t("memory.settings.factsApplyError"));
+          return null;
+        } finally {
+          setFactsBusy(false);
+        }
+      }
+      async function addFact() {
+        const content = factsNew.trim();
+        if (!content) return;
+        const body = await applyFactsOps([{ op: "add", content }]);
+        // 与既有活跃事实重复的 add 会被后端跳过并计数：输入框照常清空，跳了几条
+        // 由提示条说明，别让人以为没点上。
+        if (body) setFactsNew("");
+      }
+      function startFactEdit(f) {
+        setFactsEditId(f.id);
+        setFactsEditDraft(typeof f.content === "string" ? f.content : "");
+      }
+      function cancelFactEdit() {
+        setFactsEditId(null);
+        setFactsEditDraft("");
+      }
+      async function saveFactEdit() {
+        if (factsEditId === null) return;
+        const content = factsEditDraft.trim();
+        if (!content) return;
+        const editId = factsEditId;
+        const body = await applyFactsOps([{ op: "update", id: editId, content }]);
+        // 只有这条真的写进去了才收起编辑框；它自己的 op 失败时留着草稿，别让人重打。
+        if (body && !(Array.isArray(body.failures) && body.failures.some((x) => x && x.id === editId))) {
+          cancelFactEdit();
+        }
+      }
+      async function archiveFact(id) {
+        await applyFactsOps([{ op: "archive", id }]);
+      }
+      // 手动维护轮：结局按后端 error 码分派——no-route 重跑也一样、unparseable 等
+      // 可重试、disabled 是闸没开，三种话不能混。跑完重取 GET 并刷新预览。
+      async function runFacts() {
+        if (factsRunning || factsBusy) return;
+        setFactsRunning(true);
+        setFactsRunEnd(null);
+        try {
+          const res = await apiFetch("/api/dsh-mneme/profile-facts/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agent: factsAgent })
+          });
+          const body = await res.json().catch(() => null);
+          if (res.ok && body && typeof body.status === "string") {
+            const n = Number(body.opsApplied) || 0;
+            setFactsRunEnd(body.status === "noop" ? { kind: "noop" } : { kind: "ok", n });
+            announce(t(body.status === "noop" ? "memory.settings.factsRunNoop" : "memory.settings.factsRunOk").replace("{n}", String(n)));
+          } else {
+            const error = body && typeof body.error === "string" ? body.error : "";
+            const kind = error === "disabled" ? "disabled" : error === "no-route" ? "noroute" : "failed";
+            setFactsRunEnd({ kind });
+            announce(t(kind === "disabled" ? "memory.settings.factsRunDisabled"
+              : kind === "noroute" ? "memory.settings.factsRunNoRoute"
+              : "memory.settings.factsRunFailed"));
+          }
+          await loadFacts(factsAgent);
+          loadPreview(personaEditing);
+        } catch {
+          setFactsRunEnd({ kind: "failed" });
+          announce(t("memory.settings.factsRunFailed"));
+        } finally {
+          setFactsRunning(false);
+        }
+      }
+      // 账本行的摘要截断：before/after 各 ~40 字符，长了加省略号——账本给「扫一眼」
+      // 用，整句塞进来会把最近变更撑成一堵墙。
+      const clipFactText = (s) => {
+        const v = String(s ?? "");
+        return v.length > 40 ? v.slice(0, 40) + "…" : v;
+      };
+      const factOpLabel = (op) => (op === "add" ? t("memory.settings.factsOpAdd")
+        : op === "update" ? t("memory.settings.factsOpUpdate")
+        : op === "archive" ? t("memory.settings.factsOpArchive")
+        : String(op ?? ""));
+
       async function putRules(next) {
         await apiFetch("/api/dsh-mneme/rules", {
           method: "PUT",
@@ -5018,6 +5295,147 @@ window.__ModuleLoader__.load({
                 t("memory.settings.profileDraftCopyFailed")) : null
             )
           ) : null
+        ),
+        // 自动事实（profile_facts）：dream 后自动维护的「Agent 眼中的你」，按会话身份
+        // 分卡。放在注入预览卡之后——预览里事实段的来源就在这里，看预览的人顺势就能
+        // 找到改它的地方；规则是用户立的另一域（另一张卡），不混。
+        h("section", { className: "mneme-set-card" },
+          h("div", { className: "mneme-set-title" }, t("memory.settings.factsTitle")),
+          h("div", { className: "mneme-set-desc" }, t("memory.settings.factsHint")),
+          // 卡选择器：default + 各身份卡，人格卡同款 chip 形态；切换即重取（effect 里清行）。
+          h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
+            h("button", {
+              type: "button",
+              className: "mneme-btn" + (factsAgent === "" ? " mneme-btn--active" : ""),
+              onClick: () => setFactsAgent("")
+            }, t("memory.settings.personaDefaultCard")),
+            // 选中卡即使这轮从清单里消失（事实全归档且无同 scope 记忆）也不让它从
+            // 选择器上失踪——正在编辑的人不能失去落点。
+            [...new Set([factsAgent, ...factsCards])].filter((k) => k && k.trim()).map((k) =>
+              h("button", {
+                key: k,
+                type: "button",
+                className: "mneme-btn" + (factsAgent === k ? " mneme-btn--active" : ""),
+                onClick: () => setFactsAgent(k)
+              }, k))
+          ),
+          factsRows === null
+            ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsUnavailable"))
+            : h("div", null,
+                // 只列活跃行：归档的行留在账本里可追溯，不再回到清单上（恢复=重新添加）。
+                factsRows.filter((f) => f && f.status === "active").length === 0
+                  ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsEmpty"))
+                  : null,
+                factsRows.filter((f) => f && f.status === "active").map((f) =>
+                  factsEditId === f.id
+                    ? h("div", { key: f.id, className: "mneme-set-row" },
+                        h("input", {
+                          className: "mneme-set-input",
+                          style: { marginBottom: 0, flex: "1 1 auto" },
+                          value: factsEditDraft,
+                          autoFocus: true,
+                          onChange: (e) => setFactsEditDraft(e.target.value),
+                          onKeyDown: (e) => {
+                            if (e.key === "Enter") saveFactEdit();
+                            if (e.key === "Escape") cancelFactEdit();
+                          }
+                        }),
+                        h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: saveFactEdit },
+                          t("memory.settings.factsRowSave")),
+                        h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: cancelFactEdit },
+                          t("memory.settings.factsRowCancel"))
+                      )
+                    : h("div", { key: f.id, className: "mneme-set-row" },
+                        h("span", { className: "mneme-set-ruletext", style: { flex: "1 1 auto" } }, f.content),
+                        // ✎ 与 × 都走 mneme-set-del（悬停显形）：低频动作不常驻，
+                        // 与规则卡同一套视觉语言。
+                        h("button", {
+                          type: "button",
+                          className: "mneme-set-del",
+                          title: t("memory.settings.factsRowEdit"),
+                          "aria-label": t("memory.settings.factsRowEdit"),
+                          onClick: () => startFactEdit(f)
+                        }, "✎"),
+                        // 删除不二次确认：archive 可恢复（账本里留 before），打断比误删贵。
+                        h("button", {
+                          type: "button",
+                          className: "mneme-set-del",
+                          title: t("memory.settings.factsRowDelete"),
+                          "aria-label": t("memory.settings.factsRowDelete"),
+                          onClick: () => archiveFact(f.id)
+                        }, "×")
+                      )
+                ),
+                h("div", { style: { display: "flex", gap: 8, marginTop: 6 } },
+                  h("input", {
+                    className: "mneme-set-input",
+                    style: { marginBottom: 0 },
+                    value: factsNew,
+                    placeholder: t("memory.settings.factsAddPlaceholder"),
+                    onChange: (e) => setFactsNew(e.target.value),
+                    onKeyDown: (e) => { if (e.key === "Enter") addFact(); }
+                  }),
+                  h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: addFact },
+                    t("memory.settings.factsAdd"))
+                ),
+                // apply 回执：失败（role=alert）与跳重如实摆出来，全成才说成功。
+                factsNotice
+                  ? h("div", {
+                      className: "mneme-set-desc",
+                      role: factsNotice.kind === "fail" ? "alert" : undefined,
+                      style: { color: factsNotice.kind === "fail" ? "var(--mneme-danger)" : undefined }
+                    }, factsNotice.text)
+                  : null,
+                // 手动维护轮：总闸快照关着就禁用（features 只读不写）；快照没读到时
+                // 不锁——点下去由后端 409 disabled 给出同款解释。
+                h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 12 } },
+                  h("button", {
+                    type: "button",
+                    className: "mneme-btn",
+                    disabled: factsRunning || factsFlag === false,
+                    onClick: runFacts
+                  }, factsRunning ? t("memory.settings.factsRunning") : t("memory.settings.factsRun")),
+                  factsRunning ? h("span", { className: "mneme-saved" }, t("memory.settings.factsRunning")) : null
+                ),
+                factsFlag === false ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsGateOff")) : null,
+                // 五种结局各一句话（profileDraft 的 kind 分支同款）。
+                factsRunEnd?.kind === "ok" ? h("div", { className: "mneme-set-desc" },
+                  t("memory.settings.factsRunOk").replace("{n}", String(factsRunEnd.n))) : null,
+                factsRunEnd?.kind === "noop" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunNoop")) : null,
+                factsRunEnd?.kind === "disabled" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunDisabled")) : null,
+                factsRunEnd?.kind === "noroute" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunNoRoute")) : null,
+                factsRunEnd?.kind === "failed" ? h("div", { className: "mneme-set-desc", role: "alert", style: { color: "var(--mneme-danger)" } },
+                  t("memory.settings.factsRunFailed")) : null,
+                // 最近变更（账本尾 8 条，后端按新→旧给）：时间 + op + 内容变化 + actor 徽章。
+                h("div", { className: "mneme-featnumlabel", style: { marginTop: 12 } }, t("memory.settings.factsJournalTitle")),
+                factsJournal.length === 0 ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsJournalEmpty")) : null,
+                factsJournal.slice(0, 8).map((j) =>
+                  h("div", { key: j.id, className: "mneme-set-row", style: { flexWrap: "wrap", gap: 6 } },
+                    h("span", { className: "mneme-set-desc", title: j.at }, formatRelativeTime(j.at, t)),
+                    h("span", { className: "mneme-set-ruletext" }, factOpLabel(j.op)),
+                    h("span", { className: "mneme-set-desc", style: { flex: "1 1 160px" } },
+                      // add 只展示新值；archive 只展示旧值（op 标签已经说了归档）；
+                      // update 才有真正的 before→after。
+                      j.op === "add" ? "+ " + clipFactText(j.after)
+                        : j.op === "archive" ? clipFactText(j.before)
+                        : clipFactText(j.before) + " → " + clipFactText(j.after)),
+                    h("span", { className: "mneme-badge " + (j.actor === "manual" ? "mneme-badge--scope" : "mneme-badge--default") },
+                      t(j.actor === "manual" ? "memory.settings.factsActorManual" : "memory.settings.factsActorAuto"))
+                  )
+                ),
+                // 最近一轮维护（回执尾 1 条，后端按新→旧给）：状态 + 输入/应用计数。
+                factsRuns[0]
+                  ? h("div", { className: "mneme-set-desc" },
+                      t("memory.settings.factsRunLast")
+                      + (factsRuns[0].status === "ok" ? t("memory.settings.factsRunStatusOk")
+                        : factsRuns[0].status === "noop" ? t("memory.settings.factsRunStatusNoop")
+                        : factsRuns[0].status === "failed" ? t("memory.settings.factsRunStatusFailed")
+                        : String(factsRuns[0].status ?? ""))
+                      + " · " + t("memory.settings.factsRunCounts")
+                        .replace("{input}", String(Number(factsRuns[0].input_count) || 0))
+                        .replace("{ops}", String(Number(factsRuns[0].ops_applied) || 0)))
+                  : null
+              )
         ),
         // 规则 — numbered rows, hover reveals the delete affordance
         h("section", { className: "mneme-set-card" },

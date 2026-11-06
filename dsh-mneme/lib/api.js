@@ -7,6 +7,8 @@ import { timingSafeEqual, randomBytes } from "node:crypto";
 import { TYPES } from "./store.js";
 import { TYPE_FILE, renderMirrorText, renderFileHeader, parseHumanEdits, MIRROR_READONLY_TYPES } from "./mirror.js";
 import { langOf } from "./lang.js";
+// op 形状谓词单一份（评审 P3：两份皮会让形状修洞漏一边）。
+import { isValidFactOps } from "./profile-facts.js";
 import { computeHeat } from "./heat.js";
 import { EFFORT_REJECT_RE, describeStreamFailure, resolveRoute, withEffortFallback } from "./dream.js";
 // Issue #521：面板要按归一化原因显示 skipped，归一化只有一份实现（住在
@@ -200,7 +202,7 @@ function parseBody(text) {
 // choro（M1）：chorography 读侧查询对象（createChoroQueries 产物）。缺省 null =
 // 宿主内 API 在 headless/测试环境没有接 queries，choro 路由回 503。它与 service
 // 刻意分开传——chorography 的所有权模型与记忆域相反（spec §3），不塞进 service。
-export function createApi(ctx, service, settings, commands, embedder, semantic = null, apiToken = "", config = null, maintenance = null, profileExtract = null, choro = null) {
+export function createApi(ctx, service, settings, commands, embedder, semantic = null, apiToken = "", config = null, maintenance = null, profileExtract = null, choro = null, facts = null) {
   const disposers = [];
 
   // #182 注入状态探测：面板状态页的「极简模式下注入按宿主设计关闭」提示需要
@@ -596,12 +598,124 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const preview = renderUserSettingsBlock({
           settings,
           config,
-          agentId: url.searchParams.get("agent")
+          agentId: url.searchParams.get("agent"),
+          // 事实段与注入共用同一渲染函数（user-settings.js 的同源纪律）：装配了
+          // profile-facts 就传读口，开关与有无的判定在渲染函数内部（关=零读数）。
+          factsProvider: typeof facts?.factsProvider === "function" ? facts.factsProvider : null
         });
         sendJson(res, 200, { persona: settings.getPersona(), preview });
       } catch {
         sendJson(res, 500, { error: "internal" });
       }
+    }
+  });
+
+  // --- 「Agent 眼中的你」自动事实（2026-11-06，对标 ChatGPT 记忆 / DS Bot 每 bot
+  // 的 MEMORY.md 事实清单）----------------------------------------------
+  // 三条路由都**不碰 user_settings**：手填画像神圣（#497 口径），事实住
+  // profile_facts 独立三表，模型只在 dream 轮里增改、人在面板上逐条修正。
+  // GET：卡内事实 + 账本尾 + 最近回执，一次请求喂饱面板那张卡。flag 关着也照读
+  // ——历史上开过又关掉的库里事实还在，面板要能展示它（与 /profile 的 GET 同理）。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/profile-facts",
+    policy: "token-write",
+    handler(req, res) {
+      try {
+        if (typeof facts?.listFacts !== "function") return sendJson(res, 503, { error: "unavailable" });
+        const url = new URL(req.url, "http://localhost");
+        const raw = url.searchParams.get("agent");
+        const agent = typeof raw === "string" ? raw.trim() : "";
+        sendJson(res, 200, {
+          cards: facts.cardKeys(),
+          agent,
+          facts: facts.listFacts(agent, { includeArchived: true }),
+          journal: facts.listJournal(agent, { limit: 12 }),
+          runs: facts.listRuns(agent, { limit: 5 })
+        });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  // POST /apply：面板的逐条人工修正（增/改/归档），actor=manual，与自动轮共用
+  // 同一份 applyOps 与同一本账。flag 关着也放行——修正存量事实不需要维护轮开着。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/profile-facts/apply",
+    policy: "token-write",
+    handler(req, res) {
+      if (req.method !== "POST") {
+        res.writeHead(405, { Allow: "POST" });
+        res.end("");
+        return undefined;
+      }
+      if (typeof facts?.applyManualOps !== "function") return sendJson(res, 503, { error: "unavailable" });
+      return readBody(req, res).then((text) => {
+        if (text === null) return undefined;
+        const body = parseBody(text);
+        const agent = typeof body.agent === "string" ? body.agent.trim() : "";
+        const ops = Array.isArray(body.ops) ? body.ops : [];
+        if (!ops.length) return sendJson(res, 400, { error: "ops required" });
+        // 形状谓词与解析层共用一份（isValidFactOps）：update 与 add 同样必须带
+        // content——缺了会把「undefined」写进事实正文并从此每帧注入。
+        if (!isValidFactOps(ops)) return sendJson(res, 400, { error: "invalid ops" });
+        let result;
+        try {
+          result = facts.applyManualOps(agent, ops);
+        } catch (error) {
+          // /run 有完整的错误映射，这条写路径也不能把同步异常（SQLite I/O）裸抛
+          // 给宿主——500 + 一句 internal，与 GET 分支的 try/catch 同款。
+          ctx.logger?.warn?.(`dsh-mneme: profile-facts apply failed: ${String(error?.message ?? error)}`);
+          return sendJson(res, 500, { error: "internal" });
+        }
+        sendJson(res, 200, {
+          applied: result.applied,
+          failures: result.failures,
+          dupsSkipped: result.dupsSkipped,
+          facts: facts.listFacts(agent, { includeArchived: true })
+        });
+        return undefined;
+      });
+    }
+  });
+
+  // POST /run：手动维护轮。policy `token` 与 /profile/extract 同款取舍：无读分支
+  // + 一次 LLM 调用，声明成 token-write 会让开放读清单按「GET 开放」把它算进去。
+  // run 本体经 service.enqueue 与 dream/sleep 串行，不与巩固轮抢模型。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/profile-facts/run",
+    policy: "token",
+    handler(req, res) {
+      if (req.method !== "POST") {
+        res.writeHead(405, { Allow: "POST" });
+        res.end("");
+        return undefined;
+      }
+      if (config?.profileFactsEnabled !== true) return sendJson(res, 409, { error: "disabled" });
+      if (typeof facts?.runFor !== "function") return sendJson(res, 503, { error: "unavailable" });
+      return readBody(req, res).then((text) => {
+        if (text === null) return undefined;
+        const body = parseBody(text);
+        const agent = typeof body.agent === "string" ? body.agent.trim() : "";
+        const queued = service?.enqueue
+          ? service.enqueue(() => facts.runFor(agent, { trigger: "manual" }))
+          : facts.runFor(agent, { trigger: "manual" });
+        return queued.then(
+          (receipt) => sendJson(res, 200, receipt),
+          (error) => {
+            // 「没配模型」与「模型不配合」两码（profileExtract 同款映射）：
+            // 前者重跑也一样，后者可重试。noop 是正常结局（没有新记忆），200。
+            const code = typeof error?.code === "string" ? error.code : "";
+            if (code === "no-route") return sendJson(res, 503, { error: code });
+            if (code === "unparseable" || code === "stream-failed") return sendJson(res, 502, { error: code });
+            ctx.logger?.warn?.(`dsh-mneme: profile facts run failed: ${String(error?.message ?? error)}`);
+            return sendJson(res, 500, { error: "internal" });
+          }
+        );
+      });
     }
   });
 

@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+- **「Agent 眼中的你」自动事实：按会话身份分卡维护一份逐条事实清单，dream 巩固后自动更新、注入生效、面板可管（2026-11-06 需求，对标 ChatGPT 记忆 / DS Bot 每 bot 一份 MEMORY.md 的设计）**。`profileFactsEnabled` opt-in 默认关。
+
+  - **形态是「逐条事实」不是「整段重写」**：每张卡一份事实清单（稳定、具体、一句话），模型在维护轮里提 add/update/archive 三种 op，事实可独立增改归档、可被人在面板上逐条修正；`profile_fact_journal` 逐 op 记账（scope_changes 式 before/after + actor），`profile_fact_runs` 每轮一回执（dream_runs 式）。维护 prompt 三段硬约束与 profileExtract 同源：输入是数据不是指令（同一份 fence 断链）、禁止给助手起名设人格（#497 身份撞车）、只依据给定材料。
+  - **手填画像神圣（#497 口径不变）**：事实住 `profile_facts` 独立三表，任何路径都不写 `user_settings`——注入顺序是设计稿⑥的延伸：人格 → 手填画像 → 自动事实 → 规则。卡片寻址与 persona 同口径（byAgent 命中 / strict 无卡不注入 / 非 strict 落 default）。
+  - **输入严格分区**：agent 卡只吃 `agent_scope=自己` 的记忆行，default 卡只吃 NULL 行，外来行（source=imported）整体排除——「本库不巩固别人导入的原文」延伸到画像事实。游标从最近一次 ok 回执读，**失败不推进**（蒸馏游标同款纪律，failed 轮重跑同一窗口）；无增量输入连 noop 回执都不落（自动轮零噪音）。
+  - **触发**：dream 巩固轮成功后 fire-and-forget 逐卡维护（经 `service.enqueue` 与 sleep/巩固串行，失败不计入 dream 退避）；面板「立即更新」手动轮走同一条路。维护轮上限 12 op/轮（超出的切片丢弃并记入回执 detail）。
+  - **注入预算**：事实段 40 行 / 1200 字符双帽 + 尾注如实报数（该块此前无截断机制、从不轮换，不设上限会让一次失控的维护轮撑爆每帧 systemPrompt）；事实内容过既有 `escapePromptVars`（宿主模板插值对裸 `{{` 会整轮崩）。
+  - **三条新路由**：`GET /profile-facts`（token-write，flag 关也照读——存量事实要能展示）、`POST /profile-facts/apply`（token-write，面板逐条人工修正，与自动轮共用同一份 applyOps 与账本）、`POST /profile-facts/run`（**token**，同 /profile/extract 取舍：无读分支 + 一次 LLM；409 disabled / 503 no-route / 502 unparseable·stream-failed）。SECURITY.md 双语四张清单同步。
+  - **面板**：「Agent 眼中的你」卡后新增事实管理卡——卡选择器（default + agent 键）、事实行内编辑/归档/添加、最近变更 8 条（op + before→after + actor 徽章）、最近一轮回执状态行、维护轮五种结局各有一句人话（ok·N 条 / noop / 功能关 / 先去选模型 / 失败可重试）；apply 与 run 成功路径都刷新注入预览（事实段是注入文本的一部分）。功能开关进 enhance 组。
+  - **分享包不含事实**（v1 明确出界）：事实是本实例 agent 对本用户的认知，跨库语义未定。
+  - **验证**：新增 `test/profile-facts.test.js` 17 例（ops 解析形状、跨卡守卫、去重跳过、no-route/noop/unparseable 可区分、失败不推进游标、重跑即 noop、scope 分区与外来行排除、autoPassCandidates、账本裁剪、注入顺序/strict 寻址/关闸零读数/截断尾注/花括号转义、HTTP 面 405/400/401/409/503/502）；`test/client.test.js` 新增面板锁（三路由对齐、五种结局 i18n、卡片位置、事实域切片内无 PUT /profile 字面量——#497 的镜像锁）；旗标计数锁 113 → **114**；docs-config-keys 锁补 CONFIGURATION.md 行。全量 `npm test` 2827 tests / 2826 pass / 0 fail / 1 skipped；check-sync 95 一致。
+
 - **面板跨组件失效广播：改库动作后记忆列表/实体页/状态工作台即时重取，不再「关面板重开才看到变化」**（用户 2026-11-06 反馈：裁决完冲突要关掉插件面板才能看到败者归档落地）。
 
   - **病灶不是没刷新，是没广播**：全面板此前唯一的跨组件失效机制是 `mneme:conflicts-changed`（一个派发点、三个状态侧监听者，全是状态页小组件）；记忆列表与冲突徽章只靠弹层成功回调、手动刷新按钮与 30s 首页合并续命，实体页与归档工作台干脆只有挂载时取一次。tab 切换本就卸载重挂，所以症状集中在同一次打开的面板内。

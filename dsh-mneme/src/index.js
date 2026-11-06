@@ -28,6 +28,8 @@ import { registerChoroCommand } from "./choro-command.js";
 // 收尾档：面板重建按钮走 runChoroT0（P34；T1 不上 HTTP）。
 import { runChoroT0 } from "./wiki/t0.js";
 import { createSettings } from "./settings.js";
+// 「Agent 眼中的你」自动事实（2026-11-06）：逐卡事实清单 + dream 后自动维护轮。
+import { createProfileFacts } from "./profile-facts.js";
 import { createCommandManager } from "./commands.js";
 import { createExecutionRecorder } from "./pipeline-runner.js";
 import { registerMoRunCommand } from "./pipeline-command.js";
@@ -439,6 +441,13 @@ export const apply = (ctx, config) => {
     }
   }
 
+  // 「Agent 眼中的你」自动事实（2026-11-06，opt-in：profileFactsEnabled）：dream 巩固
+  // 轮成功后的逐卡维护 + 面板手动轮（api.js）+ 注入事实段（factsProvider 传注入器与
+  // 预览路由）。装配与开关无关——闸在消费侧（注入渲染 / 自动轮判空 / 路由 409），
+  // 与 profileExtractor 同款：503 只该指装配缺失，不该被读成「用户没开」。
+  // 位置必须在 dream 调度器之前：onRun 的 fire-and-forget 收尾要引用它。
+  const profileFacts = createProfileFacts({ ctx, service, store, config: cfg, logger: ctx.logger });
+
   // Dream scheduler: automatic consolidation + summary runs, triggered by
   // store growth. Writes through the service fire the dream hook, which asks
   // the scheduler to (re)schedule a run once absolute and since-last-run
@@ -488,7 +497,26 @@ export const apply = (ctx, config) => {
           metadata: JSON.stringify({ count, chars })
         });
       },
-      onRun: () => (dream ? dream.runDream(ctx, service, cfg) : Promise.resolve({ ok: true, skipped: true }))
+      onRun: () => {
+        const run = dream
+          ? dream.runDream(ctx, service, cfg)
+          : Promise.resolve({ ok: true, skipped: true });
+        // 画像事实自动维护：挂在巩固轮之后 fire-and-forget。刻意不并进 onRun 的
+        // promise——profileFacts 的失败不能被计入 dream 的失败退避
+        // （autoDreamFailureBackoff 的口径是巩固轮自身）；逐卡经 service.enqueue
+        // 串行，不与 sleep/下一轮巩固抢模型。单卡失败只 warn，账本已有 failed 回执。
+        run.then(async (rep) => {
+          if (cfg.profileFactsEnabled !== true || (rep && rep.ok === false)) return;
+          for (const key of profileFacts.autoPassCandidates()) {
+            try {
+              await service.enqueue(() => profileFacts.runFor(key, { trigger: "auto" }));
+            } catch (error) {
+              ctx.logger?.warn?.(`[dsh-mneme] profile-facts auto pass failed for card "${key || "default"}": ${error?.message ?? error}`);
+            }
+          }
+        }).catch(() => { /* dream 自身失败走调度器退避，这里不做第二遍日志 */ });
+        return run;
+      }
     });
     service.setDreamHook(() => dream.maybeSchedule(service));
   }
@@ -587,7 +615,7 @@ export const apply = (ctx, config) => {
 
   ctx.inject(["systemPrompt"], (promptCtx) => {
     if (cfg.autoInject) {
-      disposers.push(createInjector(promptCtx, service, settings, cfg, preInjectGate, sessionGate, choroInject));
+      disposers.push(createInjector(promptCtx, service, settings, cfg, preInjectGate, sessionGate, choroInject, profileFacts.factsProvider));
     }
   });
 
@@ -657,7 +685,7 @@ export const apply = (ctx, config) => {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,
       list: () => []
-    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro);
+    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro, profileFacts);
     disposers.push(api.dispose);
   }
 

@@ -1022,6 +1022,19 @@ export const Config = z.object({
   // preInjectGate.enabled 的定性）；是预设不是强制，用户显式勾选仍然赢。
   profileExtractEnabled: z.boolean().default(false),
 
+  // 「Agent 眼中的你」自动事实（2026-11-06，对标 ChatGPT 记忆 / DS Bot 每 bot 的
+  // MEMORY.md）：dream 巩固轮成功后按会话身份分卡增量维护一份逐条事实清单，
+  // 注入在手填画像之后（src/user-settings.js 的渲染顺序），面板可手动触发与逐条
+  // 修正（POST /api/dsh-mneme/profile-facts/*）。与 profileExtractEnabled 的三层
+  // 理由同源：① 自动轮是 dream 级别的 LLM 调用 + 读上百行记忆，不该在没人要求时
+  // 挂在面上；② 产物每帧注入，编造的代价不对称（维护 prompt 的三段硬约束与
+  // profileExtract 同源）；③ 它**不写** user_settings——手填画像神圣（#497 口径
+  // 不变），事实住独立的 profile_facts 表，可被人在面板上逐条修正。
+  // 进 LIGHT_MODE_OFF：自动维护轮与低资源档互斥（同 organizeEnabled 的定性）；
+  // 是预设不是强制，用户显式勾选仍然赢。注入段本身极轻（几十行文本），不额外
+  // 占用轻量档预算的考量见键注释末句。
+  profileFactsEnabled: z.boolean().default(false),
+
   // #539 逐会话无痕：总开关默认关，保持旧用户行为；子代理选择器默认开，但总开关
   // 未开时不生效。手动名单是精确的 session id 匹配。
   sessionGateEnabled: z.boolean().default(false),
@@ -1063,6 +1076,10 @@ const LIGHT_MODE_OFF = [
   // 要求 agent 拿住上一轮的 run_id 再回来，弱模型漏这一环就是一次被拒的调用；
   // 预设关、不剥夺显式开启的权利（合并顺序同 continuityRescueEnabled）。
   "organizeEnabled",
+  // 轻量档不开画像事实自动维护轮（2026-11-06）：dream 后的逐卡 LLM 调用 + 读上百行
+  // 记忆，与低资源档互斥（同 organizeEnabled 的定性）。注入段本身是几十行常驻文本，
+  // 关掉自动轮不省注入成本、省的是维护调用——这正是该进这张表的路径。
+  "profileFactsEnabled",
   // 轻量模式不开热计算（heat 属于重型增强；关掉后 sleep 降级也退回纯时间分层）。
   "heatEnabled",
   // 轻量模式不开注入前判定（#380：LLM-per-turn 附加路径，每帧注入多一次池级
