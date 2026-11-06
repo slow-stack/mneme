@@ -466,3 +466,27 @@ test("run 的 policy 是 token：配了 token 又不带 token 的 POST 被挡在
   assert.equal(called, 0, "鉴权必须在这次模型调用之前");
   store.close();
 });
+
+test("strict 寻址：事实一张身份卡都没建时仍落 default（#587 例外，与人格同口径）", () => {
+  // 人格那张例外同样适用于事实：只建了别的身份卡、没这一张 → 不落 default（上面
+  // 那条已锁）；一张都没建 → default 是唯一那份认知，不能因为开了严格寻址就丢掉。
+  const onlyDefault = () => ({ default: ["默认卡事实"], byAgent: {} });
+  const strictEmpty = renderUserSettingsBlock({
+    settings: settingsStub,
+    config: { ...configOn, personaStrictAddressing: true },
+    agentId: "standard",
+    factsProvider: onlyDefault
+  });
+  assert.ok(strictEmpty.text.includes("默认卡事实"), "byAgent 整体为空时严格寻址仍落 default 事实");
+  assert.equal(resolveFactsCard(onlyDefault(), "standard", { strict: true }).source, "default");
+  // 一旦建过任意一张身份卡，例外失效，严格语义恢复
+  const withOne = () => ({ default: ["默认卡事实"], byAgent: { botA: ["botA 卡事实"] } });
+  assert.equal(resolveFactsCard(withOne(), "standard", { strict: true }).source, "none");
+  assert.equal(resolveFactsCard(withOne(), "botA", { strict: true }).source, "byAgent");
+  // 关着的身份卡也算「建过」。⚠️ 生产不产空数组键：唯一注入读口 listActiveFactsGrouped
+  // 建键必带一条内容（(grouped.byAgent[k] ??= []).push(content)），settings.js 三个写入点
+  // 也是空卡直接 delete。这条是防御性形状断言——锁住判据只看键数、不数条目，将来谁改成
+  // 「有内容才算建过」就会被它拦住（Ephor 复核 #587 时指出，2026-11-06）。
+  const closedOne = () => ({ default: ["默认卡事实"], byAgent: { botA: [] } });
+  assert.equal(resolveFactsCard(closedOne(), "standard", { strict: true }).source, "none");
+});
