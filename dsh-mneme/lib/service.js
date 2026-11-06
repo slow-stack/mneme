@@ -1849,6 +1849,76 @@ export function createService({ store, mirror, config, onWrite, logger, document
         candidates = merged;
       }
     }
+    // pin 池取数修复（#249 第一批）：pin 类行被混合合并的封顶挡在候选池外面。
+    // `merged.length >= poolSize` 在 pin 筛选**之前**就封顶（生产 maxItems=5 →
+    // poolSize=10，向量路一次正好返回 10 条即 break），规则窗口里那些
+    // constraint/preference 于是一条都进不了 candidates，pin 池只能从那 10 条里
+    // 碰运气选——而本文件注释（:1919）与 issue #249 验收都写着「pin 不占
+    // maxItems 名额」。实测真库 maxItems=5 时 pin shown 只有 2/5，补回后恒 5/5；
+    // maxItems=10（poolSize=20）时前后都是 5/5——所以这不是多给名额，只是把被
+    // 向量路吃掉的那部分补回来。
+    // 两条纪律：①只在 pin 预算 > 0 时补，预算关时 candidates 与改前逐字节一致；
+    // ②只补到候选池尾部，后面的 strictScope（:1923）与 scopeState（:1930）两道
+    // 闸门照旧作用其上，「pin 池 eligible 取自过滤之后的候选」这条位置纪律不变。
+    //
+    // #249 第二批（显式 pin）：判据从「类型」换成「用户亲手钉的 id」。两种口径
+    // 由 pinned_memories 表**里能用的行**回答，而不是由「表里有几行」回答：
+    // - 有可用行 → explicit：按 id 点查（store.listByIdsForInject）取回行，于是
+    //   **200 行规则窗口之外的记忆也能进**（这是第二层存在的理由本身）；不再按
+    //   type 认 pin（写得最全的那版往往是 pattern，限类型就只能拿残缺版）。
+    // - 一条可用行都没有 → 回落旧的类型口径，升级即等价；她钉第一条才切换。
+    //
+    // ⚠ 判据为什么必须看「能用的」而不是 countPinned()>0：pin 行会在 memories
+    // 那边被归档、遗忘、硬删，而 pinned_memories 对这三种一无所知。用 count(*)
+    // 当判据，只要表里剩一行（哪怕是归档行），pinMode 就永远钉在 explicit，而
+    // eligible 恒为空 → pin 全灭且**永不回落**，无日志无报错——正是这批改动要
+    // 治的那类静默失败。删除路径补 DELETE 只堵「硬删」这一种，归档/遗忘比硬删
+    // 常见得多，所以根因在判据，不在清理。
+    // 只要还有一条能用就留在 explicit、只注入能用的那几条：若因为「有 3 条归档」
+    // 就整段回落到类型口径，会突然冒出一批她没钉过的条目，那比少注入更糟。
+    // 补位仍在这段：早于 topic 重排（:1930）、strictScope（:1972）、scopeState
+    // （:1979），所以越权行与暂停作用域行照样过两道闸——pin 不是绕过闸门的通道。
+    // 预算 0 时整段不执行：不读表、不改 candidates，逐字节等于改前。
+    const pinnedBudget = Math.max(0, Math.min(5, Math.floor(config?.pinnedInjectBudget ?? 0)));
+    // null | "explicit" | "type-fallback" | "fallback-none-usable"
+    let pinMode = null;
+    let pinRows = [];              // explicit：按 pin 先后（created_at ASC）排好、已滤遗忘/归档
+    let pinOutsideWindow = 0;      // explicit：点查取回、原本不在候选池的行数（观测点）
+    if (pinnedBudget > 0) {
+      let pinRecords = [];
+      try {
+        // 先读表（本表行数以个位计）；能用的行下一步按 id 点查回来再判。
+        pinRecords = store.countPinned() > 0 ? store.listPinned() : [];
+      } catch { pinRecords = []; }
+      if (pinRecords.length > 0) {
+        try {
+          // 点查带列裁剪（listByIdsForInject 复用 memoryColumnList，已排除 embedding）。
+          // 遗忘/归档行在这里就滤掉：pin 不是复活通道（验收第 7 条）。
+          const byId = new Map(store.listByIdsForInject(pinRecords.map((p) => p.memory_id))
+            .map((m) => [m.id, m]));
+          pinRows = pinRecords.map((p) => byId.get(p.memory_id)).filter((m) => m && !m.forgotten && !m.archived);
+        } catch { pinRows = []; }
+      }
+      if (pinRows.length > 0) {
+        pinMode = "explicit";
+        const knownIds = new Set(candidates.map((m) => m.id));
+        const additions = pinRows.filter((m) => !knownIds.has(m.id));
+        pinOutsideWindow = additions.length;
+        if (additions.length) candidates = [...candidates, ...additions];
+      } else {
+        // 表空，或表里有行但一条都用不了（归档/遗忘/被删）。两种都回落类型口径，
+        // 但 source 分开记：后者是一次**静默降级**，必须留痕，否则读的人只会看到
+        // 「pin 一条都没注入」而不知道为什么。
+        pinMode = pinRecords.length > 0 ? "fallback-none-usable" : "type-fallback";
+        if (candidates !== items) {
+          const knownIds = new Set(candidates.map((m) => m.id));
+          const spilledPins = items.filter(
+            (m) => PINNED_MEMORY_TYPES.has(m.type) && m.graphHint !== true && !knownIds.has(m.id)
+          );
+          if (spilledPins.length) candidates = [...candidates, ...spilledPins];
+        }
+      }
+    }
     // Topic-ranked selection (v0.5.0 2.2): when the current query's vector is
     // available the whole candidate list is re-ordered by similarity to that
     // vector, so the injected slots go to memories on the current topic
@@ -1909,12 +1979,24 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // （验收：pin 不参与跨轮轮换）。独立预算的两层意义：pin 既不占 maxItems
     // 名额、也不被 document 预算截断，因此不会把当前任务需要的情景候选挤出去；
     // 超预算的条数回报给调用方，在块内如实标注（绝不静默省略）。
-    const pinnedBudget = Math.max(0, Math.min(5, Math.floor(config?.pinnedInjectBudget ?? 0)));
+    // （pinnedBudget 与口径在候选池那段已算好——见 :1876 起的 #249 第二批注释。）
     // eligible 留到块外：未展示条数要等 general 槽选完才算得准（见 selected 之后）。
     // graphHint 行不进 pin 池：pin 是「每轮必进的约束/偏好」，而线索行按定义是
     // 「链路信息、非事实断言」，且 pin 长在候选池遍历之前——不排除的话，保守档
     // （graphInjectHint 关）也能从 pin 侧把它放回注入块，线索开关就被绕过去了。
-    const eligible = pinnedBudget > 0 ? candidates.filter((m) => PINNED_MEMORY_TYPES.has(m.type) && m.graphHint !== true) : [];
+    //
+    // 两种口径（#249 第二批）：explicit 时 eligible 就是「钉过、点查取回、且过了
+    // 两道闸（仍在 candidates 里）」的行，次序按 pin 先后（created_at ASC）——
+    // 稳定偏好按「什么时候被钉」排，而不是按「最近改过」，正是第二层要修的
+    // 那个排序维度；type-fallback 时保持旧口径（候选里按类型筛），升级即等价。
+    const eligible = pinnedBudget > 0
+      ? (pinMode === "explicit"
+        ? (() => {
+            const live = new Set(candidates.map((m) => m.id));
+            return pinRows.filter((m) => live.has(m.id) && m.graphHint !== true);
+          })()
+        : candidates.filter((m) => PINNED_MEMORY_TYPES.has(m.type) && m.graphHint !== true))
+      : [];
     let pinned = [];
     if (pinnedBudget > 0 && eligible.length > 0) {
       pinned = eligible.slice(0, pinnedBudget);
@@ -1969,6 +2051,17 @@ export function createService({ store, mirror, config, onWrite, logger, document
       const shownIds = new Set(selected.map((m) => m.id));
       pinnedStats.shown = pinned.length;
       pinnedStats.suppressed = eligible.filter((m) => !shownIds.has(m.id)).length;
+      // #249 第二批：口径来源与「绕开窗口」的观测点。source 四档（预算 0 时整个
+      // 键不出现）：
+      //   "explicit"              用户钉的行里有能用的，按 pin 先后注入
+      //   "type-fallback"         表里从没钉过（含升级后还没钉），走旧类型口径
+      //   "fallback-none-usable"  钉过，但那些行全被归档/遗忘/删了 —— 这次是一次
+      //                           静默降级，留这一档就是为了让它不再静默
+      // 前两档的行为差异在「窗口外也能进」：只有 explicit 享受点查补位，
+      // outsideWindow 也只数这批（cognee 那条「别让它进候选池」的等价做法）；
+      // 两个 fallback 档恒 0（它们只能从窗口里取）。
+      pinnedStats.source = pinMode ?? undefined;
+      pinnedStats.outsideWindow = pinOutsideWindow;
     }
     // Issue #380：注入前判定（preInjectGate）在这里消费——**必须在 touchRecalled
     // 之前**，与 strictScope 同纪律（见本文件 :419-422 的注释：闸门放在记账之后，
@@ -2688,6 +2781,15 @@ export function createService({ store, mirror, config, onWrite, logger, document
     setScopeState: (r) => store.setScopeState(r),
     getScopeState: (d, v) => store.getScopeState(d, v),
     listScopeStates: (o) => store.listScopeStates(o),
+    // #249 第二批：pin 的读写口。这四个都是纯 bookkeeping——它们不动任何记忆行，
+    // 只动 pinned_memories 这张关系表，所以照 setScopeState 那一批的纪律**不挂
+    // write hook**（不 afterSync、不 notifyWrite）：pin 一条不该让 mirror 重渲染，
+    // 也不该把那行记忆的 heat/embedding 重新排队。注入侧只经 store 读本表
+    // （listPinned / listByIdsForInject），写侧只经这里，两处都绕开 memories 主表。
+    pinMemory: (id, opts) => store.pinMemory(id, opts),
+    unpinMemory: (id) => store.unpinMemory(id),
+    listPinned: () => store.listPinned(),
+    countPinned: () => store.countPinned(),
     // 巩固（dream.js）侧的过滤出口。暴露出来而不是让 dream 自己读状态表，是因为
     // 判定只能有一份实现（gateByScope 注释里那条「过滤点漂移」的教训）；dream 侧
     // 的三个读入口各自的附加条件不同（有的排 forgotten、有的不排），但「被按下的
