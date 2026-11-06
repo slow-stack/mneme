@@ -11,6 +11,8 @@ import { normalizeScopeStateDimension, normalizeScopeStateValue, normalizeScopeS
 import { lastUserQuery } from "./inject.js";
 
 const TEXT_OUTPUT = (text) => [{ type: "text", text }];
+const incompleteChoroSearch = (pages) =>
+  `Search was incomplete because these pages could not be read (${pages.join(", ")}). Check the local checkout and page permissions.`;
 // Per-registry tool-name registry: guards against duplicate registration on
 // live patch reload (DSH Desktop `patchReload: "live"`) where a plugin may be
 // re-applied on the same tools registry without an intervening unregister.
@@ -92,14 +94,17 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
   // flag 关闭时恒返回 null——写入不标注，检索不加权，行为与 A1 前完全一致。
   // logger 透传：registry 反查失败时 warnOnce 才有出口（否则静默降级无观测）。
   const resolveSessionScope = createScopeResolver({ ctx, config, logger: ctx.logger });
-  // choro 工具共用的 repo 解析（M1）：不带 repo 且只有一个登记仓时自动收敛；
-  // 多仓歧义时把可选清单带回给模型（render 层会把它转成人话）。三个 execute 里
-  // 都先走这里，错误形状统一 { error, ... }，output.schema 容忍多余键由
-  // additionalProperties:false + render 兜底——错误分支直接透传给渲染层判。
+  // 宿主在 render 前按成功 schema 校验返回值，仓库解析失败要走工具错误通道。
   const resolveChoroRepo = (ref) => {
-    const row = choro ? choro.resolveRepo(ref) : null;
-    if (!row) return { error: "no-repos", hint: "run `dsh-mneme-choro <repo> --apply` first (registers the repository)" };
-    if (row.ambiguous) return { error: "repo-ambiguous", repos: row.ambiguous, hint: "pass repo id or name" };
+    const row = choro.resolveRepo(ref);
+    if (!row) {
+      const reason = ref ? `Repository ${JSON.stringify(ref)} is not registered.` : "No repository is registered for chorography.";
+      throw new Error(`${reason} Run \`dsh-mneme-choro <repo> --apply\` to register a repository.`);
+    }
+    if (row.ambiguous) {
+      const choices = row.ambiguous.map(({ id, name }) => `${id} (${name})`).join(", ");
+      throw new Error(`More than one repository is registered. Pass one of these repository IDs (${choices}).`);
+    }
     return row;
   };
   // #249 能力说明（injectGuidanceEnabled）：开启时给「何时用」最有歧义的两个
@@ -1160,7 +1165,6 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
       },
       async execute(args) {
         const repo = resolveChoroRepo(args?.repo);
-        if (repo.error) return repo;
         const { modules, edges } = choro.moduleMap(repo.id);
         return { repo: repo.name, modules, edges };
       }
@@ -1186,10 +1190,16 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
       },
       async execute(args) {
         const repo = resolveChoroRepo(args?.repo);
-        if (repo.error) return repo;
         const page = choro.readPage(repo.id, args?.slug);
-        if (!page) return { error: "page-not-found", slug: String(args?.slug ?? ""), hint: "use choro_module_map to list slugs" };
-        if (page.error) return page;
+        if (!page) {
+          throw new Error(`Page ${JSON.stringify(args?.slug ?? "")} was not found. Use choro_module_map to list page slugs.`);
+        }
+        if (page.error === "page-missing") {
+          throw new Error(`Page ${JSON.stringify(page.slug)} is missing from disk (${page.relPath}). Check the local checkout or run \`dsh-mneme-choro <repo> --apply\` to rebuild it.`);
+        }
+        if (page.error) {
+          throw new Error(`Page ${JSON.stringify(page.slug)} could not be read (${page.relPath}). Check the local file and its permissions.`);
+        }
         return { slug: page.slug, content: page.content };
       }
     }),
@@ -1208,26 +1218,29 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
           type: "object",
           additionalProperties: false,
           properties: {
-            hits: { type: "array", required: true, items: { type: "object", additionalProperties: true } }
+            hits: { type: "array", required: true, items: { type: "object", additionalProperties: true } },
+            unreadablePages: { type: "array", items: { type: "string" }, description: "Page slugs that could not be read during the search" }
           }
         },
         render: (_args, value) => {
-          const hits = value.hits ?? [];
+          const { hits, unreadablePages } = value;
           if (hits.length === 0) return TEXT_OUTPUT("0 hits.");
-          return TEXT_OUTPUT(hits
-            .map((hit) => `${hit.slug} · ${hit.section} · L${hit.line}: ${hit.excerpt}`)
-            .join("\n"));
+          const lines = hits.map((hit) => `${hit.slug} · ${hit.section} · L${hit.line}: ${hit.excerpt}`);
+          if (unreadablePages?.length) lines.push("", incompleteChoroSearch(unreadablePages));
+          return TEXT_OUTPUT(lines.join("\n"));
         }
       },
       async execute(args) {
         const repo = resolveChoroRepo(args?.repo);
-        if (repo.error) return repo;
-        return {
-          hits: choro.search(repo.id, args?.query, {
-            moduleSlug: args?.module ?? null,
-            limit: args?.limit
-          })
-        };
+        const unreadablePages = [];
+        const hits = choro.search(repo.id, args?.query, {
+          moduleSlug: args?.module ?? null,
+          limit: args?.limit,
+          onUnreadablePage: (slug) => unreadablePages.push(slug)
+        });
+        if (unreadablePages.length === 0) return { hits };
+        if (hits.length === 0) throw new Error(incompleteChoroSearch(unreadablePages));
+        return { hits, unreadablePages };
       }
     })
   ];

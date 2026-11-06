@@ -1,41 +1,45 @@
-// chorography 只读工具的回归锁（M1）。锁四件事：
-// 1. 默认配置下三个 choro_* 工具根本不注册（模型连名字都看不到，与 memory_organize
-//    同款反向语义）——tools.test.js 的 11 工具清单锁管默认面，这里管开启面；
-// 2. chorographyEnabled 开 + queries 装配 → 三工具在场；
-// 3. 开了开关但 queries 缺装配（null）→ 同样不在场（「开了没装配」与「没开」
-//    对模型都不可见，可区分性由面板路由的 409/503 负责）；
-// 4. execute 的错误形状：多仓歧义带回可选清单、未知 slug 报 page-not-found。
+// #579：从宿主的工具执行入口验证，绕过 schema 校验直调 execute 会漏掉原故障。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { Context } from "@deepseek-ai/cordis";
+import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
+import ToolRuntime from "@deepseek-ai/dsh-tools";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createTools } from "../src/tools.js";
 import { createChoroQueries } from "../src/wiki/queries.js";
 import { runChoroT0 } from "../src/wiki/t0.js";
 
-function setup(config = {}, choro) {
+const choroArgs = {
+  choro_module_map: {},
+  choro_read_page: { slug: "src" },
+  choro_search: { query: "b.js" }
+};
+
+async function setup(t, config = {}, withChoro = false) {
   const store = createStore(":memory:");
+  t.after(() => store.close());
+  const ctx = new Context();
+  const prompt = await ctx.plugin(SystemPrompt);
+  const runtime = await ctx.plugin(ToolRuntime);
+  t.after(() => { runtime.dispose(); prompt.dispose(); });
+  const tools = ctx.get("tools");
   const service = createService({ store, mirror: null, config: {} });
-  const registered = [];
-  const ctx = {
-    tools: {
-      register(def) {
-        registered.push(def);
-        return () => {};
-      }
-    }
-  };
-  createTools(ctx, service, config, null, null, choro);
-  return { registered, store };
+  createTools({ tools }, service, config, null, null, withChoro ? createChoroQueries({ store }) : null);
+  const call = (name, args = {}) => tools.execute({
+    name, callId: name, arguments: args, signal: new AbortController().signal
+  });
+  return { tools, store, call };
 }
 
-function makeRepo(store) {
+function makeRepo(t, store, name = "toolfix") {
   const root = mkdtempSync(join(tmpdir(), "choro-tools-"));
-  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "toolfix", scripts: { test: "node --test" } }, null, 2) + "\n", "utf8");
+  t.after(() => rmTempBestEffort(root));
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name, scripts: { test: "node --test" } }, null, 2) + "\n", "utf8");
   mkdirSync(join(root, "src"), { recursive: true });
   writeFileSync(join(root, "src", "a.js"), 'import { b } from "./b.js";\nexport const a = () => b();\n', "utf8");
   writeFileSync(join(root, "src", "b.js"), "export const b = () => 1;\n", "utf8");
@@ -55,67 +59,118 @@ function rmTempBestEffort(dir) {
   }
 }
 
-test("默认配置下三个 choro 工具不注册（模型看不到就不会调）", () => {
-  const { registered } = setup();
-  const names = registered.map((t) => t.name);
-  for (const name of ["choro_module_map", "choro_read_page", "choro_search"]) {
-    assert.ok(!names.includes(name), `${name} 默认缺席`);
+function expectToolError(result, pattern) {
+  const message = result.content[0]?.text ?? "";
+  assert.equal(result.isError, true, message);
+  assert.match(message, pattern);
+}
+
+test("默认配置下三个 choro 工具不注册（模型看不到就不会调）", async (t) => {
+  const { tools } = await setup(t, {}, true);
+  for (const name of Object.keys(choroArgs)) {
+    assert.ok(!tools.get(name), `${name} 默认缺席`);
   }
 });
 
-test("开关关但 queries 缺装配 → 同样缺席（可区分性归路由层）", () => {
-  const { registered } = setup({ chorographyEnabled: true }, null);
-  const names = registered.map((t) => t.name);
-  assert.ok(!names.includes("choro_search"));
+test("开关开但 queries 缺装配 → 同样缺席（可区分性归路由层）", async (t) => {
+  const { tools } = await setup(t, { chorographyEnabled: true });
+  for (const name of Object.keys(choroArgs)) assert.ok(!tools.get(name));
 });
 
-test("开启后三工具在场，execute 走通读侧三件套", async () => {
-  const store = createStore(":memory:");
-  const root = makeRepo(store);
-  try {
-    const choro = createChoroQueries({ store });
-    const { registered } = setup({ chorographyEnabled: true }, choro);
-    const names = registered.map((t) => t.name);
-    for (const name of ["choro_module_map", "choro_read_page", "choro_search"]) {
-      assert.ok(names.includes(name), `${name} 在场`);
-    }
-    const byName = Object.fromEntries(registered.map((t) => [t.name, t]));
+test("开启后三个只读工具的成功结果通过宿主校验", async (t) => {
+  const { call, store } = await setup(t, { chorographyEnabled: true }, true);
+  makeRepo(t, store);
+  const map = await call("choro_module_map");
+  assert.equal(map.isError, false);
+  assert.equal(map.value.repo, "toolfix");
+  assert.ok(map.value.modules.length >= 2);
+  const page = await call("choro_read_page", { slug: "src" });
+  assert.equal(page.isError, false);
+  assert.equal(page.value.slug, "src");
+  assert.match(page.value.content, /## 文件清单/);
+  const search = await call("choro_search", { query: "b.js" });
+  assert.equal(search.isError, false);
+  assert.ok(search.value.hits.length >= 1);
+  assert.equal(search.value.unreadablePages, undefined);
+});
 
-    const map = await byName.choro_module_map.execute({});
-    assert.ok(map.modules.length >= 2);
-    assert.equal(map.repo, "toolfix");
-
-    const page = await byName.choro_read_page.execute({ slug: "src" });
-    assert.equal(page.slug, "src");
-    assert.ok(page.content.includes("## 文件清单"));
-
-    const missing = await byName.choro_read_page.execute({ slug: "nope" });
-    assert.equal(missing.error, "page-not-found");
-
-    const hits = await byName.choro_search.execute({ query: "b.js" });
-    assert.ok(hits.hits.length >= 1);
-  } finally {
-    store.close();
-    rmTempBestEffort(root);
+test("未登记或找不到指定仓库时，三个工具都返回可操作的错误", async (t) => {
+  const { call, store } = await setup(t, { chorographyEnabled: true }, true);
+  for (const [name, args] of Object.entries(choroArgs)) {
+    expectToolError(await call(name, args), /No repository is registered.*dsh-mneme-choro/);
+  }
+  makeRepo(t, store);
+  const [{ id }] = createChoroQueries({ store }).listRepos();
+  const unknownId = String(id + 1);
+  for (const [name, args] of Object.entries(choroArgs)) {
+    expectToolError(await call(name, { ...args, repo: unknownId }), /Repository "\d+" is not registered/);
   }
 });
 
-test("多仓歧义：execute 返回可选清单而不是猜一个", async () => {
-  const store = createStore(":memory:");
-  const root1 = makeRepo(store);
-  const root2 = makeRepo(store);
-  try {
-    const choro = createChoroQueries({ store });
-    const { registered } = setup({ chorographyEnabled: true }, choro);
-    const map = registered.find((t) => t.name === "choro_module_map");
-    const result = await map.execute({});
-    assert.equal(result.error, "repo-ambiguous");
-    assert.equal(result.repos.length, 2);
-    const named = await map.execute({ repo: "toolfix" });
-    assert.ok(named.modules, "显式给名后解析成功（fixture 同名仓按 id 序取先者）");
-  } finally {
-    store.close();
-    rmTempBestEffort(root1);
-    rmTempBestEffort(root2);
+test("多仓歧义提示可选 id，按 id 重试可读到对应仓库", async (t) => {
+  const { call, store } = await setup(t, { chorographyEnabled: true }, true);
+  makeRepo(t, store);
+  makeRepo(t, store, "other");
+  const repos = createChoroQueries({ store }).listRepos();
+  for (const [name, args] of Object.entries(choroArgs)) {
+    const result = await call(name, args);
+    expectToolError(result, /More than one repository is registered/);
+    for (const { id, name } of repos) assert.ok(result.content[0].text.includes(`${id} (${name})`));
   }
+  const selected = await call("choro_module_map", { repo: String(repos[1].id) });
+  assert.equal(selected.isError, false);
+  assert.equal(selected.value.repo, "other");
+});
+
+test("读页错误区分未知 slug、缺失文件和不可读文件", async (t) => {
+  const { call, store } = await setup(t, { chorographyEnabled: true }, true);
+  const root = makeRepo(t, store);
+  expectToolError(await call("choro_read_page", { slug: "nope" }), /Page "nope" was not found.*choro_module_map/);
+  const path = join(root, ".chorography", "modules", "src.md");
+  unlinkSync(path);
+  expectToolError(await call("choro_read_page", { slug: "src" }), /Page "src" is missing from disk.*dsh-mneme-choro/);
+  mkdirSync(path);
+  const unreadable = await call("choro_read_page", { slug: "src" });
+  expectToolError(unreadable, /Page "src" could not be read.*permissions/);
+  assert.ok(!unreadable.content[0].text.includes(root), "工具错误不暴露仓库绝对路径");
+});
+
+test("共享库中本机不可达的仓库仍有模块图，读页和检索报告文件访问失败", async (t) => {
+  const { call, store } = await setup(t, { chorographyEnabled: true }, true);
+  const root = makeRepo(t, store);
+  const [{ id }] = createChoroQueries({ store }).listRepos();
+  store.db.prepare("UPDATE choro_repos SET root_path = ? WHERE id = ?")
+    .run(join(root, "unavailable-checkout"), id);
+  const repo = String(id);
+
+  const map = await call("choro_module_map", { repo });
+  assert.equal(map.isError, false);
+  assert.equal(map.value.repo, "toolfix");
+  assert.ok(map.value.modules.some(({ slug }) => slug === "src"));
+  expectToolError(await call("choro_read_page", { repo, slug: "src" }), /missing from disk.*local checkout/);
+  expectToolError(await call("choro_search", { repo, query: "b.js" }), /Search was incomplete.*src.*local checkout/);
+});
+
+test("检索报告不可读的页，保留已读到的命中", async (t) => {
+  const { call, store } = await setup(t, { chorographyEnabled: true }, true);
+  const root = makeRepo(t, store);
+  const rootPage = join(root, ".chorography", "modules", "root.md");
+  unlinkSync(rootPage);
+  const partial = await call("choro_search", { query: "b.js" });
+  assert.equal(partial.isError, false);
+  assert.ok(partial.value.hits.length >= 1);
+  assert.deepEqual(partial.value.unreadablePages, ["root"]);
+  assert.match(partial.content[0].text, /Search was incomplete.*root/);
+
+  const empty = await call("choro_search", { query: "not present", module: "src" });
+  assert.equal(empty.isError, false);
+  assert.deepEqual(empty.value, { hits: [] });
+  assert.equal(empty.content[0].text, "0 hits.");
+
+  const incomplete = await call("choro_search", { query: "not present" });
+  expectToolError(incomplete, /Search was incomplete.*root/);
+  const srcPage = join(root, ".chorography", "modules", "src.md");
+  unlinkSync(srcPage);
+  mkdirSync(srcPage);
+  expectToolError(await call("choro_search", { query: "b.js" }), /Search was incomplete.*root.*src/);
 });

@@ -2750,13 +2750,14 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         return;
       }
       if (page.error) {
-        // 索引还在、盘上没了：409 让面板知道「重跑一次 T0 就能好」，不是 404 那种
-        // 「这条路本来就不存在」。
+        // 409 保留已登记的页与未知 slug 的区别，恢复方式取决于文件状态。
         sendJson(res, 409, {
           error: page.error,
           slug: page.slug,
           relPath: page.relPath,
-          hint: "run `dsh-mneme-choro <repo> --apply` to rebuild"
+          hint: page.error === "page-missing"
+            ? "run `dsh-mneme-choro <repo> --apply` to rebuild"
+            : "check the local file and its permissions"
         });
         return;
       }
