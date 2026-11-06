@@ -227,6 +227,38 @@ test("re-registering a document whose evidence was absorbed keeps the references
   }
 });
 
+// #593 遗留缺口（#593 把 pin 从「按类型推断」改成显式存储后新出现的旁路）：
+// 上一版只问 pinnedTypes.has(row.type)，于是被显式钉住的 pattern / decision 在升格
+// 吸收时仍被 setArchived —— 用户钉过的行被文档悄悄收走，pin 语义（「这条我要长期
+// 带着」）当场失效。这条锁住「显式 pin 表是第二判据」，且用 pattern 类型（它不在
+// PINNED_MEMORY_TYPES 里），否则用例会被类型口径顺手护住、测不到缺口。
+test("explicitly pinned evidence rows survive absorption even when their type is not in the pinned pool", async () => {
+  const { store, service, close } = makeService({ documentMemoryEnabled: true });
+  const { writeDoc, cleanup } = await makeDocDir();
+  try {
+    const pinnedPattern = service.saveWithDedupe({ type: "pattern", title: "P", content: "用户反复这样操作" }).memory;
+    const plainPattern = service.saveWithDedupe({ type: "pattern", title: "P2", content: "另一条没钉的模式" }).memory;
+    store.pinMemory(pinnedPattern.id, { note: "显式钉住" });
+    const p = await writeDoc("pin-survives.md");
+
+    const res = await service.registerDocument({
+      path: p, title: "PinSurvives", summary: "s", evidence: [pinnedPattern.id, plainPattern.id]
+    });
+
+    assert.equal(res.evidence_kept, 2);
+    assert.equal(res.evidence_archived, 1, "只收走没被钉的那条");
+    assert.equal(
+      service.getById(pinnedPattern.id).archived,
+      false,
+      "被显式 pin 的行不能被升格吸收静默归档（pin 表是第二判据，不能只按类型猜）"
+    );
+    assert.equal(service.getById(plainPattern.id).archived, true, "没钉的同类型行照旧被吸收（补丁不放宽口径）");
+  } finally {
+    cleanup();
+    close();
+  }
+});
+
 test("registrar without the pinned pool wiring archives nothing (fail-safe)", async () => {
   // 拿不到 pinned 集合就不做这一步：宁可少做，也不能把保真池当普通行收走。
   const store = createStore(":memory:");
