@@ -398,7 +398,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const idFilter = (url.searchParams.get("id") ?? "").trim();
         const rows = idFilter === ""
           ? service.list({ type, limit, offset, order, minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly })
-          : [service.getById(idFilter)].filter(Boolean);
+          // getById 是裸 SELECT，没有 forgotten 谓词；这条路由是 open 的，
+          // 不过滤等于让本机任意进程按 id 读到已遗忘记忆的全文（评审 #1）。
+          // 归档行仍要放行：归档 ≠ 遗忘，面板保存前要用它比对 updated_at。
+          : [service.getById(idFilter)].filter((memo) => memo && !memo.forgotten);
         // 面板行在 wire DTO 之上补 archived/quality_score——模型工具的输出
         // schema 严格复用 toApiList，扩展只发生在 HTTP 层。
         // heat 投影（阶段二前端数据源）：仅 heatEnabled=true 时下发逐条热度

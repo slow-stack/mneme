@@ -37,6 +37,10 @@ const emitters = new Set();
 // 只能靠状态决定删谁；状态又是所有面板共用的，所以按 scope 记一份，删除前
 // 与本面板打开的那条核对，不匹配就拒绝（评审 #5）。
 const openedBy = new Map();
+// 冲突页的裁决同样改数据，而 state.conflictId 是模块级共享的：两个面板
+// 各看一条冲突时，后开的会盖掉前一个的 id。按面板 scope 记一份再核对
+// （评审 #3 的 conflict-win 部分）。
+const conflictBy = new Map();
 // 上一次推给 App 的完整数据：未重新读取的块从这里并回去，保证每份 data 都
 // 带着全部绑定键（见 load 的注释）。
 let lastPayload = null;
@@ -112,6 +116,16 @@ const defaultState = () => ({
   sCmdIns: "",
   vector: { enabled: false, baseUrl: "", model: "" },
   external: { enabled: false, port: 8790, host: "127.0.0.1" },
+  // 读成功才允许整体写回：读失败时上面的 vector/external 会落成默认值，
+  // 此时 PUT 会把用户在 Web 面板里配好的地址/端口覆盖掉（评审 #2）。
+  vectorLoaded: false,
+  externalLoaded: false,
+  // 实体搜索要重读的是「实体清单」而不是整页；load() 按这个标记补读
+  // （评审 #4）。
+  entityDirty: false,
+  // 顶层页签由 App 本地切换，state.page 可能还停在 "list"；设置项的动作
+  // 改完数据后也要重读设置块，否则推到面板上的仍是旧值（评审 #6）。
+  settingsDirty: false,
   versionNote: "",
   extractText: "",
   injectPreviewText: "",
@@ -503,6 +517,9 @@ export function mountDshGoPanel(ctx, options = {}) {
       });
     } else if (state.sPanel === "vector") {
       const res = await call("/vector-config").catch(() => null);
+      // 读到才算 loaded：读失败时下面会落成默认值，不能再拿它整体覆盖
+      // 服务端配置（评审 #2）。
+      state.vectorLoaded = res !== null && typeof res === "object" && res.config !== null && typeof res.config === "object";
       const config = res?.config ?? {};
       state.vector = {
         enabled: config.enabled === true,
@@ -531,6 +548,7 @@ export function mountDshGoPanel(ctx, options = {}) {
       // 把用户已经在 Web 面板里配好的端口/地址覆盖掉（评审 #6）。
       // 必须带 token=omit：不带的话这条 GET 会顺手生成并落库一个 Bearer。
       const res = await call("/external-api?token=omit").catch(() => null);
+      state.externalLoaded = res !== null && typeof res === "object" && res.config !== null && typeof res.config === "object";
       const config = res?.config ?? {};
       state.external = {
         enabled: config.enabled === true,
@@ -819,11 +837,16 @@ export function mountDshGoPanel(ctx, options = {}) {
       const memory = page === "detail" ? loadDetail() : page === "editor" ? loadEditor() : loadMemory();
       merge(Promise.resolve(memory));
     }
-    if (full || page === "entity") merge(page === "entity" ? loadEntityDetail() : loadEntity());
-    if (full || page === "settings" || page === "profile") {
+    const entityPage = page === "entity";
+    // 实体搜索要重读实体清单；但搜索后 state.page 仍是 "list"（视图里实体
+    // 区就是列表），旧条件只看页面，于是搜索完推的仍是搜索前那份（评审 #4）。
+    if (full || entityPage || state.entityDirty) merge(entityPage ? loadEntityDetail() : loadEntity());
+    state.entityDirty = false;
+    if (full || page === "settings" || page === "profile" || state.settingsDirty) {
       merge(loadSettings());
       merge(loadStatus());
     }
+    state.settingsDirty = false;
     if (full || (memoryPage && page === "conflict")) merge(loadConflict());
     if (full || page === "profile") merge(loadProfile());
     const settled = await Promise.allSettled(jobs);
@@ -1046,7 +1069,7 @@ export function mountDshGoPanel(ctx, options = {}) {
           );
         }
       } catch (error) {
-        state.provenanceText = errorText(error).includes("DISTILL_RECORDS_DISABLED")
+        state.provenanceText = errorText(error).includes("distill-records-disabled")
           ? "mneme 没开「保留蒸馏原文」，所以这条记忆没有可查的来源窗口。"
           : errorText(error);
       }
@@ -1131,6 +1154,8 @@ export function mountDshGoPanel(ctx, options = {}) {
       resetNotice();
       state.entityQuery = String(valueOf(event, ["entityQuery", "query", "q"], "") ?? "").trim();
       state.page = "list";
+      // 让下一次 load() 补读实体清单（页面仍是列表，见 load 里的注释）。
+      state.entityDirty = true;
       return {};
     },
 
@@ -1141,10 +1166,12 @@ export function mountDshGoPanel(ctx, options = {}) {
       return {};
     },
 
-    edit() {
+    edit(scope) {
       resetNotice();
       const memo = state.current;
       if (memo === null) return { toast: "先选一条记忆" };
+      // 记下本面板打开的那条：save 也要按它核对（评审 #3）。
+      openedBy.set(scopeKey(scope), memo.id);
       state.form = {
         id: memo.id,
         title: memo.title ?? "",
@@ -1206,6 +1233,15 @@ export function mountDshGoPanel(ctx, options = {}) {
       const tags = splitTags(String(source.tags ?? ""));
       if (title === "" || content === "") return { toast: "标题和正文都不能空" };
       const id = state.form.id === "" || state.form.id === undefined ? undefined : String(state.form.id);
+      // 编辑既有条目也要核对面板 scope：state.form 是模块级共享的，两个面板
+      // 各开一条时，A 面板点保存会把内容写进 B 刚打开的那条（评审 #3）。
+      // 新建（id 为空）不涉及已有行，不核对。
+      if (id !== undefined) {
+        const mine = openedBy.get(scopeKey(scope));
+        if (mine === undefined || mine !== id) {
+          return { toast: "这条不是当前打开的记忆，已取消" };
+        }
+      }
 
       if (id === undefined) {
         try {
@@ -1473,6 +1509,7 @@ export function mountDshGoPanel(ctx, options = {}) {
     "conflict-pick-row"(scope, event) {
       resetNotice();
       state.conflictId = String(valueOf(event, ["id"], "") ?? "");
+      conflictBy.set(scopeKey(scope), state.conflictId);
       state.conflictPick = "";
       state.page = "conflict";
       return {};
@@ -1491,9 +1528,14 @@ export function mountDshGoPanel(ctx, options = {}) {
       if (valueOf(event, ["confirmed"], false) !== true) return {};
       const id = state.conflictId;
       if (id === "") return { toast: "先选一条冲突" };
+      // 冲突 id 也是共享状态：只裁决本面板自己选中的那条（评审 #3）。
+      if (conflictBy.get(scopeKey(scope)) !== id) {
+        return { toast: "这条不是当前打开的冲突，已取消" };
+      }
       const winner = state.conflictPick === "a" ? "a" : state.conflictPick === "b" ? "b" : null;
       try {
         await call("/conflicts/resolve", { method: "POST", body: { id, winner, apply: true } });
+        conflictBy.delete(scopeKey(scope));
         state.conflictId = "";
         state.conflictPick = "";
         notice("已按裁决合并。");
@@ -1566,6 +1608,8 @@ export function mountDshGoPanel(ctx, options = {}) {
 
     "vector-toggle"(scope, event) {
       resetNotice();
+      // 没读到真实配置时 state.vector 只是默认值，整体 PUT 会覆盖服务端（评审 #2）。
+      if (!state.vectorLoaded) return { toast: "还没读到向量配置，请刷新后再改" };
       const value = event?.value;
       state.vector.enabled = typeof value === "boolean" ? value : !state.vector.enabled;
       return call("/vector-config", {
@@ -1585,6 +1629,7 @@ export function mountDshGoPanel(ctx, options = {}) {
 
     "vector-save"(scope, event) {
       resetNotice();
+      if (!state.vectorLoaded) return { toast: "还没读到向量配置，请刷新后再改" };
       const value = event?.value;
       const source = value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
       const baseUrl = String(source.sVecUrl ?? state.vector.baseUrl ?? "").trim();
@@ -1626,6 +1671,7 @@ export function mountDshGoPanel(ctx, options = {}) {
 
     "external-toggle"(scope, event) {
       resetNotice();
+      if (!state.externalLoaded) return { toast: "还没读到外部访问配置，请刷新后再改" };
       const value = event?.value;
       state.external.enabled = typeof value === "boolean" ? value : !state.external.enabled;
       return call("/external-api", {
@@ -1645,6 +1691,7 @@ export function mountDshGoPanel(ctx, options = {}) {
 
     "external-save"(scope, event) {
       resetNotice();
+      if (!state.externalLoaded) return { toast: "还没读到外部访问配置，请刷新后再改" };
       const value = event?.value;
       const source = value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
       const port = Math.round(num(source.sExtPort ?? state.external.port, 8790));
@@ -1712,6 +1759,7 @@ export function mountDshGoPanel(ctx, options = {}) {
         state.flagOverrides = features?.overrides ?? {};
         state.pendingRestart = Array.isArray(features?.pendingRestart) ? features.pendingRestart : [];
         state.flags = features?.effective ?? state.flags;
+        state.settingsDirty = true;
         notice(
           `${FLAG_LABELS.get(key) ?? key}：${
             typeof next === "string" ? next : next ? "已开启" : "已关闭"
@@ -1920,6 +1968,7 @@ export function mountDshGoPanel(ctx, options = {}) {
       state.flagOverrides = features?.overrides ?? {};
       state.pendingRestart = Array.isArray(features?.pendingRestart) ? features.pendingRestart : [];
       state.flags = features?.effective ?? state.flags;
+      state.settingsDirty = true;
       notice(`${key}：${next ? "已开启" : "已关闭"}`);
     } catch (error) {
       state.err = errorText(error);
@@ -2022,6 +2071,7 @@ export function resetPanelState() {
   cache.clear();
   emitters.clear();
   openedBy.clear();
+  conflictBy.clear();
   lastPayload = null;
   Object.assign(state, defaultState());
 }

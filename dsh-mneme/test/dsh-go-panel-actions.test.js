@@ -277,6 +277,17 @@ async function payloadOf(def, scope = SCOPE_A) {
   return seen.at(-1);
 }
 
+// 动作之后的推送必须挂在同一个 emitter 上看：payloadOf 每次都会重新全量读
+// 一遍，既看不到「只推了局部」，也会让中间的 broadcast 因为没人听而被跳过
+// （评审 #7 / #8）。
+async function waitFor(predicate, label = "condition") {
+  for (let i = 0; i < 100; i++) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
 const viewText = (def) => JSON.stringify(def.view(SCOPE_A));
 
 test("删除按面板 scope 核对：别的面板打开的条目不会被误删", async () => {
@@ -331,13 +342,29 @@ test("搜索仍然遵守类型筛选（/search 不带 type）", async () => {
   assert.equal(payload.rows[0].title, "单位同行同字号");
 });
 
-test("实体搜索走宿主的名字过滤，而不是只过滤本地切片", async () => {
+test("实体搜索走宿主的名字过滤，并且真的重读了实体清单", async () => {
   const world = makeWorld();
   const def = mount(world);
+
+  // 在同一个 emitter 上看推送：payloadOf 会重新全量读一遍，实体那一块
+  // 永远是对的，正好把「搜索后推的还是旧列表」这个 bug 盖住（评审 #7）。
+  const seen = [];
+  const cancel = def.data(SCOPE_A, (payload) => seen.push(payload));
+  await waitFor(() => seen.length > 0, "initial payload");
+  const before = seen.length;
+
   await def.actions["entity-search"](SCOPE_A, { value: { entityQuery: "bob" } });
-  const payload = await payloadOf(def);
+  await waitFor(() => seen.length > before, "entity search push");
+
+  const payload = seen.at(-1);
   assert.equal(payload.entities.length, 1);
   assert.equal(payload.entities[0].title, "Bob");
+  assert.equal(
+    world.reads.filter((item) => item.path === "/entities").length >= 2,
+    true,
+    "搜索后没有重读 /entities",
+  );
+  cancel();
 });
 
 test("规则页提交非数组不会把已有规则清空", async () => {
@@ -702,5 +729,88 @@ test("pending 动作等活干完再推数据，不推这一轮之前的旧列表
     before + 1,
     "任务跑完后没有重新推数据",
   );
+  cancel();
+});
+
+test("保存也按面板 scope 核对：别的面板打开的条目不会被写进内容", async () => {
+  const world = makeWorld();
+  const def = mount(world);
+
+  // A 面板打开 m1 并进编辑；B 面板随后打开 m2 并进编辑，state.form 被换成 m2。
+  await def.actions.open(SCOPE_A, { value: { id: "m1" } });
+  await def.actions.edit(SCOPE_A, { value: {} });
+  await def.actions.open(SCOPE_B, { value: { id: "m2" } });
+  await def.actions.edit(SCOPE_B, { value: {} });
+
+  const before = world.writes.filter((item) => item.path === "/update").length;
+  const refused = await def.actions.save(SCOPE_A, { value: { title: "改标题", content: "正文一" } });
+  assert.equal(refused.toast, "这条不是当前打开的记忆，已取消");
+  assert.equal(world.writes.filter((item) => item.path === "/update").length, before);
+  assert.equal(world.memories[1].title, "单位同行同字号");
+});
+
+test("外部访问配置读失败时不整体写回，避免覆盖 Web 面板里的端口", async () => {
+  const world = makeWorld();
+  const def = mount(world);
+  world.routes["/api/dsh-mneme/external-api"] = (req, res) => reply(res, 500, { error: "boom" });
+
+  await def.actions["open-panel"](SCOPE_A, { value: { k: "external" } });
+  const refused = await def.actions["external-save"](SCOPE_A, {
+    value: { sExtPort: "8888", sExtHost: "0.0.0.0" },
+  });
+  assert.match(String(refused.toast), /还没读到外部访问配置/);
+  assert.equal(world.writes.filter((item) => item.path === "/external-api").length, 0);
+});
+
+test("向量配置读失败时不整体写回", async () => {
+  const world = makeWorld();
+  const def = mount(world);
+  world.routes["/api/dsh-mneme/vector-config"] = (req, res) => reply(res, 500, { error: "boom" });
+
+  await def.actions["open-panel"](SCOPE_A, { value: { k: "vector" } });
+  const refused = await def.actions["vector-toggle"](SCOPE_A, { value: { value: true } });
+  assert.match(String(refused.toast), /还没读到向量配置/);
+  assert.equal(world.writes.filter((item) => item.path === "/vector-config").length, 0);
+});
+
+test("溯源 409 用小写常量判断，能翻成「没开保留蒸馏原文」", async () => {
+  const world = makeWorld();
+  const def = mount(world);
+  world.routes["/api/dsh-mneme/memory/provenance"] = (req, res) =>
+    reply(res, 409, { error: "distill-records-disabled" });
+
+  await def.actions.open(SCOPE_A, { value: { id: "m1" } });
+  await def.actions.provenance(SCOPE_A, {});
+  const payload = await payloadOf(def);
+  assert.match(String(payload.provenanceText), /保留蒸馏原文/);
+});
+
+test("冲突裁决按面板 scope 核对，别的面板选中的冲突不会被合并", async () => {
+  const world = makeWorld();
+  const def = mount(world);
+
+  await def.actions["conflict-pick-row"](SCOPE_A, { value: { id: "c-a" } });
+  await def.actions["conflict-pick-row"](SCOPE_B, { value: { id: "c-b" } });
+
+  const refused = await def.actions["conflict-win"](SCOPE_A, { value: { confirmed: true } });
+  assert.equal(refused.toast, "这条不是当前打开的冲突，已取消");
+  assert.equal(world.writes.filter((item) => item.path === "/conflicts/resolve").length, 0);
+});
+
+test("一个动作只推一次数据，内容就是它改的那块", async () => {
+  const world = makeWorld();
+  const def = mount(world);
+  const seen = [];
+  const cancel = def.data(SCOPE_A, (payload) => seen.push(payload));
+  await waitFor(() => seen.length > 0, "initial payload");
+  const before = seen.length;
+
+  await def.actions["flag-set"](SCOPE_A, { value: { key: "heatEnabled" } });
+  await waitFor(() => seen.length > before, "flag push");
+  // 再等一会儿：如果 broadcast 被调了两次，这里会多出一条。
+  await new Promise((r) => setTimeout(r, 40));
+
+  assert.equal(seen.length, before + 1);
+  assert.equal(seen.at(-1).flags.heatEnabled, true);
   cancel();
 });
