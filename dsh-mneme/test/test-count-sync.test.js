@@ -32,8 +32,8 @@ test("双 README 的测试数处处一致（徽章与所有注释同数）", () 
 // 自动发版路径因此反倒成了漂移来源。
 test("applyTestCount 覆盖徽章与全部四种注释形状（真实漂移样本）", () => {
   const drifted = [
-    '<img src="https://img.shields.io/badge/tests-1431%20passed-3E63DD?style=flat-square" alt="tests">',
-    "[![tests](https://img.shields.io/badge/tests-1431%20passed-success)](https://github.com/slow-stack/mneme)",
+    '<img src="https://img.shields.io/badge/tests-1431%20total-3E63DD?style=flat-square" alt="tests">',
+    "[![tests](https://img.shields.io/badge/tests-1431%20total-success)](https://github.com/slow-stack/mneme)",
     "npm test        # 1431 个测试",
     "npm test           # 运行 1431 个测试",
     "test/                 # 1431 个 node:test 测试（审计与三轴线压测不变量）",
@@ -47,7 +47,7 @@ test("applyTestCount 覆盖徽章与全部四种注释形状（真实漂移样�
 });
 
 test("applyTestCount 幂等：同一个数重复施加不再产生变化", () => {
-  const once = applyTestCount("tests-9%20passed-3E63DD\n# 9 个测试\n# 9 tests", 12);
+  const once = applyTestCount("tests-9%20total-3E63DD\n# 9 个测试\n# 9 tests", 12);
   assert.equal(applyTestCount(once, 12), once);
 });
 
@@ -57,4 +57,15 @@ test("applyTestCount 幂等：同一个数重复施加不再产生变化", () =>
 test("applyTestCount 不碰历史版本表里的「N 测试全绿」", () => {
   const history = "| **v0.8.0** | 745 测试全绿 |\n| **v0.7.9** | 790 通过 |\n| v0.2.7 | 263 |";
   assert.equal(applyTestCount(history, 1437), history);
+});
+// 徽章报的是套件总数（`ℹ tests N`），不是通过数：本地 Windows 未开开发者模式时有一条
+// 符号链接用例被条件跳过，pass 数会比总数少 1。徽章字面量若退回 `%20passed`，读者会把它
+// 读成「N 个用例都通过了」，而它其实只表示「跑了 N 个套件」——#599 评审指出这一处措辞
+// 与实际口径不符。这条用例锁住那个词，改回 `passed` 立刻转红。
+test("双 README 的徽章字面量报总数（total），不谎称全部通过（passed）", () => {
+  for (const f of READMES) {
+    const text = readFileSync(f, "utf8");
+    assert.ok(/tests-\d+%20total/.test(text), `${f} 徽章必须写 %20total：${text.match(/tests-\d+%20\w+/)}`);
+    assert.ok(!/tests-\d+%20passed/.test(text), `${f} 徽章不得退回 %20passed`);
+  }
 });
