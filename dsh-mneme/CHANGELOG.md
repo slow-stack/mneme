@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- **dsh-go 原生记忆库面板：手机 App 里也能看、能改这份记忆库**：`dsh-go`（DSH 的 Android 客户端，[仓库](https://github.com/ccch1mneyyy/dsh-Go)）是 Flutter 原生界面，看不到 Web 面板。新增 `src/dsh-go/` 域随插件一起发布——不另开包，也不另起端口：面板在引擎进程内直接派发 `src/api.js` 已注册的路由 handler，读写与 Web 面板同一批口径（「两张皮只许剩鉴权与路径不同」）。
+
+  - **按宿主能力挂载**：`package.json` 增 `dshGo` 清单（一个面板 `mneme`，placement `session.tab` / `features`）；`src/index.js` 在 webServer 块内 `ctx.inject(["dshGo"], …)` 里动态导入 `src/dsh-go/panel.js`，没有桥的宿主（桌面 / headless）整块不加载。`cfg.apiToken` 一并交给面板：进程内写请求带 `x-dsh-mneme-token`，不给自家路由开白名单。
+  - **视图**：v2 视图协议，顶层是 App 原生 `tabs`（记忆 / 实体 / 设置）；设置页内两格 `segmented` 切「设置 | 状态」——电脑端是四个页签，但 App 页签条每格有 80dp 下限，四格会折行。文案取自 Web 面板的 zh i18n，不自造解释性文字。记忆 / 实体页的树不随数据变（宿主的 `view()` 早于 `data()`，按数据分支的地方首屏会定形、之后只填绑定），空状态提示改成绑定文案；翻页用一行 `chips`（原生按钮组每列至少 136dp×字号，两个按钮在窄屏会折成上下两行），页码兼作 chips 的标签。
+  - **写回不覆盖别人的写入**：编辑页记住打开时的快照，只提交改动过的字段；`updated_at` 对不上就中止并重新载入。删除确认不携带参数（`confirm` 节点只有 id 与按钮文案），所以按面板 scope 记下「这个面板打开了哪条记忆」，确认时核对。
+  - **为面板补了两处读面**：`/entities` 支持 `?q=`（名字过滤下推到 store，`%` / `_` 转义）；`/external-api` 支持 `?token=omit`（只读配置，不生成也不落库 Bearer——默认 GET 会顺手铸造一个）。
+  - **验证**：`test/dsh-go-panel.test.js`（19 屏视图预算 + 页签 / 开关 / 文案锁）、`test/dsh-go-panel-actions.test.js`（点按之后发给宿主的请求、scope 核对、只发差集、视图切换）、`test/dsh-go-host.test.js`（请求体 flush、异步响应、令牌、401、超时）；`test/api-routes-gaps.test.js` 补 `q` 与 `token=omit` 两例。
+
 ## [0.12.0] - 2026-11-07
 
 ## 🆕 新增
