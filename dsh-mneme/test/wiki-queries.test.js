@@ -4,7 +4,7 @@
 // 盘上缺页如实报 page-missing、检索分节与行号、repo 解析的歧义处理。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, unlinkSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -45,6 +45,89 @@ function setup() {
   runChoroT0({ repoRoot: root, store, apply: true, now: FIXED_NOW });
   return { root, store, q: createChoroQueries({ store }) };
 }
+
+// stub embedder：文本含 "src" → [1,0]，否则 [0,1]（固定二维，可断言方向与失配）
+function stubEmbedder(model = "stub-1") {
+  return {
+    model,
+    embedSingle: async (text) => (/src/.test(text) ? [1, 0] : [0, 1]),
+    embed: async (text) => (/src/.test(text) ? [1, 0] : [0, 1]),
+  };
+}
+
+// --- 收尾档 P37–P39：向量惰性物化与检索 -------------------------------------
+
+test("embedPageVectors：首次全嵌，generated_at 没变就跳过，变了重嵌（staleness 两维之一）", async () => {
+  const { root, store, q } = setup();
+  try {
+    const repo = q.resolveRepo(undefined);
+    const emb = stubEmbedder();
+    const r1 = await q.embedPageVectors(repo.id, emb);
+    assert.equal(r1.embedded, 2, "两页全嵌");
+    const r2 = await q.embedPageVectors(repo.id, emb);
+    assert.equal(r2.embedded, 0);
+    assert.equal(r2.skipped, 2, "generated_at 没变 → 全跳过");
+    // 页面内容变了（generated_at 推进）→ 只重嵌变的那页
+    const pagePath = join(root, ".chorography", "modules", "src.md");
+    const before = readFileSync(pagePath, "utf8");
+    writeFileSync(pagePath, `${before}<!-- CHORO:HUMAN:START -->\n人工补充\n<!-- CHORO:HUMAN:END -->\n`, "utf8");
+    store.db.prepare(
+      "UPDATE choro_pages SET generated_at = ? WHERE generated_at IS NOT NULL AND id IN (SELECT p.id FROM choro_pages p JOIN choro_modules m ON p.module_id = m.id WHERE m.slug = 'src')"
+    ).run("2026-11-06T00:00:00.000Z");
+    const r3 = await q.embedPageVectors(repo.id, emb);
+    assert.equal(r3.embedded, 1, "只有 src 页重嵌");
+    assert.equal(r3.stale, 1, "旧向量按 stale 记账");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
+test("dim 失配（换 embedder 模型）→ 惰性全量重嵌（P38：不锁死，代价只是几十页）", async () => {
+  const { root, store, q } = setup();
+  try {
+    const repo = q.resolveRepo(undefined);
+    await q.embedPageVectors(repo.id, stubEmbedder("stub-1"));
+    // 换模型：维度从 2 → 3。expectDim 来自查询向量（路由先嵌查询再物化）
+    const emb3 = {
+      model: "stub-2",
+      embedSingle: async () => [1, 0, 0],
+      embed: async () => [1, 0, 0],
+    };
+    const r = await q.embedPageVectors(repo.id, emb3, { expectDim: 3 });
+    assert.equal(r.embedded, 2, "维度变了 → 全部重嵌（fresh 检查被 dimDrift 压过）");
+    assert.equal(r.dimMismatch, true, "失配被记账");
+    const rows = store.getChoroPageVectors(repo.id);
+    assert.ok(rows.every((row) => row.dim === 3 && row.model === "stub-2"), "旧维度行不复存");
+    // 不给 expectDim（无查询场景）→ fresh 行照旧跳过
+    const r2 = await q.embedPageVectors(repo.id, emb3);
+    assert.equal(r2.embedded, 0);
+    assert.equal(r2.skipped, 2);
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
+test("searchSemantic：cosine 排序 + dim 失配行被过滤 + embedder 缺席返回 null", async () => {
+  const { root, store, q } = setup();
+  try {
+    const repo = q.resolveRepo(undefined);
+    await q.embedPageVectors(repo.id, stubEmbedder("stub-1"));
+    const hits = await q.searchSemantic(repo.id, stubEmbedder("stub-1"), "src 相关的页");
+    assert.ok(Array.isArray(hits) && hits.length >= 1);
+    assert.equal(hits[0].slug, "src", "查询向量 [1,0] 与 src 页同向 → 排前");
+    // 查询向量三维：与所有行 dim 失配 → 无可比行，返回空数组而不是抛
+    const dim3 = { embedSingle: async () => [1, 0, 0], embed: async () => [1, 0, 0] };
+    const empty = await q.searchSemantic(repo.id, dim3, "x");
+    assert.deepEqual(empty, []);
+    assert.equal(await q.searchSemantic(repo.id, null, "x"), null);
+    assert.deepEqual(await q.searchSemantic(repo.id, stubEmbedder(), "  "), [], "空查询不嵌入、返回空数组");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
 
 test("listRepos / resolveRepo：单仓自动收敛，多仓歧义要显式给键", () => {
   const { root, store, q } = setup();

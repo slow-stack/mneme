@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -47,6 +47,18 @@ function handler(routes, path) {
 async function invoke(route, path) {
   const res = new FakeRes();
   await route.handler(req(path), res);
+  return { status: res.statusCode, body: JSON.parse(res.body || "{}") };
+}
+
+// POST 版：带 JSON body（readBody 走 data/end 事件）
+async function invokePost(route, path, body) {
+  const r = req(path, "POST");
+  process.nextTick(() => {
+    r.emit("data", Buffer.from(JSON.stringify(body ?? {})));
+    r.emit("end");
+  });
+  const res = new FakeRes();
+  await route.handler(r, res);
   return { status: res.statusCode, body: JSON.parse(res.body || "{}") };
 }
 
@@ -147,6 +159,90 @@ test("repo 解析失败各归各位：未知 → 404；歧义 → 400 带清单�
 
     const badSlug = await invoke(handler(routes, "/api/dsh-mneme/choro/page"), `/api/dsh-mneme/choro/page?repo=${repoId}&slug=../etc/passwd`);
     assert.equal(badSlug.status, 404, "路径穿越形态的 slug 走未知页 404（slug 只从 DB 白名单解析）");
+  } finally {
+    rmTempBestEffort(root);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 收尾档：POST /choro/run（面板重建入口，P34）+ /choro/search 的 semantic 路（P37–P39）
+// ---------------------------------------------------------------------------
+test("/choro/run：policy token-write，GET 405，POST 快乐路径重跑 T0", async () => {
+  const store = createStore(":memory:");
+  const root = makeRepo(store);
+  try {
+    const { routes } = setup({
+      config: { chorographyEnabled: true },
+      choro: {
+        ...createChoroQueries({ store }),
+        // 与 index.js 的装配同形：runT0Apply 闭包住 store（P35：写路径与读侧分开装配）
+        runT0Apply: ({ repoRoot }) => runChoroT0({ repoRoot, store, apply: true }),
+      },
+    });
+    const route = handler(routes, "/api/dsh-mneme/choro/run");
+    assert.equal(route.policy, "token-write", "写仓库磁盘的口归 token-write");
+
+    const get = await invoke(route, "/api/dsh-mneme/choro/run");
+    assert.equal(get.status, 405, "只收 POST");
+
+    // 破坏页面文件后重建：POST 走真 T0，页回来
+    rmSync(join(root, ".chorography", "modules", "src.md"));
+    const ok = await invokePost(route, "/api/dsh-mneme/choro/run", { repo: 1 });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.ok, true);
+    assert.ok(ok.body.receipt.moduleCount >= 2, "receipt 带划分计数");
+    assert.ok(existsSync(join(root, ".chorography", "modules", "src.md")), "重建把页写了回来");
+  } finally {
+    rmTempBestEffort(root);
+  }
+});
+
+test("/choro/run：开关关 409；repo 未知 404（与读路由同一道闸）", async () => {
+  const store = createStore(":memory:");
+  const root = makeRepo(store);
+  try {
+    const off = setup({
+      config: { chorographyEnabled: false },
+      choro: { ...createChoroQueries({ store }), runT0Apply: () => { throw new Error("不该被调到"); } },
+    });
+    const a = await invokePost(handler(off.routes, "/api/dsh-mneme/choro/run"), "/api/dsh-mneme/choro/run", { repo: 1 });
+    assert.equal(a.status, 409);
+
+    const on = setup({
+      config: { chorographyEnabled: true },
+      choro: { ...createChoroQueries({ store }), runT0Apply: () => { throw new Error("不该被调到") } },
+    });
+    const b = await invokePost(handler(on.routes, "/api/dsh-mneme/choro/run"), "/api/dsh-mneme/choro/run", { repo: 99 });
+    assert.equal(b.status, 404);
+  } finally {
+    rmTempBestEffort(root);
+  }
+});
+
+test("/choro/search：embedder 在场 → 惰性物化 + semantic 数组；缺席 → semantic null", async () => {
+  const store = createStore(":memory:");
+  const root = makeRepo(store);
+  try {
+    // stub embedder：向量按内容方向分类（src 相关 → [1,0]），保证可排序断言
+    const embedder = {
+      model: "stub-1",
+      embedSingle: async (text) => (/src|b\.js/.test(text) ? [1, 0] : [0, 1]),
+      embed: async (text) => (/src|b\.js/.test(text) ? [1, 0] : [0, 1]),
+    };
+    const { routes } = setup({
+      config: { chorographyEnabled: true },
+      choro: { ...createChoroQueries({ store }), embedder },
+    });
+    const s = await invoke(handler(routes, "/api/dsh-mneme/choro/search"), "/api/dsh-mneme/choro/search?repo=1&q=b.js");
+    assert.equal(s.status, 200);
+    assert.ok(Array.isArray(s.body.hits) && s.body.hits.length >= 1, "keyword hits 照旧");
+    assert.ok(Array.isArray(s.body.semantic) && s.body.semantic.length >= 1, "semantic 数组在场（惰性物化发生在这次请求里）");
+    assert.equal(s.body.semantic[0].slug, "src", "与查询同向的页排前");
+    assert.equal(typeof s.body.semantic[0].score, "number");
+
+    const noEmbedder = setup({ config: { chorographyEnabled: true }, choro: createChoroQueries({ store }) });
+    const t = await invoke(handler(noEmbedder.routes, "/api/dsh-mneme/choro/search"), "/api/dsh-mneme/choro/search?repo=1&q=b.js");
+    assert.equal(t.body.semantic, null, "embedder 缺席 → null（调用方退纯关键词）");
   } finally {
     rmTempBestEffort(root);
   }

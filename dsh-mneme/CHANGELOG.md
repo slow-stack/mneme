@@ -10,6 +10,13 @@
   - **回归锁**：`test/client.test.js` 新增一例锁事件名、发布点 ledger（新增改库动作忘了广播时先红）、订阅方数量与裁决双信号并存；onCreated 的既有原样锁同步带上广播。
   - **验证**：全量 `npm test` 2809 tests / 2808 pass / 0 fail / 1 skipped；test/client.test.js 100 例全绿（含新增锁）；test/client-share.test.js 全绿。
 
+- **chorography 收尾：面板「重建骨架」入口 + 页级向量检索（V4 落地）**：spec 消费面最后两块——**生成触发点**（spec §3「现在生成」）落成面板按钮 + `POST /choro/run`（`token-write`，T0 apply 秒级同步回执；t1Loss 警告原样透出——T0 重建会把 enriched 页退回骨架，M2 补洞的清点在按钮回执里看得见）；**向量检索**（spec §5 的 `choro_vectors` 空壳就此启用）：`choro_vectors` 补 `vector` / `source_generated_at` 列（addColumn 幂等），检索时**惰性物化**（P37：host 侧 /choro/search 先嵌查询拿 `expectDim`，再补嵌缺页/过期页），余弦 Top-N 以独立 `semantic` 数组返回（P39：两路分数量纲不同，不与 keyword `hits` 混排序）。
+
+  - **V4 的答案（P38）**：`model` / `dim` 记行内、**不与记忆向量锁死**——查询向量维度与任一行失配 = 换了 embedder 模型，本轮 `fresh` 检查被 `dimDrift` 压过、全量重嵌；代价是几十页重嵌而不是作废记忆向量。embedder 缺席（CLI / 未配置）→ `semantic: null`，检索静默退关键词。
+  - **两个 handler 的 promise 链必须 `return`**：invoke/测试 `await route.handler(...)`，不 return 就在响应发出前返回——实测症状是 semantic 恒缺席、body 恒空。/choro/search 与 /choro/run 都改成 `return readBody(...).then(...)`（nudge 同款）。
+  - **嵌入对象**：页正文剥 frontmatter / CHORO 标记行后的全文（P40，页级；claims 级留待真有精排需求）。staleness 两维：页 `generated_at` 变了（内容变）、行 `dim` 失配（模型变）。
+  - **验证**：新增 10 例（wiki-queries 3：staleness 两维 / dim 失配全量重嵌 / cosine 排序与空查询；wiki-api 3：run 路由 policy+405+快乐路径、闸语义 409/404、semantic 在场与缺席；wiki-store 向量读写随用例覆盖；client 锁 1：按钮打 /choro/run、防连点、T1 留 CLI 的 hint、回执计数）。全量 `npm test` 2814 pass / 0 fail / 1 skipped；check-sync 94 一致。
+  - **桌面实测反馈的美化：文件清单从「竖线等宽行」换成真 table**（用户看截图后拍板）：MD 渲染器解析连续 `|` 行为真表格——表头、对齐元数据（`---:` → 行数列右对齐等宽数字）、路径单元格等宽底色、斑马纹与 hover；分隔行不再画成可见行；引导引言缩小一档。回归锁三件（真 table / 分隔行被消费 / 数字列对齐）。
 ## [0.11.0] - 2026-11-05
 
 - **修复 #573：宽态侧栏的记忆入口落在「更多」行下面，点开「更多」时被菜单盖住**：宿主 0.2.2 起把面板列表的「更多」行（`PanelMoreMenu`）也追加进同一个 `nav.panelList`，于是组尾不再是面板行——我们仍按「追加到末尾」落位，入口就排到了「更多」下面。

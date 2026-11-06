@@ -112,6 +112,47 @@ test("chorography wiki entry registers its own seat pair in the same panellist b
   );
 });
 
+// 收尾档（P34）：面板的生成触发点只接 T0（秒级同步回执）；T1 是 30–240s 起步的
+// 长任务，不上 HTTP——这条边界同时是安全边界（token-write 只罩秒级写）与体验
+// 边界（面板请求不挂死）。锁三件事：按钮打到 /choro/run、rebuilding 态防连点、
+// t1Loss/指引文案存在（spec §3「现在生成」的落点 + M2 补洞的警告透出）。
+test("chorography wiki page exposes the rebuild action against /choro/run", () => {
+  assert.ok(
+    clientSource.includes('"/api/dsh-mneme/choro/run"'),
+    "the rebuild action must POST /choro/run (token-write route)"
+  );
+  assert.ok(
+    clientSource.includes("rebuilding: true"),
+    "the rebuild action must guard against double-fire while in flight"
+  );
+  assert.ok(
+    clientSource.includes("wiki.rebuild.hint"),
+    "the rebuild control must carry the hint that T1 stays on the CLI and enriched pages fall back"
+  );
+  assert.ok(
+    clientSource.includes("wiki.rebuild.done"),
+    "the receipt note must surface the rebuilt module/page counts"
+  );
+});
+
+// v0.11.1 美化：文件清单的竖线等宽行换成真 table（用户实测反馈「文件名排列
+// 太难看」）。锁渲染器三件事：真 <table>、分隔行（--- | ---:）按对齐元数据消费
+// 而不是画成可见行、数字列右对齐。回归表现：改回竖线等宽行画法 → 红在缺 table。
+test("chorography wiki page renders markdown tables as real aligned tables", () => {
+  assert.ok(
+    clientSource.includes("mneme-wikitable"),
+    "the markdown renderer must emit real table elements"
+  );
+  assert.ok(
+    clientSource.includes("isSepRow"),
+    "the separator row (--- | ---:) must be consumed as alignment metadata, not rendered"
+  );
+  assert.ok(
+    clientSource.includes("mneme-wikinum"),
+    "numeric columns (行数) must be right-aligned via the alignment marker"
+  );
+});
+
 // 上一条锁的是「代码里有没有这两套座位」，这条锁「装/卸真的按条件跑」。
 // 回归表现（都靠字符串锁抓不到）：
 //  · 新宿主上两套都装 → 侧栏两颗记忆入口；

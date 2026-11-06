@@ -2663,7 +2663,58 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         moduleSlug: url.searchParams.get("module"),
         limit: Number(url.searchParams.get("limit") ?? 20)
       });
-      sendJson(res, 200, { q: url.searchParams.get("q"), hits });
+      // 向量路（收尾档 P37/P39）：embedder 可用时惰性物化 + 余弦 Top-N，独立成
+      // semantic 数组——两路分数量纲不同，不混排序。embedder 缺席（CLI/测试装配）
+      // → semantic: null，调用方据此退纯关键词。永不抛：向量路挂了不影响 hits。
+      const embedder = choro.embedder ?? null;
+      const finish = (semantic) => sendJson(res, 200, { q: url.searchParams.get("q"), hits, semantic });
+      if (!embedder) { finish(null); return; }
+      // 必须 return 整条链：invoke/测试是 await route.handler(...)，不 return 就
+      // 会在响应发出之前返回（实测：semantic 永远缺席、body 恒空）。
+      // 顺序（P37/P38）：先嵌查询拿 expectDim → 惰性物化（dim 失配全量重嵌）→
+      // 本轮 semantic 用刚物化完的最新向量算。
+      return Promise.resolve()
+        .then(() => choro.embedQueryText(embedder, url.searchParams.get("q")))
+        .then((qv) => choro.embedPageVectors(repo.id, embedder, { expectDim: qv ? qv.length : null }).then(() => qv))
+        .then((qv) => choro.semanticTopN(repo.id, qv, { limit: Number(url.searchParams.get("limit") ?? 10) }))
+        .then((semantic) => finish(semantic))
+        .catch(() => finish(null));
+    }
+  });
+
+  // 面板重建入口（收尾档 P34）：T0 apply 秒级同步回执；**T1 不上 HTTP**——单模块
+  // 30–240s 起步的长任务不适合挂死面板请求，CLI（--t1）仍是 T1 唯一入口。
+  // policy token-write：写的是仓库磁盘的 .chorography/**，属数据面写。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/choro/run",
+    policy: "token-write",
+    handler(req, res) {
+      if (req.method !== "POST") {
+        sendJson(res, 405, { error: "method-not-allowed", allow: "POST" }, { Allow: "POST" });
+        return;
+      }
+      if (!choroGate(req, res)) return;
+      // return 链：同上，await route.handler 必须等到响应真的发出（nudge 同款）。
+      return readBody(req, res).then((text) => {
+        if (text === null) return; // readBody 已回 413
+        const body = parseBody(text);
+        const repoRef = body && typeof body === "object" ? body.repo : null;
+        const repo = choro.resolveRepo(repoRef);
+        if (!repo || repo.ambiguous) {
+          sendJson(res, repo && repo.ambiguous ? 400 : 404, {
+            error: repo && repo.ambiguous ? "repo-ambiguous" : "repo-not-found",
+            repos: repo && repo.ambiguous ? repo.ambiguous : undefined
+          });
+          return;
+        }
+        try {
+          const receipt = choro.runT0Apply({ repoRoot: repo.root_path });
+          sendJson(res, 200, { ok: true, receipt });
+        } catch (err) {
+          sendJson(res, 500, { error: "t0-failed", detail: String((err && err.message) || err) });
+        }
+      });
     }
   });
 

@@ -48,3 +48,4 @@ tools/
 # 要进版本库的人工内容写 plan.yaml 的 notes，那是随仓库走的；保留区是本地草稿。
 .chorography/*
 !.chorography/plan.yaml
+.mimosa/

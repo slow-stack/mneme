@@ -1,12 +1,44 @@
 // dsh-mneme/src/wiki/queries.js
 // chorography 的读侧（M1）：仓库列表 / 模块图 / 页面正文 / 关键词检索。
-// 只读，零写路径——写入口只有 M0 的 t0.js（红线 3：模型侧一个写工具都不注册）。
+// 收尾档追加：向量检索（P37–P39，惰性物化 + cosine）。
+// 检索读侧零写路径的例外只有一处——向量物化写 choro_vectors（P37：检索时惰性
+// 补嵌，host 侧才有 embedder；那是向量账本，不是页面真源）。
 //
 // 真源纪律（spec §4 / P12）：页面正文永远读仓库磁盘的 MD（root_path + DB 里的
 // rel_path），库里的表只是索引与状态账。slug 只从 DB 白名单解析，路径拼装零用户
 // 输入——面板与工具传进来的 slug 查不到模块行就返回 null，绝不用它拼路径。
 import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
+
+// 页正文去 frontmatter / CHORO 标记行后作为嵌入文本（P40：嵌页级全文）。
+function pageEmbedText(content) {
+  const lines = String(content ?? "").split("\n");
+  let start = 0;
+  if (lines[0]?.trim() === "---") {
+    start = 1;
+    while (start < lines.length && lines[start].trim() !== "---") start++;
+    start++;
+  }
+  return lines
+    .slice(start)
+    .filter((l) => !l.startsWith("<!-- CHORO:T1:") && !l.startsWith("<!-- CHORO:HUMAN:"))
+    .join("\n")
+    .trim();
+}
+
+function cosine(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || a.length === 0) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom === 0 ? 0 : dot / denom;
+}
 
 export function createChoroQueries({ store }) {
   const db = store.db;
@@ -216,5 +248,106 @@ export function createChoroQueries({ store }) {
     };
   }
 
-  return { listRepos, resolveRepo, moduleMap, readPage, search, repoByCwd, outline };
+  // --- chorography 向量（收尾档 P37–P39）---------------------------------
+  // 惰性物化（P37）：只在 host 侧检索路径调用（embedder 由 index.js 注入）；
+  // CLI 环境没有 embedder → 向量永不物化，检索退关键词。staleness 两维：
+  // 页 generated_at 变了（内容变了）、行 dim ≠ 本次查询向量 dim（换 embedder
+  // 模型了，P38）→ 重嵌。dim 失配是全表性的，遇到一次就把整仓重嵌（几十页）。
+  async function embedPageVectors(repoId, embedder, { limit = 200, expectDim = null } = {}) {
+    const pages = db.prepare(
+      `SELECT p.id, p.generated_at, m.slug, m.title, p.rel_path
+         FROM choro_pages p JOIN choro_modules m ON p.module_id = m.id
+        WHERE m.repo_id = ? ORDER BY m.slug`
+    ).all(repoId);
+    const repo = db.prepare("SELECT root_path FROM choro_repos WHERE id = ?").get(repoId);
+    const embedOne = embedder.embedSingle ? (t) => embedder.embedSingle(t) : (t) => embedder.embed(t);
+    const rows = store.getChoroPageVectors(repoId);
+    const bySlug = new Map(rows.map((r) => [r.slug, r]));
+    const result = { embedded: 0, skipped: 0, stale: 0, failed: [], dimMismatch: false };
+    // dim 失配的全量重嵌（P38）：expectDim 来自查询向量（调用方先嵌查询再物化，
+    // 维度免费拿到）。expectDim 与任何现存行失配 → 本轮 fresh 检查失效，全量重嵌；
+    // 没给 expectDim（无查询场景）退化为只按 generated_at 判 staleness。
+    const dimDrift = expectDim !== null && rows.some((r) => r.dim !== expectDim);
+    if (dimDrift) result.dimMismatch = true;
+    for (const page of pages) {
+      if (result.embedded >= limit) break;
+      const row = bySlug.get(page.slug);
+      const fresh = !dimDrift && row && row.source_generated_at === page.generated_at && row.vector;
+      if (fresh) { result.skipped++; continue; }
+      if (row && row.vector) result.stale++;
+      const abs = join(repo.root_path, page.rel_path);
+      if (!existsSync(abs)) continue;
+      let text;
+      try {
+        text = pageEmbedText(readFileSync(abs, "utf8"));
+      } catch {
+        result.failed.push({ slug: page.slug, reason: "page-unreadable" });
+        continue;
+      }
+      if (text.trim() === "") { result.skipped++; continue; }
+      let vector;
+      try {
+        vector = await embedOne(text);
+      } catch (err) {
+        result.failed.push({ slug: page.slug, reason: String(err?.message ?? err).slice(0, 120) });
+        continue;
+      }
+      if (!Array.isArray(vector) || vector.length === 0) {
+        result.failed.push({ slug: page.slug, reason: "embedder-returned-no-vector" });
+        continue;
+      }
+      if (row && row.dim !== vector.length) result.dimMismatch = true;
+      store.saveChoroPageVector(page.id, {
+        vector,
+        dim: vector.length,
+        model: String(embedder.model ?? "choro"),
+        sourceGeneratedAt: page.generated_at,
+        createdAt: new Date().toISOString(),
+      });
+      result.embedded++;
+    }
+    return result;
+  }
+
+  /** 嵌查询文本（宿主侧）。embedder 缺席 / 不可用 → null。 */
+  async function embedQueryText(embedder, q) {
+    if (!embedder) return null;
+    const embedOne = embedder.embedSingle ? (t) => embedder.embedSingle(t) : (t) => embedder.embed(t);
+    try {
+      const v = await embedOne(String(q ?? ""));
+      return Array.isArray(v) && v.length > 0 ? v : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 纯余弦 Top-N：向量已给定时零嵌入。行 dim 与查询失配的行过滤掉（P38）。 */
+  function semanticTopN(repoId, queryVector, { limit = 10 } = {}) {
+    if (!Array.isArray(queryVector) || queryVector.length === 0) return [];
+    const rows = store.getChoroPageVectors(repoId).filter((r) => r.vector && r.dim === queryVector.length);
+    return rows
+      .map((r) => ({
+        slug: r.slug,
+        title: r.title,
+        score: Number(cosine(queryVector, JSON.parse(r.vector)).toFixed(4)),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.max(1, Math.min(50, Number(limit) || 10)));
+  }
+
+  /** 便捷组合：嵌查询 + Top-N（P39：独立数组，不与 keyword hits 混排序）。
+   * 空查询 → []（空白查询的「语义」是噪声，面板逐键触发时尤其如此）；
+   * embedder 缺席 → null（调用方退纯关键词）。 */
+  async function searchSemantic(repoId, embedder, q, { limit = 10 } = {}) {
+    if (!embedder) return null;
+    if (String(q ?? "").trim() === "") return [];
+    const queryVector = await embedQueryText(embedder, q);
+    if (!queryVector) return [];
+    return semanticTopN(repoId, queryVector, { limit });
+  }
+
+  return {
+    listRepos, resolveRepo, moduleMap, readPage, search, repoByCwd, outline,
+    embedPageVectors, searchSemantic, embedQueryText, semanticTopN,
+  };
 }

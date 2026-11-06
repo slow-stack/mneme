@@ -25,6 +25,8 @@ import { createChoroQueries } from "./wiki/queries.js";
 // chorography M3：开局注入块与 /choro 只读回执。两者都只吃 queries 读侧，不写任何东西。
 import { createChoroInject } from "./wiki/inject.js";
 import { registerChoroCommand } from "./choro-command.js";
+// 收尾档：面板重建按钮走 runChoroT0（P34；T1 不上 HTTP）。
+import { runChoroT0 } from "./wiki/t0.js";
 import { createSettings } from "./settings.js";
 import { createCommandManager } from "./commands.js";
 import { createExecutionRecorder } from "./pipeline-runner.js";
@@ -644,7 +646,13 @@ export const apply = (ctx, config) => {
     const extractProfileDraft = createProfileExtractor({ ctx, service, config: cfg, logger: ctx.logger });
     // chorography 读侧（M1）：与 service 刻意分开——所有权模型相反（spec §3）。
     // 闸在路由/工具两层（关着 409 / 不注册），queries 本体装配与开关无关。
-    const choro = createChoroQueries({ store });
+    // 收尾档：choro 对象加两件 host 侧能力——embedder（向量惰性物化，P37）与
+    // runT0Apply（面板重建按钮的写路径，P34；T1 不上 HTTP，CLI 仍是它的入口）。
+    const choro = {
+      ...createChoroQueries({ store }),
+      embedder,
+      runT0Apply: ({ repoRoot }) => runChoroT0({ repoRoot, store, apply: true }),
+    };
     const api = createApi(ctx, service, settings, commands ?? {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,

@@ -315,6 +315,13 @@ window.__ModuleLoader__.load({
         "memory.panel.empty": "暂无记忆条目",
         "memory.panel.open": "记忆",
         "wiki.panel.open": "仓库地志",
+        "wiki.rebuild": "重建骨架",
+        "wiki.rebuilding": "重建中…",
+        "wiki.rebuild.done": "重建完成",
+        "wiki.rebuild.failed": "重建失败",
+        "wiki.rebuild.hint": "重跑 T0 确定性骨架（秒级；T1 语义富化请用 CLI --t1）。注意：富化页会退回骨架，语义段需重新生成",
+        "wiki.rebuild.modules": "个模块",
+        "wiki.rebuild.pages": "页",
         "wiki.empty.noRepo": "还没有登记的仓库。先在仓库目录里跑 `dsh-mneme-choro <仓库路径> --apply` 生成骨架页并登记，然后回到这里。",
         "wiki.empty.disabled": "chorography（仓库地志）未启用：在「设置」里打开「仓库地志」后重启 DSH 生效。",
         "wiki.empty.pickRepo": "已登记多个仓库，选一个：",
@@ -1177,6 +1184,13 @@ window.__ModuleLoader__.load({
         "memory.panel.empty": "No memories yet",
         "memory.panel.open": "Memory",
         "wiki.panel.open": "Repo Atlas",
+        "wiki.rebuild": "Rebuild skeleton",
+        "wiki.rebuilding": "Rebuilding…",
+        "wiki.rebuild.done": "Rebuilt",
+        "wiki.rebuild.failed": "Rebuild failed",
+        "wiki.rebuild.hint": "Re-runs the deterministic T0 skeleton (seconds; T1 semantic enrichment stays on the CLI --t1). Note: enriched pages fall back to skeleton — regenerate semantics afterwards",
+        "wiki.rebuild.modules": "modules",
+        "wiki.rebuild.pages": "pages",
         "wiki.empty.noRepo": "No repository registered yet. Run `dsh-mneme-choro <repo-path> --apply` inside the repository to generate skeleton pages and register it, then come back here.",
         "wiki.empty.disabled": "chorography (Repo Atlas) is disabled: turn it on under Settings and restart DSH to apply.",
         "wiki.empty.pickRepo": "Multiple repositories registered — pick one:",
@@ -2303,6 +2317,11 @@ window.__ModuleLoader__.load({
       // .mneme-panel 根内（#562 的中列整页容器），不新增渲染根。
       ".mneme-wikibar{flex:none;display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1)}",
       ".mneme-wikirepo{flex:none;max-width:40%;font-size:13.5px;font-weight:600;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+      // 重建骨架按钮（收尾档 P34）与回执行：语义色层，无新字面量色。
+      ".mneme-wikibtn{flex:none;height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);cursor:pointer;font-family:inherit;font-size:12px;line-height:26px;transition:border-color .12s}",
+      ".mneme-wikibtn:hover{border-color:var(--dsw-alias-state-business-primary)}",
+      ".mneme-wikibtn:disabled{opacity:.5;cursor:default}",
+      ".mneme-wikirebuildnote{flex:1;min-width:0;font-size:11.5px;line-height:16px;color:var(--mneme-fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
       ".mneme-wikisearch{flex:1;min-width:0;height:28px;padding:0 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12.5px;outline:none;transition:border-color .12s}",
       ".mneme-wikisearch:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-state-business-primary) 15%,transparent)}",
       ".mneme-wikibody{flex:1;min-height:0;display:flex;overflow:hidden}",
@@ -2320,8 +2339,16 @@ window.__ModuleLoader__.load({
       ".mneme-wikipage li{font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary);margin:3px 0}",
       ".mneme-wikipre{margin:10px 0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-layer-1));overflow-x:auto;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);white-space:pre}",
       ".mneme-wikicode{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-active);border-radius:4px;padding:1px 5px}",
-      ".mneme-wikitablerow{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;line-height:19px;color:var(--dsw-alias-label-secondary);white-space:pre;overflow-x:auto}",
-      ".mneme-wikiquote{margin:8px 0;padding:6px 12px;border-left:3px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);font-size:12.5px;line-height:19px}",
+      // 表格（v0.11.1 美化）：真 table 替代竖线等宽行；文件清单第一列路径走
+      // code 底色，行数列右对齐等宽数字；斑马纹用 3% 前景混色，不引新字面量色。
+      ".mneme-wikitable{width:100%;border-collapse:collapse;margin:10px 0 14px;font-size:12.5px}",
+      ".mneme-wikitable th{padding:6px 10px;border-bottom:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);font-weight:500;text-align:left;white-space:nowrap}",
+      ".mneme-wikitable td{padding:5px 10px;border-top:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary);vertical-align:top}",
+      ".mneme-wikitable tbody tr:nth-child(even){background:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
+      ".mneme-wikitable tbody tr:hover{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 7%,transparent)}",
+      ".mneme-wikitable td .mneme-wikicode{background:none;padding:0}",
+      ".mneme-wikinum{text-align:right;font-variant-numeric:tabular-nums}",
+      ".mneme-wikiquote{margin:8px 0 14px;padding:8px 12px;border-left:3px solid var(--dsw-alias-border-l2);color:var(--mneme-fg-dim);font-size:12px;line-height:18px}",
       ".mneme-wikiempty{padding:26px 22px;font-size:13px;line-height:21px;color:var(--dsw-alias-label-secondary);display:flex;flex-direction:column;gap:8px;overflow-y:auto}",
       ".mneme-wikiemptytitle{font-size:15px;font-weight:600;color:var(--dsw-alias-label-primary)}",
       ".mneme-wikihits{position:absolute;inset-inline:22px;top:8px;z-index:3;display:flex;flex-direction:column;gap:4px;max-height:46%;overflow-y:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1);padding:8px;box-shadow:0 10px 28px color-mix(in srgb,var(--dsw-alias-label-primary) 14%,transparent)}",
@@ -10277,19 +10304,57 @@ window.__ModuleLoader__.load({
         let listItems = [];
         let inCode = false;
         let codeLines = [];
+        // --- 表格（v0.11.1 美化）：连续 `|` 行解析成真 table，不再按等宽行画竖线 ---
+        const splitRow = (line) => String(line).trim().replace(/^\|/, "").replace(/\|$/, "")
+          .split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+        const isSepRow = (cells) => cells.length > 0 && cells.every((c) => /^:?-{3,}:?$/.test(c));
+        // 路径形单元格（含 / 且以扩展名结尾）渲染成等宽 code——文件清单的第一列
+        // 是相对路径，等宽 + 深一点的底色让路径在表里一眼可辨。
+        const pathLike = (text) => /^(?!https?:)(?:[\w.-]+\/)*[\w.-]+\.[A-Za-z]{1,5}$/.test(String(text).trim());
+        const cellNodes = (text, key) => {
+          const trimmed = String(text).trim();
+          if (pathLike(trimmed)) return h("code", { key, className: "mneme-wikicode" }, trimmed);
+          return inline(trimmed);
+        };
+        let tableRows = null;
+        const flushTable = () => {
+          if (!tableRows) return;
+          const rows = tableRows;
+          tableRows = null;
+          if (rows.length === 0) return;
+          const headerCells = splitRow(rows[0]);
+          const sepIndex = rows.length > 1 && isSepRow(splitRow(rows[1])) ? 1 : -1;
+          const aligns = sepIndex >= 0
+            ? splitRow(rows[sepIndex]).map((c) => (c.endsWith(":") ? "right" : c.startsWith(":") ? "center" : null))
+            : headerCells.map(() => null);
+          const bodyStart = sepIndex >= 0 ? sepIndex + 1 : 0;
+          const head = h("thead", { key: "h" }, h("tr", null,
+            headerCells.map((c, idx) => h("th", {
+              key: idx, style: aligns[idx] ? { textAlign: aligns[idx] } : undefined,
+            }, cellNodes(c, idx)))));
+          const body = h("tbody", { key: "b" }, rows.slice(bodyStart).map((row, rIdx) => {
+            const cells = splitRow(row);
+            return h("tr", { key: rIdx }, headerCells.map((_, idx) => h("td", {
+              key: idx,
+              className: aligns[idx] === "right" ? "mneme-wikinum" : undefined,
+              style: aligns[idx] && aligns[idx] !== "right" ? { textAlign: aligns[idx] } : undefined,
+            }, cellNodes(cells[idx] ?? "", idx))));
+          }));
+          out.push(h("table", { key: out.length, className: "mneme-wikitable" }, head, body));
+        };
         for (; i < lines.length; i++) {
           const line = lines[i];
           if (line.trim().startsWith("```")) {
             if (inCode) {
               out.push(h("pre", { key: out.length, className: "mneme-wikipre" }, codeLines.join("\n")));
               codeLines = []; inCode = false;
-            } else { flushList(); inCode = true; }
+            } else { flushList(); flushTable(); inCode = true; }
             continue;
           }
           if (inCode) { codeLines.push(line); continue; }
           const heading = line.match(/^(#{1,6})\s+(.*)$/);
           if (heading) {
-            flushList();
+            flushList(); flushTable();
             const level = Math.min(heading[1].length + 1, 5);
             out.push(h(`h${level}`, { key: out.length }, inline(heading[2])));
             continue;
@@ -10297,25 +10362,26 @@ window.__ModuleLoader__.load({
           const ul = line.match(/^\s*[-*]\s+(.*)$/);
           const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
           if (ul || ol) {
+            flushTable();
             const want = ul ? "ul" : "ol";
             if (list !== want) flushList();
             list = want;
             listItems.push(h("li", { key: listItems.length }, inline(ul ? ul[1] : ol[1])));
             continue;
           }
-          flushList();
-          if (/^\s*\|/.test(line)) { out.push(h("div", { key: out.length, className: "mneme-wikitablerow" }, inline(line.trim()))); continue; }
+          if (/^\s*\|/.test(line)) { flushList(); tableRows = tableRows ?? []; tableRows.push(line); continue; }
+          flushList(); flushTable();
           if (/^>\s?/.test(line)) { out.push(h("blockquote", { key: out.length, className: "mneme-wikiquote" }, inline(line.replace(/^>\s?/, "")))); continue; }
           if (line.trim() === "") continue;
           out.push(h("p", { key: out.length }, inline(line)));
         }
-        flushList();
+        flushList(); flushTable();
         if (inCode && codeLines.length > 0) out.push(h("pre", { key: out.length, className: "mneme-wikipre" }, codeLines.join("\n")));
         return out;
       }
 
       function WikiMainPanel({ t }) {
-        const [state, setState] = useState({ phase: "loading", repos: [], repo: null, modules: [], edges: [], page: null, hits: [], q: "", selected: null, disabled: false, error: null });
+        const [state, setState] = useState({ phase: "loading", repos: [], repo: null, modules: [], edges: [], page: null, hits: [], q: "", selected: null, disabled: false, error: null, rebuilding: false, rebuildNote: null });
         // apiFetch 是裸 fetch：非 2xx 不抛错，返回 Response。这里统一解 JSON 并把
         // 状态码带回来——409 disabled（用户没开）/ 503 unavailable（装配缺件）
         // 各有各的空态文案（#497 的语义分叉在这里接住）。
@@ -10362,6 +10428,35 @@ window.__ModuleLoader__.load({
             setState((s) => ({ ...s, hits: data.hits ?? [] }));
           } catch { setState((s) => ({ ...s, hits: [] })); }
         }, [state.repo]);
+        // 重建骨架（收尾档 P34）：POST /choro/run（token-write），T0 apply 秒级
+        // 同步回执。T1 语义富化是长任务，不上 HTTP——按钮旁的空态/提示会引导去
+        // CLI（t1Loss 警告也从服务端原样透出）。
+        const rebuild = useCallback(async () => {
+          const repo = state.repo;
+          if (!repo || state.rebuilding) return;
+          setState((s) => ({ ...s, rebuilding: true, rebuildNote: null }));
+          try {
+            const { status, data } = await readJson(await apiFetch("/api/dsh-mneme/choro/run", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ repo: repo.id })
+            }));
+            if (status !== 200 || !data.ok) {
+              setState((s) => ({ ...s, rebuilding: false, rebuildNote: `${t("wiki.rebuild.failed")}: ${data.detail ?? data.error ?? status}` }));
+              return;
+            }
+            const r = data.receipt ?? {};
+            const loss = (r.warnings ?? []).find((w) => /T1|语义/.test(w));
+            setState((s) => ({
+              ...s,
+              rebuilding: false,
+              rebuildNote: `${t("wiki.rebuild.done")}: ${r.moduleCount ?? "?"} ${t("wiki.rebuild.modules")} / ${r.pageCount ?? "?"} ${t("wiki.rebuild.pages")}${loss ? ` — ${loss}` : ""}`
+            }));
+            await load(repo.id);
+          } catch (err) {
+            setState((s) => ({ ...s, rebuilding: false, rebuildNote: `${t("wiki.rebuild.failed")}: ${String(err?.message ?? err)}` }));
+          }
+        }, [state.repo, state.rebuilding, load, t]);
 
         if (state.phase === "loading") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.state.loading"));
         if (state.phase === "disabled") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.empty.disabled"));
@@ -10406,7 +10501,15 @@ window.__ModuleLoader__.load({
               value: state.q,
               onChange: (e) => runSearch(e.target.value),
               "aria-label": t("wiki.search.placeholder")
-            })),
+            }),
+            h("button", {
+              type: "button",
+              className: "mneme-wikibtn",
+              disabled: state.rebuilding,
+              title: t("wiki.rebuild.hint"),
+              onClick: rebuild
+            }, state.rebuilding ? t("wiki.rebuilding") : t("wiki.rebuild")),
+            state.rebuildNote && h("span", { className: "mneme-wikirebuildnote" }, state.rebuildNote)),
           h("div", { className: "mneme-wikibody" },
             h("nav", { className: "mneme-wikitree", "aria-label": t("wiki.tree.title") }, tree),
             h("div", { className: "mneme-wikipage" },
