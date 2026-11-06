@@ -483,7 +483,10 @@ test("strict 寻址：事实一张身份卡都没建时仍落 default（#587 例
   const withOne = () => ({ default: ["默认卡事实"], byAgent: { botA: ["botA 卡事实"] } });
   assert.equal(resolveFactsCard(withOne(), "standard", { strict: true }).source, "none");
   assert.equal(resolveFactsCard(withOne(), "botA", { strict: true }).source, "byAgent");
-  // 关着的身份卡也算「建过」
+  // 关着的身份卡也算「建过」。⚠️ 生产不产空数组键：唯一注入读口 listActiveFactsGrouped
+  // 建键必带一条内容（(grouped.byAgent[k] ??= []).push(content)），settings.js 三个写入点
+  // 也是空卡直接 delete。这条是防御性形状断言——锁住判据只看键数、不数条目，将来谁改成
+  // 「有内容才算建过」就会被它拦住（Ephor 复核 #587 时指出，2026-11-06）。
   const closedOne = () => ({ default: ["默认卡事实"], byAgent: { botA: [] } });
   assert.equal(resolveFactsCard(closedOne(), "standard", { strict: true }).source, "none");
 });
