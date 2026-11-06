@@ -4031,6 +4031,20 @@ export function createStore(path) {
   }
 
   /**
+   * 这条记忆是否被显式钉住（单行点查，读侧）。
+   *
+   * 存在的理由是 #593 的缺口：升格吸收（document.js 的 evidence 归档）只拿得到
+   * 记忆行、拿不到 pin 表，于是它只能按**类型**猜「谁属于保真池」。显式 pin 落地
+   * 后，一条 pattern / decision 被钉住仍然是 pin，按类型猜就把它当普通行收走了。
+   * 谓词必须来自本表，不能从类型推——这正是 #593 把 pin 从类型推断改成显式存储
+   * 的同一件事，别在第二个地方又推回去。
+   */
+  function isPinned(memoryId) {
+    if (typeof memoryId !== "string" || !memoryId.trim()) return false;
+    return db.prepare("SELECT 1 AS hit FROM pinned_memories WHERE memory_id = ?").get(memoryId.trim()) !== undefined;
+  }
+
+  /**
    * 按 id 点查注入所需的行（绕开 200 行窗口的唯一通道）。
    *
    * 显式列清单复用 memoryColumnList：它经 PRAGMA 派生、已排除 embedding
@@ -5248,6 +5262,7 @@ export function createStore(path) {
     pinMemory,
     unpinMemory,
     countPinned,
+    isPinned,
     listByIdsForInject,
     createEntity,
     findEntityByName,

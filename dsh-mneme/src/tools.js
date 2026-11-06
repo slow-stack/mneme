@@ -498,7 +498,7 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
       description:
         "Pin a memory so it is injected at the top of the memory block every turn, regardless of its type or how it ranks against other memories. " +
         "Use this only when the user explicitly says an entry must always be present (a hard rule, a standing preference); it is not a way to mark something as important — importance already affects ranking. " +
-        "Pinned entries still obey forgetting, archiving and the scope gate, so a pinned entry that is forgotten, archived or in a paused scope is not injected — the receipt reports this as injectable: false. " +
+        "Pinned entries still obey forgetting, archiving, the scope gate and the pinnedInjectBudget gate, so a pinned entry that is forgotten, archived, in a paused scope, or pinned while pinnedInjectBudget is 0 is not injected — the receipt reports this as injectable: false. " +
         "Pass unpin: true to release it. Pin order is first-pinned-first, so the oldest pin holds its slot when the budget is tight.",
       parameters: {
         id: { type: "string", required: true, description: "Memory id to pin (or unpin with unpin: true)" },
@@ -516,8 +516,8 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
             // 回显它才看得出「这次其实没改变顺序」。
             created_at: { type: "string" },
             note: { type: "string" },
-            // 钉着 ≠ 会注入。遗忘/归档/暂停作用域都优先于 pin，把这件事放进回执，
-            // 而不是让用户以为钉完就一定出现在上下文里。
+            // 钉着 ≠ 会注入。遗忘/归档/暂停作用域/pinnedInjectBudget=0 都优先于 pin，
+            // 把这件事放进回执，而不是让用户以为钉完就一定出现在上下文里。
             injectable: { type: "boolean", required: true }
           }
         },
@@ -526,7 +526,7 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
           const when = value.created_at ? ` (pinned at ${value.created_at})` : "";
           const blocked = value.injectable
             ? ""
-            : " It will not be injected while it is forgotten, archived or inside a paused scope.";
+            : " It will not be injected while it is forgotten, archived, inside a paused scope, or while pinnedInjectBudget is 0 (the pin pool is off by default).";
           return TEXT_OUTPUT(`Memory ${value.memory_id} is pinned${when}.${blocked}`);
         }
       },
@@ -539,8 +539,20 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
         // 两个标志位对此一无所知——只算这两项，一条被暂停作用域挡住的行就会报
         // injectable: true 而实际一条都没注入。filterPaused 正是那个出口（开关关、
         // 或只开观察档时它原样返回，于是此时报 true 是对的：那种状态下本来就不拦）。
+        // #593 遗留缺口：pin 池整体由 pinnedInjectBudget 开关（src/service.js:1885 的
+        // pinnedBudget > 0 才读表选路），而它默认 0 = 关闭。只看遗忘/归档/暂停作用域时，
+        // 预算为 0 的一条回执照样报 injectable: true——钉住的动作确实成功了，但它此刻
+        // 一条都不会被注入，这正是「返回成功不等于生效」。预算 0 必须报 false。
+        //
+        // 仍然没建模的：候选池侧的 type / importance / codingGate 闸（一条被钉的
+        // document 行同样进不了注入块）。那几道闸随候选池变化，回执不做猜测；
+        // 这里只回答「pin 这条通道此刻开不开」。
+        const pinnedBudget = Math.max(0, Math.min(5, Math.floor(config?.pinnedInjectBudget ?? 0)));
         const injectable =
-          !target.forgotten && !target.archived && service.filterPaused([target]).length > 0;
+          pinnedBudget > 0 &&
+          !target.forgotten &&
+          !target.archived &&
+          service.filterPaused([target]).length > 0;
         if (args.unpin === true) {
           service.unpinMemory(target.id);
           return { memory_id: target.id, pinned: false, injectable };

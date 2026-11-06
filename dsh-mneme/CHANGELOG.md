@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- **修复 #593 留下的两处旁路：显式钉住的行仍会被文档升格吸收静默归档；`memory_pin` 回执在 `pinnedInjectBudget=0`（默认关闭）时仍报 `injectable: true`**。#593 把 pin 从「按类型推断」改成显式存储（`pinned_memories` 表），但两处消费方没跟上：吸收只拿得到记忆行、拿不到 pin 表，于是退回按类型猜；回执只看了遗忘/归档/暂停作用域，没看预算开关。
+
+  - **判据①：新增 `store.isPinned(memoryId)` 单行点查**（`pinned_memories` 的唯一读侧谓词）。`src/document.js` 的 evidence 吸收循环改为两条并列判据：`store.isPinned(row.id)`（显式钉住）**或** `pinnedTypes.has(row.type)`（#249 逐字保真池类型 constraint/preference）——任一成立就不归档。上一版只有后者，所以一条被钉的 `pattern` / `decision` 在文档升格时照样 `setArchived`：用户钉过的行被悄悄收走，pin 语义当场失效。`store.isPinned` 缺席时自动退回类型口径（fail-safe，不因新谓词缺失而放宽）。
+  - **判据②：`injectable` 加上 `pinnedBudget > 0`**，上限与 `src/service.js:1885` 同款 `Math.max(0, Math.min(5, Math.floor(config?.pinnedInjectBudget ?? 0)))`。pin 池整体由这个预算开关（`service.js` 里 `pinnedBudget > 0` 才读表选路），默认 0 = 关闭；预算 0 时钉住动作确实成功、但一条都不会被注入，回执照样报 true 正是「返回成功不等于生效」。工具 description、schema 注释与 blocked 文案同步补上这一条。**仍未建模的**：候选池侧的 type / importance / codingGate 闸（一条被钉的 `document` 行同样进不了注入块），那几道闸随候选池变化，回执只回答「pin 这条通道此刻开不开」。
+  - **回归锁**：`test/document.test.js` 新增一例用 `type:"pattern"`（刻意不在 `PINNED_MEMORY_TYPES` 里，否则会被类型口径顺手护住、测不到缺口）——钉一条、不钉一条，注册文档吸收两条，断言被钉行 `archived===false`、未钉行 `archived===true`、`evidence_archived===1`；`test/tools.test.js` 新增一例锁预算 0 时 `pinned:true` 与 `injectable:false` 分开报；`test/tools-dto-schema-matrix.test.js` 的 `injectable` 断言由 true 改 **false**（该矩阵用默认配置，预算本就是 0）。
+  - **验证**：`npm test` 2874 tests / 2873 pass / 0 fail / 1 skipped；`npm run sync` 95 文件一致。
+
 - **修复 #588：`codingGate` 词表补齐 34 项工程协作词——「合并 / PR / CI / 发版」类任务此前被判成非编码，`pitfall` / `constraint` / `rejected_solution` 三类教训记忆整类不注入**。`codingKeywords` 56 → 90 项，改的是默认值，词表本身仍可配置覆盖。
 
   - **病灶是判据只看词表不看内容**：`codingGate` 按 `m.type` 判，而「这条任务算不算编码」唯一依据是 `codingKeywords` 子串命中。原表 56 项里没有「合并 / 分支 / 提交 / 冲突 / 验收 / 审查 / 评审 / 审评 / 发版 / 仓库 / 回滚 / 推送 / 拉取 / 变基 / 上线 / 打包 / 迁移 / 字段 / 鉴权 / 超时 / 并发 / 闪退 / 白屏 / 端口 / 进程 / 守护 / 定时任务 / 索引 / 缓存 / 死锁 / 内存泄漏 / 日志 / 版本号 / 环境变量」——用户日常说的「合并吧」「看看 CI 和审评」「今天就能发版」全被判成非编码，于是这三类记忆一次都不注入。生产日志实测（`recall_runs`，剔除系统提示污染后 1,070 query / 61,446 次调用）：缺口占非编码调用的 17.1~21.7%，补词后翻转 114 query / 8,352 次，编码任务占比 23.4% → 37.0%。

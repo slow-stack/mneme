@@ -276,8 +276,9 @@ export function createDocumentRegistrar({ store, config, embedQuery, pushContent
       }
       // #275 拍板 5（#230 验收口径的补丁）：升格吸收的 evidence 行随之退出活跃面——
       // 一次吸收 20 条，库里就是「21 行不是 1 行」。四条口径：①与本行同一事务（要么
-      // 都成、要么都不成）；②pinned（constraint / preference，即 #249 的逐字保真池）
-      // 永不自动归档——升格不能绕过它；③自有生命周期的类型（document / summary，见
+      // 都成、要么都不成）；②pinned 永不自动归档——升格不能绕过它，而 pinned 有**两个**
+      // 判据：显式钉住的行（pinned_memories，#593 起为唯一正源）与 #249 的逐字保真池
+      // 类型（constraint / preference）；③自有生命周期的类型（document / summary，见
       // ABSORB_EXEMPT_TYPES）不吸收，吸收的是原子条；④只翻标志位、内容与审计全留
       // （可恢复），opt-out 走 archiveEvidence。
       // pinnedTypes 拿不到就不做这一步：宁可少做，也不能把保真池当普通行收走。
@@ -294,7 +295,12 @@ export function createDocumentRegistrar({ store, config, embedQuery, pushContent
           const row = store.getById(id);
           if (!row || row.archived || row.forgotten) continue;
           if (isImportedRow(row)) { evidenceSkipped += 1; continue; }
-          if (pinnedTypes.has(row.type) || ABSORB_EXEMPT_TYPES.has(row.type)) continue;
+          // #593：显式 pin（pinned_memories）与类型保真池是**两个**判据。上一版只问
+          // pinnedTypes.has(row.type)，等于把「被钉住的 pattern / decision」当普通行
+          // 收走——用户钉过的东西在文档升格时被静默归档，正是「钉着 ≠ 会注入」的
+          // 反面：这里连「钉着」都没保住。store.isPinned 缺席时退回类型口径（旧行为）。
+          const explicitlyPinned = typeof store.isPinned === "function" && store.isPinned(row.id);
+          if (explicitlyPinned || pinnedTypes.has(row.type) || ABSORB_EXEMPT_TYPES.has(row.type)) continue;
           store.setArchived(id, true);
           evidenceArchived += 1;
         }

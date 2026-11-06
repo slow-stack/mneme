@@ -211,7 +211,10 @@ test("A 实跑：13 个工具每个可安全触达的分支，真实返回 ⊆ �
   assert.equal(pinned.pinned, true);
   assert.equal(pinned.memory_id, pinTarget.id);
   assert.equal(pinned.note, "matrix");
-  assert.equal(pinned.injectable, true);
+  // #593：pin 池由 pinnedInjectBudget 开关，本矩阵用的默认配置里它是 0（关闭），
+  // 所以钉上了也不会注入 —— 回执必须如实报 false。这里断 false 而不是 true，
+  // 锁的正是「返回成功不等于生效」那条口径。
+  assert.equal(pinned.injectable, false);
   const unpinned = await drive(byName, "memory_pin", { id: pinTarget.id, unpin: true });
   assert.equal(unpinned.pinned, false);
   assert.equal(store.countPinned(), 0);
