@@ -165,3 +165,34 @@ test("personaEnabled is in the feature-flag boolean whitelist", () => {
   assert.throws(() => settings.setFeatureFlags({ notARealFlag: true }), TypeError);
   store.close();
 });
+
+test("strict 寻址：一张身份卡都没建时仍回落 default（#587 的例外）", () => {
+  // 两种处境必须分开：
+  //   A) 建了身份卡、只是没这一张 → strict 下不注入（见上一条用例，行为不变）
+  //   B) 一张身份卡都没建      → default 是用户手里唯一那张卡，strict 不许把它关死
+  // DS Bot 这类宿主里所有 bot 会话共用 agentPreset "standard"，用户按 bot 名字建卡
+  // 永远不命中，于是必然落进 B——此时按 none 处理等于把唯一那张卡静默废掉。
+  const { store, settings } = setup();
+  settings.setPersona({ name: "Amarre", enabled: true });
+  assert.deepEqual(settings.getPersona().byAgent, {}, "前提：byAgent 整体为空");
+  const { card, source } = resolvePersonaCard(settings, "standard", { strict: true });
+  assert.equal(source, "default", "一张卡都没建时严格寻址仍回落 default");
+  assert.equal(card.name, "Amarre");
+  // 建了任意一张身份卡之后，例外立即失效——兜底退回严格语义
+  settings.setPersonaFor("zephyr", { name: "泽菲尔", enabled: true });
+  assert.equal(resolvePersonaCard(settings, "standard", { strict: true }).source, "none");
+  // 而这张卡自己仍然命中
+  assert.equal(resolvePersonaCard(settings, "zephyr", { strict: true }).source, "byAgent");
+  store.close();
+});
+
+test("strict 寻址：身份卡存在但全被关掉，仍算「建过卡」——例外只看有没有键", () => {
+  // 例外判的是 byAgent 的键数，不是「有没有可用的卡」：一张 enabled=false 的卡
+  // 也算「用户已经做过分区」，此时不该再拿 default 去兜。这条锁住判据不会被
+  // 改成「有可用卡才算建过」，否则关掉唯一那张身份卡会重新落回 default。
+  const { store, settings } = setup();
+  settings.setPersona({ name: "Amarre", enabled: true });
+  settings.setPersonaFor("zephyr", { name: "泽菲尔", enabled: false });
+  assert.equal(resolvePersonaCard(settings, "standard", { strict: true }).source, "none");
+  store.close();
+});
