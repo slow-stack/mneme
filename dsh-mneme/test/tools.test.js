@@ -49,6 +49,106 @@ function walkSchema(node, path, problems) {
   }
 }
 
+// memory_pin 的 injectable 回执必须跟注入侧同一个出口判定（#249 第二批）。
+//
+// 这条单独立在 tools 侧而不是注入侧：注入侧早已锁了「暂停作用域的行不进块」，
+// 但回执那句话是另一段代码，它可以照样撒谎——描述文案与 README 都写着
+// 「遗忘 / 归档 / 暂停作用域都优先于 pin」，而 execute 里只算了 forgotten/archived
+// 两个标志位，暂停作用域被漏掉。于是同一条行在「真会注入」与「被作用域挡住」
+// 两种完全相反的处境下都报 injectable: true，正是「返回成功不等于生效」那一类。
+//
+// 三档一起锁，是因为 filterPaused 的出口语义是分档的（见 src/scope-state.js:215）：
+//   enforce 开 → 真正剔掉，回执必须 false；
+//   只开 enabled（观察档）→ 不拦任何东西，回执必须 true（此时报 false 才是假警报）；
+//   两个都关 → 同样不拦，回执 true。
+function setupPinReceipt(config) {
+  // pin 预算从 config 读（src/service.js:1885），不是 injectCandidates 的入参——
+  // 传进调用参数会被静默忽略，那样这几条测试就测不到 pin 池。
+  const cfg = { pinnedInjectBudget: 5, ...config };
+  const store = createStore(":memory:");
+  // 注意 config 必须同时喂 service 与 tools：作用域闸在 service 侧构造，
+  // 而 memory_pin 的 execute 走的是 service 暴露的那个出口。
+  const service = createService({ store, mirror: null, config: cfg });
+  const registered = [];
+  const ctx = { tools: { register(def) { registered.push(def); return () => {}; } } };
+  createTools(ctx, service, cfg, undefined);
+  return { store, service, byName: Object.fromEntries(registered.map((d) => [d.name, d])) };
+}
+
+test("memory_pin 的 injectable 如实报告暂停作用域（而不是只算遗忘与归档）", async () => {
+  const config = { scopeState: { enabled: true, enforce: true } };
+  const { store, service, byName } = setupPinReceipt(config);
+  const target = store.save({
+    type: "preference",
+    title: "暂停域里的偏好",
+    content: "这一路现在被按下了。",
+    workspace_scope: "proj-a",
+    importance: 5
+  });
+  await service.setScopeState({ dimension: "workspace", scope_value: "proj-a", state: "paused" });
+
+  const receipt = await byName.memory_pin.execute({ id: target.id }, undefined);
+  // 钉是钉上了（存储确实写了），但它在当前状态下不会被注入——两件事分开报。
+  assert.equal(receipt.pinned, true);
+  assert.equal(receipt.injectable, false, "暂停作用域里的行必须报 injectable: false");
+
+  // 回执与行为必须同向：真的注入一次，这条不许出现。
+  const pinnedStats = {};
+  const injected = service.injectCandidates({
+    query: "随便问个问题",
+    maxItems: 5,
+    pinnedStats
+  });
+  assert.equal(pinnedStats.source, "explicit", "这一条本身钉住了，口径应留在 explicit");
+  assert.ok(
+    !injected.some((m) => m.id === target.id),
+    "被暂停作用域挡住的行不该出现在注入块里（回执说 false，行为也必须一致）"
+  );
+});
+
+test("暂停作用域只开观察档（enforce 关）时，injectable 仍报 true", async () => {
+  // 观察档的语义是「记录本应被拦下多少，但一条都不拦」。此时那条行确实会进上下文，
+  // 所以回执必须报 true；报 false 会让用户以为它被挡了，比漏掉暂停作用域更难查。
+  const config = { scopeState: { enabled: true, enforce: false } };
+  const { store, service, byName } = setupPinReceipt(config);
+  const target = store.save({
+    type: "preference",
+    title: "观察档下的偏好",
+    content: "按下但未生效。",
+    workspace_scope: "proj-a",
+    importance: 5
+  });
+  await service.setScopeState({ dimension: "workspace", scope_value: "proj-a", state: "paused" });
+
+  const receipt = await byName.memory_pin.execute({ id: target.id }, undefined);
+  assert.equal(receipt.injectable, true, "观察档不拦任何东西，回执必须报 true");
+
+  const pinnedStats = {};
+  const injected = service.injectCandidates({
+    query: "随便问个问题",
+    maxItems: 5,
+    pinnedStats
+  });
+  assert.ok(
+    injected.some((m) => m.id === target.id),
+    "观察档下这条应当照常注入，回执与行为必须同向"
+  );
+});
+
+test("遗忘或归档的 pin：injectable 报 false（原有两项不能被这次改动弄丢）", async () => {
+  const { store, byName } = setupPinReceipt({});
+  const target = store.save({ type: "preference", title: "会被归档", content: "x", importance: 5 });
+  assert.equal((await byName.memory_pin.execute({ id: target.id }, undefined)).injectable, true);
+  store.setArchived(target.id, true);
+  const archived = await byName.memory_pin.execute({ id: target.id }, undefined);
+  assert.equal(archived.pinned, true);
+  assert.equal(archived.injectable, false);
+  store.setArchived(target.id, false);
+  store.setForget(target.id, true);
+  const forgotten = await byName.memory_pin.execute({ id: target.id }, undefined);
+  assert.equal(forgotten.injectable, false);
+});
+
 test("registers twelve tools with correct names", () => {
   const { registered } = setup();
   const names = registered.map((t) => t.name).sort();

@@ -534,7 +534,13 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
         // 不可见（explicit 他 scope）= 视作不存在，无存在性泄漏。
         const target = visibleForTool(args.id, arguments[1]);
         if (target === undefined) throw new Error("memory not found");
-        const injectable = !target.forgotten && !target.archived;
+        // 钉着 ≠ 会注入。这里必须跟注入侧用同一个出口判定，否则回执照样会说谎：
+        // 暂停作用域的行在 enforce 档会被 scopeStateGate 剔掉，但 forgotten/archived
+        // 两个标志位对此一无所知——只算这两项，一条被暂停作用域挡住的行就会报
+        // injectable: true 而实际一条都没注入。filterPaused 正是那个出口（开关关、
+        // 或只开观察档时它原样返回，于是此时报 true 是对的：那种状态下本来就不拦）。
+        const injectable =
+          !target.forgotten && !target.archived && service.filterPaused([target]).length > 0;
         if (args.unpin === true) {
           service.unpinMemory(target.id);
           return { memory_id: target.id, pinned: false, injectable };
