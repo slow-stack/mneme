@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -160,6 +160,30 @@ test("repo 解析失败各归各位：未知 → 404；歧义 → 400 带清单�
     const badSlug = await invoke(handler(routes, "/api/dsh-mneme/choro/page"), `/api/dsh-mneme/choro/page?repo=${repoId}&slug=../etc/passwd`);
     assert.equal(badSlug.status, 404, "路径穿越形态的 slug 走未知页 404（slug 只从 DB 白名单解析）");
   } finally {
+    rmTempBestEffort(root);
+  }
+});
+
+test("地志页路由区分缺失文件和不可读文件", async () => {
+  const store = createStore(":memory:");
+  const root = makeRepo(store);
+  try {
+    const { routes } = setup({ config: { chorographyEnabled: true }, choro: createChoroQueries({ store }) });
+    const pageRoute = handler(routes, "/api/dsh-mneme/choro/page");
+    const url = "/api/dsh-mneme/choro/page?slug=src";
+    const file = join(root, ".chorography", "modules", "src.md");
+    unlinkSync(file);
+    const missing = await invoke(pageRoute, url);
+    assert.equal(missing.status, 409);
+    assert.equal(missing.body.error, "page-missing");
+    assert.match(missing.body.hint, /dsh-mneme-choro/);
+    mkdirSync(file);
+    const unreadable = await invoke(pageRoute, url);
+    assert.equal(unreadable.status, 409);
+    assert.equal(unreadable.body.error, "page-unreadable");
+    assert.match(unreadable.body.hint, /permissions/);
+  } finally {
+    store.close();
     rmTempBestEffort(root);
   }
 });

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- **修复 #579**：仓库地志工具会提示登记、仓库选择和读页错误。检索遇到不可读的页面时会标明遗漏，并保留已找到的命中。
 - **修复 #593 留下的两处旁路：显式钉住的行仍会被文档升格吸收静默归档；`memory_pin` 回执在 `pinnedInjectBudget=0`（默认关闭）时仍报 `injectable: true`**。#593 把 pin 从「按类型推断」改成显式存储（`pinned_memories` 表），但两处消费方没跟上：吸收只拿得到记忆行、拿不到 pin 表，于是退回按类型猜；回执只看了遗忘/归档/暂停作用域，没看预算开关。
 
   - **判据①：新增 `store.isPinned(memoryId)` 单行点查**（`pinned_memories` 的唯一读侧谓词）。`src/document.js` 的 evidence 吸收循环改为两条并列判据：`store.isPinned(row.id)`（显式钉住）**或** `pinnedTypes.has(row.type)`（#249 逐字保真池类型 constraint/preference）——任一成立就不归档。上一版只有后者，所以一条被钉的 `pattern` / `decision` 在文档升格时照样 `setArchived`：用户钉过的行被悄悄收走，pin 语义当场失效。`store.isPinned` 缺席时自动退回类型口径（fail-safe，不因新谓词缺失而放宽）。

@@ -86,8 +86,8 @@ export function createChoroQueries({ store }) {
   }
 
   /**
-   * 读一页正文。slug 必须命中 DB 的模块行（P12：路径零用户输入）；磁盘文件被手删
-   * 时返回 { error: "page-missing" }（索引还没重算，读侧如实报缺，不伪造内容）。
+   * 读一页正文。slug 必须命中 DB 的模块行（P12：路径零用户输入）；索引仍在但
+   * 文件缺失或不可读时带回相对路径，让调用方给出对应的恢复提示。
    */
   function readPage(repoId, slug) {
     const row = db.prepare(
@@ -99,7 +99,13 @@ export function createChoroQueries({ store }) {
     if (!row) return null;
     const repo = db.prepare("SELECT root_path, name FROM choro_repos WHERE id = ?").get(repoId);
     const abs = join(repo.root_path, row.rel_path);
-    if (!existsSync(abs)) return { error: "page-missing", slug: row.slug, relPath: row.rel_path };
+    let content;
+    try {
+      content = readFileSync(abs, "utf8");
+    } catch (cause) {
+      const error = cause.code === "ENOENT" || cause.code === "ENOTDIR" ? "page-missing" : "page-unreadable";
+      return { error, slug: row.slug, relPath: row.rel_path };
+    }
     return {
       slug: row.slug,
       title: row.title,
@@ -111,16 +117,17 @@ export function createChoroQueries({ store }) {
       humanBlockCount: row.human_block_count,
       repoName: repo.name,
       relPath: row.rel_path,
-      content: readFileSync(abs, "utf8"),
+      content,
     };
   }
 
   /**
    * 关键词检索（P10）：按 `## ` 分节做大小写不敏感子串匹配，命中返回页 slug、
    * 节标题、起始行号与摘录。只扫 DB 里登记过的页面文件（不是全目录 glob——
-   * 划分变更后未重算的孤儿文件不该被搜出来）。q 为空返回空数组不报错。
+   * 划分变更后未重算的孤儿文件不该被搜出来）。需要提示检索不完整的调用方可接收
+   * 不可读的页 slug。q 为空返回空数组不报错。
    */
-  function search(repoId, q, { moduleSlug = null, limit = 20 } = {}) {
+  function search(repoId, q, { moduleSlug = null, limit = 20, onUnreadablePage } = {}) {
     const needle = String(q ?? "").trim().toLowerCase();
     if (needle === "") return [];
     const cap = Math.max(1, Math.min(100, Number(limit) || 20));
@@ -134,11 +141,11 @@ export function createChoroQueries({ store }) {
     const hits = [];
     for (const page of pages) {
       const abs = join(repo.root_path, page.rel_path);
-      if (!existsSync(abs)) continue;
       let text;
       try {
         text = readFileSync(abs, "utf8");
       } catch {
+        onUnreadablePage?.(page.slug);
         continue;
       }
       const lines = text.split("\n");
