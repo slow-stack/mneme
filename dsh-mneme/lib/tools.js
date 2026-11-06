@@ -479,6 +479,85 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
       }
     }),
 
+    // #249 第二批：显式 pin。注入侧原来靠「type 是 constraint/preference 就算
+    // 重要」推断谁该每轮置顶，那是隐含假设——库里 1100+ 条自动成了「每轮必进」
+    // 的候选而预算只有 5，真正该进去的反而排到二十名外。这个工具是那条推断的
+    // 唯一人工替代口：钉住 = 每轮注入块最前面那几条（受 pinnedInjectBudget 约束），
+    // 与类型无关（写得最全的那版常常是 pattern）。
+    //
+    // 三个边界写在这里：
+    // - 它不改记忆内容，也不改任何「记忆行」字段，只动 pinned_memories 这张关系
+    //   表，所以与 memory_forget / memory_archive / set_scope_state 都是**不同的轴**：
+    //   遗忘/归档/暂停作用域仍然优先——被它们处理掉的行就算钉着也不会注入，
+    //   回执里的 injectable 就是如实告诉我们这件事。
+    // - 存在性校验走 visibleForTool：strictScope 下 he scope 的行按「不存在」处理，
+    //   与 memory_delete 同款无存在性泄漏。
+    // - unpin 幂等：本来没钉也返回 pinned:false，不报错。
+    defineTool({
+      name: "memory_pin",
+      description:
+        "Pin a memory so it is injected at the top of the memory block every turn, regardless of its type or how it ranks against other memories. " +
+        "Use this only when the user explicitly says an entry must always be present (a hard rule, a standing preference); it is not a way to mark something as important — importance already affects ranking. " +
+        "Pinned entries still obey forgetting, archiving and the scope gate, so a pinned entry that is forgotten, archived or in a paused scope is not injected — the receipt reports this as injectable: false. " +
+        "Pass unpin: true to release it. Pin order is first-pinned-first, so the oldest pin holds its slot when the budget is tight.",
+      parameters: {
+        id: { type: "string", required: true, description: "Memory id to pin (or unpin with unpin: true)" },
+        note: { type: "string", description: "Optional short reason to keep with the pin, so a later reader knows why it is pinned" },
+        unpin: { type: "boolean", description: "true releases the pin instead of setting it" }
+      },
+      output: {
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            memory_id: { type: "string", required: true },
+            pinned: { type: "boolean", required: true },
+            // 如实回显库现值，不是回显入参：重钉一条已有的 pin 不刷新 created_at，
+            // 回显它才看得出「这次其实没改变顺序」。
+            created_at: { type: "string" },
+            note: { type: "string" },
+            // 钉着 ≠ 会注入。遗忘/归档/暂停作用域都优先于 pin，把这件事放进回执，
+            // 而不是让用户以为钉完就一定出现在上下文里。
+            injectable: { type: "boolean", required: true }
+          }
+        },
+        render: (_args, value) => {
+          if (!value.pinned) return TEXT_OUTPUT(`Memory ${value.memory_id} is no longer pinned.`);
+          const when = value.created_at ? ` (pinned at ${value.created_at})` : "";
+          const blocked = value.injectable
+            ? ""
+            : " It will not be injected while it is forgotten, archived or inside a paused scope.";
+          return TEXT_OUTPUT(`Memory ${value.memory_id} is pinned${when}.${blocked}`);
+        }
+      },
+      async execute(args) {
+        // 不可见（explicit 他 scope）= 视作不存在，无存在性泄漏。
+        const target = visibleForTool(args.id, arguments[1]);
+        if (target === undefined) throw new Error("memory not found");
+        // 钉着 ≠ 会注入。这里必须跟注入侧用同一个出口判定，否则回执照样会说谎：
+        // 暂停作用域的行在 enforce 档会被 scopeStateGate 剔掉，但 forgotten/archived
+        // 两个标志位对此一无所知——只算这两项，一条被暂停作用域挡住的行就会报
+        // injectable: true 而实际一条都没注入。filterPaused 正是那个出口（开关关、
+        // 或只开观察档时它原样返回，于是此时报 true 是对的：那种状态下本来就不拦）。
+        const injectable =
+          !target.forgotten && !target.archived && service.filterPaused([target]).length > 0;
+        if (args.unpin === true) {
+          service.unpinMemory(target.id);
+          return { memory_id: target.id, pinned: false, injectable };
+        }
+        const row = service.pinMemory(target.id, { note: args.note });
+        if (row === undefined) throw new Error("pin could not be recorded");
+        return {
+          memory_id: row.memory_id,
+          pinned: true,
+          created_at: row.created_at,
+          // 没写过理由时键整个不出现（output schema 是闭合的，留 undefined 等于空壳）。
+          ...(row.note === undefined ? {} : { note: row.note }),
+          injectable
+        };
+      }
+    }),
+
     defineTool({
       name: "memory_archive",
       description:

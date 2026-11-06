@@ -49,7 +49,7 @@ dsh web
   - 逐 type 记录 `committed / failed / pending` 回执，健康端点区分 `ok / degraded / unknown`
   - 状态写失败不静默：同步失败落日志并留债务，重启自动收敛
 
-### 模型工具（默认注册 11 个；开 `organizeEnabled` 后 12 个）
+### 模型工具（默认注册 12 个；开 `organizeEnabled` 后 13 个）
 
 
 | 工具 | 功能 |
@@ -62,6 +62,7 @@ dsh web
 | `memory_delete` | 删除记忆（按记忆 ID 精确删除） |
 | `memory_forget` | 抑制注入（降权不删除，可恢复） |
 | `memory_archive` | 归档/恢复记忆（v0.2.5；归档后隐藏于列表/搜索/注入/整理，`archived=false` 可恢复） |
+| `memory_pin` | 钉住一条记忆：无论类型、无论它和其他记忆怎么竞争，每轮都注入在记忆块最前面（#249 第二批；受 `pinnedInjectBudget` 上限约束，钉的顺序是「先钉的占位」，预算不够时最早钉的优先）。**只在她明确说「这条必须一直在」时用**，不是标记重要性的手段——重要性本来就参与排序。钉着 ≠ 会注入：遗忘 / 归档 / 暂停作用域都优先于 pin，回执里的 `injectable` 如实报告这件事。`unpin: true` 松开 |
 | `set_scope_state` | 按下/松开某个作用域的**可逆闸门**（#471：政策轴。暂停期间该作用域的记忆照旧存着，只是不注入、不参与巩固，松开即原样回来；不改任何一条记忆的标注，与上面逐条操作的 `memory_forget` / `memory_archive` 是两根不同的轴）。两级开关 `scopeState.enabled` / `.enforce` 默认都关，没开时按下不产生拦截效果 |
 | `memory_register_document` | 登记 agent 产长文档的指针行（#230：摘要 + `doc_path` + evidence 落 `document` 类型；正文留在磁盘、由 agent 自管，注册口唯一，旁路写入被拒） |
 | `memory_organize` | 主动整理（#231，**要 `organizeEnabled` 打开才注册**）：`mode=dryRun` 先出比对报告（每条候选 `exact` / `near` / `new` + 命中行，**不写一行库**、只留审计回执），agent 判断后 `mode=apply` 引用那份报告的 `run_id` 落地。两种「不要它」要分清——**`discard`** = 这条候选不写，什么都不动（只进回执）；**`archive`** = 把报告标为被取代的那条**既有行**归档（可恢复，绝不物理删除）。没有比对过的候选写不进库，一份报告也只许落地一次 |
@@ -692,7 +693,7 @@ Claude Code 挂载示例（项目根 `.mcp.json`；token 在面板「设置 → 
 │  服务层：saveWithDedupe / injectCandidates        │
 │         / mergeHumanEdits / onWrite 钩子          │
 ├─────────────────────────────────────────────────┤
-│  模型接口：11 个工具 + 自动注入 + 会话摘要         │
+│  模型接口：12 个工具 + 自动注入 + 会话摘要         │
 ├─────────────────────────────────────────────────┤
 │  autoDream：阈值调度 → LLM 决策清单               │
 │            → 校验（fail-safe）→ 应用 → 摘要       │
@@ -710,7 +711,7 @@ src/
 ├── service.js        # 领域逻辑（去重合并、注入筛选、写入钩子、scope 加权/硬过滤、冲突队列）
 ├── scope.js          # 作用域解析（agentPreset + workspace registry 反查，issue #17）
 ├── config.js         # schemastery 配置 schema
-├── tools.js          # 11 个模型工具（defineTool；memory_organize 要 organizeEnabled 打开才注册，开了是 12 个）
+├── tools.js          # 12 个模型工具（defineTool；memory_organize 要 organizeEnabled 打开才注册，开了是 13 个）
 ├── user-settings.js  # 「用户设置」注入块（人格 → 画像 → 规则）的唯一渲染处，注入与面板预览共用
 ├── profile-extract.js # 从活跃记忆提取「助手眼中的用户」画像草稿（只出草稿，不写 user_settings）
 ├── organize.js       # agent 主动整理：dryRun 比对报告 → agent 判断 → apply 落库（筛除=归档不删，留 dream_runs 回执）

@@ -204,7 +204,7 @@ test("retained tool executors use the latest gate after live registry reapply", 
   await assert.rejects(retainedSave.execute(args, privateExec), /incognito session/);
   const openGate = createSessionGate({ sessionGateEnabled: false });
   createTools({ tools: registry }, service, {}, null, openGate);
-  assert.equal(registered.length, 11, "live reapply keeps the host's existing tool registrations");
+  assert.equal(registered.length, 12, "live reapply keeps the host's existing tool registrations");
   assert.equal((await retainedSave.execute(args, privateExec)).action, "created", "off restores the original tool behavior");
   const closedGate = createSessionGate({ sessionGateEnabled: true, sessionGateSessions: ["private"] });
   createTools({ tools: registry }, service, {}, null, closedGate);

@@ -287,6 +287,29 @@ CREATE TABLE IF NOT EXISTS scope_state (
 -- 它同时是 setScopeState 那条 UPSERT 的冲突目标，所以不能省。
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scope_state_key ON scope_state(dimension, scope_value);
 
+-- pinned_memories: #249 第二批，显式 pin。旧口径把「类型是 constraint/preference」
+-- 当成 pin（隐含假设），于是 1163 条自动变「每轮必进」而预算只有 5——池子本身
+-- 就太大，靠相关性排序永远轮不到「署名」「拒绝谄媚」这类稳定偏好。本表把
+-- 「哪些是用户亲手钉的」变成一条显式事实：注入侧只认这张表，不再认类型。
+--
+-- 为什么是独立表而不是 memories 的布尔列：回退只需一条 DROP，不碰 31 列的主表；
+-- 且「pin 是用户与记忆之间的一条关系」天然是关系表——created_at 还能给出
+-- pin 顺序（按 pin 先后注入，而不是按「最近改过」）。外泄面天然为零：
+-- mirror/share 都不 SELECT 本表，pin 标记不会出现在导出物里。
+--
+-- 幂等靠 CREATE TABLE IF NOT EXISTS（本文件其余建表同款），不登记
+-- applied_migrations——那是给「跑完恒不命中却仍要全表扫一遍」的 data migration
+-- 用的，本表没有回填步骤。存量库升级后本表为空，注入侧据此回落到旧的类型口径
+-- （见 service.injectCandidates 的 type-fallback 分支），升级即等价。
+CREATE TABLE IF NOT EXISTS pinned_memories (
+  memory_id  TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  note       TEXT
+);
+-- 按 pin 顺序注入要读 created_at 全序；本表行数以「人手钉的条数」计（个位到几十），
+-- 索引只为把排序的临时 B 树换成一次有序扫，不承担过滤。
+CREATE INDEX IF NOT EXISTS idx_pinned_created ON pinned_memories(created_at);
+
 -- llm_audit_logs: every background LLM call (autoDream consolidation + summary,
 -- autoSummarize compression) is recorded here — tokens in/out, duration, status
 -- and the trigger that caused it (Bug8). Failures are captured as status='error'
@@ -984,6 +1007,17 @@ function toScopeState(row) {
     state: row.state,
     note: row.note ?? undefined,
     decided_at: row.decided_at
+  };
+}
+
+// pinned_memories 行 → 读侧对象（#249 第二批）。NULL note 落 undefined，
+// 与 toScopeState 同口径。
+function toPinned(row) {
+  if (!row) return undefined;
+  return {
+    memory_id: row.memory_id,
+    created_at: row.created_at,
+    note: row.note ?? undefined
   };
 }
 
@@ -2008,6 +2042,11 @@ export function createStore(path) {
       db.prepare("DELETE FROM memory_provenance WHERE memory_id = ?").run(id);
       // #512：铸造记录同理——它也只是指着记忆行的索引，行没了索引就没有指代对象。
       db.prepare("DELETE FROM memory_mints WHERE memory_id = ?").run(id);
+      // #249 第二批：pin 行同理，理由与前两条完全一致（本表建表时也没抄
+      // REFERENCES ... ON DELETE CASCADE，清理不挂驱动默认）。注意这一条**只
+      // 防攒垃圾**，不修「回落被卡住」——注入侧判据看的是「有几条能用的」
+      // 而不是「表里有几行」，见 service.js 注入段与 pinnedStats.source 三档。
+      db.prepare("DELETE FROM pinned_memories WHERE memory_id = ?").run(id);
       db.prepare("DELETE FROM memories WHERE id = ?").run(id);
       // Mirror sync must reflect the deletion; bump desired generation so a
       // crash between the delete and syncMirror leaves a recoverable debt.
@@ -2075,6 +2114,8 @@ export function createStore(path) {
         const marks = chunk.map(() => "?").join(", ");
         db.prepare(`DELETE FROM memory_provenance WHERE memory_id IN (${marks})`).run(...chunk);
         db.prepare(`DELETE FROM memory_mints WHERE memory_id IN (${marks})`).run(...chunk);
+        // 同 remove()：pin 行防攒垃圾（不修卡回落的那个判据问题）。
+        db.prepare(`DELETE FROM pinned_memories WHERE memory_id IN (${marks})`).run(...chunk);
         deleted += db.prepare(`DELETE FROM memories WHERE id IN (${marks})`).run(...chunk).changes;
       }
       incrementGeneration();
@@ -3939,6 +3980,71 @@ export function createStore(path) {
     return rows.map(toScopeState);
   }
 
+  // --- pinned_memories: 显式 pin（#249 第二批） ------------------------------
+  // 四个函数只管「哪条被钉住了」这条事实，不回答「该不该注入」——注入侧的
+  // 越权/暂停作用域/遗忘判定一律留在 service（与 strictScope、scopeStateGate
+  // 同处，见 injectCandidates 的位置纪律）。存储层越薄，越不会被绕过。
+
+  /**
+   * 全部 pin 行，按 pin 先后（created_at ASC）——注入就按这个序前置，**先钉的
+   * 排在最前**。预算不够（钉的条数 > pinnedInjectBudget）时，被 eligible.slice
+   * 取走的是最早钉的那几条，最近才钉的排后面、先被挤掉。
+   *
+   * 这个方向和「稳定偏好」的理由是一致的：pin 表达的是「这条我要长期带着」，
+   * 越早做出这个承诺、越久没被撤回，就越该占住名额；若反过来让新钉的优先，
+   * pin 就退化成「最近关注」清单，和 updated_at DESC 那个错误排序键同病。
+   *
+   * 注意排序键是「什么时候钉的」，不是内容的 updated_at——一条 10 月的老记忆
+   * 今天才钉，它在 pin 序里是新的、在内容上是老的，两个轴不要混。
+   * 次键 rowid：同毫秒连钉两条时 UUID 主键排序是随机的，回执要可复现。
+   */
+  function listPinned() {
+    return db.prepare("SELECT * FROM pinned_memories ORDER BY created_at ASC, rowid ASC").all().map(toPinned);
+  }
+
+  /**
+   * 钉住一条记忆。重复 pin 同一 id 不刷新 created_at（只补 note）——pin 顺序
+   * 是「第一次钉的时间」，重钉不该把老偏好的位置往后推。调用方负责确认目标
+   * 记忆存在；这里不做外键校验（本库其余表同款：关系表不设 FK，删记忆时由
+   * unpinMemory 或下一次读的 forgotten/archived 过滤兜住）。
+   */
+  function pinMemory(memoryId, { note, created_at } = {}) {
+    if (typeof memoryId !== "string" || !memoryId.trim()) return undefined;
+    const id = memoryId.trim();
+    const at = normalizeOccurredAt(created_at) ?? nowIso();
+    db.prepare(
+      `INSERT INTO pinned_memories (memory_id, created_at, note) VALUES (?, ?, ?)
+       ON CONFLICT(memory_id) DO UPDATE SET note = COALESCE(excluded.note, pinned_memories.note)`
+    ).run(id, at, normalizeScopeText(note));
+    return toPinned(db.prepare("SELECT * FROM pinned_memories WHERE memory_id = ?").get(id));
+  }
+
+  /** 松开一条 pin。返回实际删掉的行数（0 = 本来就没钉，不是错误）。 */
+  function unpinMemory(memoryId) {
+    if (typeof memoryId !== "string" || !memoryId.trim()) return 0;
+    return db.prepare("DELETE FROM pinned_memories WHERE memory_id = ?").run(memoryId.trim()).changes;
+  }
+
+  /** pin 行数。注入侧靠它判「表是空的」——空表要回落到旧的类型口径。 */
+  function countPinned() {
+    return db.prepare("SELECT count(*) AS c FROM pinned_memories").get().c;
+  }
+
+  /**
+   * 按 id 点查注入所需的行（绕开 200 行窗口的唯一通道）。
+   *
+   * 显式列清单复用 memoryColumnList：它经 PRAGMA 派生、已排除 embedding
+   * （1024 维浮点文本 ≈ 34KB/条，5 条就白搬 170KB 而注入渲染根本不用向量）。
+   * 返回顺序不保证（IN 的求值序），调用方按自己的次序（pin created_at）重排。
+   */
+  function listByIdsForInject(ids) {
+    const wanted = Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id) : [];
+    if (wanted.length === 0) return [];
+    const placeholders = wanted.map(() => "?").join(", ");
+    return db.prepare(`SELECT ${memoryColumnList} FROM memories WHERE id IN (${placeholders})`)
+      .all(...wanted).map(toRow);
+  }
+
   function getFailureStats({ since } = {}) {
     const clause = since ? "WHERE created_at >= ?" : "";
     const params = since ? [since] : [];
@@ -5135,6 +5241,14 @@ export function createStore(path) {
     setScopeState,
     getScopeState,
     listScopeStates,
+    // #249 第二批：显式 pin（独立表，绕开候选池的通道）。注入侧只读这里，
+    // 不再拿 PINNED_MEMORY_TYPES 当 pin 标记（那个常量在 write-admission 里
+    // 另有写入配额豁免的语义，两件事不再叠在同一个名字上）。
+    listPinned,
+    pinMemory,
+    unpinMemory,
+    countPinned,
+    listByIdsForInject,
     createEntity,
     findEntityByName,
     findEntityById,
