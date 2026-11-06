@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Config } from "../src/config.js";
+import { isCodingTask } from "../src/service.js";
 
 test("session incognito is opt-in, with a default-on subordinate selector", () => {
   const cfg = Config({});
@@ -81,9 +82,12 @@ test("startup probe: the reranker module never statically imports transformers/o
 
 test("codingKeywords 覆盖工程协作动作，且不含歧义词", () => {
   const { codingKeywords } = Config({});
-  assert.equal(codingKeywords.length, 90, "56 项原有 + 34 项工程协作");
 
-  // 这 34 项就是补进去的工程协作词，一个都不能少（少了就等于白改）
+  // 这 34 项就是补进去的工程协作词，一个都不能少（少了就等于白改）。
+  // 不另加「长度必须是 90」的断言：那是把「逐词覆盖」和「不多不少」两个语义
+  // 绑在一处，删一个词会同时触发两条断言，看报告的人会误以为两条用例各自
+  // 独立兜底。逐词断言已经足够——多出来的词由下面的「不得含」三条反向兜住。
+  //
   // 「审评」必须与「评审」并列：她真实说的是「等审评」「看CI和审评」（8 条 /
   // 779 次），「评审」只有 4 条 / 420 次。同义不同形，子串匹配两套都得分开放。
   const engineering = [
@@ -116,8 +120,12 @@ test("codingKeywords 覆盖工程协作动作，且不含歧义词", () => {
 });
 
 test("工程协作话被判成编码任务，考研答题话仍判成非编码", () => {
+  // 走生产的 isCodingTask，不在这里另写一份判断逻辑。
+  // 此前这条用例自己写 const isCoding = (t) => codingKeywords.some(...)，
+  // 测的是「词表内容对不对」，不是「生产函数怎么用它」——实测把
+  // src/service.js 的 isCodingTask 改成永远 return false（整个编码门废掉），
+  // 全仓 177 个相关用例仍然全绿。所以这里必须 import 真函数。
   const { codingKeywords } = Config({});
-  const isCoding = (t) => codingKeywords.some((kw) => t.toLowerCase().includes(kw.toLowerCase()));
 
   // 这些是她真实说过的工程协作话，补词前全部被判成非编码
   for (const q of [
@@ -130,7 +138,7 @@ test("工程协作话被判成编码任务，考研答题话仍判成非编码",
     "等审评。你看看#35那个pr。",
     "按照你说的，先合并完前面的再开#493"
   ]) {
-    assert.equal(isCoding(q), true, `「${q}」应判成编码任务`);
+    assert.equal(isCodingTask(q, codingKeywords), true, `「${q}」应判成编码任务`);
   }
 
   // 考研答题话：补词后仍然不能被判成编码任务，否则她的答题场景会注入编码踩坑
@@ -140,6 +148,6 @@ test("工程协作话被判成编码任务，考研答题话仍判成非编码",
     "英语阅读 1 篇（2016 起正序）",
     "631 专业课块 · 15:30–17:00"
   ]) {
-    assert.equal(isCoding(q), false, `「${q}」应判成非编码任务`);
+    assert.equal(isCodingTask(q, codingKeywords), false, `「${q}」应判成非编码任务`);
   }
 });
