@@ -41,6 +41,9 @@ const openedBy = new Map();
 // 各看一条冲突时，后开的会盖掉前一个的 id。按面板 scope 记一份再核对
 // （评审 #3 的 conflict-win 部分）。
 const conflictBy = new Map();
+// 「Agent 眼中的你」的编辑态 state.factEdit 同样是共享的；按面板 scope 记
+// 一份打开的事实 id，保存与归档前核对（评审 #3 的 facts 部分）。
+const factBy = new Map();
 // 上一次推给 App 的完整数据：未重新读取的块从这里并回去，保证每份 data 都
 // 带着全部绑定键（见 load 的注释）。
 let lastPayload = null;
@@ -1786,6 +1789,7 @@ export function mountDshGoPanel(ctx, options = {}) {
       resetNotice();
       state.factsAgent = String(valueOf(event, ["value", "agent"], "") ?? "");
       state.factEdit = null;
+      factBy.delete(scopeKey(scope));
       return {};
     },
 
@@ -1795,6 +1799,7 @@ export function mountDshGoPanel(ctx, options = {}) {
       const fact = state.factsItems.find((item) => String(item.id) === id);
       if (fact === undefined) return { toast: "这条事实已经不在了" };
       state.factEdit = { id, content: String(fact.content ?? "") };
+      factBy.set(scopeKey(scope), id);
       return {};
     },
 
@@ -1821,6 +1826,9 @@ export function mountDshGoPanel(ctx, options = {}) {
       resetNotice();
       const target = state.factEdit;
       if (target === null) return { toast: "先点一条事实" };
+      if (factBy.get(scopeKey(scope)) !== target.id) {
+        return { toast: "这条不是当前打开的事实，已取消" };
+      }
       const value = event?.value;
       const source = value !== null && typeof value === "object" ? value : {};
       const text = String(source.sFactEdit ?? target.content ?? "").trim();
@@ -1834,6 +1842,7 @@ export function mountDshGoPanel(ctx, options = {}) {
             return {};
           }
           state.factEdit = null;
+          factBy.delete(scopeKey(scope));
           notice("事实已更新。");
           return {};
         },
@@ -1849,9 +1858,13 @@ export function mountDshGoPanel(ctx, options = {}) {
       if (valueOf(event, ["confirmed"], false) !== true) return {};
       const target = state.factEdit;
       if (target === null) return { toast: "先点一条事实" };
+      if (factBy.get(scopeKey(scope)) !== target.id) {
+        return { toast: "这条不是当前打开的事实，已取消" };
+      }
       return applyFacts([{ op: "archive", id: target.id }]).then(
         () => {
           state.factEdit = null;
+          factBy.delete(scopeKey(scope));
           notice("已归档这条事实。");
           return {};
         },
@@ -2072,6 +2085,7 @@ export function resetPanelState() {
   emitters.clear();
   openedBy.clear();
   conflictBy.clear();
+  factBy.clear();
   lastPayload = null;
   Object.assign(state, defaultState());
 }

@@ -686,7 +686,11 @@ test("冲突后按最新记忆重建比对基准，第二次保存仍做版本�
 test("列表页的动作只重读列表，不再顺手读实体与设置", async () => {
   const world = makeWorld();
   const def = mount(world);
-  await payloadOf(def);
+  // 必须留一个活着的 emitter，否则 broadcast() 直接返回，这条用例就失去了
+  // 检查「重读了什么」的意义（评审 #8）。
+  const pushed = [];
+  const cancel = def.data(SCOPE_A, (payload) => pushed.push(payload));
+  await waitFor(() => pushed.length > 0, "initial payload");
 
   const seen = [];
   for (const path of [
@@ -701,8 +705,42 @@ test("列表页的动作只重读列表，不再顺手读实体与设置", async
     };
   }
 
+  const before = pushed.length;
   await def.actions.page(SCOPE_A, { value: { value: "next" } });
-  assert.deepEqual(seen, [], "列表动作把实体 / 设置 / 状态也重读了一遍");
+  await waitFor(() => pushed.length > before, "page push");
+  // dream-status 不是设置块：列表行上的「待确认」徽标要用它的 pendingMemoryIds，
+  // 所以它属于列表这一块；实体与设置则绝不能被列表动作顺手重读。
+  assert.deepEqual(seen.filter((path) => !path.endsWith("/dream-status")), []);
+  assert.ok(seen.includes("/api/dsh-mneme/dream-status"), "列表行仍需要待确认标记");
+  cancel();
+});
+
+test("事实保存与归档也按面板 scope 核对", async () => {
+  const world = makeWorld();
+  const def = mount(world);
+  // 留一个活着的 emitter：广播真的执行，设置块（含事实清单）才会重读。
+  const seen = [];
+  const cancel = def.data(SCOPE_A, (payload) => seen.push(payload));
+  await waitFor(() => seen.length > 0, "initial payload");
+
+  await def.actions["open-panel"](SCOPE_A, { value: { k: "facts" } });
+  await def.actions["facts-edit"](SCOPE_A, { value: { id: "f1" } });
+
+  // B 面板加一条并打开它：state.factEdit 被换成 B 的那条。
+  await def.actions["open-panel"](SCOPE_B, { value: { k: "facts" } });
+  await def.actions["facts-add"](SCOPE_B, { value: { sFactNew: "新的偏好" } });
+  const added = world.facts.items.find((item) => item.content === "新的偏好");
+  await def.actions["facts-edit"](SCOPE_B, { value: { id: added.id } });
+
+  const before = world.writes.filter((item) => item.path === "/profile-facts/apply").length;
+  const refusedSave = await def.actions["facts-save"](SCOPE_A, { value: { sFactEdit: "别写这条" } });
+  assert.equal(refusedSave.toast, "这条不是当前打开的事实，已取消");
+  assert.equal(world.writes.filter((item) => item.path === "/profile-facts/apply").length, before);
+
+  const refusedArchive = await def.actions["facts-archive"](SCOPE_A, { value: { confirmed: true } });
+  assert.equal(refusedArchive.toast, "这条不是当前打开的事实，已取消");
+  assert.equal(world.writes.filter((item) => item.path === "/profile-facts/apply").length, before);
+  cancel();
 });
 
 test("pending 动作等活干完再推数据，不推这一轮之前的旧列表", async () => {
