@@ -10,7 +10,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { STR } from "../src/lang.js";
-import { renderUserSettingsBlock, escapePromptVars, resolvePersonaCard } from "../src/user-settings.js";
+import { renderUserSettingsBlock, escapePromptVars, resolvePersonaCard, resolveFactsCard } from "../src/user-settings.js";
 
 // 事实段预算（与 src/user-settings.js 同值，golden 需要它复现截断）
 const MAX_LINES = 40;
@@ -44,14 +44,10 @@ function legacyRender({ settings, config, agentId = null, factsProvider = null }
         ...(typeof persona.replyStyle === "string" && persona.replyStyle.trim() ? [STR.personaReplyStyleLine[language](persona.replyStyle.trim())] : [])
       ]
     : [];
+  // 事实解析直接调生产函数 resolveFactsCard——内联重写会抄错「先查卡命中还是先判
+  // strict」的顺序（Ephor 2026-11-07 复核指出，内联版实测 3/5 情形与生产不一致）。
   const factsResolved = config?.profileFactsEnabled === true && typeof factsProvider === "function"
-    ? (() => {
-        const grouped = factsProvider();
-        const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : null;
-        const strict = config?.personaStrictAddressing === true;
-        if (id && strict && Object.keys(grouped.byAgent).length > 0) return { facts: [], source: "none" };
-        return { facts: id ? (grouped.byAgent[id] ?? []) : grouped.default, source: id ? "byAgent" : "default" };
-      })()
+    ? resolveFactsCard(factsProvider(), agentId, { strict: config?.personaStrictAddressing === true })
     : { facts: [], source: "none" };
   const factLines = [];
   if (factsResolved.facts.length) {
@@ -154,17 +150,40 @@ const CASES = [
     "事实里的 {{ }} 要转义",
     makeSettings({ profile: "画像", rules: [] }),
     { profileFactsEnabled: true, factsProvider: () => ({ default: ["模板 {{x}} 事实"], byAgent: {} }) }
+  ],
+  // 下面三条覆盖 resolveFactsCard 的四条出口：golden 曾把事实解析内联重写，
+  // 抄错了「先查本卡命中还是先判 strict」的顺序，而这 20 个用例当时全绿——说明
+  // 分歧路径没被覆盖。Ephor 2026-11-07 复核指出后补齐（实测内联版 3/5 分歧）。
+  [
+    "事实段 strict 开着但本卡命中（命中优先于 strict，不许判 none）",
+    makeSettings({ profile: "画像", rules: [] }),
+    { profileFactsEnabled: true, personaStrictAddressing: true, agentId: "botA", factsProvider: () => ({ default: ["默认卡"], byAgent: { botA: ["botA 卡"] } }) }
+  ],
+  [
+    "事实段 strict 关着且本卡未命中（落 default，不许判 byAgent 空）",
+    makeSettings({ profile: "画像", rules: [] }),
+    { profileFactsEnabled: true, agentId: "ghost", factsProvider: () => ({ default: ["默认卡"], byAgent: { botA: ["botA 卡"] } }) }
+  ],
+  [
+    "事实段 strict 开着但 byAgent 整体为空（#587 例外，仍落 default）",
+    makeSettings({ profile: "画像", rules: [] }),
+    { profileFactsEnabled: true, personaStrictAddressing: true, agentId: "botA", factsProvider: () => ({ default: ["默认卡"], byAgent: {} }) }
   ]
 ];
 
-test("text 逐字节不变：新实现与改动前的实现，20 种配置下输出完全一致", () => {
+test("text 逐字节不变：新实现与改动前的实现，23 种配置下输出完全一致", () => {
+  // 逐个比对并把**所有**分歧收集完再断言：循环里直接 assert 会在第一条分歧处
+  // 抛出，后面几条根本没跑到（Ephor 2026-11-07 复核时暴露出这一点——把 golden
+  // 换回内联版只报 1 条，实际有 3 条分歧路径）。
+  const bad = [];
   for (const [name, settings, extra] of CASES) {
     const { agentId = null, ...config } = extra;
     const args = { settings, config, agentId, factsProvider: config.factsProvider };
     const before = legacyRender(args).text;
     const after = renderUserSettingsBlock(args).text;
-    assert.equal(after, before, `配置「${name}」的注入文本必须逐字节不变`);
+    if (after !== before) bad.push(`「${name}」\n  改动前: ${JSON.stringify(before)}\n  改动后: ${JSON.stringify(after)}`);
   }
+  assert.equal(bad.length, 0, `${bad.length} 种配置的注入文本变了：\n${bad.join("\n")}`);
 });
 
 // ---- ② segments 是 text 的唯一真源 ------------------------------------------
