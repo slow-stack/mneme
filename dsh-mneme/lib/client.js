@@ -394,6 +394,7 @@ window.__ModuleLoader__.load({
         "kb.repo.pickFirst": "先在上面选一个仓库",
         "kb.repo.none": "还没有登记的仓库：先去「仓库地志」页生成一次，再回来导入。",
         "kb.repo.noPath": "这个仓库的根路径拿不到（后端没回 rootPath），拼不出地志页的绝对路径。",
+        "kb.repo.noRelPath": "这个模块还没生成骨架页（后端没回 relPath），先回「仓库地志」页生成一次再来导入。",
         "kb.load.failed": "加载失败",
         "memory.tab.all": "全部",
         "memory.tab.preference": "偏好",
@@ -1364,6 +1365,7 @@ window.__ModuleLoader__.load({
         "kb.repo.pickFirst": "Pick a repository above first",
         "kb.repo.none": "No repository registered yet: generate one on the Repo Atlas page first, then come back to import.",
         "kb.repo.noPath": "This repository's root path is unavailable (the backend did not return rootPath), so the atlas page's absolute path cannot be composed.",
+        "kb.repo.noRelPath": "This module has no skeleton page yet (the backend did not return relPath). Generate it on the Repo Atlas page first, then import.",
         "kb.load.failed": "Failed to load",
         "memory.tab.all": "All",
         "memory.tab.preference": "Preferences",
@@ -11500,7 +11502,9 @@ window.__ModuleLoader__.load({
           const relPath = mod && mod.relPath ? String(mod.relPath) : "";
           // 拿不到根路径就停在这儿给一句人话——发出去必然是 404，用户只会更糊涂。
           if (!rootPath) { patch({ toast: t("kb.repo.noPath") }); return; }
-          if (!relPath) { patch({ toast: t("kb.repo.pickFirst") }); return; }
+          // 缺 relPath 与「没选模块」是两件事：前者是后端回执少字段、后者是用户没点。
+          // 用同一句「请先选模块」会把真 bug 说成操作问题（#607 那种假成功），故分开。
+          if (!relPath) { patch({ toast: t("kb.repo.noRelPath") }); return; }
           source = rootPath.replace(/[\\/]+$/, "") + "/" + relPath.replace(/^[\\/]+/, "");
         }
         if (!source) { patch({ toast: t("kb.doc.source") }); return; }

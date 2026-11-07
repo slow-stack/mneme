@@ -189,6 +189,12 @@ export function createChoroQueries({ store }) {
       `SELECT from_slug, to_slug, weight FROM choro_edges WHERE repo_id = ?
         ORDER BY from_slug, to_slug`
     ).all(repoId);
+    // 纯加法补一个 camelCase 的 relPath：面板从地志页导入知识点要拼「根路径 + 页相对
+    // 路径」，而这里历史上直出 SQL 行的 snake_case（page_rel_path）。C 线按契约读的是
+    // mod.relPath，字段一缺就恒 undefined，用户选完模块点导入只会看到「请先选模块」。
+    // 原字段一律保留——src/tools.js 的 render 与 choro-command 都还在吃 file_count /
+    // page_status，改形状会波及它们；outline() 里的同名映射是这件事的正确写法。
+    for (const m of modules) m.relPath = m.page_rel_path ?? null;
     return { modules, edges };
   }
 

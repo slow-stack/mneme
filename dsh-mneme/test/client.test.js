@@ -261,6 +261,14 @@ test("knowledge base page exposes the §3.6 routes and explains every empty stat
   assert.ok(fn.includes('t("kb.empty.unavailable")'), "503 must render the unavailable explanation");
   assert.ok(fn.includes('t("kb.empty.collections")'), "an empty collection list must explain what to do next");
   assert.ok(fn.includes('t("kb.repo.noPath")'), "a missing rootPath must stop before composing a guaranteed 404");
+  // 后端 /choro/modules 曾只回 snake_case 的 page_rel_path，面板读 mod.relPath 恒 undefined，
+  // 于是「选完模块点导入」永远弹「请先选模块」——把后端缺陷说成用户没点（#607 同型）。
+  // 现在后端补了 relPath，缺字段时也必须落到独立的解释上，不许复用 pickFirst。
+  assert.ok(fn.includes('t("kb.repo.noRelPath")'), "a module without relPath needs its own explanation");
+  assert.ok(
+    !/if \(!relPath\) \{ patch\(\{ toast: t\("kb\.repo\.pickFirst"\) \}\); return; \}/.test(fn),
+    "a missing relPath must not be reported as 'pick a module first'"
+  );
   assert.ok(fn.includes("kb/collections?key="), "deleting a collection addresses it by key");
 
   // 文案本身锁一次：说清这是 mneme 的功能、开关在哪儿。

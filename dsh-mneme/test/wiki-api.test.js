@@ -120,6 +120,11 @@ test("快乐路径：repos / modules / page / search 全通", async () => {
     assert.equal(modules.status, 200);
     assert.ok(modules.body.modules.length >= 2);
     assert.ok(Array.isArray(modules.body.edges));
+    // 面板的地志页导入要把「根路径 + 页相对路径」拼成磁盘绝对路径（契约 §3.6），
+    // 回执里缺 relPath 时它会静默回落到「请先选模块」——这条锁的就是那个真机 bug。
+    const withPage = modules.body.modules.filter((m) => m.page_rel_path);
+    assert.ok(withPage.length >= 1, "fixture 里至少一个模块有骨架页");
+    for (const m of withPage) assert.equal(m.relPath, m.page_rel_path);
 
     const page = await invoke(handler(routes, "/api/dsh-mneme/choro/page"), `/api/dsh-mneme/choro/page?repo=${repoId}&slug=src`);
     assert.equal(page.status, 200);
