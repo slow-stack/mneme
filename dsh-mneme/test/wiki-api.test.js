@@ -271,3 +271,353 @@ test("/choro/search：embedder 在场 → 惰性物化 + semantic 数组；缺�
     rmTempBestEffort(root);
   }
 });
+
+// ---------------------------------------------------------------------------
+// 契约 §3.2（kb-qoder parity）：面板闭环要的新字段与新入口
+// ---------------------------------------------------------------------------
+
+test("/choro/repos：契约字段齐备，git 漂移 → stale/git，plan 漂移 → stale/plan", async () => {
+  const store = createStore(":memory:");
+  const root = makeRepo(store);
+  try {
+    const { routes } = setup({ config: { chorographyEnabled: true }, choro: createChoroQueries({ store }) });
+    const url = "/api/dsh-mneme/choro/repos";
+
+    // 刚重建完：不该有任何过期信号——否则面板会对着一个刚生成的地志喊「代码已变」，
+    // 用户第一次用就学会不信任那个标记。
+    const fresh = await invoke(handler(routes, url), url);
+    assert.equal(fresh.status, 200);
+    const a = fresh.body.repos[0];
+    for (const key of ["id", "name", "rootPath", "modules", "pages", "claims", "legacy", "stale", "staleReason", "lastRunAt"]) {
+      assert.ok(key in a, `契约字段 ${key} 必须在场（面板按它渲染）`);
+    }
+    assert.equal(a.stale, false);
+    assert.equal(a.staleReason, null);
+    assert.equal(a.legacy, false);
+    assert.equal(typeof a.lastRunAt, "string");
+    assert.ok(a.modules >= 2 && a.pages >= 2, "modules/pages 是契约字段名（不是行里的 module_count）");
+
+    // 代码变了（新 commit）→ 说过期，理由必须是 git：面板那句话是「代码已变」。
+    writeFileSync(join(root, "src", "c.js"), "export const c = () => 2;\n", "utf8");
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"], { cwd: root, stdio: "pipe" });
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "drift", "--no-gpg-sign"], { cwd: root, stdio: "pipe" });
+    const drifted = await invoke(handler(routes, url), url);
+    assert.equal(drifted.body.repos[0].stale, true);
+    assert.equal(drifted.body.repos[0].staleReason, "git");
+
+    // 先重建一次把 git 基线推平（否则 git 那一路永远优先，plan 判据根本轮不到），
+    // 再只改 plan.yaml（HEAD 不动）→ 理由必须是 plan：这条判据不依赖 git，不能被
+    // git 那一路掩盖掉，否则「改了模板配置但没提交」的仓库永远显示干净。
+    runChoroT0({ repoRoot: root, store, apply: true });
+    const cleaned = await invoke(handler(routes, url), url);
+    assert.equal(cleaned.body.repos[0].stale, false, "重建后 git 基线推平，过期信号应清掉");
+    writeFileSync(join(root, ".chorography", "plan.yaml"), "pages: []\n", "utf8");
+    const planDrift = await invoke(handler(routes, url), url);
+    assert.equal(planDrift.body.repos[0].stale, true);
+    assert.equal(planDrift.body.repos[0].staleReason, "plan");
+  } finally {
+    rmTempBestEffort(root);
+  }
+});
+
+test("/choro/run：空态按绝对路径登记新仓库，重复路径复用同一 id", async () => {
+  const store = createStore(":memory:");
+  // 只把仓库目录准备好但不登记：这就是面板「一个仓库都没登记」的真实起点。
+  const root = mkdtempSync(join(tmpdir(), "choro-empty-"));
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "emptyfix" }, null, 2) + "\n", "utf8");
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "src", "a.js"), "export const a = 1;\n", "utf8");
+  execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "pipe" });
+  execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"], { cwd: root, stdio: "pipe" });
+  execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init", "--no-gpg-sign"], { cwd: root, stdio: "pipe" });
+  try {
+    const { routes } = setup({
+      config: { chorographyEnabled: true },
+      choro: { ...createChoroQueries({ store }), runT0Apply: ({ repoRoot }) => runChoroT0({ repoRoot, store, apply: true }) }
+    });
+    const route = handler(routes, "/api/dsh-mneme/choro/run");
+    const reposUrl = "/api/dsh-mneme/choro/repos";
+    const before = await invoke(handler(routes, reposUrl), reposUrl);
+    assert.equal(before.body.repos.length, 0, "起点确实是一个仓库都没登记");
+
+    const first = await invokePost(route, "/api/dsh-mneme/choro/run", { path: root });
+    assert.equal(first.status, 200);
+    assert.equal(first.body.ok, true);
+    assert.ok(first.body.receipt.moduleCount >= 1, "走的是真 T0（有划分回执）");
+    const after = await invoke(handler(routes, reposUrl), reposUrl);
+    assert.equal(after.body.repos.length, 1, "空态 + 路径 → 自动登记");
+
+    // 第二次同一路径：不能变成两条记录，也不能报错——面板按钮会被连点。
+    const again = await invokePost(route, "/api/dsh-mneme/choro/run", { rootPath: root, refresh: true });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.refresh, true, "refresh 原样回显，面板据此区分「我要求过重跑」");
+    assert.equal((await invoke(handler(routes, reposUrl), reposUrl)).body.repos.length, 1, "同一路径复用既有 id");
+  } finally {
+    rmTempBestEffort(root);
+  }
+});
+
+test("/choro/run：路径给错时结构化报错，不落 500 一锅烩", async () => {
+  const store = createStore(":memory:");
+  const notGit = mkdtempSync(join(tmpdir(), "choro-notgit-"));
+  try {
+    const { routes } = setup({
+      config: { chorographyEnabled: true },
+      choro: { ...createChoroQueries({ store }), runT0Apply: ({ repoRoot }) => runChoroT0({ repoRoot, store, apply: true }) }
+    });
+    const route = handler(routes, "/api/dsh-mneme/choro/run");
+
+    const rel = await invokePost(route, "/api/dsh-mneme/choro/run", { path: "some/rel/dir" });
+    assert.equal(rel.status, 400);
+    assert.equal(rel.body.error, "path-not-absolute", "相对路径的语义取决于宿主 cwd，必须挡");
+
+    const missing = await invokePost(route, "/api/dsh-mneme/choro/run", { path: join(notGit, "nope") });
+    assert.equal(missing.status, 400);
+    assert.equal(missing.body.error, "path-not-found");
+
+    const plain = await invokePost(route, "/api/dsh-mneme/choro/run", { path: notGit });
+    assert.equal(plain.status, 409);
+    assert.equal(plain.body.error, "not-a-git-repo", "目录在但不是 git 仓库 → 409，不是 500");
+  } finally {
+    rmTempBestEffort(notGit);
+  }
+});
+
+// T1 会真花钱（模型调用），所以这里注入假的 startT1Job / t1JobStatus：
+// 路由层要锁的只是闸门与 200/409/404 的分叉形状，不是进程本身。
+function withT1({ startT1Job, t1JobStatus } = {}) {
+  const store = createStore(":memory:");
+  const root = makeRepo(store);
+  const choro = { ...createChoroQueries({ store }) };
+  if (startT1Job) choro.startT1Job = startT1Job;
+  if (t1JobStatus) choro.t1JobStatus = t1JobStatus;
+  return { store, root, choro };
+}
+
+test("/choro/t1：缺装配 503 / 面板闸关 409 / 同仓并发 409 job-running / 缺省 404", async () => {
+  const a = withT1({});
+  try {
+    const noJobs = setup({ config: { chorographyEnabled: true, chorographyT1FromPanel: true }, choro: a.choro });
+    const missing = await invokePost(handler(noJobs.routes, "/api/dsh-mneme/choro/t1"), "/api/dsh-mneme/choro/t1", { repo: 1 });
+    assert.equal(missing.status, 503, "没装配任务账 → 503 环境缺件");
+    assert.equal(missing.body.error, "unavailable");
+  } finally {
+    rmTempBestEffort(a.root);
+  }
+
+  const b = withT1({ startT1Job: () => ({ started: true, jobId: "j-1" }) });
+  try {
+    const off = setup({
+      config: { chorographyEnabled: true, chorographyT1FromPanel: false },
+      choro: b.choro
+    });
+    const disabled = await invokePost(handler(off.routes, "/api/dsh-mneme/choro/t1"), "/api/dsh-mneme/choro/t1", { repo: 1 });
+    assert.equal(disabled.status, 409, "T1 花模型额度，面板闸关着就不许起");
+    assert.equal(disabled.body.error, "disabled");
+
+    const on = setup({ config: { chorographyEnabled: true, chorographyT1FromPanel: true }, choro: b.choro });
+    const t1Route = handler(on.routes, "/api/dsh-mneme/choro/t1");
+    assert.equal(t1Route.policy, "token-write", "起一个会写页面/claims 的后台任务属数据面写");
+
+    const ok = await invokePost(t1Route, "/api/dsh-mneme/choro/t1", { repo: 1, module: "src", retryFailed: true });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(ok.body, { jobId: "j-1", started: true });
+
+    const unknown = await invokePost(t1Route, "/api/dsh-mneme/choro/t1", { repo: 99 });
+    assert.equal(unknown.status, 404);
+
+    const busy = withT1({ startT1Job: () => ({ started: false, code: "job-running", jobId: "j-2" }) });
+    try {
+      const busySetup = setup({ config: { chorographyEnabled: true, chorographyT1FromPanel: true }, choro: busy.choro });
+      const running = await invokePost(handler(busySetup.routes, "/api/dsh-mneme/choro/t1"), "/api/dsh-mneme/choro/t1", { repo: 1 });
+      assert.equal(running.status, 409);
+      assert.equal(running.body.error, "job-running");
+      assert.equal(running.body.jobId, "j-2", "把在跑的那个 jobId 带回给面板，好让它接着轮询而不是重起");
+    } finally {
+      rmTempBestEffort(busy.root);
+    }
+  } finally {
+    rmTempBestEffort(b.root);
+  }
+});
+
+test("/choro/t1/status：jobId 缺 400、未知 404、已知 200 带契约字段", async () => {
+  const job = {
+    jobId: "j-9",
+    repo: { id: 1, name: "x", rootPath: "/x" },
+    state: "running",
+    startedAt: "T0",
+    modules: { total: 2, done: 1, failed: 0 },
+    logTail: ["line"]
+  };
+  const f = withT1({ startT1Job: () => ({ started: true, jobId: "j-9" }), t1JobStatus: (id) => (id === "j-9" ? job : null) });
+  try {
+    const { routes } = setup({ config: { chorographyEnabled: true }, choro: f.choro });
+    const route = handler(routes, "/api/dsh-mneme/choro/t1/status");
+
+    const noId = await invoke(route, "/api/dsh-mneme/choro/t1/status");
+    assert.equal(noId.status, 400);
+    assert.equal(noId.body.error, "jobId-required");
+
+    const gone = await invoke(route, "/api/dsh-mneme/choro/t1/status?jobId=nope");
+    assert.equal(gone.status, 404, "宿主重启后旧 jobId 必然查不到，面板据此回到「没有在跑的任务」");
+
+    const found = await invoke(route, "/api/dsh-mneme/choro/t1/status?jobId=j-9");
+    assert.equal(found.status, 200);
+    assert.equal(found.body.state, "running");
+    assert.equal(found.body.modules.total, 2);
+    assert.deepEqual(found.body.logTail, ["line"]);
+  } finally {
+    rmTempBestEffort(f.root);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// chorographyAutoRefresh：读侧自动重跑 T0（面板文案已经把它当契约写死了：
+// 「读地志页时如果发现仓库代码变了，自动重跑一次 T0 骨架」）。
+// 这一批同时锁「开关关着绝不偷偷改用户工作区」与「开关开着真的会刷」——只锁一端
+// 的测试在实现成「永远不刷」或「永远刷」时都会绿，等于没锁。
+// ---------------------------------------------------------------------------
+
+// 计数外壳：真实 queries + 包一层的 runT0Apply（记调用次数、可注入失败）。
+// 不造一个假 T0——「刷了但基线没推进」这种 bug 只有真 T0 才照得出来。
+function countingChoro(store, { throwOnRun = false } = {}) {
+  const calls = [];
+  const base = createChoroQueries({ store });
+  return {
+    calls,
+    choro: {
+      ...base,
+      runT0Apply: ({ repoRoot }) => {
+        calls.push(repoRoot);
+        if (throwOnRun) throw new Error("磁盘只读（模拟）");
+        return runChoroT0({ repoRoot, store, apply: true });
+      }
+    }
+  };
+}
+
+// 造一个「代码已变」的仓库：登记时的 git_baseline 与当前 HEAD 不同。
+function driftRepo(store) {
+  const root = makeRepo(store);
+  writeFileSync(join(root, "src", "c.js"), "export const c = () => 2;\n", "utf8");
+  execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"], { cwd: root, stdio: "pipe" });
+  execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "drift", "--no-gpg-sign"], { cwd: root, stdio: "pipe" });
+  return root;
+}
+
+test("/choro/repos 自动重跑：开关关着时即使过期也一次都不刷（默认行为逐字节不变）", async () => {
+  const store = createStore(":memory:");
+  const root = driftRepo(store);
+  try {
+    const { calls, choro } = countingChoro(store);
+    const { routes } = setup({ config: { chorographyEnabled: true }, choro });
+    const url = "/api/dsh-mneme/choro/repos?repo=1";
+    const REPOS_PATH = "/api/dsh-mneme/choro/repos";
+    const res = await invoke(handler(routes, REPOS_PATH), url);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.repos[0].staleReason, "git", "前提：这个仓库确实是过期的");
+    assert.equal(calls.length, 0, "开关缺省 false 时读侧一个字节都不许动用户的工作区");
+    assert.equal(res.body.autoRefreshed, false);
+  } finally {
+    rmTempBestEffort(root);
+  }
+});
+
+test("/choro/repos 自动重跑：开关开 + ?repo= 点名且 git 过期 → 刷一次，回执按新基线说话", async () => {
+  const store = createStore(":memory:");
+  const root = driftRepo(store);
+  try {
+    const { calls, choro } = countingChoro(store);
+    const { routes } = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
+    const url = "/api/dsh-mneme/choro/repos?repo=1";
+    const REPOS_PATH = "/api/dsh-mneme/choro/repos";
+    const res = await invoke(handler(routes, REPOS_PATH), url);
+    assert.equal(res.status, 200);
+    assert.equal(calls.length, 1, "开关开 + 指名 + git 过期 = 恰好刷这一个仓库");
+    assert.equal(res.body.autoRefreshed, true);
+    // 刷完必须改成不 stale：否则面板刚刷完就显示「代码已变」，等于谎报一次失败。
+    assert.equal(res.body.repos[0].stale, false);
+    assert.equal(res.body.repos[0].staleReason, null);
+  } finally {
+    rmTempBestEffort(root);
+  }
+});
+
+test("/choro/repos 自动重跑：不 stale 或没点名 ?repo= 时都不刷（一次面板加载不能扫全库）", async () => {
+  const store = createStore(":memory:");
+  const cleanRoot = makeRepo(store);
+  try {
+    const { calls, choro } = countingChoro(store);
+    const { routes } = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
+    const plain = "/api/dsh-mneme/choro/repos";
+    const clean = await invoke(handler(routes, plain), plain);
+    assert.equal(clean.status, 200);
+    assert.equal(calls.length, 0, "staleReason 为 null → 没有刷的理由");
+
+    // 造第二个过期仓库，但请求不带 ?repo=：列表路径一个都不许刷。
+    const drifted = driftRepo(store);
+    try {
+      const listed = await invoke(handler(routes, plain), plain);
+      assert.equal(listed.body.repos.length, 2);
+      assert.equal(calls.length, 0, "没点名就不刷：否则打开面板要付 N 次全仓扫描");
+      assert.equal(listed.body.autoRefreshed, false);
+      assert.ok(listed.body.repos.some((r) => r.staleReason === "git"), "过期信号照常回，只是不顺手刷");
+    } finally {
+      rmTempBestEffort(drifted);
+    }
+  } finally {
+    rmTempBestEffort(cleanRoot);
+  }
+});
+
+test("/choro/repos 自动重跑失败：读照常 200、数据在、错误进 autoRefreshError", async () => {
+  const store = createStore(":memory:");
+  const root = driftRepo(store);
+  try {
+    const { calls, choro } = countingChoro(store, { throwOnRun: true });
+    const { routes } = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
+    const url = "/api/dsh-mneme/choro/repos?repo=1";
+    const REPOS_PATH = "/api/dsh-mneme/choro/repos";
+    const res = await invoke(handler(routes, REPOS_PATH), url);
+    // 读是主诉求、刷新是附赠：打成 500 等于「顺手的事没办成，正事也不给办」。
+    assert.equal(res.status, 200, "刷新失败不许把读请求打成 500");
+    assert.equal(calls.length, 1);
+    assert.equal(res.body.autoRefreshed, false);
+    assert.match(res.body.autoRefreshError, /磁盘只读/);
+    assert.equal(res.body.repos.length, 1, "数据必须还在");
+    assert.equal(res.body.repos[0].staleReason, "git", "没刷成功就照实说过期");
+  } finally {
+    rmTempBestEffort(root);
+  }
+});
+
+// /choro/page 是面板主路径，也是「读地志页时发现代码变了」那句文案的真正时刻。
+// 顶栏「代码已变」徽章读 state.repo.stale —— 回执里没有 repo 这份数据，徽章永远不亮。
+test("/choro/page 回执带 repo.stale/staleReason，并在这条读路径上自动重跑", async () => {
+  const store = createStore(":memory:");
+  const root = driftRepo(store);
+  try {
+    const { calls, choro } = countingChoro(store);
+    const url = "/api/dsh-mneme/choro/page?repo=1&slug=src";
+    const PAGE_PATH = "/api/dsh-mneme/choro/page";
+
+    const offSetup = setup({ config: { chorographyEnabled: true }, choro });
+    const off = await invoke(handler(offSetup.routes, PAGE_PATH), url);
+    assert.equal(off.status, 200);
+    assert.equal(off.body.repo.stale, true, "徽章的数据源：开关关着也要照实报过期");
+    assert.equal(off.body.repo.staleReason, "git");
+    assert.equal(off.body.autoRefreshed, false);
+    assert.equal(calls.length, 0);
+
+    const onSetup = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
+    const on = await invoke(handler(onSetup.routes, PAGE_PATH), url);
+    assert.equal(on.status, 200);
+    assert.equal(calls.length, 1, "页读路径点名的就是这一个仓库");
+    assert.equal(on.body.autoRefreshed, true);
+    assert.equal(on.body.repo.stale, false, "刷完页面与 repo 徽章必须同一时刻一致");
+    assert.ok(on.body.page.content.includes("## 文件清单"), "页正文照常回");
+  } finally {
+    rmTempBestEffort(root);
+  }
+});

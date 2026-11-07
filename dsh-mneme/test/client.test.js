@@ -112,10 +112,11 @@ test("chorography wiki entry registers its own seat pair in the same panellist b
   );
 });
 
-// 收尾档（P34）：面板的生成触发点只接 T0（秒级同步回执）；T1 是 30–240s 起步的
-// 长任务，不上 HTTP——这条边界同时是安全边界（token-write 只罩秒级写）与体验
-// 边界（面板请求不挂死）。锁三件事：按钮打到 /choro/run、rebuilding 态防连点、
-// t1Loss/指引文案存在（spec §3「现在生成」的落点 + M2 补洞的警告透出）。
+// 收尾档（P34）留下的边界：面板的「重建」触发点只接 T0（秒级同步回执）。
+// T1 后来按契约 §3.5 单开了自己的路由（/choro/t1 + 轮询），所以这里的
+// 「不上 HTTP」只对重建按钮成立，不再是整个面板的规矩——重建仍然是同步回执，
+// 锁三件事：按钮打到 /choro/run、rebuilding 态防连点、t1Loss/指引文案存在
+// （spec §3「现在生成」的落点 + M2 补洞的警告透出）。
 test("chorography wiki page exposes the rebuild action against /choro/run", () => {
   assert.ok(
     clientSource.includes('"/api/dsh-mneme/choro/run"'),
@@ -132,6 +133,160 @@ test("chorography wiki page exposes the rebuild action against /choro/run", () =
   assert.ok(
     clientSource.includes("wiki.rebuild.done"),
     "the receipt note must surface the rebuilt module/page counts"
+  );
+});
+
+// issue #607 正面修复：空态（phase === "no-repo"）以前只有一句「去跑 CLI」的
+// 纯文字，一个可点的东西都没有，而那句命令在 PATH 里根本不存在。回归表现：
+//  · 空态退回纯文字 → 用户第一次进这块只能自己去翻文档；
+//  · 命令示例写回裸 CLI 名 → 抄进终端就是 "command not found"；
+//  · 文案出现「cd 进目录」→ 命令收的是路径参数，cd 进去反而找不着仓库。
+test("#607: the no-repo empty state offers a clickable path-to-generate entry", () => {
+  assert.ok(
+    clientSource.includes("mneme-wikirunrow"),
+    "the no-repo empty state must render an input+button row, not a bare paragraph"
+  );
+  assert.ok(
+    clientSource.includes('t("wiki.empty.generate")'),
+    "the empty state must carry its own generate button label"
+  );
+  assert.ok(
+    clientSource.includes('t("wiki.empty.pathPlaceholder")'),
+    "the empty state must ask for the repository's absolute path (the CLI takes a path argument)"
+  );
+  // 命令要给绝对路径：dsh-mneme-choro 不在 PATH 里，裸名抄进终端必然找不到。
+  // 值里含转义引号（路径要用引号包住），所以逐字取到未转义的那个收尾引号。
+  const cmds = [...clientSource.matchAll(/"wiki\.empty\.cliCmd":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  assert.equal(cmds.length, 2, "wiki.empty.cliCmd must exist in both dictionaries");
+  for (const cmd of cmds) {
+    assert.ok(
+      cmd.includes("node ") && cmd.includes("dsh-mneme-choro.mjs"),
+      "the CLI example must be a node call on the bin script, got: " + cmd
+    );
+    assert.ok(cmd.includes("--apply"), "the example must carry --apply, otherwise it only previews");
+  }
+  // 收的是路径参数，不能教用户 cd 进目录：cd 进去再传 "." 又会因为命令不在
+  // PATH 里失败，这是 #607 报告里最常被踩的一步。判据落在两处：旧的「在仓库
+  // 目录里跑」这句必须消失；剩下的提及只允许是「不必先 cd」这种反例澄清。
+  const noRepos = [...clientSource.matchAll(/"wiki\.empty\.noRepo":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  assert.equal(noRepos.length, 2, "wiki.empty.noRepo must exist in both dictionaries");
+  for (const copy of noRepos) {
+    assert.equal(
+      /在仓库目录里跑|inside the repository|run this inside/i.test(copy),
+      false,
+      "the copy must not tell the user to run the command from inside the repository, got: " + copy
+    );
+    // #607 的三件事缺一不可：是什么、在哪里开、命令要给绝对路径。
+    assert.ok(copy.includes("mneme"), "the copy must say which plugin this belongs to");
+  }
+  const hints = [...clientSource.matchAll(/"wiki\.empty\.cliHint":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  assert.equal(hints.length, 2, "wiki.empty.cliHint must exist in both dictionaries");
+  for (const hint of hints) {
+    assert.ok(
+      /不必先 cd|no need to cd/i.test(hint),
+      "a mention of cd must be the explicit disclaimer, got: " + hint
+    );
+  }
+  assert.ok(
+    clientSource.includes('t("wiki.run.notGit")'),
+    "a not-git rejection must be translated into an explanation, not echoed as a bare code"
+  );
+});
+
+// 空态那条 POST 要带 path 字段（契约 §3.2）：老实现只认 repo，新实现认 path，
+// 两个都带上才能同时跑在两版后端上。回归表现：只发 repo → 第一次进来自报家门
+// 的目录永远登记不上。
+test("#607: generating from the empty state posts the absolute path to /choro/run", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(/body = \{ path: p \}/.test(fn), "the run body must carry the path field");
+  assert.ok(fn.includes("body.repo = "), "the run body must still carry repo when one is already loaded");
+  assert.ok(fn.includes('"/api/dsh-mneme/choro/run"'), "both entry points share the token-write route");
+});
+
+// 失败也要能读懂（#607 的另一半：原文案把错误码直接糊在屏幕上）。
+// 后端把 wiki 层的 err.code "not-git" 翻成了对外契约的 "not-a-git-repo"，两个码
+// 都要认——只认一个就会出现「同一个失败，换个后端版本就只剩错误码」的半修状态。
+test("#607: run failures explain themselves instead of echoing a bare error code", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(fn.includes('data.error === "not-git"'), "the wiki-layer code must still be understood");
+  assert.ok(fn.includes('data.error === "not-a-git-repo"'), "the public API code is the one the server actually sends");
+  assert.ok(fn.includes('t("wiki.run.notGit")'), "not-git must resolve to an explanation, not a code");
+  assert.ok(fn.includes('t("wiki.run.notAbsolute")'), "a relative path must say it has to be absolute");
+  assert.ok(fn.includes('t("wiki.run.notFound")'), "a missing directory must say so");
+
+  // 解释本身要讲清「为什么」：非 git 没有可比基线，且不含「cd 进目录」这类误导。
+  const notGit = clientSource.match(/"wiki\.run\.notGit":\s*"((?:[^"\\]|\\.)+)"/g) || [];
+  assert.equal(notGit.length, 2, "wiki.run.notGit must exist in zh and en");
+  for (const line of notGit) {
+    assert.ok(/git/.test(line), "the not-git copy must mention git");
+    assert.ok(/基线|baseline/.test(line), "the not-git copy must explain the missing baseline, i.e. why it is refused");
+  }
+});
+
+// 契约 §3.5-2：面板顶栏两枚子开关 + T1 长任务。
+//  · T1 是 30–240s 起步的长任务，POST 只负责起跑，进度必须靠轮询；
+//  · 轮询依赖取 jobId 而不是整个 t1 对象，否则每拍 setState 都把定时器拆了重建；
+//  · stale 的仓库要在行内标出来，否则用户以为页面和代码同步。
+test("choro page wires the two feature toggles, the T1 job and the stale marker", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(fn.includes('toggleFlag("chorographyAutoRefresh")'), "the auto-refresh toggle must ride on chorographyAutoRefresh");
+  // 两枚都是「面板就地能改」的开关，不是只读回显：点一下要把同一个键 PUT 回 /features。
+  assert.ok(fn.includes('toggleFlag("chorographyT1FromPanel")'), "the T1 permission is its own toggle, not a read-only echo");
+  assert.ok(fn.includes('"/api/dsh-mneme/features"'), "toggling must write back through /features, not a local-only flag");
+  assert.ok(fn.includes('"/api/dsh-mneme/choro/t1"'), "the T1 button must POST /choro/t1");
+  assert.ok(fn.includes("/api/dsh-mneme/choro/t1/status?jobId="), "T1 progress must be polled from /choro/t1/status");
+  assert.ok(fn.includes("setInterval(tick, 2000)"), "the poll interval is 2s per contract §3.5");
+  assert.ok(fn.includes("clearInterval"), "the poller must be torn down when the job ends or the panel unmounts");
+  assert.ok(
+    fn.includes("mneme-badge--pending") && fn.includes('t("wiki.stale")'),
+    'stale repos need an inline "code changed" badge'
+  );
+});
+
+// 知识库页（契约 §3.6）。这条锁的是「路由与就近文案都在」，不是布局：
+//  · 409/503 各有自己的空态，不把裸状态码丢屏幕上；
+//  · disabled 那句必须说清去哪儿开（#607 的教训：只说「未启用」等于没说）；
+//  · 地志页导入要拼绝对路径，根路径只从 /choro/repos 取，拿不到就停手。
+test("knowledge base page exposes the §3.6 routes and explains every empty state", () => {
+  const fn = sliceComponent("KbMainPanel");
+  for (const route of [
+    '"/api/dsh-mneme/kb/collections',
+    '"/api/dsh-mneme/kb/docs?collection=',
+    '"/api/dsh-mneme/kb/ingest"',
+    '"/api/dsh-mneme/kb/search"'
+  ]) {
+    assert.ok(fn.includes(route), "the knowledge base page must call " + route);
+  }
+  assert.ok(fn.includes('t("kb.empty.disabled")'), "409 must render the disabled explanation");
+  assert.ok(fn.includes('t("kb.empty.unavailable")'), "503 must render the unavailable explanation");
+  assert.ok(fn.includes('t("kb.empty.collections")'), "an empty collection list must explain what to do next");
+  assert.ok(fn.includes('t("kb.repo.noPath")'), "a missing rootPath must stop before composing a guaranteed 404");
+  assert.ok(fn.includes("kb/collections?key="), "deleting a collection addresses it by key");
+
+  // 文案本身锁一次：说清这是 mneme 的功能、开关在哪儿。
+  assert.ok(
+    clientSource.includes("设置 → 记忆(mneme) → 功能 → 知识库"),
+    "the Chinese disabled copy must name the exact toggle path"
+  );
+  assert.ok(
+    clientSource.includes("Settings → Memory (mneme) → Features → Knowledge base"),
+    "the English disabled copy must name the same path"
+  );
+});
+
+// 知识库是第三个座位：id 与 main 的 key 必须逐字同名，否则宿主 selectPanel
+// 直接抛 "main panel ... is not registered"（#562 在记忆座位上踩过）。
+test("knowledge base entry registers its own seat pair in the same panellist block", () => {
+  assert.ok(clientSource.includes('id: "dsh-mneme-kb"'), "the kb sidebar seat must use its own id");
+  assert.ok(clientSource.includes('key: "dsh-mneme-kb"'), "the kb main seat key must match the sidebar id verbatim");
+  assert.ok(clientSource.includes("h(KbMainPanel, { t })"), "the kb main seat must render KbMainPanel");
+  assert.ok(
+    clientSource.includes("h(KbGlyph, { size: props && props.size })"),
+    "the kb glyph takes its size from the host"
+  );
+  assert.ok(
+    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);\s*disposeWikiGlyph\(\);\s*disposeWikiMain\(\);\s*disposeKbGlyph\(\);\s*disposeKbMain\(\);/.test(clientSource),
+    "the panellist cleanup must dispose all three seat pairs"
   );
 });
 
@@ -189,8 +344,8 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
   // spec 存在时点火：一把全点会把新座位的注册塞进老宿主，测出来的就不是真行为。
   const fire = (ctx, key) => ctx.injected.filter((i) => i.key === key).map((i) => i.cb());
 
-  // 新宿主：panellist 已声明。panellist + main 各两份（记忆 + chorography 两个
-  // 座位，M1），每对各自 id/key 逐字同名；footer 回落不装。
+  // 新宿主：panellist 已声明。panellist + main 各三份（记忆 + chorography +
+  // 知识库三个座位），每对各自 id/key 逐字同名；footer 回落不装。
   {
     const { ctx, regs } = makeCtx((key) => (key === "sidebar.panellist" ? { kind: "list" } : undefined));
     const api = boot(ctx, (k) => k, () => null);
@@ -199,10 +354,10 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
     fire(ctx, "sidebar.footer.action");
     assert.equal(disposes.length, 1);
     const ids = (name) => regs.filter((r) => r.alive && r.opts.name === name).map((r) => r.opts.id ?? r.opts.key).sort();
-    assert.equal(alive(regs, "sidebar.panellist"), 2, "memory + wiki glyphs");
-    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
-    assert.equal(alive(regs, "main"), 2, "memory + wiki pages");
-    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
+    assert.equal(alive(regs, "sidebar.panellist"), 3, "memory + wiki + kb glyphs");
+    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
+    assert.equal(alive(regs, "main"), 3, "memory + wiki + kb pages");
+    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
     assert.equal(alive(regs, "sidebar.footer.action"), 0, "the footer fallback must not mount on a host that has the seat");
   }
 
