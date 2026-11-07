@@ -195,6 +195,48 @@ test("#604: maxTotal: 0 with a permanently failing row terminates", async () => 
   store.close();
 });
 
+test("#604: a dead prefix at the queue head does not starve the healthy tail", async () => {
+  // pick() is ORDER BY updated_at DESC and a failed row is never written, so a
+  // block of permanently failing rows sits at the head forever. With a fixed
+  // batchSize window the filter removed the whole batch every round and the run
+  // ended `stalled` without trying a single healthy row behind them — measured
+  // on this code: okCalls 0, indexed 0, 20 rows still stale.
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  // Written first ⇒ older updated_at ⇒ BEHIND the failing block under DESC.
+  for (let i = 0; i < 10; i++) {
+    service.saveWithDedupe({ type: "preference", title: `好行${i}`, content: `good-${i}` });
+  }
+  // Written last ⇒ newest updated_at ⇒ the queue head.
+  for (let i = 0; i < 10; i++) {
+    service.saveWithDedupe({ type: "preference", title: `坏行${i}`, content: `bad-${i}` });
+  }
+  let okCalls = 0;
+  let badCalls = 0;
+  const embedder = {
+    embedSingle: async (text) => {
+      if (String(text).includes("bad-")) { badCalls++; return null; }
+      okCalls++; return [1, 0, 0];
+    },
+    modelHash: "h#1",
+    dimension: 3
+  };
+  const vectorIndex = createVectorIndex({ store });
+
+  const summary = await backfillMissingEmbeddings({
+    store, embedder, vectorIndex,
+    logger: { info() {} },
+    maxTotal: 500, batchSize: 10, rateLimitMs: 0
+  });
+
+  assert.equal(okCalls, 10, "every healthy row behind the dead prefix is attempted");
+  assert.equal(summary.indexed, 10, "and actually embedded");
+  assert.equal(badCalls, 10, "each failing row is still tried exactly once");
+  assert.equal(summary.failed, 10);
+  assert.equal(store.needsEmbeddingFor("h#1", 100).length, 10, "only the failing rows remain stale");
+  store.close();
+});
+
 test("#604: a run with no failures can reach 'drained' even with a nonzero budget", async () => {
   const store = createStore(":memory:");
   const service = createService({ store, mirror: null, config: {} });

@@ -54,6 +54,24 @@ export async function backfillMissingEmbeddings({
   // permanent exclusion. A row skipped here is retried on the next boot, which
   // is the same contract #128 established for the fingerprint gate.
   const attempted = new Set();
+  // #604 follow-up: a fixed-size window starves the queue tail. pick() is
+  // ORDER BY updated_at DESC and a failed row is never written, so its
+  // updated_at never moves: a batch of permanently failing rows at the head is
+  // re-selected every round, filtered out by `attempted`, and the run ends
+  // `stalled` with every healthy row behind it never tried once. Measured on
+  // this code: 20 rows (10 good written first, 10 failing at the head),
+  // maxTotal 500 / batchSize 10 → {indexed: 0, finishReason: "stalled"},
+  // okCalls 0. Widening the window by the number already tried keeps the dead
+  // prefix in view and always reaches past it, so the budget is spent on real
+  // work. Still memory-only, still no persistent blacklist.
+  // The window is bounded: widening by the whole dead prefix is what makes the
+  // tail reachable, but an unbounded window turns "provider down, every row
+  // fails" into a quadratic walk that materialises the entire table once per
+  // round. 500 rows keeps the query cheap (≈ the default maxTotal) and still
+  // tolerates hundreds of permanent failures at the head before honestly
+  // reporting `stalled`.
+  const maxWindow = Math.max(batchSize, 500);
+  const pickFresh = (n) => pick(Math.min(n + attempted.size, maxWindow));
   let indexed = 0;
   let processed = 0;
   let failed = 0;
@@ -64,9 +82,9 @@ export async function backfillMissingEmbeddings({
     failureReasons[reason] = (failureReasons[reason] ?? 0) + 1;
   };
   for (let done = 0; unlimited || done < maxTotal;) {
-    const picked = pick(batchSize);
+    const picked = pickFresh(batchSize);
     if (!picked.length) break;
-    const rows = picked.filter((row) => !attempted.has(row.id));
+    const rows = picked.filter((row) => !attempted.has(row.id)).slice(0, batchSize);
     if (!rows.length) {
       // Everything still queued already failed during this run. Stop instead of
       // spinning; the next boot starts with a fresh ledger.
