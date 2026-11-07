@@ -314,3 +314,109 @@ test("段文本本身保持原样（未转义），转义只发生在 text 这�
   assert.ok(profileSeg.text.includes("{{x}}"), "段里是原文，面板要显示给人看");
   assert.ok(!out.text.includes("{{x}}"), "text 里必须已转义");
 });
+
+// ---- ⑥ value：可回写的原始值（Ephor 2026-11-07 复核提出的第二期坑） ----------
+//
+// `text` 是带模板前缀的整行（`- 用户画像：xxx` / `  - xxx` / `- 规则：xxx`），
+// 面板若直接拿它当新值回写，写一次叠一层前缀。可回写的段因此另带 `value`＝
+// 原始值（无前缀、未转义）；表头、事实表头、截断尾注没有原始值，不带这个键。
+
+test("画像段带 value＝原始画像，text 仍是带前缀的整行", () => {
+  const out = renderUserSettingsBlock({ settings: makeSettings({ profile: "用户是规划背景" }), config: { language: "zh" }, agentId: null });
+  const seg = out.segments.find((s) => s.kind === "profile");
+  assert.equal(seg.value, "用户是规划背景", "value 必须是原始值，不带 `- 用户画像：` 前缀");
+  assert.equal(seg.text, STR.profileLine.zh("用户是规划背景"), "text 仍是整行");
+  assert.ok(seg.text !== seg.value, "两者不该相同，否则这条用例没测到前缀");
+});
+
+test("人格三段的 value 分别等于 name / personality / replyStyle 的原始值", () => {
+  const out = renderUserSettingsBlock({
+    settings: makeSettings({ persona: { enabled: true, name: "Amarre", personality: "懒洋洋", replyStyle: "先结论" } }),
+    config: { language: "zh", personaEnabled: true },
+    agentId: null
+  });
+  const byKind = Object.fromEntries(out.segments.filter((s) => s.kind.startsWith("persona")).map((s) => [s.kind, s]));
+  assert.equal(byKind.personaName.value, "Amarre");
+  assert.equal(byKind.personaPersonality.value, "懒洋洋");
+  assert.equal(byKind.personaReplyStyle.value, "先结论");
+  assert.equal(byKind.personaName.field, "name", "field 仍在，value 不取代它");
+});
+
+test("事实段的 value 是原始事实串，不带 `  - ` 前缀", () => {
+  const out = renderUserSettingsBlock({
+    settings: makeSettings({ profile: "画像" }),
+    config: { language: "zh", profileFactsEnabled: true },
+    agentId: null,
+    factsProvider: () => ({ default: ["甲事实", "乙事实"], byAgent: {} })
+  });
+  const facts = out.segments.filter((s) => s.kind === "fact");
+  assert.deepEqual(facts.map((s) => s.value), ["甲事实", "乙事实"]);
+  assert.equal(facts[0].text, STR.profileFactLine.zh("甲事实"));
+  assert.ok(facts[0].text !== facts[0].value);
+});
+
+test("规则段的 value 是原始规则串", () => {
+  const out = renderUserSettingsBlock({ settings: makeSettings({ profile: "画像", rules: ["提交时不得有AI署名"] }), config: { language: "zh" }, agentId: null });
+  const seg = out.segments.find((s) => s.kind === "rule");
+  assert.equal(seg.value, "提交时不得有AI署名");
+  assert.equal(seg.text, STR.ruleLine.zh("提交时不得有AI署名"));
+});
+
+test("没有原始值的段不带 value 键（不是 undefined、不是空串）", () => {
+  const out = renderUserSettingsBlock({
+    settings: makeSettings({ profile: "画像", rules: ["规则一"] }),
+    config: { language: "zh", profileFactsEnabled: true },
+    agentId: null,
+    factsProvider: () => ({ default: Array.from({ length: 50 }, (_, i) => `事实${i}`), byAgent: {} })
+  });
+  for (const kind of ["header", "factsHeader", "factsTruncated"]) {
+    const seg = out.segments.find((s) => s.kind === kind);
+    assert.ok(seg, `用例前提：应当存在 ${kind} 段`);
+    assert.ok(!("value" in seg), `${kind} 段没有原始值，不该带 value 键`);
+  }
+});
+
+test("回写幂等：拿 value 当新值再渲染，文本不变；拿 text 当新值会叠一层前缀", () => {
+  const config = { language: "zh" };
+  const original = renderUserSettingsBlock({ settings: makeSettings({ profile: "用户是规划背景" }), config, agentId: null });
+  const profileValue = original.segments.find((s) => s.kind === "profile").value;
+  const profileText = original.segments.find((s) => s.kind === "profile").text;
+
+  const fromValue = renderUserSettingsBlock({ settings: makeSettings({ profile: profileValue }), config, agentId: null });
+  assert.equal(fromValue.text, original.text, "用 value 回写必须幂等");
+
+  // 用 text 当新值回写：新值里已经含 `- 用户画像：` 前缀，再渲染时模板又加一层，
+  // 于是注入文本里出现两遍前缀。`value` 就是为挡这个坑存在的。
+  const fromText = renderUserSettingsBlock({ settings: makeSettings({ profile: profileText }), config, agentId: null });
+  const doubledLine = fromText.segments.find((s) => s.kind === "profile").text;
+  assert.notEqual(fromText.text, original.text, "用 text 回写必须改变注入文本，否则这条用例没测到");
+  assert.ok(
+    doubledLine.startsWith("- 用户画像：- 用户画像："),
+    `用 text 回写应当叠成两层前缀，实际是：${doubledLine}`
+  );
+  assert.equal(
+    fromText.segments.find((s) => s.kind === "profile").value,
+    profileText,
+    "value 只如实回显存进去的东西（它就是原文），叠层发生在渲染这一步"
+  );
+});
+
+test("value 也是未转义的原文（转义只在 text 这一层）", () => {
+  const out = renderUserSettingsBlock({ settings: makeSettings({ profile: "画像 {{x}}" }), config: { language: "zh" }, agentId: null });
+  const seg = out.segments.find((s) => s.kind === "profile");
+  assert.equal(seg.value, "画像 {{x}}", "value 要能直接回写进 settings，不能带反斜杠");
+  assert.ok(!out.text.includes("{{x}}"), "text 里仍必须已转义");
+});
+
+test("人格字段带前后空格时 value 已 trim（回写进去的不能是带空格的原文）", () => {
+  const out = renderUserSettingsBlock({
+    settings: makeSettings({ persona: { enabled: true, name: "  Amarre  ", personality: " 懒洋洋 ", replyStyle: " 先结论 " } }),
+    config: { language: "zh", personaEnabled: true },
+    agentId: null
+  });
+  const byKind = Object.fromEntries(out.segments.filter((s) => s.kind.startsWith("persona")).map((s) => [s.kind, s]));
+  assert.equal(byKind.personaName.value, "Amarre", "value 要与 text 用的是同一个 trim 后的值");
+  assert.equal(byKind.personaPersonality.value, "懒洋洋");
+  assert.equal(byKind.personaReplyStyle.value, "先结论");
+  assert.ok(!byKind.personaName.text.includes("  "), "text 里也不该有那两处空格");
+});
