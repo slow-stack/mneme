@@ -61,6 +61,7 @@ dsh-mneme 是 DSH 宿主的记忆插件（蒸馏 / 注入 / 检索 / 巩固 / sc
 | 配置 | `src/config.js`（schema + lightMode）、`src/settings.js`（feature flags 白名单） | 一切行为开关的家 |
 | API 面 | `src/api.js`（宿主内 /api/dsh-mneme/*）、`src/api-standalone.js`（Bearer 数据面）、`bin/dsh-mneme-mcp.mjs`（MCP stdio）、`src/serve.js` + `bin/dsh-mneme-serve.mjs`（独立服务 daemon，无 LLM 数据面） | 对外四张脸 |
 | 面板 | `lib/client.js` | 面板侧产物，无 src 对应物 |
+| 手机面板 | `src/dsh-go/**` + `package.json` 的 `dshGo` | dsh-go 原生面板：进程内派发同一批路由，只有宿主提供 `dshGo` 服务时才加载（[docs/DSH-GO.md](dsh-mneme/docs/DSH-GO.md)） |
 | 运行时 | `src/runtime/*` | 模型下载（断点续传）/ 校验 / adopt |
 | 命令 | `src/commands.js` | 斜杠命令注册与派发 |
 | 双语 | `src/lang.js` | 文案与语言解析 |

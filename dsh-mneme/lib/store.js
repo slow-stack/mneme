@@ -4501,10 +4501,21 @@ export function createStore(path) {
   /** All entities (optionally name-filtered, newest first). Used by sleep phase 4
    *  orphan detection: an entity with zero relations is a candidate for relation
    *  completion. */
-  function listEntities({ limit = 1000 } = {}) {
+  function listEntities({ limit = 1000, q } = {}) {
+    const needle = typeof q === "string" ? q.trim() : "";
+    if (needle === "") {
+      const rows = db.prepare(
+        "SELECT * FROM entities ORDER BY last_seen DESC, name ASC LIMIT ?"
+      ).all(limit);
+      return rows.map(toEntity);
+    }
+    // 名字过滤放在 SQL 侧：调用方若在 LIMIT 之后过滤，排在 limit 之外的实体
+    // 就永远搜不到（面板按 limit=200 取回再本地过滤，1.6 万实体时命中率约 1%）。
+    // LIKE 的 % / _ 用 ESCAPE 转义，否则用户输入一个 "%" 就会把整库匹配出来。
+    const escaped = needle.replace(/[\\%_]/g, (ch) => `\\${ch}`);
     const rows = db.prepare(
-      "SELECT * FROM entities ORDER BY last_seen DESC, name ASC LIMIT ?"
-    ).all(limit);
+      "SELECT * FROM entities WHERE name LIKE ? ESCAPE '\\' ORDER BY last_seen DESC, name ASC LIMIT ?"
+    ).all(`%${escaped}%`, limit);
     return rows.map(toEntity);
   }
 
