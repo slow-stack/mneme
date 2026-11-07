@@ -199,6 +199,77 @@ test("dream (non-freeze): same-scope conflict is still auto-adjudicated (regress
   store.close();
 });
 
+// Issue #603 第 1 层：freeze 分支此前绕过全部三个上限，且把「已在队列里的对」
+// 当成新停车报进 frozen。下面三条锁住修完之后的三个性质。
+test("#603 freeze: a pair already in the queue is not re-reported as a new freeze", async () => {
+  const { store, service, vectorIndex } = setup();
+  savePair(service, vectorIndex, "索引策略A", "索引策略B", { agent: "coder" }, { agent: "coder" });
+  const logger = { warn: () => {}, info: () => {} };
+
+  const first = await runSleep(llmCtx(), service, baseConfig({ conflictFreezeEnabled: true }), logger, { embedder, vectorIndex }, null);
+  assert.equal(first.phases.conflicts.frozen, 1, "第一次是真插入");
+  assert.equal(store.countConflictPending(), 1);
+
+  const second = await runSleep(llmCtx(), service, baseConfig({ conflictFreezeEnabled: true }), logger, { embedder, vectorIndex }, null);
+  assert.equal(second.phases.conflicts.frozen, 0, "第二次检出的是已入队的对，不算新停车");
+  assert.equal(second.status, "noop", "没有新停车就是 noop，不是 ok");
+  assert.equal(store.countConflictPending(), 1, "队列没有被重复写入");
+  store.close();
+});
+
+test("#603 freeze: cap is applied after filtering already-parked pairs, so the queue keeps growing", async () => {
+  const { store, service, vectorIndex } = setup();
+  // 三对互不相交的高相似记忆：贪心配对每轮都能检出三对。
+  savePair(service, vectorIndex, "队列A1", "队列A2", { agent: "coder" }, { agent: "coder" });
+  savePair(service, vectorIndex, "队列B1", "队列B2", { agent: "coder" }, { agent: "coder" });
+  savePair(service, vectorIndex, "队列C1", "队列C2", { agent: "coder" }, { agent: "coder" });
+  const logger = { warn: () => {}, info: () => {} };
+  // 每轮只处理一对，且远小于候选数——裸 slice 会让第一对永远占住这个名额。
+  const cfg = baseConfig({ conflictFreezeEnabled: true, sleepConflictMaxPairsPerRun: 1 });
+
+  await runSleep(llmCtx(), service, cfg, logger, { embedder, vectorIndex }, null);
+  assert.equal(store.countConflictPending(), 1);
+  await runSleep(llmCtx(), service, cfg, logger, { embedder, vectorIndex }, null);
+  assert.equal(store.countConflictPending(), 2, "第二对必须能轮到，不能被第一对饿死");
+  await runSleep(llmCtx(), service, cfg, logger, { embedder, vectorIndex }, null);
+  assert.equal(store.countConflictPending(), 3, "第三对同理");
+
+  const done = await runSleep(llmCtx(), service, cfg, logger, { embedder, vectorIndex }, null);
+  assert.equal(done.phases.conflicts.frozen, 0, "全部入队后不再虚报");
+  assert.equal(done.phases.conflicts.perRunSkipped, 0, "没有新对可处理，不算被截断");
+  store.close();
+});
+
+test("#603 freeze: the pending queue budget stops parking and says so", async () => {
+  const { store, service, vectorIndex } = setup();
+  savePair(service, vectorIndex, "预算A1", "预算A2", { agent: "coder" }, { agent: "coder" });
+  savePair(service, vectorIndex, "预算B1", "预算B2", { agent: "coder" }, { agent: "coder" });
+  savePair(service, vectorIndex, "预算C1", "预算C2", { agent: "coder" }, { agent: "coder" });
+  const warnings = [];
+  const logger = { warn: (m) => warnings.push(String(m)), info: () => {} };
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictFreezeMaxPending: 2 }),
+    logger, { embedder, vectorIndex }, null
+  );
+  assert.equal(store.countConflictPending(), 2, "只装到队列上限为止");
+  assert.equal(result.phases.conflicts.frozen, 2);
+  assert.equal(result.phases.conflicts.pendingSkipped, 1, "被队列上限挡下的对要如实报出来");
+  assert.ok(warnings.some((w) => /freeze queue full/.test(w)), "要留一条 warn，不能静默丢弃");
+
+  // 队列已满：再跑一轮不会新增，也不会把「满了」报成可续排的 backlog。
+  const again = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictFreezeMaxPending: 2 }),
+    logger, { embedder, vectorIndex }, null
+  );
+  assert.equal(store.countConflictPending(), 2);
+  assert.equal(again.phases.conflicts.frozen, 0);
+  assert.equal(again.phases.conflicts.perRunSkipped, 0, "队列满不是 per-run 截断，不该触发续排");
+  store.close();
+});
+
 test("non-freeze with an LLM: cross-scope pair bypasses adjudication; same-scope pair is adjudicated", async () => {
   const { store, service, vectorIndex } = setup();
   const [yNew, yOld] = savePair(service, vectorIndex, "缓存策略A", "缓存策略B", { agent: "coder" }, { agent: "coder" });

@@ -3712,7 +3712,10 @@ export function createStore(path) {
    * pending once — a re-detection in a later dream run is a no-op, never a
    * duplicate queue entry. Returns the pending row (freshly inserted, or the
    * existing unresolved row when the pair is already pending), or undefined
-   * when the re-detection is suppressed.
+   * when the re-detection is suppressed. The returned row carries `fresh`:
+   * true only when this call actually inserted a row, false when the pair was
+   * already pending (issue #603 — callers used to read "non-null" as "parked",
+   * so a re-detection re-reported the same pair as a new freeze every run).
    *
    * v0.8.1（issue #170 复核项 4）：人工已裁决过的对（resolved_at 非空）不再
    * 反复入队——除非任一侧在裁决之后又被改过（updated_at 晚于 resolved_at）。
@@ -3725,7 +3728,7 @@ export function createStore(path) {
     const existing = db.prepare(
       "SELECT * FROM conflict_pending WHERE memory_a = ? AND memory_b = ? AND resolved_at IS NULL LIMIT 1"
     ).get(a, b);
-    if (existing) return toConflictPending(existing);
+    if (existing) return { ...toConflictPending(existing), fresh: false };
     const reviewed = db.prepare(
       "SELECT * FROM conflict_pending WHERE memory_a = ? AND memory_b = ? AND resolved_at IS NOT NULL ORDER BY resolved_at DESC, rowid DESC LIMIT 1"
     ).get(a, b);
@@ -3741,7 +3744,7 @@ export function createStore(path) {
       `INSERT INTO conflict_pending (id, run_id, memory_a, memory_b, reason, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`
     ).run(id, run_id ?? null, a, b, reason ?? null, now);
-    return toConflictPending(db.prepare("SELECT * FROM conflict_pending WHERE id = ?").get(id));
+    return { ...toConflictPending(db.prepare("SELECT * FROM conflict_pending WHERE id = ?").get(id)), fresh: true };
   }
 
   /**

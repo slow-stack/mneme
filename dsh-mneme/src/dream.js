@@ -1489,7 +1489,9 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
               // 返回 undefined = 该对已被人工裁决且两侧内容未变（issue #170 复核
               // 项 4：内容变了才重新入队）——不算停车、不进 frozenIds。
               const parked = service.saveConflictPending({ run_id: runId, memory_a: d.winner, memory_b: d.loser, reason: d.reason });
-              if (parked == null) continue;
+              // 只有真的新插了一行才算停车：这一对已在队列里时返回的是旧行
+              // （fresh=false），旧代码把它也算进 frozen，虚报由此而来（#603）。
+              if (parked?.fresh !== true) continue;
               frozenCount++;
               frozenIds.push(d.winner, d.loser);
             } catch (error) {
@@ -1512,7 +1514,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
             memory_b: d.loser,
             reason: STR.scopeConflictParkReason[language](d.reason)
           });
-          if (parked != null) {
+          if (parked?.fresh === true) {
             frozenCount++;
             frozenIds.push(d.winner, d.loser);
           }

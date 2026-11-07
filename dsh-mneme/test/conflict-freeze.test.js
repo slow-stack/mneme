@@ -294,7 +294,7 @@ test("dream: freeze=true 同一对跨 run 去重 —— 只保留一条 pending"
   const ctx2 = freezeCtx({ conflicts: [{ action: "conflict", winner: w.id, loser: l.id, reason: "日期矛盾" }] });
   const r2 = await dream.runDream(ctx2, service, { ...BASE_CONFIG, conflictFreezeEnabled: true });
   assert.equal(r1.frozen, 1);
-  assert.equal(r2.frozen, 1, "每次 run 都检出并上报该对");
+  assert.equal(r2.frozen, 0, "第二次检出的是已在队列里的对，不算新停车（#603 第 1 层）");
   assert.equal(store.countConflictPending(), 1, "但队列只有一条 pending");
   store.close();
 });

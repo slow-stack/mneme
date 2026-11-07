@@ -389,33 +389,87 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // （专属 reason），同 scope 对维持既有路径（freeze 停车 / LLM 裁决）。
   const crossPairs = selected.filter(isCrossScopePair);
   const samePairs = selected.filter((p) => !isCrossScopePair(p));
+  // 四态：fresh（真的新插了一行）/ existing（这一对已在队列里）/ suppressed
+  // （已人工裁决且两侧未变，复核项 4）/ failed（写库抛错）。旧代码把
+  // 「返回非 null」一律当停车成功，existing 因此每轮虚报一遍 frozen（#603）。
   const parkPair = (p, reason) => {
     try {
-      // 返回 undefined = 该对已被人工裁决且两侧内容未变（复核项 4）——不算停车。
-      return service.saveConflictPending({ run_id: runId, memory_a: p.a.id, memory_b: p.b.id, reason }) != null;
+      const parked = service.saveConflictPending({ run_id: runId, memory_a: p.a.id, memory_b: p.b.id, reason });
+      if (parked == null) return "suppressed";
+      return parked.fresh === true ? "fresh" : "existing";
     } catch (error) {
       logger?.warn?.(`dsh-mneme sleep: failed to park conflict ${p.a.id}/${p.b.id}: ${String(error)}`);
-      return false;
+      return "failed";
     }
   };
   const scopeReason = (p) => STR.scopeCandidateReason[language](p.similarity.toFixed(2));
   const simReason = (p) => STR.similarityReason[language](p.similarity.toFixed(2));
 
+  // 待审对的键集合（与 pairKey 同形）。只用于 freeze 分支的「先滤已入队」，
+  // 分页拉全量：队列规模不受 50 条默认页长限制。
+  const loadPendingPairKeys = () => {
+    const keys = new Set();
+    if (typeof service.listConflictPending !== "function") return keys;
+    const pageSize = 500;
+    for (let offset = 0; ; offset += pageSize) {
+      const page = service.listConflictPending({ limit: pageSize, offset, includeResolved: false }) ?? [];
+      for (const row of page) keys.add(`${row.memory_a}\u0000${row.memory_b}`);
+      if (page.length < pageSize) break;
+    }
+    return keys;
+  };
+
   // Freeze mode: park pairs for manual review, no LLM required. Cross-scope
   // pairs carry the dedicated scope-candidate reason so the queue reads them
   // as ownership decisions rather than plain duplicates.
+  //
+  // Issue #603 第 1 层：这条分支此前绕过全部三个上限、直接裸跑 selected。
+  //   · 先滤已入队再截断——裸 slice 会饥饿：上限恒小于候选数时，前 N 个名额
+  //     每轮都被同一批已在队列里的对占住，后面的对永远轮不上；
+  //   · 接预算：conflictFreezeMaxPending 决定队列还能装多少，
+  //     sleepConflictMaxPairsPerRun 决定一轮最多处理多少，取两者较小值；
+  //   · 只把 fresh 计入 frozen，已入队的对不再虚报。
   if (config.conflictFreezeEnabled === true) {
+    const maxPending = Number.isInteger(config.conflictFreezeMaxPending) ? config.conflictFreezeMaxPending : 100;
+    const pendingNow = typeof service.countConflictPending === "function" ? (service.countConflictPending() ?? 0) : 0;
+    const room = Math.max(0, maxPending - pendingNow);
+    const pendingKeys = loadPendingPairKeys();
+    const unparked = selected.filter((p) => !pendingKeys.has(pairKey(p)));
+    const withinRoom = room > 0 ? unparked.slice(0, room) : [];
+    const pendingSkipped = unparked.length - withinRoom.length;
+    const perRunCap = config.sleepConflictMaxPairsPerRun ?? 60;
+    const pool = perRunCap > 0 ? withinRoom.slice(0, perRunCap) : withinRoom;
+    // 只报「有位置但被每轮上限截住」的那部分：队列满时再追一轮也没用，
+    // 报成 backlog 会让调度器空转（catchup 上限 24 轮）。
+    const perRunSkipped = withinRoom.length - pool.length;
     let frozen = 0;
-    for (const p of selected) {
-      if (parkPair(p, isCrossScopePair(p) ? scopeReason(p) : simReason(p))) frozen++;
+    let parkFailed = 0;
+    for (const p of pool) {
+      const outcome = parkPair(p, isCrossScopePair(p) ? scopeReason(p) : simReason(p));
+      if (outcome === "fresh") frozen++;
+      else if (outcome === "failed") parkFailed++;
     }
-    return { status: frozen > 0 ? "ok" : "noop", frozen, scopeCandidates: crossPairs.length, pairs: selected.length };
+    if (pendingSkipped > 0) {
+      logger?.warn?.(`dsh-mneme sleep: conflict freeze queue full (${pendingNow}/${maxPending}), skipped ${pendingSkipped} conflict(s)`);
+    }
+    return {
+      status: frozen > 0 ? "ok" : "noop",
+      frozen,
+      // 写库抛错的对既没入队也不算落地：clean=false，别让调度器当「追完了」。
+      clean: parkFailed === 0,
+      scopeCandidates: crossPairs.length,
+      pairs: selected.length,
+      batches: 0,
+      ledgerSkipped,
+      perRunSkipped,
+      pendingSkipped
+    };
   }
 
   // 非 freeze：跨 scope 对先停车（绝不进 LLM 裁决），同 scope 对照常走 LLM。
   let scopeParked = 0;
   for (const p of crossPairs) {
-    if (parkPair(p, scopeReason(p))) scopeParked++;
+    if (parkPair(p, scopeReason(p)) === "fresh") scopeParked++;
   }
   if (samePairs.length === 0) {
     // 没有可送 LLM 的同 scope 对：可能一对都没检测到，也可能全被台账挡下了
