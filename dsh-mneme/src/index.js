@@ -681,11 +681,17 @@ export const apply = (ctx, config) => {
       embedder,
       runT0Apply: ({ repoRoot }) => runChoroT0({ repoRoot, store, apply: true }),
     };
+    // The semantic surface handed to the API is createSemantic()'s own return
+    // value, plus the vectorIndex it does not carry. Passing the bare literal
+    // `{ vectorIndex, reranker }` used to drop embeddingDiagnostics, so the
+    // panel's `data.embeddings` was permanently null on a real install — the
+    // typeof guard in api.js fell through every time, and no test noticed
+    // because none asserted on `data.embeddings`.
     const api = createApi(ctx, service, settings, commands ?? {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,
       list: () => []
-    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro, profileFacts);
+    }, embedder, { ...semantic, vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro, profileFacts);
     disposers.push(api.dispose);
   }
 

@@ -944,6 +944,23 @@ test("wiring: maintenance is built before the panel createApi call and passed in
   assert.match(callText(src, standaloneAt), /maintenance/);
 });
 
+test("wiring: the panel createApi receives createSemantic's surface, not a bare literal", () => {
+  // 接线锁。#604 的诊断面（backfill / receipts）挂在 createSemantic() 的返回值上，
+  // 而面板这一处曾传字面量 { vectorIndex, reranker }，embeddingDiagnostics 挂不上去，
+  // api.js 的 typeof 守卫每次都落空 —— 真机上 data.embeddings 恒为 null，
+  // 而且没有任何用例断言过它，所以测试全绿。这里锁住传参形状。
+  const src = readFileSync(join(root, "src", "index.js"), "utf8");
+  const callAt = src.indexOf("createApi(ctx, service, settings");
+  assert.ok(callAt >= 0, "src/index.js 里找不到面板 createApi 调用");
+  const call = callText(src, callAt);
+  assert.match(
+    call, /\.\.\.semantic/,
+    "面板 createApi 必须展开 createSemantic() 的返回值，否则 embeddingDiagnostics 永远挂不上"
+  );
+  assert.match(call, /vectorIndex/, "createSemantic() 不带 vectorIndex，必须显式补上");
+  assert.match(call, /reranker/, "reranker 仍要传，/semantic 的 reranker 状态靠它");
+});
+
 
 // ---------------------------------------------------------------------------
 // /api/dsh-mneme/semantic/consolidation-stats（8 周沉淀图的数据源）

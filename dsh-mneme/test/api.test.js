@@ -595,6 +595,33 @@ test("GET /api/dsh-mneme/semantic counts stale-dimension rows as unsearchable wi
   assert.equal(data.vectors.unsearchable, 1, "yet only one is retrievable");
 });
 
+test("GET /api/dsh-mneme/semantic surfaces the #604 backfill/receipt diagnostics", async () => {
+  // #604 的诊断面在 api.js 里一直有出口，但全仓没有一条用例断言过
+  // `data.embeddings`，所以「传参形状不对 → 真机恒为 null」这件事测试看不见。
+  // 这里从 handler 一侧锁住出口本身：semantic 面有 embeddingDiagnostics 就必须透出。
+  const diag = {
+    backfill: { indexed: 12, failed: 1, finishReason: "capped", stillStale: true },
+    receipts: { recent: [{ reason: "http-503" }], totals: { ok: 12, failed: 1 } }
+  };
+  const { routes } = setup(undefined, "", null, {
+    vectorIndex: { getStats: () => ({ embeddedCount: 12, totalCount: 13 }) },
+    embeddingDiagnostics: () => diag
+  });
+  const sem = routes.find((r) => r.path === "/api/dsh-mneme/semantic");
+  const res = new FakeRes();
+  await sem.handler(req("/api/dsh-mneme/semantic"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.deepEqual(data.embeddings, diag, "the diagnostics must reach the panel verbatim");
+
+  // 老 semantic 面（没有这个方法）仍报 null，不伪造空对象。
+  const { routes: plain } = setup(undefined, "", null, { vectorIndex: { getStats: () => ({ embeddedCount: 0, totalCount: 0 }) } });
+  const plainSem = plain.find((r) => r.path === "/api/dsh-mneme/semantic");
+  const plainRes = new FakeRes();
+  await plainSem.handler(req("/api/dsh-mneme/semantic"), plainRes);
+  assert.equal(JSON.parse(plainRes.body).embeddings, null);
+});
+
 // --- Bug8: llm-audit API (pagination + stats) --------------------------------
 
 test("GET /api/dsh-mneme/semantic/llm-audit returns paginated rows", async () => {
