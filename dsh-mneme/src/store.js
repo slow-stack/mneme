@@ -2575,6 +2575,30 @@ export function createStore(path) {
     return needsEmbeddingFor(modelHash, 1).length > 0;
   }
 
+  /**
+   * How many rows needsEmbeddingFor() would pick in total.
+   *
+   * A re-index run is bounded by a limit, so "indexed: 0" and "indexed: 3 of
+   * 300" looked identical to the caller. Counting is cheap (no content is
+   * materialised) and is what lets the caller say how much work is left.
+   */
+  function countNeedsEmbeddingFor(modelHash) {
+    if (!modelHash) {
+      return db.prepare(
+        `SELECT count(*) AS c FROM memories
+         WHERE (embedding IS NULL OR embedding = '')
+           AND forgotten = 0 AND archived = 0`
+      ).get().c;
+    }
+    return db.prepare(
+      `SELECT count(*) AS c FROM memories
+       WHERE ((embedding IS NULL OR embedding = '')
+              OR embedding_model IS NULL
+              OR embedding_model != ?)
+         AND forgotten = 0 AND archived = 0`
+    ).get(String(modelHash)).c;
+  }
+
   /** Per-model provenance counts over active rows ('' = unknown origin). */
   function embeddingModelBreakdown() {
     return db.prepare(
@@ -5174,6 +5198,7 @@ export function createStore(path) {
     embeddedCount,
     needsEmbedding,
     needsEmbeddingFor,
+    countNeedsEmbeddingFor,
     hasStaleEmbedding,
     embeddingModelBreakdown,
     embeddingDimensionBreakdown,

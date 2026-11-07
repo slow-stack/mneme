@@ -125,6 +125,95 @@ test("rows with unknown provenance (NULL embedding_model) count as stale", async
   store.close();
 });
 
+test("#604: a permanently failing row is tried once, not once per batch", async () => {
+  // A failed row is never written, so it stays stale and the next pick() hands
+  // it straight back. Measured on the old loop: 9 of 20 budget slots burned on
+  // one bad row, and the summary still said "capped" — as if the budget had run
+  // out with other work waiting behind it.
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  for (let i = 0; i < 12; i++) {
+    service.saveWithDedupe({ type: "preference", title: `记忆${i}`, content: `内容${i}` });
+  }
+  const bad = "记忆11\n内容11";
+  const calls = [];
+  const embedder = {
+    embedSingle: async (text) => {
+      calls.push(text);
+      return text === bad ? null : [1, 0, 0]; // legacy adapters signal failure by returning null
+    },
+    modelHash: "h#1",
+    dimension: 3
+  };
+  const vectorIndex = createVectorIndex({ store });
+
+  const summary = await backfillMissingEmbeddings({
+    store, embedder, vectorIndex,
+    logger: { info() {} },
+    maxTotal: 20, batchSize: 10, rateLimitMs: 0
+  });
+
+  const badCalls = calls.filter((t) => t === bad).length;
+  assert.equal(badCalls, 1, "the bad row is attempted exactly once");
+  assert.equal(summary.indexed, 11, "every healthy row still gets embedded");
+  assert.equal(summary.failed, 1, "one failure counted, not nine");
+  assert.equal(summary.finishReason, "stalled", "queue is not empty but nothing is left to try");
+  assert.deepEqual(summary.failureReasons, { "empty-vector": 1 });
+  store.close();
+});
+
+test("#604: maxTotal: 0 with a permanently failing row terminates", async () => {
+  // The old loop used `unlimited || done < maxTotal`, so with maxTotal: 0 the
+  // counter never bounded anything and a failing row kept the queue non-empty
+  // forever. Measured: still running after 25s, embedSingle called in a tight
+  // loop. This must return, and return quickly.
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  for (let i = 0; i < 4; i++) {
+    service.saveWithDedupe({ type: "preference", title: `行${i}`, content: `C${i}` });
+  }
+  let calls = 0;
+  const embedder = {
+    embedSingle: async () => { calls++; throw new Error("provider down"); },
+    modelHash: "h#1",
+    dimension: 3
+  };
+  const vectorIndex = createVectorIndex({ store });
+
+  const summary = await backfillMissingEmbeddings({
+    store, embedder, vectorIndex,
+    logger: { info() {} },
+    maxTotal: 0, batchSize: 10, rateLimitMs: 0
+  });
+
+  assert.equal(calls, 4, "each row attempted once, then the run stops");
+  assert.equal(summary.indexed, 0);
+  assert.equal(summary.failed, 4);
+  assert.equal(summary.finishReason, "stalled");
+  assert.equal(summary.stillStale, true, "the rows are still stale — they will be retried next boot");
+  assert.deepEqual(summary.failureReasons, { "error:Error: provider down": 4 });
+  store.close();
+});
+
+test("#604: a run with no failures can reach 'drained' even with a nonzero budget", async () => {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  for (let i = 0; i < 3; i++) {
+    service.saveWithDedupe({ type: "preference", title: `行${i}`, content: `C${i}` });
+  }
+  const embedder = { embedSingle: async () => [1, 0, 0], modelHash: "h#1", dimension: 3 };
+  const vectorIndex = createVectorIndex({ store });
+
+  const summary = await backfillMissingEmbeddings({
+    store, embedder, vectorIndex, logger: { info() {} },
+    maxTotal: 100, batchSize: 10, rateLimitMs: 0
+  });
+  assert.equal(summary.finishReason, "drained");
+  assert.equal(summary.stalled, false);
+  assert.equal(summary.failureReasons, null, "no failure map when nothing failed");
+  store.close();
+});
+
 test("setEmbedding records provenance and clearing the vector clears it", async () => {
   const store = createStore(":memory:");
   const service = createService({ store, mirror: null, config: {} });

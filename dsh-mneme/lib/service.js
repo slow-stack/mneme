@@ -2897,6 +2897,7 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // 向量出身的两个分组读数：状态端点 /semantic 用它们区分「有向量」和
     // 「可检索」（byModel 按行级 embedding_model，byDimension 按向量维数）。
     // passthrough 形状与 embeddedCount 同款，api 层不直接摸 store。
+    countNeedsEmbeddingFor: (modelHash) => store.countNeedsEmbeddingFor(modelHash),
     embeddingModelBreakdown: () => store.embeddingModelBreakdown(),
     embeddingDimensionBreakdown: () => store.embeddingDimensionBreakdown(),
     // #383：维度探针，供 /context 判「库里有没有一条活跃向量与查询同维」。注意

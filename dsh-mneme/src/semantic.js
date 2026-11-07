@@ -43,13 +43,38 @@ export async function backfillMissingEmbeddings({
     ? store.needsEmbeddingFor(model, n)
     : store.needsEmbedding(n));
   const unlimited = !(maxTotal > 0);
+  // #604: a failed row stays stale, so the next pick() hands it straight back
+  // and it eats the budget again — measured 9 of 20 slots burned on one
+  // permanently failing row, and with maxTotal: 0 the loop never terminated
+  // (the failed row never leaves the queue, so "done" never reaches a bound
+  // that does not exist). Remembering what THIS run already tried makes the
+  // queue strictly shrink, which fixes both shapes with one mechanism.
+  //
+  // Deliberately in-memory only: a transient provider outage must not become a
+  // permanent exclusion. A row skipped here is retried on the next boot, which
+  // is the same contract #128 established for the fingerprint gate.
+  const attempted = new Set();
   let indexed = 0;
   let processed = 0;
   let failed = 0;
+  let stalled = false;
+  const failureReasons = Object.create(null);
+  const noteFailure = (reason) => {
+    failed++;
+    failureReasons[reason] = (failureReasons[reason] ?? 0) + 1;
+  };
   for (let done = 0; unlimited || done < maxTotal;) {
-    const rows = pick(batchSize);
-    if (!rows.length) break;
+    const picked = pick(batchSize);
+    if (!picked.length) break;
+    const rows = picked.filter((row) => !attempted.has(row.id));
+    if (!rows.length) {
+      // Everything still queued already failed during this run. Stop instead of
+      // spinning; the next boot starts with a fresh ledger.
+      stalled = true;
+      break;
+    }
     for (const row of rows) {
+      attempted.add(row.id);
       try {
         const text = [row.title, row.content].filter(Boolean).join("\n");
         const vector = await embedder.embedSingle(text);
@@ -57,9 +82,12 @@ export async function backfillMissingEmbeddings({
           store.setEmbedding(row.id, vector, model);
           indexed++;
         } else {
-          failed++;
+          // legacy OpenAI-compatible adapters signal failure by returning null
+          // and drop the detailed reason inside embedText(), which only returns
+          // the vector. "no vector came back" is all we can honestly claim.
+          noteFailure("empty-vector");
         }
-      } catch { failed++; /* skip the bad row, but count it */ }
+      } catch (error) { noteFailure(`error:${String(error)}`); }
     }
     done += rows.length;
     processed += rows.length;
@@ -67,19 +95,170 @@ export async function backfillMissingEmbeddings({
     if (pick(1).length) await new Promise((r) => setTimeout(r, rateLimitMs));
   }
   if (indexed > 0 && model) vectorIndex.markModel?.(model, embedder.dimension);
-  // stillStale answers "did it actually finish?". The old return value was a
-  // bare indexed count, so a run that hit the cap looked exactly like a run
-  // that drained the backlog.
+  // Two independent dimensions, because one number cannot answer both
+  // questions the caller actually has:
+  //   finishReason — why the loop stopped;
+  //   failed/failureReasons — what was lost along the way.
+  //
+  // The old ternary had an unreachable branch: "all-failed" required
+  // `!stillStale && failed > 0`, but a failed row is never written, so it is
+  // still stale and `stillStale` is always true once anything failed. Four
+  // failing rows out of four reported "capped" — as if the budget had run out
+  // with work to spare. Invariant worth stating: failed > 0 implies
+  // stillStale === true, therefore "drained" is only reachable with zero
+  // failures, and "stalled" is the honest name for "queue not empty, nothing
+  // left to try this run".
   const stillStale = pick(1).length > 0;
-  const finishReason = stillStale ? "capped" : (failed > 0 && indexed === 0 ? "all-failed" : "drained");
+  const finishReason = stalled ? "stalled" : stillStale ? "capped" : "drained";
   logger?.info?.(
     `[dsh-mneme] auto-reindex backfilled ${indexed} embeddings (processed=${processed}, failed=${failed}, finish=${finishReason})`
   );
   return {
-    indexed, processed, failed, finishReason, stillStale,
+    indexed, processed, failed, finishReason, stillStale, stalled,
+    // Only the reasons we can name; absent when nothing failed.
+    failureReasons: failed > 0 ? { ...failureReasons } : null,
     startedAt,
     finishedAt: new Date().toISOString(),
     model: model ?? null
+  };
+}
+
+/**
+ * Boot 回填调度器（#604）。
+ *
+ * 抽成模块级函数而不是留在 createSemantic 闭包里，是因为闭包形态此前**零测试
+ * 覆盖**（全仓只有 index.js / serve.js 引用 createSemantic），而「一次启动只跑
+ * 一轮、撞 cap 就停」正是靠这个缺口活了很久：没有任何用例能观察到「第二轮没
+ * 排上」。
+ *
+ * 续排规则：
+ *   - finishReason === "capped"（队列还有、额度用完）→ 排下一轮；
+ *   - finishReason === "stalled"（剩下的本轮全失败过）→ 不排，下一轮启动再试；
+ *   - 抛错 → 也排，但走同一个计数器，硬故障不会变成无限重试；
+ *   - 计数到 maxContinuations 就停并告警。
+ *
+ * 计时器只有一个槽位：dispose 清它，且 disposed 后任何已排的回调都不再执行
+ * —— 否则会对已关闭的库继续查 needsEmbedding（#365 CodeRabbit 踩过同一坑）。
+ *
+ * @param {object} opts
+ *   store / vectorIndex / logger / cfg — 与 createSemantic 同形；
+ *   getEmbedder()  — 取当前 embedder（可能为 null 或尚未 ready）；
+ *   onStatus(next) — 接收 running / finished / error 快照；
+ *   timing         — 仅供测试压缩等待：initialDelayMs / continueDelayMs /
+ *                    maxContinuations / readyRetryDelayMs，默认值与生产一致。
+ * @returns {{ dispose: () => void, status: () => object|null }}
+ */
+export function scheduleBootBackfill({
+  store, vectorIndex, logger, cfg,
+  getEmbedder, onStatus = () => {},
+  timing = {}
+}) {
+  const initialDelayMs = timing.initialDelayMs ?? 5000;
+  const continueDelayMs = timing.continueDelayMs ?? 3000;
+  const readyRetryDelayMs = timing.readyRetryDelayMs ?? 2000;
+  // Hard stop on continuations: a provider that fails every row must not turn
+  // into an endless retry loop for the life of the process. Reset per boot.
+  const maxContinuations = timing.maxContinuations ?? 20;
+
+  let timer = null;
+  let disposed = false;
+  let continuations = 0;
+  let status = null;
+
+  const publish = (next) => { status = next; onStatus(next); };
+  const scheduleNext = (fn, delay) => {
+    if (disposed) return;
+    timer = setTimeout(fn, delay);
+  };
+
+  const attempt = (tries) => {
+    if (disposed) return;
+    try {
+      const embedder = getEmbedder();
+      if (!embedder || typeof embedder.embedSingle !== "function") return;
+      if ("ready" in embedder && embedder.ready !== true) {
+        // Local/ollama embedders init asynchronously; give them a moment
+        // before giving up on this boot (next boot retries).
+        // CodeRabbit on #365:嵌套重试计时器同样入册,否则 dispose 后仍可能
+        // 对已关库跑 needsEmbedding(有 try/catch 兜底只是日志噪声,但状态要收干净)。
+        if (tries > 0) scheduleNext(() => attempt(tries - 1), readyRetryDelayMs);
+        return;
+      }
+      const model = embedder.modelHash;
+      const stale = typeof store.hasStaleEmbedding === "function"
+        ? store.hasStaleEmbedding(model)
+        : store.needsEmbedding(1).length > 0;
+      if (!stale) return; // nothing missing and nothing from another model
+      // Issue #128: no fingerprint gate here anymore — a matching fingerprint
+      // used to return early and permanently orphan rows whose embed failed
+      // at write time. See backfillMissingEmbeddings().
+      // Cap and pacing are configuration now (reindexMaxPerBoot /
+      // reindexBatchSize / reindexRateLimitMs) instead of hardcoded 500/10/200.
+      const startedAt = new Date().toISOString();
+      publish({
+        state: "running", startedAt,
+        maxTotal: cfg.reindexMaxPerBoot, batchSize: cfg.reindexBatchSize,
+        continuation: continuations
+      });
+      backfillMissingEmbeddings({
+        store, embedder, vectorIndex, logger,
+        maxTotal: cfg.reindexMaxPerBoot,
+        batchSize: cfg.reindexBatchSize,
+        rateLimitMs: cfg.reindexRateLimitMs
+      })
+        .then((summary) => {
+          if (disposed) return;
+          publish({ ...summary, state: "finished", continuation: continuations });
+          // Only "capped" means real work is left AND the budget ran out.
+          // "stalled" means everything left already failed this run — trying
+          // again immediately would just burn the same rows, so the next boot
+          // is the honest retry point.
+          if (summary.finishReason !== "capped") return;
+          if (continuations < maxContinuations) {
+            continuations++;
+            scheduleNext(() => attempt(0), continueDelayMs);
+          } else {
+            logger?.warn?.(
+              `[dsh-mneme] auto-reindex hit the continuation limit (${maxContinuations}); `
+              + `${summary.indexed} embedded, the rest waits for the next start`
+            );
+          }
+        })
+        .catch((error) => {
+          if (disposed) return;
+          publish({
+            state: "error", error: String(error),
+            startedAt: status?.startedAt ?? startedAt,
+            continuation: continuations
+          });
+          logger?.warn?.(`[dsh-mneme] auto-reindex failed: ${String(error)}`);
+          // A throwing backfill (closed database, bug) is retried too, but
+          // under the same cap so a hard failure cannot loop forever.
+          if (continuations < maxContinuations) {
+            continuations++;
+            scheduleNext(() => attempt(0), continueDelayMs);
+          }
+        });
+    } catch (error) {
+      // Synchronous throw before the promise exists: record it, otherwise the
+      // panel shows "never ran" instead of "ran and failed".
+      publish({
+        state: "error", error: String(error),
+        startedAt: status?.startedAt ?? new Date().toISOString(),
+        continuation: continuations
+      });
+      logger?.warn?.(`[dsh-mneme] auto-reindex failed: ${String(error)}`);
+    }
+  };
+
+  if (cfg.autoReindexOnBoot !== false) scheduleNext(() => attempt(5), initialDelayMs);
+
+  return {
+    dispose() {
+      disposed = true;
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+    },
+    status: () => status
   };
 }
 
@@ -101,9 +280,6 @@ export function createSemantic({ store, service, settings, cfg, logger, vectorIn
   let reranker = null;
   // #118: pending embedder-init retry timer, cleared on unload.
   let embedRetryTimer = null;
-  // boot 回填首查计时器。搬移前在 index.js 是裸 setTimeout(不参与卸载清理);
-  // 纳入 dispose 是修悬挂,不改变启动行为。
-  let reindexTimer = null;
   // Last boot-backfill summary, exposed via backfillStatus() so "did it
   // finish?" has an answer other than a log line.
   let lastBackfill = null;
@@ -222,53 +398,18 @@ export function createSemantic({ store, service, settings, cfg, logger, vectorIn
   // delay. Gated on cfg.autoReindexOnBoot; rate-limited in small batches so a
   // large backlog never floods the provider. Failures degrade silently —
   // search stays keyword.
-  function scheduleAutoReindex() {
-    if (cfg.autoReindexOnBoot === false) return;
-    const attempt = (tries) => {
-      try {
-        if (!embedder || typeof embedder.embedSingle !== "function") return;
-        if ("ready" in embedder && embedder.ready !== true) {
-          // Local/ollama embedders init asynchronously; give them a moment
-          // before giving up on this boot (next boot retries).
-          // CodeRabbit on #365:嵌套重试计时器同样入册,否则 dispose 后仍可能
-          // 对已关库跑 needsEmbedding(有 try/catch 兜底只是日志噪声,但状态要收干净)。
-          if (tries > 0) reindexTimer = setTimeout(() => attempt(tries - 1), 2000);
-          return;
-        }
-        const model = embedder.modelHash;
-        const stale = typeof store.hasStaleEmbedding === "function"
-          ? store.hasStaleEmbedding(model)
-          : store.needsEmbedding(1).length > 0;
-        if (!stale) return; // nothing missing and nothing from another model
-        // Issue #128: no fingerprint gate here anymore — a matching fingerprint
-        // used to return early and permanently orphan rows whose embed failed
-        // at write time. See backfillMissingEmbeddings().
-        // Cap and pacing are configuration now (reindexMaxPerBoot /
-        // reindexBatchSize / reindexRateLimitMs) instead of hardcoded 500/10/200.
-        lastBackfill = {
-          state: "running", startedAt: new Date().toISOString(),
-          maxTotal: cfg.reindexMaxPerBoot, batchSize: cfg.reindexBatchSize
-        };
-        backfillMissingEmbeddings({
-          store, embedder, vectorIndex, logger,
-          maxTotal: cfg.reindexMaxPerBoot,
-          batchSize: cfg.reindexBatchSize,
-          rateLimitMs: cfg.reindexRateLimitMs
-        })
-          .then((summary) => {
-            lastBackfill = { ...summary, state: "finished" };
-          })
-          .catch((error) => {
-            lastBackfill = { state: "error", error: String(error), startedAt: lastBackfill?.startedAt };
-            logger?.warn?.(`[dsh-mneme] auto-reindex failed: ${String(error)}`);
-          });
-      } catch (error) {
-        logger?.warn?.(`[dsh-mneme] auto-reindex failed: ${String(error)}`);
-      }
-    };
-    reindexTimer = setTimeout(() => attempt(5), 5000);
-  }
-  scheduleAutoReindex();
+  //
+  // #604: a capped run used to be the end of the road until the next process
+  // start — the boot backfill fired once, wrote lastBackfill, and nothing ever
+  // rescheduled it. On this machine that meant a 500-row cap cleared the
+  // backlog only across several restarts, and the only trace was a log line
+  // nobody could see from the panel. The scheduler now continues inside the
+  // same boot (bounded), and records why it stopped where it did.
+  const backfill = scheduleBootBackfill({
+    store, vectorIndex, logger, cfg,
+    getEmbedder: () => embedder,
+    onStatus: (next) => { lastBackfill = next; }
+  });
 
   return {
     embedder,
@@ -277,9 +418,35 @@ export function createSemantic({ store, service, settings, cfg, logger, vectorIn
     backfillStatus() {
       return lastBackfill;
     },
+    /**
+     * Embedding diagnostics for the status endpoint (#604): "is the vector
+     * layer silently dead right now?" had no answer outside the process.
+     * backfillStatus() covers the boot sweep, embedReceipts() covers writes.
+     * Both are read-only snapshots; neither touches the database.
+     */
+    embeddingDiagnostics() {
+      const receipts = typeof embedder?.embedReceipts === "function"
+        ? embedder.embedReceipts()
+        : null;
+      return {
+        backfill: lastBackfill,
+        receipts: receipts
+          ? {
+            totals: receipts.totals,
+            lastOkAt: receipts.lastOkAt,
+            lastFailAt: receipts.lastFailAt,
+            lastFailReason: receipts.lastFailReason,
+            recent: Array.isArray(receipts.recent) ? receipts.recent.slice(-20) : []
+          }
+          : null
+      };
+    },
     dispose() {
       if (embedRetryTimer !== null) { clearTimeout(embedRetryTimer); embedRetryTimer = null; }
-      if (reindexTimer !== null) { clearTimeout(reindexTimer); reindexTimer = null; }
+      // #604: the backfill scheduler owns its own (single) timer slot and its
+      // own disposed flag, so a continuation that was already queued cannot
+      // fire against a closed database after unload.
+      backfill.dispose();
     }
   };
 }
