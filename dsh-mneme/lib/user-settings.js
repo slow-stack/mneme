@@ -94,13 +94,21 @@ export function renderUserSettingsBlock({ settings, config, agentId = null, fact
     ? resolvePersonaCard(settings, agentId, { strict: config?.personaStrictAddressing === true })
     : { card: {}, source: "default" };
   const persona = resolved.card;
-  const personaLines = persona?.enabled === true
-    ? [
-        ...(typeof persona.name === "string" && persona.name.trim() ? [STR.personaNameLine[language](persona.name.trim())] : []),
-        ...(typeof persona.personality === "string" && persona.personality.trim() ? [STR.personaPersonalityLine[language](persona.personality.trim())] : []),
-        ...(typeof persona.replyStyle === "string" && persona.replyStyle.trim() ? [STR.personaReplyStyleLine[language](persona.replyStyle.trim())] : [])
-      ]
-    : [];
+  // 段（#600）：每一行都带上它的 kind 与写回所需的定位信息，供面板按段读、按段改。
+  // 段文本是**未转义**的原样行；整串 `text` 仍走原来的「先 join 再统一转义」，
+  // 所以注入字节不变（转义只动连续花括号，换行不参与，逐段转义与整串转义等价）。
+  const personaLines = [];
+  if (persona?.enabled === true) {
+    if (typeof persona.name === "string" && persona.name.trim()) {
+      personaLines.push({ kind: "personaName", field: "name", text: STR.personaNameLine[language](persona.name.trim()) });
+    }
+    if (typeof persona.personality === "string" && persona.personality.trim()) {
+      personaLines.push({ kind: "personaPersonality", field: "personality", text: STR.personaPersonalityLine[language](persona.personality.trim()) });
+    }
+    if (typeof persona.replyStyle === "string" && persona.replyStyle.trim()) {
+      personaLines.push({ kind: "personaReplyStyle", field: "replyStyle", text: STR.personaReplyStyleLine[language](persona.replyStyle.trim()) });
+    }
+  }
   // 事实段：开关关 / 无 provider / 该卡没事实三种情况都不渲染，注入文本与
   // 未启用事实时逐字节一致（老用户零变化）。
   const factsResolved = config?.profileFactsEnabled === true && typeof factsProvider === "function"
@@ -113,22 +121,31 @@ export function renderUserSettingsBlock({ settings, config, agentId = null, fact
     for (const fact of factsResolved.facts) {
       const line = STR.profileFactLine[language](String(fact));
       if (shown >= PROFILE_FACTS_MAX_LINES || chars + line.length > PROFILE_FACTS_MAX_CHARS) break;
-      factLines.push(line);
+      factLines.push({ kind: "fact", index: shown, text: line });
       chars += line.length;
       shown += 1;
     }
     const remaining = factsResolved.facts.length - shown;
-    if (remaining > 0) factLines.push(STR.profileFactsTruncated[language](remaining));
-    if (factLines.length) factLines.unshift(STR.profileFactsHeader[language](factsResolved.facts.length));
+    if (remaining > 0) factLines.push({ kind: "factsTruncated", remaining, text: STR.profileFactsTruncated[language](remaining) });
+    if (factLines.length) {
+      // 表头的 n 是**总条数**（含没注入的），与「另有 N 条未注入」互补，别改成 shown。
+      factLines.unshift({
+        kind: "factsHeader",
+        shown,
+        total: factsResolved.facts.length,
+        text: STR.profileFactsHeader[language](factsResolved.facts.length)
+      });
+    }
   }
   const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : null;
   if (!profile && !rules.length && !personaLines.length && !factLines.length) {
-    return { text: "", source: resolved.source, agent: id, configGate: enabled };
+    return { text: "", segments: [], source: resolved.source, agent: id, configGate: enabled };
   }
-  const lines = [STR.userSettingsHeader[language]];
-  lines.push(...personaLines);
-  if (profile) lines.push(STR.profileLine[language](profile));
-  lines.push(...factLines);
-  for (const rule of rules) lines.push(STR.ruleLine[language](rule));
-  return { text: escapePromptVars(config, lines.join("\n")), source: resolved.source, agent: id, configGate: enabled };
+  const segments = [{ kind: "header", text: STR.userSettingsHeader[language] }];
+  segments.push(...personaLines);
+  if (profile) segments.push({ kind: "profile", text: STR.profileLine[language](profile) });
+  segments.push(...factLines);
+  for (const rule of rules) segments.push({ kind: "rule", text: STR.ruleLine[language](rule) });
+  const lines = segments.map((s) => s.text);
+  return { text: escapePromptVars(config, lines.join("\n")), segments, source: resolved.source, agent: id, configGate: enabled };
 }
