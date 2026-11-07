@@ -25,8 +25,36 @@ function makeSettings({ profile = "", rules = [], persona = null, byAgent = {} }
 }
 
 /**
+ * 冻结副本：origin/main 041e8f3 的 resolvePersonaCard 逐字抄。
+ *
+ * golden 不能 import 生产函数——那样谁改坏生产，golden 跟着一起坏，两边同错
+ * 仍会全绿（自证陷阱，Ephor 2026-11-07 指出）。所以这里留一份副本。
+ * 代价是副本会随生产演进而过期，由文件末尾那条「漂移告警」用例负责显式失败，
+ * 而不是让 golden 静默变成生产函数的镜像。
+ */
+function legacyResolvePersonaCard(settings, agentId, { strict = false } = {}) {
+  const store = settings.getPersona();
+  const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "";
+  const card = id ? store.byAgent[id] : null;
+  if (card && card.enabled === true) return { card, source: "byAgent" };
+  if (id && strict && Object.keys(store.byAgent).length > 0) return { card: {}, source: "none" };
+  return { card: store.default, source: "default" };
+}
+
+/** 冻结副本：origin/main 041e8f3 的 resolveFactsCard 逐字抄（同上，不许 import 生产）。 */
+function legacyResolveFactsCard(factsStore, agentId, { strict = false } = {}) {
+  const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "";
+  const byAgent = factsStore?.byAgent ?? {};
+  const card = id ? (byAgent[id] ?? null) : null;
+  if (card && card.length) return { facts: card, source: "byAgent" };
+  if (id && strict && Object.keys(byAgent).length > 0) return { facts: [], source: "none" };
+  return { facts: factsStore?.default ?? [], source: "default" };
+}
+
+/**
  * 改动前的实现（origin/main 041e8f3 的 src/user-settings.js:88-134 原样）。
  * 只依赖 lang.js 与 escapePromptVars——这两个本期都没改。
+ * 两个 resolve 用上面的冻结副本，不用生产函数（见副本注释）。
  */
 function legacyRender({ settings, config, agentId = null, factsProvider = null }) {
   const language = config?.language === "en" ? "en" : "zh";
@@ -34,7 +62,7 @@ function legacyRender({ settings, config, agentId = null, factsProvider = null }
   const rules = settings.getRules();
   const enabled = config?.personaEnabled === true;
   const resolved = enabled
-    ? resolvePersonaCard(settings, agentId, { strict: config?.personaStrictAddressing === true })
+    ? legacyResolvePersonaCard(settings, agentId, { strict: config?.personaStrictAddressing === true })
     : { card: {}, source: "default" };
   const persona = resolved.card;
   const personaLines = persona?.enabled === true
@@ -44,10 +72,11 @@ function legacyRender({ settings, config, agentId = null, factsProvider = null }
         ...(typeof persona.replyStyle === "string" && persona.replyStyle.trim() ? [STR.personaReplyStyleLine[language](persona.replyStyle.trim())] : [])
       ]
     : [];
-  // 事实解析直接调生产函数 resolveFactsCard——内联重写会抄错「先查卡命中还是先判
-  // strict」的顺序（Ephor 2026-11-07 复核指出，内联版实测 3/5 情形与生产不一致）。
+  // 事实解析用冻结副本。曾有一版是内联重写的，抄错了「先查卡命中还是先判 strict」的
+  // 顺序（Ephor 2026-11-07 复核指出，实测 3/5 情形与生产不一致）；改成直接调生产
+  // 函数又落进自证陷阱。冻结副本是第三条路：顺序与 origin/main 一致，且不随生产漂。
   const factsResolved = config?.profileFactsEnabled === true && typeof factsProvider === "function"
-    ? resolveFactsCard(factsProvider(), agentId, { strict: config?.personaStrictAddressing === true })
+    ? legacyResolveFactsCard(factsProvider(), agentId, { strict: config?.personaStrictAddressing === true })
     : { facts: [], source: "none" };
   const factLines = [];
   if (factsResolved.facts.length) {
@@ -419,4 +448,68 @@ test("人格字段带前后空格时 value 已 trim（回写进去的不能是�
   assert.equal(byKind.personaPersonality.value, "懒洋洋");
   assert.equal(byKind.personaReplyStyle.value, "先结论");
   assert.ok(!byKind.personaName.text.includes("  "), "text 里也不该有那两处空格");
+});
+
+// ---- ④ golden 的冻结副本与生产是否还一致（漂移告警，不是等价断言）---------------
+//
+// golden 里那两份 resolve 副本是冻结的：生产怎么演进它们都不动，所以「text 逐字节
+// 不变」这条结论始终对着一个历史基准成立。代价是副本会过期——如果生产改了判据而
+// 副本没跟着改，golden 比的就不再是「改动前 vs 改动后」，而是「旧判据 vs 新判据」，
+// 那批用例会开始报一些看不懂的分歧。
+//
+// 这条用例就是把那个时刻显式化：副本与生产一旦分歧就红，红的时候**别急着改副本**，
+// 先判断生产这次改动是不是有意的——
+//   · 有意改判据 → 同时更新 legacyRender 的期望，并在 CHANGELOG 记清「基准已换代」；
+//   · 无意改坏 → 生产回退。
+// 两种情况都不该由这条用例替你决定，它只负责让静默漂移变成一次可见的失败。
+test("golden 的 resolve 冻结副本与生产实现一致（漂移告警）", () => {
+  const personaCases = [
+    ["无名会话", {}, null, false],
+    ["无名会话 + strict", {}, null, true],
+    ["default 卡", { default: { enabled: true, name: "A" } }, null, false],
+    ["default 卡 + strict", { default: { enabled: true, name: "A" } }, null, true],
+    ["本卡命中", { default: { enabled: true, name: "A" }, byAgent: { botA: { enabled: true, name: "B" } } }, "botA", false],
+    ["本卡命中 + strict", { default: { enabled: true, name: "A" }, byAgent: { botA: { enabled: true, name: "B" } } }, "botA", true],
+    ["本卡存在但关着", { default: { enabled: true, name: "A" }, byAgent: { botA: { enabled: false } } }, "botA", false],
+    ["本卡存在但关着 + strict", { default: { enabled: true, name: "A" }, byAgent: { botA: { enabled: false } } }, "botA", true],
+    ["建了别家的卡（未命中）", { default: { enabled: true, name: "A" }, byAgent: { botB: { enabled: true } } }, "botA", false],
+    ["建了别家的卡（未命中）+ strict", { default: { enabled: true, name: "A" }, byAgent: { botB: { enabled: true } } }, "botA", true],
+    ["byAgent 有键但空数组", { default: { enabled: true }, byAgent: { botA: [] } }, "botA", true],
+    ["agentId 带空格", { default: { enabled: true, name: "A" }, byAgent: { botA: { enabled: true, name: "B" } } }, "  botA  ", true],
+    ["agentId 空串", { default: { enabled: true, name: "A" } }, "", true]
+  ];
+  const factsCases = [
+    ["无名会话", { default: ["d"], byAgent: {} }, null, false],
+    ["无名会话 + strict", { default: ["d"], byAgent: {} }, null, true],
+    ["本卡命中", { default: ["d"], byAgent: { botA: ["a"] } }, "botA", false],
+    ["本卡命中 + strict", { default: ["d"], byAgent: { botA: ["a"] } }, "botA", true],
+    ["本卡空数组（未命中）", { default: ["d"], byAgent: { botA: [] } }, "botA", false],
+    ["本卡空数组（未命中）+ strict", { default: ["d"], byAgent: { botA: [] } }, "botA", true],
+    ["建了别家的卡 + strict", { default: ["d"], byAgent: { botB: ["b"] } }, "botA", true],
+    ["无 default 键", { byAgent: { botB: ["b"] } }, "botA", true],
+    ["undefined 存储", undefined, "botA", true]
+  ];
+
+  const drift = [];
+  for (const [name, store, agentId, strict] of personaCases) {
+    const legacy = legacyResolvePersonaCard({ getPersona: () => store }, agentId, { strict });
+    const real = resolvePersonaCard({ getPersona: () => store }, agentId, { strict });
+    if (JSON.stringify(legacy) !== JSON.stringify(real)) {
+      drift.push(`人格 / ${name}：golden=${JSON.stringify(legacy)} 生产=${JSON.stringify(real)}`);
+    }
+  }
+  for (const [name, store, agentId, strict] of factsCases) {
+    const legacy = legacyResolveFactsCard(store, agentId, { strict });
+    const real = resolveFactsCard(store, agentId, { strict });
+    if (JSON.stringify(legacy) !== JSON.stringify(real)) {
+      drift.push(`事实 / ${name}：golden=${JSON.stringify(legacy)} 生产=${JSON.stringify(real)}`);
+    }
+  }
+  assert.equal(
+    drift.length,
+    0,
+    `生产判据变了，golden 的冻结副本已过期（${drift.length} 处）。先判断这次改动是否有意：\n` +
+      `有意 → 更新副本并记 CHANGELOG「基准已换代」；无意 → 回退生产。\n` +
+      drift.join("\n")
+  );
 });
