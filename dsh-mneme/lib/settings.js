@@ -137,6 +137,10 @@ const FEATURE_FLAG_BOOLEANS = [
   // Issue #230：document 型记忆——agent 产长文档的指针行（注册校验/摘要+
   // doc_path 落库/C2 去重/supersede 记账；全文归 agent；默认关，lightMode 强制关）。
   "documentMemoryEnabled",
+  // 日记本：跨天惰性判定 + 启动补写，正文落 <memoryDir>/diaries/<项目键>/。
+  // 默认关，进 LIGHT_MODE_OFF（要调模型，与低资源档互斥）。与 documentMemoryEnabled
+  // 成对但不相依：关掉文档记忆只影响检索，正文照样写。
+  "diaryEnabled",
   "codingRetrospect",
   "autoDream",
   // Issue #292：autoDream 连续失败退避（默认关）。基数是 dreamMinIntervalMinutes，

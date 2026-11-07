@@ -204,6 +204,18 @@
 | `documentDir` | `""` | managed 落盘目录（#296） | 空 = `<memoryDir>/documents/`；目录之外只登记指针、正文零读零写 |
 | `policyEpoch` | `0` | 裁决规则版本号 | bump 后旧 dream_runs 降为历史证据（receipt 不再驱动现行决策） |
 
+## 日记本（diary，v0.13）
+
+| 键 | 默认 | 作用 | 开启后果 / 冲突 |
+|---|---|---|---|
+| `diaryEnabled` **light** | `false` | QQ 日记本总闸：跨天判定 + 手写入口 + 面板页 | opt-in；与 `documentMemoryEnabled` **成对但不相依**——关着也能写正文文件，只是不铸造 `document` 指针行（回执里如实标 `pointer.skipped`） |
+| `diaryDir` | `""` | 日记正文根目录 | 空 = `<memoryDir>/diaries/<项目键>/`；`~` 展开到 home，绝对路径原样，相对路径落 memoryDir 下。**与 `memoryDir` 一样是路径配置，不是行为开关**，故不进 `settings.js` 白名单、也不上面板 |
+| `diaryInboxDir` | `""` | QQ 入站素材目录（只读） | 空 = 从 `memoryDir` 推 `<memoryDir>/../media/onebot`（onebot 的默认落点）。本模块**不 import `dsh-onebot-qq` 任何模块**，边界只靠这份「目录 + 文件形状」约定 |
+
+日记不落用户绑定的项目目录：那目录实测非 git、无 `.gitignore`、混着探针脚本，
+写进去没有版本也没有回滚；mneme 成文的写盘面只有 `memoryDir` 与 `documentDir` 两处。
+「入库到项目」是面板上一个**人主动点**的导出动作（复制而非移动）。
+
 ## 睡眠模式（sleep，空闲深维护）
 
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |
@@ -357,7 +369,8 @@
 `organizeEnabled`（#231） ·
 `profileExtractEnabled`（#497） ·
 `profileFactsEnabled`（2026-11-06） ·
-`preInjectGate.enabled`（#380） · `distillRecords.enabled`（#399）
+`preInjectGate.enabled`（#380） · `distillRecords.enabled`（#399） ·
+`diaryEnabled`（v0.13，每天一篇 = 一次 LLM 调用，属重型）
 
 预设只是默认值而非强制：用户显式写进 feature_flags 的值在装配顺序上后展开、仍然生效
 （「用户开关 > 轻量预设 > bundle 配置」）。

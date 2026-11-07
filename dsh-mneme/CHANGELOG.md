@@ -4,6 +4,15 @@
 
 ## 🆕 新增
 
+- **日记本：让当前会话里那个有人格的 agent 自己写日记（v0.13，beta）**。`diaryEnabled` opt-in 默认关。日记不是「聊天记录的备份」，是**同一个人格在写自己的日记**——正文由人格卡 + 当天真实素材一起生成，落成 `<memoryDir>/diaries/<项目键>/YYYY-MM-DD.md`，右栏「日记本」页只读预览、可手动补写、可「入库」把某天复制进项目自己的 `<项目>/diary/` 目录。
+
+  - **素材默认取当前会话，QQ 只是兜底**：`src/diary/session-provider.js` 从 `session.snapshotEvents()` 取当天 user/assistant 正文（机器注入的 `source.kind !== "user"` 一律挡掉），当日素材为空时才退回只读 `qq-inbox*.jsonl`（跨轮换文件按序号续读、只认 `decision.stage === "dispatch" && decision.ok === true`）。**inbox 里没有机器人自己的回复**（`message_sent` 命中 0），所以 prompt 明令禁止编造自己说过的话。
+  - **人格寻址走同一个入口**：`renderUserSettingsBlock({settings, config, agentId})`——与注入、面板预览共用一份，不另拼第二份。agentId 由 `sessionAgentId(session)` 从 `session.header.agentPreset` 读（先读 `requestHeader` 会返回请求级模型路由头、遮蔽 agentPreset）。
+  - **触发是「跨天惰性判定 + 启动补写」**：宿主没有日历调度原语（`cordis.patch.yml` 无 schedules），所以 `turn/end` 时判 `shouldRollDay(lastDate, today)`，启动时对已知项目做一次 catch-up（只补 1 天，更早的缺口记 `gapDays` 进正文而不补写）。写日记的回合**异步落盘、绝不 await 在 session/event 派发链上**（成本实测 p50 11.6s / p90 51.6s）。
+  - **仓库里没有 `memories.type = "diary"`**：`document` 行的唯一铸造口是 `registerDocument`（`src/api.js` 对 document 直接 400，`test/standalone-api.test.js:188` 把 diary 钉成反例）。所以正文是 md 文件、索引是 `type="document" + tags:["diary"]` 指针行，且只在 `documentMemoryEnabled` 另外开着时才落。
+  - **面板（`lib/client.js`）**：右栏 tab `dsh-mneme:diary`，独立旗标闸（不复用 `actionPipelineEnabled` 那条 effect）；503「没装配」与 409「没开」两种文案分开、读失败可见可重试；「补写今天」把 `written / already-written / no-material` 三种结果分开说，**不把 skip 当成功含糊过去**；「入库」409（目标已存在）单独提示。视觉是手绘风——只靠不对称圆角、1.5px 描边、dash 分隔与 ±0.3deg 轻微歪斜表达，颜色一律走 `--mneme-*` / `--dsw-*` 语义层（无新增 token、无字体依赖）。
+  - **四条路由**（`/api/dsh-mneme/diary`、`/diary/entry` 读 `open`；`/diary/compose`、`/diary/export` 写 `token-write`；缺装配 503、未开启 409、project 非绝对路径 400——服务端没有「当前项目」这个概念），`SECURITY.md` 中英两处清单已同步。
+
 - **「Agent 眼中的你」按段化第一期：注入渲染函数产出段边界（`segments`），面板从此能按段读（#600）**。`renderUserSettingsBlock` 原先只回一整串 `text`，面板那张卡只能整段只读显示——想改注入文本里的某一句，得走「整段提取 → 复制 → 粘进画像框」的剪贴板中转，而画像段是手写原文、人格段是结构化卡、事实段是逐条维护的行，三者写回语义完全不同。段边界是这三条路能分开走的前提。
 
   - **纯加法，注入字节零变化**：返回值多一个 `segments`，每行带 `kind` 与写回定位信息；`text` 仍是原来的 `escapePromptVars(config, lines.join("\n"))`。段文本存**未转义**原文（面板要显示给人看），转义只发生在 `text` 这一层——转义只动连续花括号、换行不参与，逐段转义与整串转义等价，所以注入行为与改前逐字节相同，老用户零变化。

@@ -766,7 +766,9 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 顶层扁平原值 "light"，不需要 NESTED_FLAG_PATHS 条目）= 113。
   // 「Agent 眼中的你」自动事实新增 profileFactsEnabled（dream 后逐卡维护 + 手动轮
   // + 注入段的顶层总闸；顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 114。
-  assert.equal(Object.keys(data.effective).length, 114);
+  // v0.13 新增 diaryEnabled（QQ 日记本：跨天判定 + 手写入口 + 面板页的总闸；
+  // 顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 115。
+  assert.equal(Object.keys(data.effective).length, 115);
   assert.equal(data.effective.chorographyEnabled, false);
   assert.equal(data.effective.chorographyInject, "light");
   assert.equal(data.effective.dreamSkipInvalid, true);

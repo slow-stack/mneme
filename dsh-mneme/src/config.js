@@ -335,6 +335,19 @@ export const Config = z.object({
   // （= #230 的「管线对正文零读零写」）；与 memoryDir 一样是路径配置，不是
   // 行为开关，故不进 settings.js 的 feature flags 白名单、也不上面板。
   documentDir: z.string().default(""),
+  // 日记本（QQ 机器人写日记）：跨天惰性判定 + 启动补写，正文落
+  // `<memoryDir>/diaries/<项目键>/YYYY-MM-DD.md`，记忆库里留一条 document 指针行。
+  // 默认关=行为与此前一致；lightMode 强制关闭（它要调模型，与低资源档互斥）。
+  // 与 documentMemoryEnabled **成对但不相依**：关掉文档记忆只影响「能不能被检索到」，
+  // 正文照样写——那是用户自己的日记，不该被一个检索开关收走。
+  diaryEnabled: z.boolean().default(false),
+  // 日记根目录：空串 = 跟随 `<memoryDir>/diaries/`。与 documentDir 同一套路径规则
+  // （`~` 展开、绝对路径原样、相对路径落 memoryDir 下），同样是**路径配置不是行为
+  // 开关**，故不进 settings.js 白名单、也不上面板。
+  diaryDir: z.string().default(""),
+  // QQ 收件箱目录：空串 = 从 memoryDir 推（`<memoryDir>/../media/onebot`，本机即
+  // `D:\DSH\.dsh\media\onebot`）。推出不来就报 no-inbox-dir，绝不猜别的盘。
+  diaryInboxDir: z.string().default(""),
   // 隐式 keep（v0.4.4）：LLM 未提及的 snapshot 记忆自动补 {action:"keep"}，
   // 避免"未覆盖即全拒"白白浪费整轮 run。设为 false 时保留旧的严格校验
   // （未覆盖即拒绝整单）。
@@ -1120,7 +1133,11 @@ const LIGHT_MODE_OFF = [
   // M.O. 自动沉淀：同样挂在 session/event 热路径上，而且解压会话日志是同步 I/O。
   // 轻量档的取向（小模型 / 小上下文 / 少常驻路径）与它直接冲突，预设里关掉；
   // 用户显式勾选仍然赢（合并顺序同上面几条）。
-  "actionNudgeEnabled"
+  "actionNudgeEnabled",
+  // 日记本：一次要调模型写一整段散文，且挂 session/event 热路径做跨天判定。
+  // 与低资源档（小模型 / 小上下文 / 少常驻路径）直接冲突，预设里关掉；
+  // 用户显式勾选仍然赢（合并顺序同上面几条）。
+  "diaryEnabled"
 ];
 
 /**

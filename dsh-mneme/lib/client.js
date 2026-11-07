@@ -780,6 +780,38 @@ window.__ModuleLoader__.load({
         "memory.features.actionPipelineEnabled.hint": "只读视图：把真实会话里反复走通的动作连成一张图谱——会话头图标、右栏完整视图、每次运行的结算卡。看 ≠ 写：沉淀由「M.O. 自动沉淀」单独开，执行记账由 /mo-run 单独开。Modus Operandi（工作流）。重启 DSH 后生效",
         "memory.features.actionNudgeEnabled": "自动沉淀工作流（beta）",
         "memory.features.actionNudgeEnabled.hint": "开：每轮结束后看一眼这个项目自己的会话日志，把反复走通的动作挖成记忆库里的一条「提议」，等你确认才可能变成工作流。只产草稿、不自动启用、不往仓库里塞文件。挂热路径且要解压日志，轻量档会强制关掉。重启 DSH 后生效",
+        "memory.features.diaryEnabled": "日记本（beta）",
+        "memory.features.diaryEnabled.hint": "开：右栏多一个「日记本」，拥有人格的 agent 每天用这个项目真实发生过的对话写一篇日记——今天没聊就不写，不编。日记正文落在记忆目录，点「存到这个项目」才复制一份到项目里。轻量档会强制关掉。重启 DSH 后生效",
+        "memory.diary.title": "日记本",
+        "memory.diary.note": "写的是这个项目里真实发生过的事：没聊过就不写，不编。",
+        "memory.diary.write": "写今天",
+        "memory.diary.writing": "正在写…",
+        "memory.diary.export": "存到这个项目",
+        "memory.diary.exporting": "正在存…",
+        "memory.diary.loading": "正在读…",
+        "memory.diary.noProject": "不知道这个会话属于哪个项目",
+        "memory.diary.noProjectHint": "会话还没有工作目录，日记不知道该写到哪里。换一个有工作目录的会话再打开。",
+        "memory.diary.disabled": "日记本没有开",
+        "memory.diary.disabledHint": "到「设置 › 增强」里打开「日记本」，重启 DSH 之后这个入口才可用。",
+        "memory.diary.unavailable": "日记服务没有装配起来",
+        "memory.diary.readFailed": "读不出日记",
+        "memory.diary.retry": "重试",
+        "memory.diary.empty": "这个项目还没有日记",
+        "memory.diary.emptyHint": "点「写今天」：它拿这个会话今天真实说过的话写一篇；今天没聊过就不写。",
+        "memory.diary.pickHint": "左边选一天，右边看正文。",
+        "memory.diary.count": "共 {n} 篇",
+        "memory.diary.writtenOk": "写好了：{path}",
+  "memory.diary.exportOk": "已存到 {path}",
+        "memory.diary.exportExists": "那个文件已经在项目里了，没有覆盖",
+        "memory.diary.exportFailed": "存不进去",
+        "memory.diary.composeFailed": "这次没有写成",
+        "memory.diary.skip.already": "今天已经写过一篇了，没有重复写。",
+        "memory.diary.skip.noMaterial": "今天这个项目没有可用的对话素材，所以没写。",
+        "memory.diary.skip.other": "这一轮没有写成。",
+        "memory.diary.auditTitle": "最近几轮",
+        "memory.diary.status.written": "写了",
+        "memory.diary.status.skipped": "跳过",
+        "memory.diary.status.failed": "失败",
         "memory.features.resilientModelDownload": "模型下载断了能续上",
         "memory.features.resilientModelDownload.hint": "开：下载中断后从断点续传并自动重试；关：中断就整份重来（断点续传，默认开）",
         "memory.features.searchSemanticDedup": "搜到意思相同的只留一条",
@@ -1666,6 +1698,38 @@ window.__ModuleLoader__.load({
         "memory.features.actionPipelineEnabled.hint": "Read-only view: the ways of working that actually got walked through in real sessions, drawn as a graph — session-header icon, full sidebar view, and a per-run settlement card. Viewing is not writing: distillation has its own switch below, and run accounting has its own (/mo-run). Modus Operandi. Takes effect after restarting DSH",
         "memory.features.actionNudgeEnabled": "Auto-distill workflows (beta)",
         "memory.features.actionNudgeEnabled.hint": "On: after each turn, look at this project's own session logs and mine the actions it keeps repeating into a proposal in the memory store — it still needs your sign-off before becoming a workflow. Drafts only; never auto-activates; never writes files into the repo. Hooks a hot path and decompresses logs, so light mode forces it off. Takes effect after restarting DSH",
+        "memory.features.diaryEnabled": "Diary (beta)",
+        "memory.features.diaryEnabled.hint": "On: a Diary tab appears in the right sidebar, and the agent that carries a persona writes one entry a day from what actually happened in this project — no conversation that day, no entry, and nothing made up. Entries live in the memory directory; only the “Save into this project” button copies one into the repo. Light mode forces it off. Takes effect after restarting DSH",
+        "memory.diary.title": "Diary",
+        "memory.diary.note": "Written from what actually happened in this project: no conversation, no entry, nothing invented.",
+        "memory.diary.write": "Write today",
+        "memory.diary.writing": "Writing…",
+        "memory.diary.export": "Save into this project",
+        "memory.diary.exporting": "Saving…",
+        "memory.diary.loading": "Loading…",
+        "memory.diary.noProject": "This session has no project directory",
+        "memory.diary.noProjectHint": "The session has no working directory yet, so there is nowhere to write a diary to. Open this in a session that has one.",
+        "memory.diary.disabled": "The diary is off",
+        "memory.diary.disabledHint": "Turn on Diary under Settings › Enhance, then restart DSH — the entry becomes available after that.",
+        "memory.diary.unavailable": "The diary service is not wired up",
+        "memory.diary.readFailed": "Could not read the diary",
+        "memory.diary.retry": "Retry",
+        "memory.diary.empty": "No diary entries for this project yet",
+        "memory.diary.emptyHint": "Press “Write today”: it writes one entry from what this session actually said today, and writes nothing if there was no conversation.",
+        "memory.diary.pickHint": "Pick a day on the left, read the entry on the right.",
+        "memory.diary.count": "{n} entries",
+        "memory.diary.writtenOk": "Written: {path}",
+  "memory.diary.exportOk": "Saved to {path}",
+        "memory.diary.exportExists": "That file is already in the project; nothing was overwritten",
+        "memory.diary.exportFailed": "Could not save it",
+        "memory.diary.composeFailed": "Nothing was written this time",
+        "memory.diary.skip.already": "Today's entry already exists, so nothing was written twice.",
+        "memory.diary.skip.noMaterial": "No usable conversation material in this project today, so nothing was written.",
+        "memory.diary.skip.other": "Nothing was written this round.",
+        "memory.diary.auditTitle": "Recent runs",
+        "memory.diary.status.written": "written",
+        "memory.diary.status.skipped": "skipped",
+        "memory.diary.status.failed": "failed",
         "memory.features.resilientModelDownload": "Model downloads resume after interruption",
         "memory.features.resilientModelDownload.hint": "On: downloads continue from where they stopped and retry automatically. Off: an interrupted download starts over (resumable downloads, on by default)",
         "memory.features.searchSemanticDedup": "Keep one entry when search hits near-duplicates",
@@ -2985,6 +3049,48 @@ window.__ModuleLoader__.load({
       // 而「为什么禁用」本来就由 title 说明（读不到会话工作目录）。
       ".mneme-pipe-distillBtn:disabled{cursor:not-allowed;border-style:dashed;color:var(--mneme-fg-dim)}",
       ".mneme-pipe-distillNote{color:var(--mneme-fg-dim);line-height:17px;min-width:0}",
+      // --- v0.13 日记本（beta）---------------------------------------------
+      // 语义色层第三份：日记本整页长在右栏 pane 里，既不在 .mneme-x 下、也不是
+      // pipe 那套类名。取值与第一份逐字相同，理由同 :2831 那条注释——测试按
+      // 首次出现抓 --mneme-* 定义，所以这条只能排在它后面。
+      ".mneme-diary,.mneme-diary-paper,.mneme-diary-head,.mneme-diary-list{" +
+        "--mneme-fg-dim:color-mix(in srgb,var(--dsw-alias-label-primary) 60%,transparent);" +
+        "--mneme-graphic-dim:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent);" +
+        "--mneme-accent:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
+        "--mneme-danger:color-mix(in srgb,var(--dsw-alias-state-error-primary) 80%,var(--dsw-alias-label-primary));" +
+        "--mneme-warn:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 65%,var(--dsw-alias-label-primary));" +
+        "--mneme-ok:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 65%,var(--dsw-alias-label-primary))" +
+      "}",
+      // 手绘风只靠**形状**做，不靠颜色：四角不对称的圆角（每边一个数会写成
+      // 「横向/纵向」两组百分比）、比常规粗一点的 1.5px 描边、虚线分隔、以及
+      // 正负 0.3deg 的轻微歪斜——这些都不碰对比度，深浅主题下一样成立。
+      // 想加纸纹就用 repeating-linear-gradient：它不是 color 声明，主锁不看；
+      // 反过来**别在这里加 color**，任何新色值都要先过 #178 的 AA 主锁。
+      ".mneme-diary{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;padding:10px 12px;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary);box-sizing:border-box}",
+      ".mneme-diary-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}",
+      ".mneme-diary-title{font-size:15px;line-height:21px;font-weight:700;letter-spacing:.3px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-diary-note{font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
+      ".mneme-diary-spacer{flex:1 1 auto;min-width:0}",
+      ".mneme-diary-btn{border:1.5px solid var(--dsw-alias-border-l2);background:0 0;border-radius:13px 9px 14px 10px;cursor:pointer;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12px;line-height:17px;padding:3px 11px}",
+      ".mneme-diary-btn:hover:enabled{background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-diary-btn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
+      ".mneme-diary-btn:disabled{cursor:not-allowed;border-style:dashed;color:var(--mneme-fg-dim)}",
+      ".mneme-diary-btn--primary{border-color:var(--mneme-accent);color:var(--mneme-accent)}",
+      ".mneme-diary-body{display:flex;gap:10px;min-height:0;flex:1 1 auto}",
+      ".mneme-diary-list{flex:0 0 108px;display:flex;flex-direction:column;gap:4px;overflow:auto;padding-right:2px;border-right:1px dashed var(--dsw-alias-border-l2)}",
+      ".mneme-diary-day{text-align:left;border:0;background:0 0;cursor:pointer;font-family:inherit;font-size:12px;line-height:17px;padding:3px 7px;border-radius:9px 7px 10px 6px;color:var(--mneme-fg-dim)}",
+      ".mneme-diary-day:hover{background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-diary-day:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
+      ".mneme-diary-day--on{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
+      ".mneme-diary-paper{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.18deg);background:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
+      ".mneme-diary-text{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:13px;line-height:22px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-diary-sheet{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
+      ".mneme-diary-empty{padding:14px 0;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
+      ".mneme-diary-warn{font-size:12px;line-height:17px;color:var(--mneme-danger)}",
+      ".mneme-diary-ok{font-size:12px;line-height:17px;color:var(--mneme-ok)}",
+      ".mneme-diary-audit{flex:none;border-top:1px dashed var(--dsw-alias-border-l2);padding-top:8px;display:flex;flex-direction:column;gap:3px;max-height:96px;overflow:auto}",
+      ".mneme-diary-audithead{font-size:11px;line-height:16px;letter-spacing:.4px;text-transform:uppercase;color:var(--mneme-fg-dim)}",
+      ".mneme-diary-auditrow{font-size:11px;line-height:16px;color:var(--mneme-fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
       // ===== 移动端适配（mobile-adapt 车道）=====
       // 为什么主通道是 @container 而不是 @media：面板有两种形态（overlay 弹层与
       // better-sidebar 工作台 tab），容器宽度与视口宽度并不相等；`.mneme-x` 是
@@ -3718,7 +3824,10 @@ window.__ModuleLoader__.load({
         // 启用这个子系统」而不是「每轮付多少」，所以和上面这些行为开关同组；
         // 每轮付出多少由紧随组尾的 choroSub 档位管。放组末是因为子块按组尾渲染
         // ——档位下拉要贴着它的总闸。
-        "chorographyEnabled"] },
+        "chorographyEnabled",
+        // 日记本（v0.13）：右栏座位的闸门。和 M.O. 一样是「开关=座位注册与否」，
+        // 但它属于「它在替你写字」这一类行为开关，所以归 enhance 而不是单开一组。
+        "diaryEnabled"] },
       { key: "group.dream", items: ["sleepModeEnabled"] },
       // v0.8.0 A4（issue #17）：作用域隔离组——标注总开关 + 严格硬过滤。
       { key: "group.scope", items: ["scopeEnabled", "strictScope"] }
@@ -10673,6 +10782,258 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // --- v0.13 日记本（beta）：常量、数据存取与正文组件 ----------------
+    // tab 的 id 与 kind 是两个不同用途的东西（见 registerPipelineSeats 里那段注释）：
+    // id 是宿主侧唯一键，kind 是 openTab() 的参数。
+    const DIARY_TAB_ID = "dsh-mneme:diary";
+    const DIARY_TAB_KIND = "mneme-diary";
+
+    // 读侧：一条清单（含账本）+ 按天取正文。写侧两条 POST。
+    // apiFetch 只补 Authorization 头，method/body 必须自己写。
+    const DIARY_WRITE_OPTS = (payload) => ({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload || {})
+    });
+
+    function diaryUrl(path, project) {
+      return "/api/dsh-mneme/diary" + path + "?project=" + encodeURIComponent(project || "");
+    }
+
+    // 日记本标记：一本翻开的册子 + 一道书脊。粗细 1.4 与 PipelineMark 对齐，
+    // 颜色走 currentColor（图形色由座位那层的 --mneme-* 决定）。
+    function DiaryMark(props) {
+      const { size = 16 } = props || {};
+      return h("svg", { width: size, height: size, viewBox: "0 0 16 16", "aria-hidden": "true", focusable: "false" },
+        h("path", { d: "M2.2 3.4c1.9-.6 3.8-.6 5.4.5v8.6c-1.6-1-3.5-1-5.4-.5z", fill: "none", stroke: "currentColor", "stroke-width": 1.4, "stroke-linejoin": "round" }),
+        h("path", { d: "M13.8 3.4c-1.9-.6-3.8-.6-5.4.5v8.6c1.6-1 3.5-1 5.4-.5z", fill: "none", stroke: "currentColor", "stroke-width": 1.4, "stroke-linejoin": "round" })
+      );
+    }
+
+    // 右栏 tab 的正文。为什么单独包一层具名组件（而不是把 hook 塞进
+    // slots.register 的回调里）——同 PipelinePane 那条注释。
+    function DiaryPane(props) {
+      const { t, project } = props;
+      const [doc, setDoc] = useState(undefined); // undefined=读中 null=读不出 对象=拿到
+      const [gate, setGate] = useState(null);    // {kind, status} 503/409 的如实说明
+      const [tick, setTick] = useState(0);
+      const [day, setDay] = useState(null);      // 选中的日期串
+      const [entry, setEntry] = useState(undefined);
+      const [busy, setBusy] = useState("");      // "" | "compose" | "export"
+      const [notice, setNotice] = useState(null);
+
+      useEffect(() => {
+        if (!project) { setDoc(null); return; }
+        let dead = false;
+        setDoc(undefined);
+        setGate(null);
+        apiFetch(diaryUrl("", project))
+          .then((res) => res.json().then((body) => ({ status: res.status, ok: res.ok, body })))
+          .then((r) => {
+            if (dead) return;
+            if (r.ok) { setDoc(r.body || {}); return; }
+            // 503 = 没装配、409 = 没开。两种都不是「读失败」，文案必须分开，
+            // 否则用户会以为日记坏了而不是自己没开开关。
+            if (r.status === 503 || r.status === 409) {
+              setGate({ kind: r.status === 503 ? "unavailable" : "disabled", status: r.status });
+              setDoc(null);
+              return;
+            }
+            setDoc(null);
+          })
+          .catch((err) => {
+            console.warn("[dsh-mneme] diary list failed:", err);
+            if (!dead) setDoc(null);
+          });
+        return () => { dead = true; };
+      }, [project, tick]);
+
+      const rows = (doc && doc.diaries) || [];
+      const activeDay = day || (rows.length ? rows[0].date : null);
+
+      useEffect(() => {
+        if (!project || !activeDay) { setEntry(undefined); return; }
+        let dead = false;
+        setEntry(undefined);
+        apiFetch(diaryUrl("/entry", project) + "&date=" + encodeURIComponent(activeDay))
+          .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+          .then((r) => {
+            if (dead) return;
+            setEntry({ date: activeDay, text: r.ok && r.body ? String(r.body.text || "") : null });
+          })
+          .catch((err) => {
+            console.warn("[dsh-mneme] diary entry failed:", err);
+            if (!dead) setEntry({ date: activeDay, text: null });
+          });
+        return () => { dead = true; };
+      }, [project, activeDay]);
+
+      const say = (tone, text) => {
+        setNotice({ tone, text });
+        if (typeof announce === "function") announce(text);
+      };
+
+      const writeToday = () => {
+        if (!project || busy) return;
+        setBusy("compose");
+        setNotice(null);
+        apiFetch(diaryUrl("/compose", project), DIARY_WRITE_OPTS({}))
+          .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+          .then((r) => {
+            const b = r.body || {};
+            if (!r.ok) { say("bad", t("memory.diary.composeFailed") + (b.error ? " (" + b.error + ")" : "")); return; }
+            // skip 也是 200——「今天写过 / 今天没聊」都是正常结果，必须说清是哪一种，
+            // 否则用户看到的是一句「成功了」但什么都没变（假成功）。
+            // 写成时不能借用「已存到」那句文案——写和入库是两件事，
+            // 复用到一起用户会以为日记已经被复制进项目目录了。
+            if (b.status === "written") say("ok", t("memory.diary.writtenOk").replace("{path}", String(b.path || b.date || "")));
+            else if (b.reason === "already-written") say("ok", t("memory.diary.skip.already"));
+            else if (b.reason === "no-material") say("ok", t("memory.diary.skip.noMaterial"));
+            else if (b.status === "skipped") say("ok", t("memory.diary.skip.other"));
+            else say("ok", t("memory.diary.skip.other"));
+            setTick((n) => n + 1);
+          })
+          .catch((err) => { console.warn("[dsh-mneme] diary compose failed:", err); say("bad", t("memory.diary.composeFailed")); })
+          .finally(() => setBusy(""));
+      };
+
+      const exportDay = () => {
+        if (!project || !activeDay || busy) return;
+        setBusy("export");
+        setNotice(null);
+        apiFetch(diaryUrl("/export", project), DIARY_WRITE_OPTS({ date: activeDay }))
+          .then((res) => res.json().then((body) => ({ ok: res.ok, status: res.status, body })))
+          .then((r) => {
+            const b = r.body || {};
+            if (r.ok) say("ok", t("memory.diary.exportOk").replace("{path}", String(b.path || "")));
+            else if (r.status === 409) say("bad", t("memory.diary.exportExists"));
+            else say("bad", t("memory.diary.exportFailed") + (b.error ? " (" + b.error + ")" : ""));
+          })
+          .catch((err) => { console.warn("[dsh-mneme] diary export failed:", err); say("bad", t("memory.diary.exportFailed")); })
+          .finally(() => setBusy(""));
+      };
+
+      const head = h("div", { className: "mneme-diary-head" },
+        h(DiaryMark, { size: 16 }),
+        h("span", { className: "mneme-diary-title" }, t("memory.diary.title")),
+        h("span", { className: "mneme-diary-spacer" }),
+        h("button", {
+          type: "button", className: "mneme-diary-btn mneme-diary-btn--primary",
+          disabled: !project || !!busy, onClick: writeToday,
+          title: t("memory.diary.note")
+        }, busy === "compose" ? t("memory.diary.writing") : t("memory.diary.write")),
+        h("button", {
+          type: "button", className: "mneme-diary-btn",
+          disabled: !project || !activeDay || !!busy, onClick: exportDay
+        }, busy === "export" ? t("memory.diary.exporting") : t("memory.diary.export"))
+      );
+
+      let body = null;
+      if (!project) {
+        body = h("div", { className: "mneme-diary-empty" },
+          h("div", null, t("memory.diary.noProject")),
+          h("div", null, t("memory.diary.noProjectHint")));
+      } else if (gate) {
+        body = h("div", { className: "mneme-diary-empty" },
+          h("div", null, t(gate.kind === "disabled" ? "memory.diary.disabled" : "memory.diary.unavailable")),
+          h("div", null, t(gate.kind === "disabled" ? "memory.diary.disabledHint" : "memory.diary.note")));
+      } else if (doc === undefined) {
+        body = h("div", { className: "mneme-diary-empty" }, t("memory.diary.loading"));
+      } else if (doc === null) {
+        body = h("div", { className: "mneme-diary-empty" },
+          h("span", { className: "mneme-diary-warn" }, t("memory.diary.readFailed")),
+          " ",
+          h("button", { type: "button", className: "mneme-diary-btn", onClick: () => setTick((n) => n + 1) }, t("memory.diary.retry")));
+      } else if (!rows.length) {
+        body = h("div", { className: "mneme-diary-empty" },
+          h("div", null, t("memory.diary.empty")),
+          h("div", null, t("memory.diary.emptyHint")));
+      } else {
+        const list = h("div", { className: "mneme-diary-list" }, rows.map((r) => h("button", {
+          key: r.date, type: "button",
+          className: "mneme-diary-day" + (r.date === activeDay ? " mneme-diary-day--on" : ""),
+          onClick: () => setDay(r.date)
+        }, r.date)));
+        const text = entry && entry.date === activeDay ? entry.text : undefined;
+        const paper = h("div", { className: "mneme-diary-paper" },
+          text === undefined
+            ? h("div", { className: "mneme-diary-empty" }, t("memory.diary.loading"))
+            : text === null
+              ? h("span", { className: "mneme-diary-warn" }, t("memory.diary.readFailed"))
+              : h("pre", { className: "mneme-diary-text" }, text));
+        body = h("div", { className: "mneme-diary-body" }, list, paper);
+      }
+
+      const audit = (doc && doc.audit) || [];
+      const foot = audit.length
+        ? h("div", { className: "mneme-diary-audit" },
+            h("div", { className: "mneme-diary-audithead" }, t("memory.diary.auditTitle")),
+            audit.slice(-6).reverse().map((a, i) => h("div", { key: "a" + i, className: "mneme-diary-auditrow" },
+              [a.date, t("memory.diary.status." + (a.status || "skipped")), a.reason || ""].filter(Boolean).join(" · "))))
+        : null;
+
+      return h("div", { className: "mneme-diary" },
+        head,
+        h("div", { className: "mneme-diary-note" },
+          rows.length
+            ? t("memory.diary.count").replace("{n}", String(rows.length)) + " " + t("memory.diary.pickHint")
+            : t("memory.diary.note")),
+        notice ? h("div", { className: notice.tone === "bad" ? "mneme-diary-warn" : "mneme-diary-ok" }, notice.text) : null,
+        body,
+        foot
+      );
+    }
+
+    // 座位注册（仅在 diaryEnabled 开启后被调用）。与 M.O. 那套同样的两条纪律：
+    // ① 类型注册与正文座位各自兜自己的异常；② 类型注册要幂等（宿主对重复的
+    // 类型 id 会抛）。这里没有会话头入口——日记本是「打开才看」的常驻页，
+    // 不该在每一轮会话头多一个图标。
+    function registerDiarySeats(ctx, t) {
+      try {
+        const tabs = typeof ctx.get === "function" ? ctx.get("sidebarRightTabs") : null;
+        if (tabs && typeof tabs.register === "function") {
+          const already = typeof tabs.get === "function" ? tabs.get(DIARY_TAB_ID) : null;
+          if (!already) {
+            tabs.register({
+              id: DIARY_TAB_ID,
+              kind: DIARY_TAB_KIND,
+              title: () => t("memory.diary.title"),
+              guide: [{
+                id: "dsh-mneme:diary:guide",
+                order: 10,
+                title: () => t("memory.diary.title"),
+                description: () => t("memory.diary.note"),
+                icon: (size) => h(DiaryMark, { size })
+              }]
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("[dsh-mneme] diary tab type registration failed:", err);
+      }
+
+      try {
+        const tabs = typeof ctx.get === "function" ? ctx.get("sidebarRightTabs") : null;
+        if (tabs && typeof tabs.register === "function") {
+          ctx.slots.inject("sidebar.right.pane.tab", () => {
+            return ctx.slots.register({
+              name: "sidebar.right.pane.tab",
+              key: DIARY_TAB_ID,
+              inject: (sessionId) => ({ sessionId })
+            }, (props) => h(DiaryPane, { t, project: sessionProject(ctx, props && props.sessionId) }));
+          });
+          ctx.slots.inject("sidebar.right.pane.tab.title", () => {
+            return ctx.slots.register({
+              name: "sidebar.right.pane.tab.title",
+              key: DIARY_TAB_ID
+            }, () => t("memory.diary.title"));
+          });
+        }
+      } catch (err) {
+        console.warn("[dsh-mneme] diary pane body registration failed:", err);
+      }
+    }
+
     function apply(ctx) {
       const t = ctx.locale.bind(NS);
       ctx.effect(() => ctx.locale.register(NS, dictionaries), "dsh-mneme: dictionaries");
@@ -11091,6 +11452,26 @@ window.__ModuleLoader__.load({
           });
         return () => { dead = true; };
       }, "dsh-mneme: action-pipeline gate");
+
+      // --- v0.13 日记本（beta）：独立旗标门控 ---
+      // 为什么不复用上面那条：它读的是 actionPipelineEnabled——一个只为 M.O. 存在的
+      // 闸门。把日记挂进同一个 then 里，等于「关掉 M.O. 顺带关掉日记」，而这两个
+      // 功能没有任何关系。所以另起一条 effect、读自己的键、失败同样 fail-closed。
+      ctx.effect(() => {
+        let dead = false;
+        apiFetch("/api/dsh-mneme/features")
+          .then((res) => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
+          .then((j) => {
+            if (dead) return;
+            const eff = (j && j.effective) || {};
+            if (!eff.diaryEnabled) return;
+            registerDiarySeats(ctx, t);
+          })
+          .catch((err) => {
+            console.warn("[dsh-mneme] features fetch failed, diary stays off:", err);
+          });
+        return () => { dead = true; };
+      }, "dsh-mneme: diary gate");
     }
 
     exports.apply = apply;

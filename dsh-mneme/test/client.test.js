@@ -2231,6 +2231,51 @@ test("right-pane tab renders a named component instead of a bare hook callback",
 // 「仓库里还没有工作流」与「一条运行记录都没有」是两句不同的话，都得中英齐全——
 // i18n 掉一边，界面上就是一行 key 裸奔。作用域那三句尤其不能缺：清单行上「项目」
 // 与「全局」是唯一的来源提示，缺了它，人分不清手里这条是本项目的还是跟着插件来的。
+// 日记本（v0.13）的四条形状锁。为什么值得单独立锁而不是靠上面的通用闸门：
+// ① 它的旗标闸必须**独立**——M.O. 那条 effect 读的是 actionPipelineEnabled，
+//    把日记塞进同一个 then 里，关掉 M.O. 会连带关掉日记，而两者毫无关系；
+// ② 右栏正文同样必须是具名组件（同 PipelinePane 的理由，hook 顺序只在运行时炸）；
+// ③ 「写成 / 今天写过 / 没素材」是三种不同结果，混成一句「成功」就是假成功；
+// ④ 503（没装配）与 409（没开）是两种不同的「不能用」，合并文案用户会以为日记坏了。
+test("diary pane: own gate, named component, and distinct outcomes", () => {
+  assert.match(clientSource, /function DiaryPane\(/, "DiaryPane must exist");
+  assert.ok(
+    clientSource.includes(
+      "}, (props) => h(DiaryPane, { t, project: sessionProject(ctx, props && props.sessionId) }));"
+    ),
+    "the diary tab callback must delegate to the named DiaryPane component"
+  );
+
+  // 从日记那段注释起算、到自己的 effect 名止：不能退 1600 字符去数，
+  // 那会把上面 M.O. 那段（它本来就写着 actionPipelineEnabled）一起框进来。
+  const gateHead = clientSource.indexOf("// --- v0.13 日记本（beta）：独立旗标门控 ---");
+  const gateAt = clientSource.indexOf('"dsh-mneme: diary gate"');
+  assert.ok(gateHead > -1, "the diary gate comment must exist");
+  assert.ok(gateAt > gateHead, "the diary must carry its own flag gate, after that comment");
+  // 只审代码、不审注释：那段注释本身就在解释「为什么不复用 M.O. 那条」，
+  // 会把 actionPipelineEnabled 这个字放进来说明——按注释判会把这个正确的说明当成违规。
+  const gateBody = clientSource
+    .slice(gateHead, gateAt)
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("//"))
+    .join("\n");
+  assert.ok(gateBody.includes("eff.diaryEnabled"), "the diary gate must read its own flag");
+  assert.ok(
+    !gateBody.includes("actionPipelineEnabled"),
+    "the diary gate must not ride on actionPipelineEnabled — the two features are unrelated"
+  );
+
+  // 三种结果必须各有自己的分支，不能都落进同一句「成功」
+  for (const marker of ['b.status === "written"', '"already-written"', '"no-material"']) {
+    assert.ok(clientSource.includes(marker), "diary write outcome must be handled explicitly: " + marker);
+  }
+  // 503 与 409 分开成两种 gate 文案
+  assert.ok(
+    clientSource.includes("r.status === 503") && clientSource.includes("r.status === 409"),
+    "diary unavailable (503) and disabled (409) must be told apart"
+  );
+});
+
 test("M.O. empty-state, list and scope copy exist in both languages", () => {
   for (const key of [
     "memory.actions.empty.title",

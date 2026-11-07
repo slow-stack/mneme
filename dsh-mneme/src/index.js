@@ -36,6 +36,8 @@ import { registerMoRunCommand } from "./pipeline-command.js";
 // M.O. 自动沉淀的触发侧（冷却 / 排队 / 兜底）。挖掘与落盘在 pipeline-nudge.js，
 // 这里只管「什么时候跑」。两者分开的理由见 src/pipeline-nudge-auto.js 文件头。
 import { createNudgeAutoRun } from "./pipeline-nudge-auto.js";
+// QQ 日记本：合成管线（compose）与触发侧（auto）分开，理由见 src/diary/index.js 文件头。
+import { createDiaryComposer, createDiaryAutoRun } from "./diary/index.js";
 import { createVectorIndex } from "./vector-index.js";
 // semantic(embedder/reranker/boot 回填)纯搬移至 src/semantic.js(PR2):宿主与
 // daemon(dsh-mneme-serve,#363)共用同一套装配,原文件保留 barrel 出口。
@@ -651,6 +653,15 @@ export const apply = (ctx, config) => {
   const summarizer = createSummarizer(ctx, service, cfg, {}, sessionGate);
   disposers.push(summarizer.dispose);
 
+  // QQ 日记本（v0.13，diaryEnabled）：构造期零副作用（只闭包住依赖，不建目录、不读盘、
+  // 不调模型），所以位置可以放在这里——它必须早于下面的 createApi，面板的
+  // 「写一篇」按钮要转调同一个 composer；而自动触发侧在 webServer 块之后挂（同
+  // actionNudge 的 TDZ 理由）。关闸时 composer 是 null：路由回 409、座位不注册，
+  // 与「装配缺失」的 503 严格区分（#497 先例）。
+  const diary = cfg.diaryEnabled === true
+    ? createDiaryComposer({ ctx, config: cfg, logger: ctx.logger, service, settings, memoryDir })
+    : null;
+
   // #275 存储生命周期第一批：无损回收的手动入口。刻意不挂启动路径、不接定时器——
   // 这一步是不可逆的内容丢弃，只由人显式触发（面板的维护卡、`dsh-mneme reclaim`）。
   // 实例建在插件进程内，是为了让 CLI 也能走这条路：VACUUM 要排他锁，跟宿主抢锁的
@@ -685,7 +696,7 @@ export const apply = (ctx, config) => {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,
       list: () => []
-    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro, profileFacts);
+    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro, profileFacts, diary);
     disposers.push(api.dispose);
   }
 
@@ -699,6 +710,23 @@ export const apply = (ctx, config) => {
   // 是本插件里最重的一条后台路径；且它只产「提议」，关掉不影响记忆本身的正确性。
   if (cfg.actionNudgeEnabled === true) {
     disposers.push(createNudgeAutoRun({ ctx, memoryDir, logger: ctx.logger, sessionGate }));
+  }
+
+  // 日记的触发侧（v0.13）：turn/end 跨天判定 + 启动补写。
+  //
+  // 启动补写为什么在这里而不是 webServer 块里：它不依赖面板，headless 宿主也该补。
+  // 补哪个项目只能靠状态文件里记过的项目根——宿主刚起来时没有任何会话，
+  // 而「上次是哪个项目、哪天写的」就在那儿。补写不 await：启动路径上吊住一次
+  // 模型调用，等于让整个插件加载等模型回来（本机 p90 五十秒级）。
+  if (diary) {
+    const diaryAuto = createDiaryAutoRun({ ctx, composer: diary, logger: ctx.logger, sessionGate });
+    disposers.push(diaryAuto);
+    const projects = diary.knownProjects();
+    if (projects.length) {
+      Promise.resolve(diaryAuto.catchUp(projects)).catch((error) => {
+        ctx.logger?.warn?.("[dsh-mneme] diary startup catch-up failed: " + String(error));
+      });
+    }
   }
 
   // Standalone external API (v0.7.12): plain node:http server for ecosystem

@@ -34,6 +34,9 @@ import { readPipelineDoc, loadPipelines, projectPipelineDir } from "./pipeline.j
 import { loadRunsById, runsDir, RUNS_SUFFIX } from "./pipeline-runs.js";
 import { observationDir, loadObservationsById } from "./pipeline-observations.js";
 import { projectKey } from "./candidates.js";
+// 日记本（v0.13）：读侧三件（列表/正文/账本）在 diary/index.js 里都是纯函数级的小实现，
+// 路由只做参数校验与闸门——把口径写在这里会让「面板与 CLI 读的是同一份」破功。
+import { diaryDir, listDiaries, readDiary, exportDiary } from "./diary/index.js";
 import { readCandidateDoc } from "./candidates.js";
 // M.O. 自动沉淀：/nudge 是 pipeline-nudge.js 的第一个运行时消费者（此前它只有测试在用，
 // 是个孤儿模块——「不能自动沉淀工作流」的根因）。
@@ -202,7 +205,10 @@ function parseBody(text) {
 // choro（M1）：chorography 读侧查询对象（createChoroQueries 产物）。缺省 null =
 // 宿主内 API 在 headless/测试环境没有接 queries，choro 路由回 503。它与 service
 // 刻意分开传——chorography 的所有权模型与记忆域相反（spec §3），不塞进 service。
-export function createApi(ctx, service, settings, commands, embedder, semantic = null, apiToken = "", config = null, maintenance = null, profileExtract = null, choro = null, facts = null) {
+// diary（v0.13）是第 13 个位置参数，缺省 null：旧调用点（测试里 14 处）继续工作，
+// 不传时日记路由一律 503 diary-unavailable（装配缺件），而不是伪装成「用户没开」。
+// 与 choro 同一套 503/409 分叉：#497 定下「503 = 环境缺件，409 = 用户没开」。
+export function createApi(ctx, service, settings, commands, embedder, semantic = null, apiToken = "", config = null, maintenance = null, profileExtract = null, choro = null, facts = null, diary = null) {
   const disposers = [];
 
   // #182 注入状态探测：面板状态页的「极简模式下注入按宿主设计关闭」提示需要
@@ -2668,6 +2674,148 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         return;
       }
       run(null);
+    }
+  });
+
+  // --- QQ 日记本（v0.13）-----------------------------------------------
+  // 五条路由，闸门分两层：
+  // - **装配缺件**（diary 参数没传 / headless 宿主）→ 503 diary-unavailable；
+  // - **用户没开**（diaryEnabled=false）→ 409 disabled（#497 定下的 503/409 分叉）。
+  // 读侧三条 policy "open"（与 /pipeline、/candidates 同级：只读、不写盘、宿主围栏统一
+  // 鉴权）；写侧两条 "token-write"——它们会落盘：/diary/compose 调模型写正文，
+  // /diary/export 往**用户项目目录**复制文件。写盘面一律受门控。
+  //
+  // project 参数照 /pipeline 的规矩：不是绝对路径就 400，**不能忽略**——服务端没有
+  // 「当前项目」这个概念，忽略它就静默退成「全局」，而全局看起来一切正常。
+  function diaryGate(req, res) {
+    if (!diary) {
+      sendJson(res, 503, { error: "unavailable", reason: "diary-unavailable" });
+      return false;
+    }
+    if (!config || config.diaryEnabled !== true) {
+      sendJson(res, 409, { error: "disabled", reason: "diary-not-enabled" });
+      return false;
+    }
+    return true;
+  }
+  function diaryProject(req, res) {
+    const project = new URL(req.url, "http://localhost").searchParams.get("project");
+    if (project === null || project === "") {
+      // 读侧不给 project 会退成「合并所有项目」——那正是要避免的静默全局。
+      sendJson(res, 400, { error: "project-required" });
+      return null;
+    }
+    if (!isAbsolute(project)) {
+      sendJson(res, 400, { error: "project-not-absolute", detail: project });
+      return null;
+    }
+    return project;
+  }
+
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/diary",
+    policy: "open",
+    handler(req, res) {
+      if (!diaryGate(req, res)) return;
+      const project = diaryProject(req, res);
+      if (!project) return;
+      try {
+        const dir = diaryDir({ memoryDir: config.memoryDir, projectRoot: project, configured: config.diaryDir });
+        // 账本一起带走：面板要回答「今天为什么没有日记」时必须读它，不能靠猜。
+        const audit = diary.readAudit({ projectRoot: project, limit: 20 });
+        sendJson(res, 200, { contract: "mneme.diary/v1", project, dir, diaries: listDiaries(dir), audit });
+      } catch (error) {
+        sendJson(res, 500, { error: "diary-unreadable", detail: String((error && error.message) || error) });
+      }
+    }
+  });
+
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/diary/entry",
+    policy: "open",
+    handler(req, res) {
+      if (!diaryGate(req, res)) return;
+      const project = diaryProject(req, res);
+      if (!project) return;
+      const date = new URL(req.url, "http://localhost").searchParams.get("date");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date ?? ""))) {
+        sendJson(res, 400, { error: "date-required" });
+        return;
+      }
+      try {
+        const dir = diaryDir({ memoryDir: config.memoryDir, projectRoot: project, configured: config.diaryDir });
+        const text = readDiary(dir, date);
+        if (text === null) {
+          // 404 而不是空串：面板据此区分「这一篇还没写」与「写了但是空的」。
+          sendJson(res, 404, { error: "diary-not-found", date });
+          return;
+        }
+        sendJson(res, 200, { contract: "mneme.diary/v1", date, path: `${dir}/${date}.md`, text });
+      } catch (error) {
+        sendJson(res, 500, { error: "diary-unreadable", detail: String((error && error.message) || error) });
+      }
+    }
+  });
+
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/diary/compose",
+    policy: "token-write",
+    handler(req, res) {
+      if (!diaryGate(req, res)) return;
+      const method = String(req.method || "GET").toUpperCase();
+      if (method === "GET" || method === "HEAD") {
+        // 手动「写一篇」是会调模型的写动作，必须 POST——GET 会被浏览器预取、
+        // 被面板刷新反复调用，等于每刷一次烧一次模型（/nudge 同款教训）。
+        sendJson(res, 405, { error: "method-not-allowed", allow: "POST" }, { Allow: "POST" });
+        return;
+      }
+      const project = diaryProject(req, res);
+      if (!project) return;
+      Promise.resolve(diary.compose({ trigger: "manual", projectRoot: project }))
+        .then((result) => {
+          // skip 不是错：already-written / no-material 都是关于这个项目的答案，回 200。
+          const status = result && result.ok === false ? 500 : 200;
+          sendJson(res, status, { contract: "mneme.diary/v1", ...result });
+        })
+        .catch((error) => {
+          sendJson(res, 500, { error: "diary-compose-failed", detail: String((error && error.message) || error) });
+        });
+    }
+  });
+
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/diary/export",
+    policy: "token-write",
+    handler(req, res) {
+      if (!diaryGate(req, res)) return;
+      const method = String(req.method || "GET").toUpperCase();
+      if (method === "GET" || method === "HEAD") {
+        sendJson(res, 405, { error: "method-not-allowed", allow: "POST" }, { Allow: "POST" });
+        return;
+      }
+      const project = diaryProject(req, res);
+      if (!project) return;
+      readBody(req, res).then((text) => {
+        if (text === null) return;
+        const body = parseBody(text);
+        const date = String(body.date ?? "");
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          sendJson(res, 400, { error: "date-required" });
+          return;
+        }
+        try {
+          const dir = diaryDir({ memoryDir: config.memoryDir, projectRoot: project, configured: config.diaryDir });
+          const result = exportDiary({ sourceDir: dir, projectRoot: project, date, overwrite: body.overwrite === true });
+          const status = result.ok ? 200 : result.error === "target-exists" ? 409 : result.error === "no-diary" ? 404 : 500;
+          sendJson(res, status, { contract: "mneme.diary/v1", ...result });
+        } catch (error) {
+          sendJson(res, 500, { error: "diary-export-failed", detail: String((error && error.message) || error) });
+        }
+      });
     }
   });
 
