@@ -114,7 +114,9 @@ const CASES = [
   ["画像+规则", makeSettings({ profile: "用户是规划背景", rules: ["不提及用户名"] }), {}],
   [
     "人格三行齐（default 卡）",
-    makeSettings({ profile: "画像原文", rules: ["规则一"], persona: { enabled: true, name: "Amarre", personality: "轻松幽默", replyStyle: "先结论" } }),
+    // name 里刻意放 {{x}}：人格段若被提前转义，转义是幂等的，下面的
+    // 「转义后等于 text」断言抓不到（CodeRabbit 2026-11-07 指出）。
+    makeSettings({ profile: "画像原文", rules: ["规则一"], persona: { enabled: true, name: "Amarre {{x}}", personality: "轻松幽默", replyStyle: "先结论" } }),
     { personaEnabled: true }
   ],
   [
@@ -222,6 +224,17 @@ test("segments 拼回去等于未转义的整串，转义后等于 text（同源
     const { agentId = null, ...config } = extra;
     const out = renderUserSettingsBlock({ settings, config, agentId, factsProvider: config.factsProvider });
     const joined = out.segments.map((s) => s.text).join("\n");
+    // 段必须是**未转义**的原文：只比「转义后等于 text」抓不到「某段被提前转义」——
+    // escapePromptVars 幂等（/[{}]{2,}/g 只在连续花括号前插反斜杠，已插过的串不再匹配），
+    // 提前转义一遍再整体转义一遍，结果与只转义一遍逐字节相同。
+    // 所以另取一份独立基线：同一套配置把转义关掉跑 golden，段拼装必须等于它。
+    const rawBefore = legacyRender({
+      settings,
+      config: { ...config, escapePromptVariables: false },
+      agentId,
+      factsProvider: config.factsProvider
+    }).text;
+    assert.equal(joined, rawBefore, `配置「${name}」：段拼装必须等于未转义原文（某段被提前转义就会在这里红）`);
     assert.equal(escapePromptVars(config, joined), out.text, `配置「${name}」：转义后的段拼装必须等于 text`);
     if (config.escapePromptVariables === false) {
       assert.equal(joined, out.text, `配置「${name}」：转义关掉时段拼装与 text 直接相等`);
