@@ -349,7 +349,99 @@ test("#604: permanent failures still report 'stalled' even mixed with the same c
   store.close();
 });
 
-test("#604: a run with no failures can reach 'drained' even with a nonzero budget", async () => {  const store = createStore(":memory:");
+test("#604: a detailed adapter turns a provider outage into 'errored' on the legacy path", async () => {
+  // 这台机器实际跑的是 legacy OpenAI 兼容适配器（embedProvider 默认 openai）。
+  // 它的 embedSingle() 只回向量、把原因丢掉，所以 provider 挂掉与「这行坏了」
+  // 在旧路径上是同一个 null。embedSingleDetailed() 把原因带出来，回填才能分档。
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  for (let i = 0; i < 10; i++) {
+    service.saveWithDedupe({ type: "preference", title: `行${i}`, content: `legacy-${i}` });
+  }
+  const vectorIndex = createVectorIndex({ store });
+  let detailedCalls = 0;
+  const embedder = {
+    // Deliberately present and returning null: if the backfill ever prefers it
+    // over embedSingleDetailed, the run degrades to `stalled` and this fails.
+    embedSingle: async () => null,
+    embedSingleDetailed: async () => {
+      detailedCalls++;
+      return { vector: null, reason: "http-503" };
+    },
+    modelHash: "h#1", dimension: 3
+  };
+
+  const summary = await backfillMissingEmbeddings({
+    store, embedder, vectorIndex, logger: { info() {} },
+    maxTotal: 500, batchSize: 10, rateLimitMs: 0
+  });
+
+  assert.equal(detailedCalls, 10, "the detailed adapter is the one that gets called");
+  assert.equal(summary.indexed, 0);
+  assert.equal(
+    summary.finishReason, "errored",
+    "an http-503 is the provider's problem, so the scheduler retries it in-boot"
+  );
+  assert.deepEqual(summary.failureReasons, { "error:http-503": 10 });
+  assert.equal(store.needsEmbeddingFor("h#1", 100).length, 10, "nothing was lost");
+  store.close();
+});
+
+test("#604: a detailed adapter keeps an unembeddable row permanent", async () => {
+  // 同一个详细适配器、同样的条数，只把 reason 换成永久的那一类。分档必须跟着
+  // 原因走，而不是跟着「有没有 detailed 方法」走。
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  for (let i = 0; i < 10; i++) {
+    service.saveWithDedupe({ type: "preference", title: `行${i}`, content: `bad-${i}` });
+  }
+  const vectorIndex = createVectorIndex({ store });
+  const embedder = {
+    embedSingle: async () => null,
+    embedSingleDetailed: async () => ({ vector: null, reason: "response-no-vector" }),
+    modelHash: "h#1", dimension: 3
+  };
+
+  const summary = await backfillMissingEmbeddings({
+    store, embedder, vectorIndex, logger: { info() {} },
+    maxTotal: 500, batchSize: 10, rateLimitMs: 0
+  });
+
+  assert.equal(summary.finishReason, "stalled");
+  assert.deepEqual(summary.failureReasons, { "error:response-no-vector": 10 });
+  store.close();
+});
+
+test("#604: a missing config field is permanent, so it must not buy error retries", async () => {
+  // config-incomplete 也以 error: 开头，但它每次都会以同样方式失败。若按前缀
+  // 一律算瞬时，配置不全的机器会在每次启动时空跑 1+3 轮。
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  for (let i = 0; i < 10; i++) {
+    service.saveWithDedupe({ type: "preference", title: `行${i}`, content: `cfg-${i}` });
+  }
+  const vectorIndex = createVectorIndex({ store });
+  const embedder = {
+    embedSingle: async () => null,
+    embedSingleDetailed: async () => ({ vector: null, reason: "config-incomplete:apiKey" }),
+    modelHash: "h#1", dimension: 3
+  };
+
+  const summary = await backfillMissingEmbeddings({
+    store, embedder, vectorIndex, logger: { info() {} },
+    maxTotal: 500, batchSize: 10, rateLimitMs: 0
+  });
+
+  assert.equal(
+    summary.finishReason, "stalled",
+    "an incomplete config is not an outage; retrying it only burns the error budget"
+  );
+  assert.equal(summary.stalled, true);
+  store.close();
+});
+
+test("#604: a run with no failures can reach 'drained' even with a nonzero budget", async () => {
+  const store = createStore(":memory:");
   const service = createService({ store, mirror: null, config: {} });
   for (let i = 0; i < 3; i++) {
     service.saveWithDedupe({ type: "preference", title: `行${i}`, content: `C${i}` });

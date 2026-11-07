@@ -265,6 +265,20 @@ export function createEmbedder({ store, settings, logger, vectorIndex }) {
       return null;
     },
 
+    // Same as embedSingle, but keeps the reason a vector did not come back.
+    // embedSingle() drops it on purpose — its callers only care whether a
+    // vector exists — but the boot backfill has to tell "this row is broken"
+    // from "the provider was unreachable", and a bare null erases that
+    // distinction. Callers feature-detect this method and fall back to
+    // embedSingle() so older adapters keep working unchanged.
+    async embedSingleDetailed(text) {
+      const cfg = settings.getVectorConfig();
+      if (!configComplete(cfg)) return { vector: null, reason: "config-incomplete" };
+      const out = await embedTextDetailed(cfg, text);
+      if (out.vector) _dimension = out.vector.length;
+      return out;
+    },
+
     /** Model fingerprint (model#hex), or undefined when not configured. */
     get modelHash() {
       const cfg = settings.getVectorConfig();

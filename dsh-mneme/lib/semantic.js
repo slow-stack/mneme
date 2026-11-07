@@ -95,14 +95,29 @@ export async function backfillMissingEmbeddings({
       attempted.add(row.id);
       try {
         const text = [row.title, row.content].filter(Boolean).join("\n");
-        const vector = await embedder.embedSingle(text);
+        // Prefer the adapter that reports why it failed. Without it a legacy
+        // OpenAI-compatible embedder (the default `embedProvider: "openai"`
+        // path, and the one this install actually runs) returns a bare null for
+        // both "this row is unembeddable" and "the provider was unreachable",
+        // so every provider outage was filed as a permanent row failure and the
+        // run reported `stalled` — deferring the retry to the next boot when
+        // the provider had already recovered. Older adapters have no
+        // embedSingleDetailed and keep the old, less precise behaviour.
+        const detailed = typeof embedder.embedSingleDetailed === "function"
+          ? await embedder.embedSingleDetailed(text)
+          : null;
+        const vector = detailed ? detailed.vector : await embedder.embedSingle(text);
         if (vector?.length) {
           store.setEmbedding(row.id, vector, model);
           indexed++;
+        } else if (detailed?.reason) {
+          // Keep the `error:` prefix the finishReason split keys on. The reason
+          // domain is embedTextDetailed's: http-<status>, request-failed:<kind>,
+          // config-incomplete:<field>, response-no-vector.
+          noteFailure(`error:${detailed.reason}`);
         } else {
-          // legacy OpenAI-compatible adapters signal failure by returning null
-          // and drop the detailed reason inside embedText(), which only returns
-          // the vector. "no vector came back" is all we can honestly claim.
+          // No reason available (older adapter): "no vector came back" is all
+          // we can honestly claim, and it is treated as permanent.
           noteFailure("empty-vector");
         }
       } catch (error) { noteFailure(`error:${String(error)}`); }
@@ -156,7 +171,27 @@ export async function backfillMissingEmbeddings({
   //   - `stalled`: nothing got through and every failure was permanent. The
   //     next boot is the honest retry point.
   const stillStale = pick(1).length > 0;
-  const transient = Object.keys(failureReasons).some((reason) => reason.startsWith("error:"));
+  // A reason is transient when the same request could plausibly succeed later.
+  // Both a thrown adapter error and a detailed failure arrive here as
+  // `error:<reason>`, so the prefix alone is too coarse: a missing config field
+  // and a row the provider refuses to embed fail identically every time, and
+  // retrying those only burns the error budget. Only rate limiting, server-side
+  // faults, transport failures and unclassified throws earn a retry.
+  const isTransient = (reason) => {
+    if (!reason.startsWith("error:")) return false;
+    const detail = reason.slice("error:".length);
+    if (detail.startsWith("config-incomplete")) return false;
+    if (detail.startsWith("response-no-vector")) return false;
+    const status = /^http-(\d{3})/.exec(detail);
+    if (status) {
+      const code = Number(status[1]);
+      return code === 429 || code >= 500;
+    }
+    // request-failed:<timeout|network> and bare thrown Errors: blame the
+    // provider, not the row.
+    return true;
+  };
+  const transient = Object.keys(failureReasons).some(isTransient);
   const noProgress = stalled || indexed === 0;
   const finishReason = !stillStale
     ? "drained"
