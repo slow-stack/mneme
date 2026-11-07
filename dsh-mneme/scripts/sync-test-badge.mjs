@@ -4,7 +4,7 @@
 //
 // 做三件事：
 //   1. 跑一遍全量测试（npm test），取套件总数（`ℹ tests N` 汇总行）；
-//   2. 把双 README 的 tests 徽章（img.shields.io/badge/tests-N%20passed）与
+//   2. 把双 README 的 tests 徽章（img.shields.io/badge/tests-N%20total）与
 //      开发命令注释（# N 个测试 / # 运行 N 个测试 / # N 个 node:test 测试 /
 //      # N tests）刷成该数字——形状集合收在 scripts/test-count-sync.mjs，与发版
 //      自动路径 scripts/release-prep.mjs 共用（两条路径各存一份曾导致 v0.8.11

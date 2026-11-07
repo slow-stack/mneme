@@ -2,22 +2,9 @@
 
 ## [Unreleased]
 
-- **修复 #579**：仓库地志工具会提示登记、仓库选择和读页错误。检索遇到不可读的页面时会标明遗漏，并保留已找到的命中。
-- **修复 #593 留下的两处旁路：显式钉住的行仍会被文档升格吸收静默归档；`memory_pin` 回执在 `pinnedInjectBudget=0`（默认关闭）时仍报 `injectable: true`**。#593 把 pin 从「按类型推断」改成显式存储（`pinned_memories` 表），但两处消费方没跟上：吸收只拿得到记忆行、拿不到 pin 表，于是退回按类型猜；回执只看了遗忘/归档/暂停作用域，没看预算开关。
+## [0.12.0] - 2026-11-07
 
-  - **判据①：新增 `store.isPinned(memoryId)` 单行点查**（`pinned_memories` 的唯一读侧谓词）。`src/document.js` 的 evidence 吸收循环改为两条并列判据：`store.isPinned(row.id)`（显式钉住）**或** `pinnedTypes.has(row.type)`（#249 逐字保真池类型 constraint/preference）——任一成立就不归档。上一版只有后者，所以一条被钉的 `pattern` / `decision` 在文档升格时照样 `setArchived`：用户钉过的行被悄悄收走，pin 语义当场失效。`store.isPinned` 缺席时自动退回类型口径（fail-safe，不因新谓词缺失而放宽）。
-  - **判据②：`injectable` 加上两道注入闸——`pinnedBudget > 0` 与 `autoInject` 未关**。前者上限与 `src/service.js:1885` 同款 `Math.max(0, Math.min(5, Math.floor(config?.pinnedInjectBudget ?? 0)))`，pin 池整体由它开关（`service.js` 里 `pinnedBudget > 0` 才读表选路），默认 0 = 关闭；后者是整条注入通道的总闸，关着时 `src/index.js:617` 根本不注册注入器，pin 段一行都跑不到。两处都属「钉住动作确实成功、但一条都不会被注入」，回执照样报 true 正是「返回成功不等于生效」。`autoInject` 按「只有显式 false 才算关」判（config schema 默认 true，见 `src/config.js:10`），测试直连 `createTools` 拿不到已填 defaults 的 config 时不会被误报成 false。工具 description、schema 注释与 blocked 文案同步改写。
-  - **回归锁**：`test/document.test.js` 新增一例用 `type:"pattern"`（刻意不在 `PINNED_MEMORY_TYPES` 里，否则会被类型口径顺手护住、测不到缺口）——钉一条、不钉一条，注册文档吸收两条，断言被钉行 `archived===false`、未钉行 `archived===true`、`evidence_archived===1`；`test/tools.test.js` 新增两例：预算 0 时 `pinned:true` 与 `injectable:false` 分开报、`autoInject:false` 时同样报 false 且不显式传时不得误报 false；`test/tools-dto-schema-matrix.test.js` 的 `injectable` 断言由 true 改 **false**（该矩阵用默认配置，预算本就是 0）。
-  - **口径**：回执回答的是「pin 这条通道此刻开不开」，**不是**「这条记忆被排除在所有块之外」——`injectable:false` 的行仍可能凭自身重要性走常规候选路进块，工具描述与 blocked 文案都写明了这一点（首版文案写成「不会被注入」，被 #596 评审指出是过度承诺）。
-  - **验证**：`npm test` 2875 tests / 2874 pass / 0 fail / 1 skipped；`npm run sync` 95 文件一致；变异自证：撤掉 `autoInjectOn` → `test/tools.test.js` 34 pass / 1 fail（转红）。
-
-- **修复 #588：`codingGate` 词表补齐 34 项工程协作词——「合并 / PR / CI / 发版」类任务此前被判成非编码，`pitfall` / `constraint` / `rejected_solution` 三类教训记忆整类不注入**。`codingKeywords` 56 → 90 项，改的是默认值，词表本身仍可配置覆盖。
-
-  - **病灶是判据只看词表不看内容**：`codingGate` 按 `m.type` 判，而「这条任务算不算编码」唯一依据是 `codingKeywords` 子串命中。原表 56 项里没有「合并 / 分支 / 提交 / 冲突 / 验收 / 审查 / 评审 / 审评 / 发版 / 仓库 / 回滚 / 推送 / 拉取 / 变基 / 上线 / 打包 / 迁移 / 字段 / 鉴权 / 超时 / 并发 / 闪退 / 白屏 / 端口 / 进程 / 守护 / 定时任务 / 索引 / 缓存 / 死锁 / 内存泄漏 / 日志 / 版本号 / 环境变量」——用户日常说的「合并吧」「看看 CI 和审评」「今天就能发版」全被判成非编码，于是这三类记忆一次都不注入。生产日志实测（`recall_runs`，剔除系统提示污染后 1,070 query / 61,446 次调用）：缺口占非编码调用的 17.1~21.7%，补词后翻转 114 query / 8,352 次，编码任务占比 23.4% → 37.0%。
-  - **只加中文，一个英文词都不加**：`isCodingTask` 是纯子串匹配、没有词边界，`pr` 命中的 69 条里 30 条（57.9%）是 `C:/Program Files`、`pnpm` 路径、`prompt` 这类文本。英文词要加得先改成带 `\b` 的正则，不在本次范围。
-  - **刻意不加的两个**：「事务」（唯一命中是政治学简答「公共事务委托给企业和社会组织」，加了会把答题场景判成编码任务，方向正好相反）、「依赖包」（「依赖」已在表内，它永远不会单独生效，纯冗余）。「审评」与「评审」并列保留——同义不同形，子串匹配两套都得分开放，删任一个都漏一类真实说法。
-  - **顺带修掉更严重的盲区**：原测试从未驱动生产的 `isCodingTask`——把 `src/service.js` 里该函数改成恒 `false`，四个相关测试文件 177 个用例仍全绿。用例改为直接 `import` 生产函数，并删掉耦合的 `assert.equal(codingKeywords.length, 90)` 长度锁；新增 34 词逐项断言、不得含歧义词、无重复、不得含英文短词，以及 8 条正例 / 4 条负例的行为断言。
-  - **验证**：`npm test` 2841 tests / 2840 pass / 0 fail / 1 skipped；`check-sync` 95 文件一致；三处变异（生产函数恒 `false` / 删「合并」/ 加回「事务」）各自让对应用例转红。
+## 🆕 新增
 
 - **「Agent 眼中的你」自动事实：按会话身份分卡维护一份逐条事实清单，dream 巩固后自动更新、注入生效、面板可管（2026-11-06 需求，对标 ChatGPT 记忆 / DS Bot 每 bot 一份 MEMORY.md 的设计）**。`profileFactsEnabled` opt-in 默认关。
 
@@ -31,6 +18,24 @@
   - **分享包不含事实**（v1 明确出界）：事实是本实例 agent 对本用户的认知，跨库语义未定。
   - **验证**：新增 `test/profile-facts.test.js` 17 例（ops 解析形状、跨卡守卫、去重跳过、no-route/noop/unparseable 可区分、失败不推进游标、重跑即 noop、scope 分区与外来行排除、autoPassCandidates、账本裁剪、注入顺序/strict 寻址/关闸零读数/截断尾注/花括号转义、HTTP 面 405/400/401/409/503/502）；`test/client.test.js` 新增面板锁（三路由对齐、五种结局 i18n、卡片位置、事实域切片内无 PUT /profile 字面量——#497 的镜像锁）；旗标计数锁 113 → **114**；docs-config-keys 锁补 CONFIGURATION.md 行。全量 `npm test` 2827 tests / 2826 pass / 0 fail / 1 skipped；check-sync 95 一致。
 
+- **pin 从「按类型推断」改成用户亲手钉的显式事实：新表 `pinned_memories` + `memory_pin` / `memory_unpin`，钉住的行在注入时优先占位，不再依赖它恰好是 `constraint` / `preference`**（默认 `pinnedInjectBudget = 0`，预算关时注入序列与改前逐条相同——这条线不改变任何人的现有行为）。
+
+  - **为什么另开一张表**：pin 是「用户与记忆之间的一条关系」，不是记忆自身的属性。独立表回退只需一条 `DROP`，不必碰主表 31 列；`created_at` 还能给出 pin 顺序。幂等靠 `CREATE TABLE IF NOT EXISTS`，本表没有回填步骤所以不登记 `applied_migrations`。外泄面为零——mirror / share 都不 `SELECT` 本表。
+  - **pin 池此前会被向量路的封顶挤出候选池**：pin 筛选发生在 hybrid 合并**之后**，而合并结果已按 `poolSize` 封顶（生产 `maxItems=5` → `poolSize=10`，向量路一次正好返回 10 条即 break），规则窗口里的 `constraint` / `preference` 一条都进不了候选池，pin 只能从那 10 条里碰运气。修法：合并块之后、topic 重排之前，把被 `poolSize` 挤掉的 pin 类行补到候选池**尾部**；只在预算 > 0 时补，`strictScope` 与 `scopeState` 两道闸门照旧作用其上。真库副本实测（6733 条有向量行、1024 维、`maxItems=5`）：pin 注入 2/5 → 5/5、注入总条数 7 → 10，前 5 位新进的三条之外原有条目只后移、无一条被挤出注入块；无向量路径改前改后都 5/5、10 条且逐条同序。
+  - **判据从「表里有几行」改成「有几条能用的」**：旧判据 `countPinned() > 0` 是错的——pin 行会在 `memories` 那边被归档、遗忘、硬删，而 `pinned_memories` 对这三种一无所知。只要表里还剩一行（哪怕早已归档），判据就一直判 explicit，可选集恒为空，pin 全灭且**永不回落到旧的类型口径**，无日志无报错。`pinnedStats.source` 因此三档：`explicit` / `fallback-none-usable`（钉过但一条都用不了，静默降级必须留痕）/ `type-fallback`（从没钉过，升级即等价）。**不整段回落**：若因为「有 3 条归档」就回落类型口径，会突然冒出一批用户根本没钉过的条目，那比少注入更糟。
+  - **`memory_pin` 回执补上「暂停作用域」**：描述文案、README 与 render 文案三处都写着「遗忘 / 归档 / 暂停作用域都优先于 pin，回执如实报告」，而 `execute` 只算了遗忘与归档两项，被按下作用域的行因此报 `injectable: true` 而实际一条都没注入。改法：回执改用 `service.filterPaused([target])`，与注入侧共用同一个出口，以后改闸不会漏掉回执这一侧——注入侧本身没坏，坏的是回执另写了一份判据。
+  - **不做**：`PINNED_MEMORY_TYPES` 保持原样不动——它在 write-admission 还承担写入配额豁免语义，与注入侧是两件不同的事，本线只把注入侧解耦。
+  - **验收**：存量库升级后新表为空 → 回落旧类型口径，两档 `maxItems`（5 / 10）在真库副本上逐条 id 相同；预算 0 时任何路径都不改注入序列；归档 / 遗忘 / 硬删三种场景各有用例；向量路填满 `poolSize` 时 pin 仍拿满预算；暂停作用域下回执如实为 false；全量 2858 用例 / 2857 通过 / 0 失败 / 1 跳过。
+- **chorography 收尾：面板「重建骨架」入口 + 页级向量检索（V4 落地）**：spec 消费面最后两块——**生成触发点**（spec §3「现在生成」）落成面板按钮 + `POST /choro/run`（`token-write`，T0 apply 秒级同步回执；t1Loss 警告原样透出——T0 重建会把 enriched 页退回骨架，M2 补洞的清点在按钮回执里看得见）；**向量检索**（spec §5 的 `choro_vectors` 空壳就此启用）：`choro_vectors` 补 `vector` / `source_generated_at` 列（addColumn 幂等），检索时**惰性物化**（P37：host 侧 /choro/search 先嵌查询拿 `expectDim`，再补嵌缺页/过期页），余弦 Top-N 以独立 `semantic` 数组返回（P39：两路分数量纲不同，不与 keyword `hits` 混排序）。
+
+  - **V4 的答案（P38）**：`model` / `dim` 记行内、**不与记忆向量锁死**——查询向量维度与任一行失配 = 换了 embedder 模型，本轮 `fresh` 检查被 `dimDrift` 压过、全量重嵌；代价是几十页重嵌而不是作废记忆向量。embedder 缺席（CLI / 未配置）→ `semantic: null`，检索静默退关键词。
+  - **两个 handler 的 promise 链必须 `return`**：invoke/测试 `await route.handler(...)`，不 return 就在响应发出前返回——实测症状是 semantic 恒缺席、body 恒空。/choro/search 与 /choro/run 都改成 `return readBody(...).then(...)`（nudge 同款）。
+  - **嵌入对象**：页正文剥 frontmatter / CHORO 标记行后的全文（P40，页级；claims 级留待真有精排需求）。staleness 两维：页 `generated_at` 变了（内容变）、行 `dim` 失配（模型变）。
+  - **验证**：新增 10 例（wiki-queries 3：staleness 两维 / dim 失配全量重嵌 / cosine 排序与空查询；wiki-api 3：run 路由 policy+405+快乐路径、闸语义 409/404、semantic 在场与缺席；wiki-store 向量读写随用例覆盖；client 锁 1：按钮打 /choro/run、防连点、T1 留 CLI 的 hint、回执计数）。全量 `npm test` 2814 pass / 0 fail / 1 skipped；check-sync 94 一致。
+  - **桌面实测反馈的美化：文件清单从「竖线等宽行」换成真 table**（用户看截图后拍板）：MD 渲染器解析连续 `|` 行为真表格——表头、对齐元数据（`---:` → 行数列右对齐等宽数字）、路径单元格等宽底色、斑马纹与 hover；分隔行不再画成可见行；引导引言缩小一档。回归锁三件（真 table / 分隔行被消费 / 数字列对齐）。
+
+## 🎨 面板
+
 - **面板跨组件失效广播：改库动作后记忆列表/实体页/状态工作台即时重取，不再「关面板重开才看到变化」**（用户 2026-11-06 反馈：裁决完冲突要关掉插件面板才能看到败者归档落地）。
 
   - **病灶不是没刷新，是没广播**：全面板此前唯一的跨组件失效机制是 `mneme:conflicts-changed`（一个派发点、三个状态侧监听者，全是状态页小组件）；记忆列表与冲突徽章只靠弹层成功回调、手动刷新按钮与 30s 首页合并续命，实体页与归档工作台干脆只有挂载时取一次。tab 切换本就卸载重挂，所以症状集中在同一次打开的面板内。
@@ -39,13 +44,46 @@
   - **回归锁**：`test/client.test.js` 新增一例锁事件名、发布点 ledger（新增改库动作忘了广播时先红）、订阅方数量与裁决双信号并存；onCreated 的既有原样锁同步带上广播。
   - **验证**：全量 `npm test` 2809 tests / 2808 pass / 0 fail / 1 skipped；test/client.test.js 100 例全绿（含新增锁）；test/client-share.test.js 全绿。
 
-- **chorography 收尾：面板「重建骨架」入口 + 页级向量检索（V4 落地）**：spec 消费面最后两块——**生成触发点**（spec §3「现在生成」）落成面板按钮 + `POST /choro/run`（`token-write`，T0 apply 秒级同步回执；t1Loss 警告原样透出——T0 重建会把 enriched 页退回骨架，M2 补洞的清点在按钮回执里看得见）；**向量检索**（spec §5 的 `choro_vectors` 空壳就此启用）：`choro_vectors` 补 `vector` / `source_generated_at` 列（addColumn 幂等），检索时**惰性物化**（P37：host 侧 /choro/search 先嵌查询拿 `expectDim`，再补嵌缺页/过期页），余弦 Top-N 以独立 `semantic` 数组返回（P39：两路分数量纲不同，不与 keyword `hits` 混排序）。
+## 🐛 修复
 
-  - **V4 的答案（P38）**：`model` / `dim` 记行内、**不与记忆向量锁死**——查询向量维度与任一行失配 = 换了 embedder 模型，本轮 `fresh` 检查被 `dimDrift` 压过、全量重嵌；代价是几十页重嵌而不是作废记忆向量。embedder 缺席（CLI / 未配置）→ `semantic: null`，检索静默退关键词。
-  - **两个 handler 的 promise 链必须 `return`**：invoke/测试 `await route.handler(...)`，不 return 就在响应发出前返回——实测症状是 semantic 恒缺席、body 恒空。/choro/search 与 /choro/run 都改成 `return readBody(...).then(...)`（nudge 同款）。
-  - **嵌入对象**：页正文剥 frontmatter / CHORO 标记行后的全文（P40，页级；claims 级留待真有精排需求）。staleness 两维：页 `generated_at` 变了（内容变）、行 `dim` 失配（模型变）。
-  - **验证**：新增 10 例（wiki-queries 3：staleness 两维 / dim 失配全量重嵌 / cosine 排序与空查询；wiki-api 3：run 路由 policy+405+快乐路径、闸语义 409/404、semantic 在场与缺席；wiki-store 向量读写随用例覆盖；client 锁 1：按钮打 /choro/run、防连点、T1 留 CLI 的 hint、回执计数）。全量 `npm test` 2814 pass / 0 fail / 1 skipped；check-sync 94 一致。
-  - **桌面实测反馈的美化：文件清单从「竖线等宽行」换成真 table**（用户看截图后拍板）：MD 渲染器解析连续 `|` 行为真表格——表头、对齐元数据（`---:` → 行数列右对齐等宽数字）、路径单元格等宽底色、斑马纹与 hover；分隔行不再画成可见行；引导引言缩小一档。回归锁三件（真 table / 分隔行被消费 / 数字列对齐）。
+- **修复 #590：严格寻址把「一张身份卡都没建」也判成「没有这张卡」，唯一那张人格卡静默失效**：`personaStrictAddressing` 开时，`resolvePersonaCard` 把两种完全不同的处境都判成 `source: "none"`——① 建了卡、但没有这张身份的卡（按 none 处理是合理的）；② 一张身份卡都没建（按 none 处理等于把 default 永久废掉，而面板不报错）。第 2 种在 DS Bot 这类宿主里是**必然**：所有 bot 会话共用同一个 `agentPreset`、且会话建成就不可变，用户按 bot 名字建卡永远不会命中，于是一开严格寻址，唯一那张人格卡就静默失效——症状正是「第一次派任务时它不知道自己是谁、人设与回复格式如何」。
+
+  - **判据改成「有没有键」而不是「有没有可用的卡」**：严格模式只在 `Object.keys(byAgent).length > 0` 时才拒绝兜底。一张 `enabled=false` 的卡也算用户已经做过分区——否则「关掉唯一那张身份卡」会重新落回 default，「关掉这张卡」这个动作又变成没意义。`resolveFactsCard` 是同一处语义的镜像，同改。
+  - **回归锁三件**：一张都没建 → 严格模式下仍落 default、建一张后例外立即失效；身份卡全被关掉仍算「建过卡」（锁住判据不被改成「有可用卡才算」）；事实侧同口径（含「关着的卡也算建过」）。变异自证三处：去掉「建过卡」前提 → pass 33 / fail 1；判据换成「有 enabled 卡才算」→ pass 32 / fail 2；facts 侧去掉前提 → pass 33 / fail 1。全量 2842 tests / 2841 pass / 0 fail / 1 skipped。
+- **修复 #579：仓库地志的三个只读工具在错误分支返回 schema 之外的字段，宿主直接判 `invalid output`，面板只剩一句与真实原因无关的报错**：`choro_module_map` / `choro_read_page` / `choro_search` 的 `output.schema` 是 `additionalProperties: false` 且只声明了成功形状，而 `resolveChoroRepo` 与读页 / 检索的失败分支返回 `{ error, hint }`、`{ error, slug, relPath }` 这类对象——错误载荷原样穿过宿主校验，用户看到的是「缺 `value.repo`」「`value.error` 不是已声明的属性」。
+
+  - **改走宿主工具错误路径（抛错），而不是继续扩 schema**：仓库里既有的工具错误本来就是 `throw`（参数校验、记忆不存在等），扩 schema 等于把「错误」写进「正常返回」的形状里，每加一个错误码就要多改一处契约。
+  - **检索不再把「读不到」答成「没匹配」**：`src/wiki/queries.js` 的检索循环对读不到的页原先静默 `continue`，于是「三页里两页读不了」会退化成「0 hits」——这是同一个 issue 里最危险的一条。现在保留已读到的命中、把读不到的页单独列出；无命中且有页读不到时明确报「检索不完整」。
+  - **回归测试**：`test/wiki-tools.test.js` 重写（错误与成功两条路径都用临时库，覆盖「仓库行存在但本机路径不可达」「页记录存在但文件读不了」「真正未知的仓库 id」三类且必须互相可区分），`test/wiki-api.test.js` 补闸语义；16 例全过。
+- **修复 #593 留下的两处旁路：显式钉住的行仍会被文档升格吸收静默归档；`memory_pin` 回执在 `pinnedInjectBudget=0`（默认关闭）时仍报 `injectable: true`**。#593 把 pin 从「按类型推断」改成显式存储（`pinned_memories` 表），但两处消费方没跟上：吸收只拿得到记忆行、拿不到 pin 表，于是退回按类型猜；回执只看了遗忘/归档/暂停作用域，没看预算开关。
+
+  - **判据①：新增 `store.isPinned(memoryId)` 单行点查**（`pinned_memories` 的唯一读侧谓词）。`src/document.js` 的 evidence 吸收循环改为两条并列判据：`store.isPinned(row.id)`（显式钉住）**或** `pinnedTypes.has(row.type)`（#249 逐字保真池类型 constraint/preference）——任一成立就不归档。上一版只有后者，所以一条被钉的 `pattern` / `decision` 在文档升格时照样 `setArchived`：用户钉过的行被悄悄收走，pin 语义当场失效。`store.isPinned` 缺席时自动退回类型口径（fail-safe，不因新谓词缺失而放宽）。
+  - **判据②：`injectable` 加上两道注入闸——`pinnedBudget > 0` 与 `autoInject` 未关**。前者上限与 `src/service.js:1885` 同款 `Math.max(0, Math.min(5, Math.floor(config?.pinnedInjectBudget ?? 0)))`，pin 池整体由它开关（`service.js` 里 `pinnedBudget > 0` 才读表选路），默认 0 = 关闭；后者是整条注入通道的总闸，关着时 `src/index.js:617` 根本不注册注入器，pin 段一行都跑不到。两处都属「钉住动作确实成功、但一条都不会被注入」，回执照样报 true 正是「返回成功不等于生效」。`autoInject` 按「只有显式 false 才算关」判（config schema 默认 true，见 `src/config.js:10`），测试直连 `createTools` 拿不到已填 defaults 的 config 时不会被误报成 false。工具 description、schema 注释与 blocked 文案同步改写。
+  - **回归锁**：`test/document.test.js` 新增一例用 `type:"pattern"`（刻意不在 `PINNED_MEMORY_TYPES` 里，否则会被类型口径顺手护住、测不到缺口）——钉一条、不钉一条，注册文档吸收两条，断言被钉行 `archived===false`、未钉行 `archived===true`、`evidence_archived===1`；`test/tools.test.js` 新增两例：预算 0 时 `pinned:true` 与 `injectable:false` 分开报、`autoInject:false` 时同样报 false 且不显式传时不得误报 false；`test/tools-dto-schema-matrix.test.js` 的 `injectable` 断言由 true 改 **false**（该矩阵用默认配置，预算本就是 0）。
+  - **口径**：回执回答的是「pin 这条通道此刻开不开」，**不是**「这条记忆被排除在所有块之外」——`injectable:false` 的行仍可能凭自身重要性走常规候选路进块，工具描述与 blocked 文案都写明了这一点（首版文案写成「不会被注入」，被 #596 评审指出是过度承诺）。
+  - **验证**：`npm test` 2875 tests / 2874 pass / 0 fail / 1 skipped；`npm run sync` 95 文件一致；变异自证：撤掉 `autoInjectOn` → `test/tools.test.js` 34 pass / 1 fail（转红）。
+
+- **修复 #588：`codingGate` 词表补齐 34 项工程协作词——「合并 / 分支 / 提交 / 发版」类任务此前被判成非编码，`pitfall` / `constraint` / `rejected_solution` 三类教训记忆整类不注入**。`codingKeywords` 56 → 90 项，改的是默认值，词表本身仍可配置覆盖。**默认词表不含 `pr` / `ci` 两个英文短词**（理由见下条），所以只写「PR」「CI」而不带其他中文工程词的查询仍会被判成非编码——「看看 CI 和审评」「合并吧」这类说法靠「审评」「合并」命中，不是靠这两个字母。
+
+  - **病灶是判据只看词表不看内容**：`codingGate` 按 `m.type` 判，而「这条任务算不算编码」唯一依据是 `codingKeywords` 子串命中。原表 56 项里没有「合并 / 分支 / 提交 / 冲突 / 验收 / 审查 / 评审 / 审评 / 发版 / 仓库 / 回滚 / 推送 / 拉取 / 变基 / 上线 / 打包 / 迁移 / 字段 / 鉴权 / 超时 / 并发 / 闪退 / 白屏 / 端口 / 进程 / 守护 / 定时任务 / 索引 / 缓存 / 死锁 / 内存泄漏 / 日志 / 版本号 / 环境变量」——用户日常说的「合并吧」「看看 CI 和审评」「今天就能发版」全被判成非编码，于是这三类记忆一次都不注入。生产日志实测（`recall_runs`，剔除系统提示污染后 1,070 query / 61,446 次调用）：缺口占非编码调用的 17.1~21.7%，补词后翻转 114 query / 8,352 次，编码任务占比 23.4% → 37.0%。
+  - **只加中文，一个英文词都不加**：`isCodingTask` 是纯子串匹配、没有词边界，`pr` 命中的 69 条 query（6,002 次调用）里，30 条（3,477 次）是 `C:/Program Files`、`pnpm` 路径、`prompt` 这类文本——按调用次数算 3,477 / 6,002 = 57.9%，按 query 条数算 30 / 69 = 43.5%，两种口径都是高误报。英文词要加得先改成带 `\b` 的正则，不在本次范围。
+  - **刻意不加的两个**：「事务」（唯一命中是政治学简答「公共事务委托给企业和社会组织」，加了会把答题场景判成编码任务，方向正好相反）、「依赖包」（「依赖」已在表内，它永远不会单独生效，纯冗余）。「审评」与「评审」并列保留——同义不同形，子串匹配两套都得分开放，删任一个都漏一类真实说法。
+  - **顺带修掉更严重的盲区**：原测试从未驱动生产的 `isCodingTask`——把 `src/service.js` 里该函数改成恒 `false`，四个相关测试文件 177 个用例仍全绿。用例改为直接 `import` 生产函数，并删掉耦合的 `assert.equal(codingKeywords.length, 90)` 长度锁；新增 34 词逐项断言、不得含歧义词、无重复、不得含英文短词，以及 8 条正例 / 4 条负例的行为断言。
+  - **验证**：`npm test` 2841 tests / 2840 pass / 0 fail / 1 skipped；`check-sync` 95 文件一致；三处变异（生产函数恒 `false` / 删「合并」/ 加回「事务」）各自让对应用例转红。
+
+## 🚀 性能
+
+- **修复 #594：检索热路径上两处「同一条查询本该更便宜」的缺陷，向量缓存命中率从恒 0% 到 100%，单轮检索快 5.6 倍**：两处都是真实库副本实测，线上库全程只读。
+
+  - **向量解析缓存上限写死 4000，小于工作集 → 命中率恒 0**：活跃带向量行已 6730，扫到第 4001 条就开始驱逐自己刚填的条目，扫完只剩最后 4000 条，下一轮又从第一条 miss——四轮实测命中率恒 0.0%，缓存等于不存在，每次检索全量重解析（约 6730 条 × 1024 维 `JSON.parse`）。固定调大只是把复发推到下个月（活跃行近 30 天净增 6156 条），所以上限改成**跟工作集自适应**、再用内存预算封顶。对照（同一 WAL 快照、同一 query、同一库）：旧实现 1.8–2.4s / 新实现第二轮起 370–424ms。
+  - **存储改 `Float32Array`**：真实占用 55.5MB → 29.7MB（省 47%），前 50 条排序与冷解析逐位一致、分数最大差 `0.00e+0`。**必须同步改三处 `Array.isArray` 守卫**——typed array 返回 `false`，只换存储不改守卫会让 `cosine` / `cosineSimilarity` / `setEmbedding` 把每个相似度静默算成 0、把「设置向量」读成「清空向量」。对外契约不变（`getParsedEmbedding` / `getEmbeddings` 仍返回 `number[]`）。
+  - **只取 id 的扫描却带着 `embedding != ''` 谓词**：`searchVector` 与 `vectorDimensionState` 的 SQL 只 `SELECT id`，但 `embedding != ''` 要读 `embedding` 列才能判定，SQLite 就得把整列向量文本（约 134MB）从磁盘搬一遍、读完一条都不用。摘掉后 SQL 层 265ms → 96ms、单轮检索约 138ms → 47ms。**只摘这两处**；三处统计类查询（`embeddedCount` / `embeddingModelBreakdown` / `embeddingDimensionBreakdown`）保留谓词——它们要数「已索引」条数，空串行若被算进分母会变成新的假数。摘谓词的前提是空串行不会把检索搞崩（库里现在 0 条空串，`setEmbedding` 写 NULL，能造出空串的只有外部直接 `UPDATE`），所以锁住：`readVector` 对 `JSON.parse('')` 抛错返回 `undefined`，空串行既不计分也不崩。
+  - **三条口径陷阱写进注释，防止被当证据引用错**：`heapUsed` **不统计** TypedArray 底层 ArrayBuffer——只看它会把省 47% 读成省 96%，必须按 `heap + arrayBuffers` 计；旧实现保持上限 4000 时只装得下 4000/6730 条、常驻 31.9MB 但命中率 0%，与「装满」的 29.7MB 不可比，对照组必须把旧上限抬到能装下工作集；「SQL 层 265ms → 96ms」不等于「每轮检索省 170ms」，落到一轮完整检索上只省约 90ms，两个口径分开写。
+  - **测试 9 例**（6 条缓存行为 + 2 条空串 / 坏 JSON 护栏 + 1 条读取次数锁），变异四条均咬住：自适应退回固定上限 / `cosine` 守卫退回 `Array.isArray` / `setEmbedding` 守卫退回 / 独立基准分数。变异实验还暴露过一个真实缺口——只比「缓存路径与冷路径是否一致」**测不出两边一起错**，补了一条独立基准分数锁。**刻意不写「断言这句 SQL 不含 `!= ''`」的结构锁**：那会把测试绑在字面量上，换行、改别名、换 `${archivedFilter}` 写法都会无辜变红，红了第一反应是删断言；改为锁行为——数 `embeddingCacheStats` 的读取增量，断言三行非 NULL 必须各读一次（当前实现 3 次绿，谓词加回后 2 次红）。全量 2848 tests / 2847 pass / 0 fail / 1 skipped。
+### 贡献者 / Thanks
+
+- **@Oscar-Williams**：#579 的修复（PR #595）——把三个仓库地志只读工具的错误分支改走宿主工具错误路径，让检索在遇到读不到的页时保留已找到的命中并标明遗漏，并补上错误与成功两条路径的回归测试（用临时库跑）。本版唯一的外部代码贡献。
+
 ## [0.11.0] - 2026-11-05
 
 - **修复 #573：宽态侧栏的记忆入口落在「更多」行下面，点开「更多」时被菜单盖住**：宿主 0.2.2 起把面板列表的「更多」行（`PanelMoreMenu`）也追加进同一个 `nav.panelList`，于是组尾不再是面板行——我们仍按「追加到末尾」落位，入口就排到了「更多」下面。

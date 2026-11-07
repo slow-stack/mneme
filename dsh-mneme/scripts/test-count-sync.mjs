@@ -9,17 +9,21 @@
 // 四条注释留在 1431 —— 自动路径反而成了漂移的来源。规则收在这里共用，
 // 由 test/test-count-sync.test.js 锁住形状集合与「双 README 同数」这条不变量。
 //
-// 徽章正则刻意不带尾随 `-`：`tests-N%20passed` 既能命中 `…passed-3E63DD`（root）
-// 也能命中 `…passed-success`（包 README），将来出现无后缀写法也不会静默漏改。
+// 徽章正则刻意不带尾随 `-`：`tests-N%20total` 既能命中 `…total-3E63DD`（root）
+// 也能命中 `…total-success`（包 README），将来出现无后缀写法也不会静默漏改。
+//
+// 徽章报的是**套件总数**不是通过数，所以字面量写 `total` 而不是 `passed`（#599 评审指出）：
+// 本地 Windows 未开开发者模式时有一条符号链接用例被条件跳过，pass 数会比总数少 1，
+// 而徽章口径是 CI（ubuntu）的套件总数——写 `passed` 就在非 CI 平台上多报了一个通过。
 
-const BADGE = /tests-\d+%20passed/g;
+const BADGE = /tests-\d+%20total/g;
 const COMMENT_CJK = /(#\s*(?:运行\s*)?)\d+( 个(?:\s*node:test)?\s*测试)/g;
 const COMMENT_EN = /(#\s*)\d+( tests)/g;
 
 /** 把一段文本里所有测试数出现处刷成 count（含徽章与四种注释形状）。 */
 export function applyTestCount(text, count) {
   return text
-    .replace(BADGE, `tests-${count}%20passed`)
+    .replace(BADGE, `tests-${count}%20total`)
     .replace(COMMENT_CJK, `$1${count}$2`)
     .replace(COMMENT_EN, `$1${count}$2`);
 }
@@ -31,7 +35,7 @@ export function applyTestCount(text, count) {
  */
 export function readTestCounts(text) {
   const found = [];
-  for (const m of text.matchAll(/tests-(\d+)%20passed/g)) {
+  for (const m of text.matchAll(/tests-(\d+)%20total/g)) {
     found.push({ shape: "badge", value: Number(m[1]) });
   }
   for (const m of text.matchAll(/#\s*(?:运行\s*)?(\d+)\s*个(?:\s*node:test)?\s*测试/g)) {
