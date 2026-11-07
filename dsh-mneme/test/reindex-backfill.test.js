@@ -189,7 +189,11 @@ test("#604: maxTotal: 0 with a permanently failing row terminates", async () => 
   assert.equal(calls, 4, "each row attempted once, then the run stops");
   assert.equal(summary.indexed, 0);
   assert.equal(summary.failed, 4);
-  assert.equal(summary.finishReason, "stalled");
+  // 这里抛错，按失败种类归 `errored`（provider 不可达，值得重试）而不是
+  // `stalled`（死行，重试无意义）。本条用例真正要锁的是「它会停」——
+  // 调用次数与退出行为不因分档而变，重试策略由调度器决定。
+  assert.equal(summary.finishReason, "errored");
+  assert.equal(summary.stalled, false);
   assert.equal(summary.stillStale, true, "the rows are still stale — they will be retried next boot");
   assert.deepEqual(summary.failureReasons, { "error:Error: provider down": 4 });
   store.close();
@@ -280,8 +284,72 @@ test("#604: a dead prefix deeper than the pick window reports 'stalled', not 'ca
   store.close();
 });
 
-test("#604: a run with no failures can reach 'drained' even with a nonzero budget", async () => {
+test("#604: a whole batch of transient failures reports 'errored', not 'stalled'", async () => {
+  // 10 条全是好行，但这一轮恰好全撞上 503。indexed === 0，如果只按「没进展」
+  // 判 stalled，重试就被推到下次启动——而 provider 一秒后已经好了。
+  // 判据在 failureReasons：抛错落 `error:` 桶（瞬时），null 向量落
+  // `empty-vector`（对该行是永久性）。
   const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  for (let i = 0; i < 10; i++) {
+    service.saveWithDedupe({ type: "preference", title: `好行${i}`, content: `good-${i}` });
+  }
+  const vectorIndex = createVectorIndex({ store });
+  let calls = 0;
+  const embedder = {
+    embedSingle: async () => {
+      calls++;
+      throw new Error("503 Service Unavailable");
+    },
+    modelHash: "h#1", dimension: 3
+  };
+
+  const summary = await backfillMissingEmbeddings({
+    store, embedder, vectorIndex, logger: { info() {} },
+    maxTotal: 500, batchSize: 10, rateLimitMs: 0
+  });
+
+  assert.equal(summary.indexed, 0);
+  assert.equal(
+    summary.finishReason, "errored",
+    "a throw is a provider problem, not a dead row — the scheduler retries it on a short leash"
+  );
+  assert.equal(summary.stalled, false, "'stalled' must keep meaning 'no retry will help'");
+  assert.ok(
+    Object.keys(summary.failureReasons).some((r) => r.startsWith("error:")),
+    "the transient reason is named, not folded into a generic bucket"
+  );
+  assert.equal(store.needsEmbeddingFor("h#1", 100).length, 10, "nothing was lost");
+  store.close();
+});
+
+test("#604: permanent failures still report 'stalled' even mixed with the same count", async () => {
+  // 与上一条同样的形状（10 条、一条没嵌上），唯一区别是失败形态：null 而不是抛错。
+  // 两条并列，锁住「分档看的是失败种类，不是数量」。
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  for (let i = 0; i < 10; i++) {
+    service.saveWithDedupe({ type: "preference", title: `坏行${i}`, content: `bad-${i}` });
+  }
+  const vectorIndex = createVectorIndex({ store });
+  const embedder = {
+    embedSingle: async () => null,
+    modelHash: "h#1", dimension: 3
+  };
+
+  const summary = await backfillMissingEmbeddings({
+    store, embedder, vectorIndex, logger: { info() {} },
+    maxTotal: 500, batchSize: 10, rateLimitMs: 0
+  });
+
+  assert.equal(summary.indexed, 0);
+  assert.equal(summary.finishReason, "stalled", "nothing transient here: retrying now is pointless");
+  assert.equal(summary.stalled, true);
+  assert.deepEqual(summary.failureReasons, { "empty-vector": 10 });
+  store.close();
+});
+
+test("#604: a run with no failures can reach 'drained' even with a nonzero budget", async () => {  const store = createStore(":memory:");
   const service = createService({ store, mirror: null, config: {} });
   for (let i = 0; i < 3; i++) {
     service.saveWithDedupe({ type: "preference", title: `行${i}`, content: `C${i}` });

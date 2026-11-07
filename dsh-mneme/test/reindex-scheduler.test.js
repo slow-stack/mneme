@@ -58,6 +58,22 @@ async function waitForFinished(statusOf, { timeoutMs = 10000 } = {}) {
   throw new Error(`scheduler never reached a terminal state within ${timeoutMs}ms`);
 }
 
+// 续排场景下「第一个终态」不是答案：第一轮 errored 之后还会再排一轮。
+// 需要等到某个具体的 finishReason 出现才算数。
+async function waitForReason(statusOf, reason, { timeoutMs = 10000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    const now = statusOf();
+    if (now) last = now;
+    if (now && now.state === "finished" && now.finishReason === reason) return now;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(
+    `scheduler never reported "${reason}" within ${timeoutMs}ms (last=${JSON.stringify(last)})`
+  );
+}
+
 test("#604: a capped run continues inside the same boot until the backlog drains", async () => {
   // 6 行、每轮最多 2 行 → 需要 3 轮。旧实现只跑第一轮就永久停手。
   const { store, vectorIndex, cfg } = setup({ count: 6, batchSize: 2, maxPerBoot: 2 });
@@ -106,12 +122,14 @@ test("#604: continuations stop at the cap instead of looping forever", async () 
 });
 
 test("#604: a stalled run does not reschedule — the next boot is the retry point", async () => {
-  // 全行失败 → finishReason stalled。立刻再排只会把同几行再烧一遍，
+  // 全行永久失败 → finishReason stalled。立刻再排只会把同几行再烧一遍，
   // 所以正确行为是停手，把重试留给下一次启动（与 #128 的契约一致）。
+  // 用 null 向量（empty-vector，对该行是永久性）而不是抛错：抛错属于
+  // `error:` 桶，是瞬时故障，走 errored 那条更短的续排路径，见下面两个用例。
   const { store, vectorIndex, cfg } = setup({ count: 4, batchSize: 10, maxPerBoot: 100 });
   let calls = 0;
   const embedder = {
-    embedSingle: async () => { calls++; throw new Error("provider down"); },
+    embedSingle: async () => { calls++; return null; },
     modelHash: "m#1",
     dimension: 3
   };
@@ -268,5 +286,84 @@ test("#604: a synchronous throw before the promise still publishes an error stat
 
   assert.equal(status.state, "error", "the failure is visible instead of reading as never-ran");
   assert.match(status.error, /embedder blew up/);
+  store.close();
+});
+
+test("#604: a transient provider outage retries inside the boot instead of waiting for the next start", async () => {
+  // 一轮 batch 10 刚好全撞上 503：indexed === 0，但这是运气不好，不是死行。
+  // 判成 stalled 会把重试推到下次启动（可能几小时后），而 provider 一秒后就好了。
+  // 判据在 failureReasons 里：抛错落在 `error:` 桶（瞬时），null 向量落在
+  // `empty-vector`（对该行是永久性）。
+  const { store, vectorIndex, cfg } = setup({ count: 10, batchSize: 10, maxPerBoot: 500 });
+  let calls = 0;
+  const embedder = {
+    embedSingle: async () => {
+      calls++;
+      // 第一轮的 10 次全挂，之后恢复。
+      if (calls <= 10) throw new Error("503 Service Unavailable");
+      return [1, 0, 0];
+    },
+    modelHash: "m#1",
+    dimension: 3
+  };
+
+  const scheduler = scheduleBootBackfill({
+    store, vectorIndex, cfg,
+    logger: { info() {}, warn() {} },
+    getEmbedder: () => embedder,
+    timing: { initialDelayMs: 0, continueDelayMs: 0 }
+  });
+
+  const status = await waitForReason(() => scheduler.status(), "drained");
+  scheduler.dispose();
+
+  assert.equal(status.finishReason, "drained", "the retry rode out the outage and finished");
+  assert.ok(status.continuation >= 1, "a retry actually happened inside this boot");
+  assert.equal(store.needsEmbeddingFor("m#1", 100).length, 0, "every row ended up embedded");
+  store.close();
+});
+
+test("#604: a provider that stays down stops after the small error budget", async () => {
+  // 反面：provider 一直挂。errored 值得重试，但不能用 capped 的 20 轮预算陪跑，
+  // 否则「瞬时」这个借口就变成了另一个活锁。
+  // 断言必须看「排了几轮」，不能只看「调用次数有没有超」——后者在调用一多就
+  // dispose，分辨不出 4 轮和 20 轮（变异自证时确实漏过这条）。
+  const { store, vectorIndex, cfg } = setup({ count: 10, batchSize: 10, maxPerBoot: 500 });
+  let calls = 0;
+  let runs = 0;
+  const embedder = {
+    embedSingle: async () => {
+      calls++;
+      throw new Error("503 Service Unavailable");
+    },
+    modelHash: "m#1",
+    dimension: 3
+  };
+
+  const scheduler = scheduleBootBackfill({
+    store, vectorIndex, cfg,
+    logger: { info() {}, warn() {} },
+    getEmbedder: () => embedder,
+    onStatus: (s) => { if (s.state === "running") runs++; },
+    timing: { initialDelayMs: 0, continueDelayMs: 0, maxErrorContinuations: 3 }
+  });
+
+  // 等到调用数不再增长（调度器真的停手），而不是等到某个固定上限。
+  const deadline = Date.now() + 10000;
+  let lastCalls = -1;
+  let quietSince = Date.now();
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 20));
+    if (calls !== lastCalls) { lastCalls = calls; quietSince = Date.now(); }
+    else if (Date.now() - quietSince > 300) break;
+  }
+  const status = scheduler.status();
+  scheduler.dispose();
+
+  assert.equal(status.finishReason, "errored", "an unreachable provider is not a dead row");
+  // 1 次初始 + 3 次重试 = 4 轮。若走 maxContinuations(20) 这里会是 21。
+  assert.equal(runs, 4, `the error budget is 3 retries, not the 20-round cap (runs=${runs})`);
+  assert.equal(calls, 40, `4 rounds × 10 rows (calls=${calls})`);
+  assert.equal(store.needsEmbeddingFor("m#1", 100).length, 10, "everything stays queued");
   store.close();
 });

@@ -140,11 +140,28 @@ export async function backfillMissingEmbeddings({
   //     point, exactly like any other no-progress run.
   // A run that embedded *something* and ran out of budget is still "capped":
   // the tail behind the dead prefix may well be reachable next round.
+  //
+  // But "no progress" alone cannot tell a dead row from a dead provider. Ten
+  // healthy rows that all hit a 503 in one batch produce the same indexed === 0
+  // as ten permanently broken ones — and reporting "stalled" for the former
+  // sends the retry to the next boot, minutes or hours away, when the provider
+  // was back a second later. The distinction is already in failureReasons:
+  // adapter throws land in `error:`-prefixed buckets (transient), while a null
+  // vector lands in `empty-vector` (permanent for that row, as far as we can
+  // tell). So a no-progress run splits in two:
+  //   - `errored`: nothing got through AND at least one throw — the provider
+  //     was unreachable. Worth another round, but a much smaller budget than
+  //     "capped", because a genuinely dead provider must not become an endless
+  //     retry loop.
+  //   - `stalled`: nothing got through and every failure was permanent. The
+  //     next boot is the honest retry point.
   const stillStale = pick(1).length > 0;
+  const transient = Object.keys(failureReasons).some((reason) => reason.startsWith("error:"));
+  const noProgress = stalled || indexed === 0;
   const finishReason = !stillStale
     ? "drained"
-    : stalled || indexed === 0
-      ? "stalled"
+    : noProgress
+      ? (transient ? "errored" : "stalled")
       : "capped";
   logger?.info?.(
     `[dsh-mneme] auto-reindex backfilled ${indexed} embeddings (processed=${processed}, failed=${failed}, finish=${finishReason})`
@@ -173,7 +190,11 @@ export async function backfillMissingEmbeddings({
  *
  * 续排规则：
  *   - finishReason === "capped"（队列还有、额度用完）→ 排下一轮；
- *   - finishReason === "stalled"（剩下的本轮全失败过）→ 不排，下一轮启动再试；
+ *   - finishReason === "errored"（一条都没嵌上、且失败里有抛错）→ 排下一轮，
+ *     但走更小的 maxErrorContinuations（默认 3）：瞬时 503 值得重试，provider
+ *     真挂了不能靠 20 轮 × 500 行陪着耗；
+ *   - finishReason === "stalled"（剩下的本轮全失败且都是永久性失败）→ 不排，
+ *     下一轮启动再试；
  *   - 抛错 → 也排，但走同一个计数器，硬故障不会变成无限重试；
  *   - 计数到 maxContinuations 就停并告警。
  *
@@ -185,7 +206,8 @@ export async function backfillMissingEmbeddings({
  *   getEmbedder()  — 取当前 embedder（可能为 null 或尚未 ready）；
  *   onStatus(next) — 接收 running / finished / error 快照；
  *   timing         — 仅供测试压缩等待：initialDelayMs / continueDelayMs /
- *                    maxContinuations / readyRetryDelayMs，默认值与生产一致。
+ *                    maxContinuations / maxErrorContinuations /
+ *                    readyRetryDelayMs，默认值与生产一致。
  * @returns {{ dispose: () => void, status: () => object|null }}
  */
 export function scheduleBootBackfill({
@@ -199,10 +221,16 @@ export function scheduleBootBackfill({
   // Hard stop on continuations: a provider that fails every row must not turn
   // into an endless retry loop for the life of the process. Reset per boot.
   const maxContinuations = timing.maxContinuations ?? 20;
+  // Transient outages get their own, much smaller budget. A 503 that clears in
+  // seconds deserves a retry; a provider that stays down must not be retried 20
+  // times × 500 rows just because the failures look like throws rather than
+  // nulls. Three rounds is enough to ride out a restart or a rate-limit blip.
+  const maxErrorContinuations = timing.maxErrorContinuations ?? 3;
 
   let timer = null;
   let disposed = false;
   let continuations = 0;
+  let errorContinuations = 0;
   let status = null;
 
   const publish = (next) => { status = next; onStatus(next); };
@@ -250,9 +278,26 @@ export function scheduleBootBackfill({
           if (disposed) return;
           publish({ ...summary, state: "finished", continuation: continuations });
           // Only "capped" means real work is left AND the budget ran out.
-          // "stalled" means everything left already failed this run — trying
-          // again immediately would just burn the same rows, so the next boot
-          // is the honest retry point.
+          // "stalled" means everything left already failed permanently this
+          // run — trying again immediately would just burn the same rows, so
+          // the next boot is the honest retry point.
+          // "errored" means nothing got through because the provider threw:
+          // that is worth a retry, but on its own short leash (see
+          // maxErrorContinuations) so a provider that stays down cannot keep
+          // the process busy for the life of the boot.
+          if (summary.finishReason === "errored") {
+            if (errorContinuations < maxErrorContinuations) {
+              errorContinuations++;
+              continuations++;
+              scheduleNext(() => attempt(0), continueDelayMs);
+            } else {
+              logger?.warn?.(
+                `[dsh-mneme] auto-reindex: the embedder kept failing (${maxErrorContinuations} retries); `
+                + `${summary.indexed} embedded, the rest waits for the next start`
+              );
+            }
+            return;
+          }
           if (summary.finishReason !== "capped") return;
           if (continuations < maxContinuations) {
             continuations++;
