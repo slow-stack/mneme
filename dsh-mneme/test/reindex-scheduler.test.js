@@ -46,6 +46,18 @@ async function settle(statusOf, { timeoutMs = 3000 } = {}) {
   throw new Error(`scheduler did not settle within ${timeoutMs}ms (last=${last})`);
 }
 
+// settle() 只要求「连续三次读到同一个状态」，对几百行的长跑会提前返回 running。
+// 需要终态的场景用这个：等到 state 变成 finished / error 再返回。
+async function waitForFinished(statusOf, { timeoutMs = 10000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const now = statusOf();
+    if (now && (now.state === "finished" || now.state === "error")) return now;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`scheduler never reached a terminal state within ${timeoutMs}ms`);
+}
+
 test("#604: a capped run continues inside the same boot until the backlog drains", async () => {
   // 6 行、每轮最多 2 行 → 需要 3 轮。旧实现只跑第一轮就永久停手。
   const { store, vectorIndex, cfg } = setup({ count: 6, batchSize: 2, maxPerBoot: 2 });
@@ -191,6 +203,52 @@ test("#604: an embedder that is not ready yet is retried before the run", async 
   assert.ok(readyChecks >= 3, "waited for ready instead of giving up on the first check");
   assert.equal(status.finishReason, "drained");
   assert.equal(store.needsEmbeddingFor("m#1").length, 0);
+  store.close();
+});
+
+test("#604: a dead prefix deeper than the pick window stops the scheduler instead of spinning", async () => {
+  // 回归 Ephor 实测的那条悬崖：死前缀 >= maxWindow(500) 时，每轮窗口都被死行
+  // 占满、被 attempted 截断，rows 永远非空、indexed 恒 0，于是 finishReason 落到
+  // capped、调度器继续续排。默认配置连跑 21 轮：每轮 indexed=0 / failed=500，
+  // 累计 provider 调用 10500 次，好行 0/10 嵌入。
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  for (let i = 0; i < 10; i++) {
+    service.saveWithDedupe({ type: "preference", title: `好行${i}`, content: `good-${i}` });
+  }
+  for (let i = 0; i < 500; i++) {
+    service.saveWithDedupe({ type: "preference", title: `坏行${i}`, content: `bad-${i}` });
+  }
+  const vectorIndex = createVectorIndex({ store });
+  const cfg = {
+    autoReindexOnBoot: true,
+    reindexMaxPerBoot: 500,
+    reindexBatchSize: 10,
+    reindexRateLimitMs: 0
+  };
+  let calls = 0;
+  const embedder = {
+    embedSingle: async (text) => {
+      calls++;
+      return String(text).includes("bad-") ? null : [1, 0, 0];
+    },
+    modelHash: "m#1",
+    dimension: 3
+  };
+
+  const scheduler = scheduleBootBackfill({
+    store, vectorIndex, cfg,
+    logger: { info() {}, warn() {} },
+    getEmbedder: () => embedder,
+    timing: { initialDelayMs: 0, continueDelayMs: 0 }
+  });
+
+  const status = await waitForFinished(() => scheduler.status());
+  scheduler.dispose();
+  assert.equal(status.finishReason, "stalled", "no progress is reported honestly");
+  assert.equal(status.continuation, 0, "no continuation: the next boot is the retry point");
+  assert.equal(calls, 500, "one run, one attempt per row — not 21 rounds of the same 500");
+  assert.equal(store.needsEmbeddingFor("m#1", 5000).length, 510, "everything stays queued");
   store.close();
 });
 

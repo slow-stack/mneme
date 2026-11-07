@@ -124,15 +124,37 @@ export async function backfillMissingEmbeddings({
   // failing rows out of four reported "capped" — as if the budget had run out
   // with work to spare. Invariant worth stating: failed > 0 implies
   // stillStale === true, therefore "drained" is only reachable with zero
-  // failures, and "stalled" is the honest name for "queue not empty, nothing
-  // left to try this run".
+  // failures.
+  //
+  // "capped" must mean *real work is left and the budget stopped us*, because
+  // the scheduler re-runs on it. Two ways to be stuck without having made
+  // progress, and both have to report "stalled":
+  //   - `stalled`: the pick window held nothing but rows already attempted
+  //     this run (small dead prefix, exhausted);
+  //   - `indexed === 0`: a whole run produced not one vector. Measured on a
+  //     dead prefix of >= maxWindow rows: every round's window is filled by
+  //     failing rows, so `rows` is never empty, the loop exits on the budget
+  //     with `stalled === false`, and "capped" made the scheduler re-run 21
+  //     times — 10,500 provider calls, 0 rows embedded. With `indexed === 0`
+  //     folded into "stalled", that run stops and the next boot is the retry
+  //     point, exactly like any other no-progress run.
+  // A run that embedded *something* and ran out of budget is still "capped":
+  // the tail behind the dead prefix may well be reachable next round.
   const stillStale = pick(1).length > 0;
-  const finishReason = stalled ? "stalled" : stillStale ? "capped" : "drained";
+  const finishReason = !stillStale
+    ? "drained"
+    : stalled || indexed === 0
+      ? "stalled"
+      : "capped";
   logger?.info?.(
     `[dsh-mneme] auto-reindex backfilled ${indexed} embeddings (processed=${processed}, failed=${failed}, finish=${finishReason})`
   );
   return {
-    indexed, processed, failed, finishReason, stillStale, stalled,
+    indexed, processed, failed, finishReason, stillStale,
+    // Keep this flag consistent with finishReason: a run that embedded nothing
+    // also made no progress, and callers should not have to know that it got
+    // there via the budget rather than via an exhausted window.
+    stalled: finishReason === "stalled",
     // Only the reasons we can name; absent when nothing failed.
     failureReasons: failed > 0 ? { ...failureReasons } : null,
     startedAt,

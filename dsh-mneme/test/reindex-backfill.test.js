@@ -237,6 +237,49 @@ test("#604: a dead prefix at the queue head does not starve the healthy tail", a
   store.close();
 });
 
+test("#604: a dead prefix deeper than the pick window reports 'stalled', not 'capped'", async () => {
+  // The window widening above has a bound (maxWindow = 500). A dead prefix at
+  // least that deep fills every round's window, so `rows` is never empty, the
+  // loop exits on the budget, and `stalled` never gets set — the run used to
+  // report "capped" with indexed 0, and the scheduler re-ran it 21 times:
+  // 10,500 provider calls, nothing embedded. "capped" must mean work is left
+  // AND the budget stopped us; a run that embedded nothing made no progress
+  // and has to say so, so the next boot becomes the retry point.
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  for (let i = 0; i < 10; i++) {
+    service.saveWithDedupe({ type: "preference", title: `好行${i}`, content: `good-${i}` });
+  }
+  for (let i = 0; i < 500; i++) {
+    service.saveWithDedupe({ type: "preference", title: `坏行${i}`, content: `bad-${i}` });
+  }
+  let okCalls = 0;
+  const embedder = {
+    embedSingle: async (text) => {
+      if (String(text).includes("bad-")) return null;
+      okCalls++; return [1, 0, 0];
+    },
+    modelHash: "h#1",
+    dimension: 3
+  };
+  const vectorIndex = createVectorIndex({ store });
+
+  const summary = await backfillMissingEmbeddings({
+    store, embedder, vectorIndex,
+    logger: { info() {} },
+    maxTotal: 500, batchSize: 10, rateLimitMs: 0
+  });
+
+  assert.equal(summary.indexed, 0, "the dead prefix consumed the whole budget");
+  assert.equal(summary.failed, 500);
+  assert.equal(
+    summary.finishReason, "stalled",
+    "no progress means stalled — 'capped' would make the scheduler burn the same rows again"
+  );
+  assert.equal(okCalls, 0, "the healthy tail is simply out of reach this run");
+  store.close();
+});
+
 test("#604: a run with no failures can reach 'drained' even with a nonzero budget", async () => {
   const store = createStore(":memory:");
   const service = createService({ store, mirror: null, config: {} });
