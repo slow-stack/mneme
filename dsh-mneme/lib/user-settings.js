@@ -94,13 +94,28 @@ export function renderUserSettingsBlock({ settings, config, agentId = null, fact
     ? resolvePersonaCard(settings, agentId, { strict: config?.personaStrictAddressing === true })
     : { card: {}, source: "default" };
   const persona = resolved.card;
-  const personaLines = persona?.enabled === true
-    ? [
-        ...(typeof persona.name === "string" && persona.name.trim() ? [STR.personaNameLine[language](persona.name.trim())] : []),
-        ...(typeof persona.personality === "string" && persona.personality.trim() ? [STR.personaPersonalityLine[language](persona.personality.trim())] : []),
-        ...(typeof persona.replyStyle === "string" && persona.replyStyle.trim() ? [STR.personaReplyStyleLine[language](persona.replyStyle.trim())] : [])
-      ]
-    : [];
+  // 段（#600）：每一行都带上它的 kind 与写回所需的定位信息，供面板按段读、按段改。
+  // 段文本是**未转义**的原样行；整串 `text` 仍走原来的「先 join 再统一转义」，
+  // 所以注入字节不变（转义只动连续花括号，换行不参与，逐段转义与整串转义等价）。
+  //
+  // `text` 是**带模板前缀的整行**（如 `- 用户画像：xxx`），不能拿去当新值回写，
+  // 否则每写一次叠一层前缀。可回写的段另带 `value`＝原始值（无前缀、未转义）；
+  // 没有原始值的段（表头、事实表头、截断尾注）不带 `value` 键。
+  const personaLines = [];
+  if (persona?.enabled === true) {
+    if (typeof persona.name === "string" && persona.name.trim()) {
+      const value = persona.name.trim();
+      personaLines.push({ kind: "personaName", field: "name", value, text: STR.personaNameLine[language](value) });
+    }
+    if (typeof persona.personality === "string" && persona.personality.trim()) {
+      const value = persona.personality.trim();
+      personaLines.push({ kind: "personaPersonality", field: "personality", value, text: STR.personaPersonalityLine[language](value) });
+    }
+    if (typeof persona.replyStyle === "string" && persona.replyStyle.trim()) {
+      const value = persona.replyStyle.trim();
+      personaLines.push({ kind: "personaReplyStyle", field: "replyStyle", value, text: STR.personaReplyStyleLine[language](value) });
+    }
+  }
   // 事实段：开关关 / 无 provider / 该卡没事实三种情况都不渲染，注入文本与
   // 未启用事实时逐字节一致（老用户零变化）。
   const factsResolved = config?.profileFactsEnabled === true && typeof factsProvider === "function"
@@ -111,24 +126,34 @@ export function renderUserSettingsBlock({ settings, config, agentId = null, fact
     let chars = 0;
     let shown = 0;
     for (const fact of factsResolved.facts) {
-      const line = STR.profileFactLine[language](String(fact));
+      const value = String(fact);
+      const line = STR.profileFactLine[language](value);
       if (shown >= PROFILE_FACTS_MAX_LINES || chars + line.length > PROFILE_FACTS_MAX_CHARS) break;
-      factLines.push(line);
+      factLines.push({ kind: "fact", index: shown, value, text: line });
       chars += line.length;
       shown += 1;
     }
     const remaining = factsResolved.facts.length - shown;
-    if (remaining > 0) factLines.push(STR.profileFactsTruncated[language](remaining));
-    if (factLines.length) factLines.unshift(STR.profileFactsHeader[language](factsResolved.facts.length));
+    if (remaining > 0) factLines.push({ kind: "factsTruncated", remaining, text: STR.profileFactsTruncated[language](remaining) });
+    if (factLines.length) {
+      // 表头的 n 是**总条数**（含没注入的），与「另有 N 条未注入」互补，别改成 shown。
+      factLines.unshift({
+        kind: "factsHeader",
+        shown,
+        total: factsResolved.facts.length,
+        text: STR.profileFactsHeader[language](factsResolved.facts.length)
+      });
+    }
   }
   const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : null;
   if (!profile && !rules.length && !personaLines.length && !factLines.length) {
-    return { text: "", source: resolved.source, agent: id, configGate: enabled };
+    return { text: "", segments: [], source: resolved.source, agent: id, configGate: enabled };
   }
-  const lines = [STR.userSettingsHeader[language]];
-  lines.push(...personaLines);
-  if (profile) lines.push(STR.profileLine[language](profile));
-  lines.push(...factLines);
-  for (const rule of rules) lines.push(STR.ruleLine[language](rule));
-  return { text: escapePromptVars(config, lines.join("\n")), source: resolved.source, agent: id, configGate: enabled };
+  const segments = [{ kind: "header", text: STR.userSettingsHeader[language] }];
+  segments.push(...personaLines);
+  if (profile) segments.push({ kind: "profile", value: profile, text: STR.profileLine[language](profile) });
+  segments.push(...factLines);
+  for (const rule of rules) segments.push({ kind: "rule", value: rule, text: STR.ruleLine[language](rule) });
+  const lines = segments.map((s) => s.text);
+  return { text: escapePromptVars(config, lines.join("\n")), segments, source: resolved.source, agent: id, configGate: enabled };
 }

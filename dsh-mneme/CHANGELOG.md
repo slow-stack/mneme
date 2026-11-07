@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## 🆕 新增
+
+- **「Agent 眼中的你」按段化第一期：注入渲染函数产出段边界（`segments`），面板从此能按段读（#600）**。`renderUserSettingsBlock` 原先只回一整串 `text`，面板那张卡只能整段只读显示——想改注入文本里的某一句，得走「整段提取 → 复制 → 粘进画像框」的剪贴板中转，而画像段是手写原文、人格段是结构化卡、事实段是逐条维护的行，三者写回语义完全不同。段边界是这三条路能分开走的前提。
+
+  - **纯加法，注入字节零变化**：返回值多一个 `segments`，每行带 `kind` 与写回定位信息；`text` 仍是原来的 `escapePromptVars(config, lines.join("\n"))`。段文本存**未转义**原文（面板要显示给人看），转义只发生在 `text` 这一层——转义只动连续花括号、换行不参与，逐段转义与整串转义等价，所以注入行为与改前逐字节相同，老用户零变化。
+  - **段形状**：`header` / `personaName`·`personaPersonality`·`personaReplyStyle`（带 `field`，供字段级写回）/ `profile` / `factsHeader`（带 `shown`·`total`）/ `fact`（带 `index`）/ `factsTruncated`（带 `remaining`）/ `rule`。段 kind 复用 `src/lang.js` 已有文案 key，不新增。事实段的 `shown + remaining === total` 由测试锁住（表头报总数、尾注报未注入数，两处必须配平）。早退分支返回 `segments: []`。
+  - **可回写的段另带 `value`＝原始值，挡住回写叠前缀（Ephor 2026-11-07 复核提出）**：`text` 是带模板前缀的整行（`- 用户画像：xxx`、`  - xxx`、`- 规则：xxx`），面板若直接拿它当新值回写，写一次叠一层前缀——实测把画像段的 `text` 写回去，第二轮变成 `- 用户画像：- 用户画像：用户是规划背景`。修法是段里多带一个 `value`（无前缀、未转义、与 `text` 用同一个 trim 后的值），可回写的四类段（`profile` / `personaName`·`personaPersonality`·`personaReplyStyle` / `fact` / `rule`）都有；表头、事实表头、截断尾注没有原始值，**不带这个键**（不是 `undefined`、不是空串），免得前端把「没有可回写的值」和「值就是空」混为一谈。写入侧不必按 kind 猜前缀。`text` 仍逐字节不变。
+  - **复核修掉的 golden 缺陷（Ephor 2026-11-07）**：golden 里的事实解析原本是内联重写的，与生产 `resolveFactsCard` 的判据顺序不一致——生产先查本卡命中再判 strict，内联版先判 strict 再看卡。实测 5 种情形 3 种结果不同，而当时 20 个用例全绿，说明分歧路径压根没覆盖。并补三条用例覆盖四条出口（strict 开 + 本卡命中 / strict 关 + 本卡未命中 / strict 开 + `byAgent` 整体为空即 #587 例外）；逐字节比对也从「循环里直接 assert」改成「收集全部分歧再断言」——原来第一条分歧就抛出，把 golden 换回内联版只报 1 条、实际有 3 条。
+
+    修法**不是**「改成 import 生产函数」——那样谁改坏生产、golden 跟着一起坏，两边同错仍会全绿，是把自证循环从一份实现换成另一份（Ephor 同轮指出）。最终落法是**冻结副本 + 漂移告警**：`legacyResolvePersonaCard` / `legacyResolveFactsCard` 在测试里逐字抄 `origin/main` 那两个函数，golden 只依赖它们，不 import 生产的 resolve；另加一条 `golden 的 resolve 冻结副本与生产实现一致（漂移告警）` 用例，把 13 种人格情形 + 9 种事实情形逐格比对两边输出，一旦生产判据变了就红，并在报错文案里写明「有意改判据 → 更新副本并记『基准已换代』；无意改坏 → 回退生产」。**这条用例不是等价断言，是让静默漂移变成一次可见失败**——两种处理都不该由测试替人决定，所以它只负责响。
+  - **验证**：新增 `test/user-settings-segments.test.js` 21 例。其中最关键的一条把**改动前的渲染实现原样留在测试里当 golden**，逐配置对比 23 种情形（空库 / 单段 / 人格卡三种填充度 / byAgent 命中 / strict 未命中 / 总闸关 / 英文 / 转义开关 / 事实段三种截断态 / 事实段 strict 与 byAgent / 事实里的裸花括号），断言 `text` 逐字节不变——「我看着一样」不算验证。另锁段拼装与 `text` 同源、段顺序（表头恒第一）、`shown/total` 配平、`fact.index` 连续、早退形状、段内保持未转义。变异自证 11 条各自报错、互不重复：段化 5 条（表头 total 改成 shown / 早退去掉 `segments: []` / 段拼装丢掉表头 / `fact.index` 恒 0 / 人格 field 全写成 name），`value` 6 条（画像 value 改成 text / 事实 value 改成 text / 规则去掉 value / 表头塞 value / 人格 value 不 trim / value 存转义文本）。另有一条变异（逐段转义再 join）**未被抓到**，因为逐段转义与整串转义在数学上等价——这条记在这里，免得下次有人以为它该被抓。漂移告警那条单独验过：把生产的事实判据改回 Ephor 抓到的错序 → 2 红（漂移告警 + 逐字节不变），把人格 strict 判据改成「有可用卡才算」→ 1 红（只有漂移告警），把事实的 `byAgent` 空例外去掉 → 2 红，三条互不重复，恢复后 21/21 绿。全量 2902 用例 / 2901 通过 / 0 失败 / 1 跳过；check-sync 95 一致。
+  - **测试盲区修复（CodeRabbit 2026-11-07 评审指出）**：`segments 拼回去等于未转义的整串` 这条用例原先只比「转义后的段拼装等于 `text`」，抓不到「某一段被提前转义」——`escapePromptVars` 是幂等的（`/[{}]{2,}/g` 只在连续花括号前插反斜杠，已插过的串不再匹配），提前转义一遍再整体转义一遍与只转义一遍逐字节相同。两处修法：① 人格用例的 `name` 改成 `"Amarre {{x}}"`（原来没有裸花括号，人格段被污染也无从暴露）；② 另取一份独立基线——同一套 23 种配置把 `escapePromptVariables` 关掉跑 `legacyRender`，段拼装必须等于它。两条缺一不可，已各自变异验证：只提前转义人格段 `text` → 有 `{{x}}` 时 1 红（本条用例），去掉 `{{x}}` 后 21/21 全绿（证明样例是承重的）；只提前转义画像段 `text` → 2 红（本条 + `段文本本身保持原样`）。
+  - **不做**：不加路由、不碰 `setPersonaFor`、不改 `wordDiff`、不动事实段的两顶帽子（40 行 / 1200 字符）、不做面板 UI。第 2 期人格字段级写回 + 规则并发控制，第 3 期面板按段渲染与就地编辑（含 `wordDiff` 解 800 词上限与 hunk 分组层），第 4 期 `profile-extract` 输出段形状。
+
 ## [0.12.0] - 2026-11-07
 
 ## 🆕 新增
@@ -1780,3 +1794,4 @@
 - desired generation 同事务原子递增（崩溃窗口不再静默跳过）。
 - 逐 type committed / failed / pending 回执，健康端点区分 ok / degraded / unknown。
 - generation 上界 / 负数 CHECK。
+
