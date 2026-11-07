@@ -34,7 +34,9 @@ function parseList(raw) {
 // persona 对象的字段白名单：写入时只挑这些键，未知字段丢弃（设计稿①：字段从简，
 // beta 收到真实反馈再加；provenance 是 v1.5 协作式人格的预留位，v1 不写管道）。
 // 读侧损坏即回空对象——同一容错口径照 parseList（坏值不抛错、面板显示为空可重写）。
-const PERSONA_FIELDS = ["name", "personality", "replyStyle", "enabled", "provenance"];
+// scenario / mesExample（#606）：对标 Character Card V2 的同名字段，是「人格卡能装
+// 下完整角色」所需的最小补充。两者都可选、都不写时渲染零输出（老用户逐字节不变）。
+const PERSONA_FIELDS = ["name", "personality", "replyStyle", "scenario", "mesExample", "enabled", "provenance"];
 
 function parsePersona(raw) {
   try {
@@ -54,14 +56,20 @@ function parsePersona(raw) {
 // 兼容层：v1 存的是单对象（有 PERSONA_FIELDS 键、无 default/byAgent 键），读侧
 // 判形状——单对象原样落 default 位，旧数据零迁移。byAgent 的键是 agent 身份
 // id（注入时按会话身份寻址，取不到落 default）。default 卡不可删（兜底位）。
+//
+// 绑会话（v1.3，#606）：加第三维 bySession: { <sessionId>: <卡> }。为什么需要它——
+// byAgent 的键来自 session.header.agentPreset，而 DS Bot 这类宿主把它写成常量
+// （所有 bot 会话都是 "standard"，实测 43/50），按 bot 名字建卡永远不命中。会话 id
+// 才是那个「一个 bot 一张卡」真正能分开的键。bySession 同样是纯加法：没有这个键
+// 的老数据读成 {}，注入文本逐字节不变。
 function parsePersonaStore(raw) {
   try {
     const value = JSON.parse(raw);
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      return { default: {}, byAgent: {} };
+      return { default: {}, byAgent: {}, bySession: {} };
     }
-    // 新形：含 default 或 byAgent 键 → 按多卡解析
-    if ("default" in value || "byAgent" in value) {
+    // 新形：含 default / byAgent / bySession 任一键 → 按多卡解析
+    if ("default" in value || "byAgent" in value || "bySession" in value) {
       const byAgent = {};
       if (value.byAgent && typeof value.byAgent === "object" && !Array.isArray(value.byAgent)) {
         for (const [agentId, card] of Object.entries(value.byAgent)) {
@@ -69,24 +77,38 @@ function parsePersonaStore(raw) {
           if (Object.keys(parsed).length) byAgent[String(agentId)] = parsed;
         }
       }
-      return { default: parsePersona(JSON.stringify(value.default ?? {})), byAgent };
+      const bySession = {};
+      if (value.bySession && typeof value.bySession === "object" && !Array.isArray(value.bySession)) {
+        for (const [sessionId, card] of Object.entries(value.bySession)) {
+          const parsed = parsePersona(JSON.stringify(card ?? {}));
+          if (Object.keys(parsed).length) bySession[String(sessionId)] = parsed;
+        }
+      }
+      return { default: parsePersona(JSON.stringify(value.default ?? {})), byAgent, bySession };
     }
     // 旧形：v1 单对象 → 整体作 default（字段白名单在 parsePersona 内裁）
-    return { default: parsePersona(raw), byAgent: {} };
+    return { default: parsePersona(raw), byAgent: {}, bySession: {} };
   } catch {
-    return { default: {}, byAgent: {} };
+    return { default: {}, byAgent: {}, bySession: {} };
   }
 }
 
 function serializePersonaStore(store) {
   const out = {
     default: parsePersona(JSON.stringify(store?.default ?? {})),
-    byAgent: {}
+    byAgent: {},
+    bySession: {}
   };
   if (store?.byAgent && typeof store.byAgent === "object") {
     for (const [agentId, card] of Object.entries(store.byAgent)) {
       const parsed = parsePersona(JSON.stringify(card ?? {}));
       if (Object.keys(parsed).length) out.byAgent[String(agentId)] = parsed;
+    }
+  }
+  if (store?.bySession && typeof store.bySession === "object") {
+    for (const [sessionId, card] of Object.entries(store.bySession)) {
+      const parsed = parsePersona(JSON.stringify(card ?? {}));
+      if (Object.keys(parsed).length) out.bySession[String(sessionId)] = parsed;
     }
   }
   return JSON.stringify(out);
@@ -534,10 +556,10 @@ export function createSettings(db) {
       return parsePersonaStore(getSetting("persona") ?? "{}");
     },
     setPersona(input) {
-      // 双形兼容：单对象形 = 只更新 default、byAgent 保留（旧面板/旧调用方合并语义）；
-      // 多卡形 = 全量替换。坏体（非对象）在此不落库不抛错，保值由调用方守卫。
+      // 双形兼容：单对象形 = 只更新 default、byAgent/bySession 保留（旧面板/旧调用方
+      // 合并语义）；多卡形 = 全量替换。坏体（非对象）在此不落库不抛错，保值由调用方守卫。
       if (typeof input !== "object" || input === null || Array.isArray(input)) return;
-      if ("default" in input || "byAgent" in input) {
+      if ("default" in input || "byAgent" in input || "bySession" in input) {
         setSetting("persona", serializePersonaStore(input));
         return;
       }
@@ -569,6 +591,38 @@ export function createSettings(db) {
       const store = parsePersonaStore(getSetting("persona") ?? "{}");
       if (!(id in store.byAgent)) return false;
       delete store.byAgent[id];
+      setSetting("persona", serializePersonaStore(store));
+      return true;
+    },
+
+    /**
+     * 绑会话卡（#606）：按 sessionId 存/删/列。形状与 setPersonaFor 一族逐一对应，
+     * 只是换了一个维度——为什么需要第二维见 parsePersonaStore 的注释。
+     * sessionId 为空或 "default" 拒绝（与 byAgent 同一条纪律：兜底位不可被顶替）。
+     */
+    setPersonaForSession(sessionId, card) {
+      const id = typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : "";
+      if (!id || id === "default") return false;
+      const store = parsePersonaStore(getSetting("persona") ?? "{}");
+      const clean = parsePersona(JSON.stringify(
+        typeof card === "object" && card !== null && !Array.isArray(card) ? card : {}
+      ));
+      if (Object.keys(clean).length) store.bySession[id] = clean;
+      else delete store.bySession[id];
+      setSetting("persona", serializePersonaStore(store));
+      return true;
+    },
+    /** bySession 键列表（面板「按会话建的卡」用，default 不在其中）。 */
+    listPersonaSessions() {
+      return Object.keys(parsePersonaStore(getSetting("persona") ?? "{}").bySession);
+    },
+    /** 删一张 bySession 卡；不存在返回 false。 */
+    removePersonaForSession(sessionId) {
+      const id = typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : "";
+      if (!id || id === "default") return false;
+      const store = parsePersonaStore(getSetting("persona") ?? "{}");
+      if (!(id in store.bySession)) return false;
+      delete store.bySession[id];
       setSetting("persona", serializePersonaStore(store));
       return true;
     },

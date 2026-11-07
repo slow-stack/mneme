@@ -591,7 +591,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         // 预览（面板「Agent 眼中的画像」用）：由注入器同一个渲染函数产出，前端只显示
         // 返回的文本——以前端自己拼列表冒充「生效文本」是这个面板最容易漂的地方。
         // ?agent=<身份> 让面板能逐张卡预览：传了就按那个身份寻址，没传按「解析不到身份」
-        // 走（也就是 default 卡的受众）。
+        // 走（也就是 default 卡的受众）。?session=<会话 id>（#606）同理作用于绑会话卡，
+        // 优先级高于 ?agent——与 resolvePersonaCard 的寻址次序一致，预览不许比注入更乐观。
         // 这里不加鉴权是有意的：画像、规则、人格三处在同一条开放读面上本来就能各读一次
         // （GET /profile 与 GET /persona 都无 token 可读），本字段只是把同样的内容拼成
         // 模型实际看到的形状，没有新增可达面；真要锁，配 apiToken（写面与它同源）。
@@ -599,6 +600,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           settings,
           config,
           agentId: url.searchParams.get("agent"),
+          sessionId: url.searchParams.get("session"),
           // 事实段与注入共用同一渲染函数（user-settings.js 的同源纪律）：装配了
           // profile-facts 就传读口，开关与有无的判定在渲染函数内部（关=零读数）。
           factsProvider: typeof facts?.factsProvider === "function" ? facts.factsProvider : null

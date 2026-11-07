@@ -157,6 +157,17 @@ export const STR = {
     zh: (text) => `- 回复要求：${text}`,
     en: (text) => `- Reply style: ${text}`
   },
+  // 人格卡的两个可选字段（#606）：对标 Character Card V2 的 scenario / mes_example。
+  // 只有设置了才输出——未设置时本块与历史版本逐字节一致（老用户零变化）。
+  // 位置在 replyStyle 之后：场景与示例是「人格的具体化」，不该抢在身份与语气之前。
+  personaScenarioLine: {
+    zh: (text) => `- 场景设定：${text}`,
+    en: (text) => `- Scenario: ${text}`
+  },
+  personaMesExampleLine: {
+    zh: (text) => `- 对话示例：${text}`,
+    en: (text) => `- Example dialogue: ${text}`
+  },
   // 「Agent 眼中的你」自动事实段（2026-11-06）。渲染顺序是设计稿⑥的延伸：
   // 人格 → 手填画像 → 自动事实 → 规则——事实是画像的 agent 侧补充，在画像之后、
   // 规则之前，rules 恒最硬。行前缀比画像那条多一层缩进，视觉上归属画像块。

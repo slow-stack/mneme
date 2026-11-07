@@ -323,6 +323,25 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
     }
   }
 
+  // 会话 id 解析（#606 绑会话卡用）：session.id 在宿主里稳定可用（scope.js:97-103
+  // 就是靠它反查 workspace 的）。与 agentPreset 一样各自护住——两者来自同一个
+  // session 对象，但 accessor 抛错时不该互相拖累（一个取不到不影响另一个）。
+  // 为什么需要第二个键：DS Bot 里 agentPreset 恒为 "standard"，按 bot 建卡分不开，
+  // 只有会话 id 能分开（实测见 issue #606）。
+  function sessionIdOf(ctx) {
+    try {
+      const id = ctx?.agent?.session?.id;
+      return typeof id === "string" && id.trim() ? id.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // 一次取全两个寻址键。分开取值、各自兜错：一个失败不该让另一个也丢。
+  function sessionIdentity(ctx) {
+    return { agentId: sessionAgentId(ctx), sessionId: sessionIdOf(ctx) };
+  }
+
   // User profile + rules: injected ahead of the memory block because they are
   // always-relevant instructions the agent should follow every turn.
   // 渲染整体搬到 src/user-settings.js（与面板预览共用一份，见那里的模块头注释）。
@@ -333,7 +352,8 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
   function renderUserSettings(ctx) {
     // factsInject 是 profile-facts 域的读口（index.js 接线，面板预览路由传同一份）：
     // 开关与事实有无的判定都在 renderUserSettingsBlock 内部，「关」等于零读数。
-    return renderUserSettingsBlock({ settings, config, agentId: sessionAgentId(ctx), factsProvider: factsInject }).text;
+    const { agentId, sessionId } = sessionIdentity(ctx);
+    return renderUserSettingsBlock({ settings, config, agentId, sessionId, factsProvider: factsInject }).text;
   }
 
   // #249 能力说明的系统提示段。order 150 = 插件指引段的既有惯例
