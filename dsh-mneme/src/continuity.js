@@ -1,4 +1,6 @@
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
+// Issue #611：图片块的文本口径（占位，不是空串），与 summarize.js 共用一份。
+import { contentToText } from "./attachment-text.js";
 
 // #249 N3（压缩边缘双落点）：上下文即将大幅精简前，抢救「正在做什么」。
 //
@@ -72,13 +74,12 @@ function isCompactionEdge(event) {
 // 与 summarize.js 的 collectMessages 同一个口径：只取公开文本块，reasoning 私有推理
 // 不进快照（快照可能被宿主重建进摘要）。刻意副本而不是导出——那边是会话蒸馏的内部
 // 细节，两边取文本的理由不同。
+//
+// Issue #611：图片块不再返回空串，改走 attachment-text 的占位口径。快照的全部意义
+// 就是「压缩后还能看出刚才在干什么」，而一张没被记下的截图恰恰是最容易丢的那部分
+// 上下文——用户在等你看图，压缩后却只剩一句「看这个」，这种快照比没有更误导。
 function textOf(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((block) => (typeof block === "string" ? block : (block?.type === "text" && typeof block.text === "string" ? block.text : "")))
-    .filter((s) => s)
-    .join("\n");
+  return contentToText(content);
 }
 
 // DSH 0.1.2-rc.1 起 Session 用 snapshotEvents()，兼容旧版 .events。这是**全量日志**

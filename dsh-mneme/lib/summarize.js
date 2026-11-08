@@ -9,6 +9,8 @@ import { createScopeResolver } from "./scope.js";
 // #493 补充 §③：断链与巩固侧同一份实现（src/fence.js）。转录里出现闭合标记时
 // 原先能提前闭合围栏——那是把用户消息升格成指令最短的一条路。
 import { breakFenceMarkers } from "./fence.js";
+// Issue #611：图片块的文本口径（占位，不是空串）。三个 textOf 副本共用这一份。
+import { contentToText, countImages } from "./attachment-text.js";
 // #512：每轮蒸馏一个 run id（归因主体）。store 侧也能铸造，但这里必须知道它——
 // 写记忆时要把它一路带到 saveMemoryProvenance / 落 run 行，拿回来再写就是两次往返。
 import { randomUUID } from "node:crypto";
@@ -292,13 +294,13 @@ const SUBAGENT_MESSAGE_KINDS = new Set(["agent-message", "subagent-settled"]);
 
 // 兼容严格形状 [{type:"text",text}] 与宽松形状 ["字符串", ...]（lib-smoke 用例
 // 直接传字符串数组）。只取公开文本块；reasoning 私有推理块不进蒸馏上下文。
+//
+// Issue #611：图片块曾经在这里一律变空串，于是图-only 消息整条被丢、图+文消息只剩
+// 文字——静默，没有任何计数。现在改由 attachment-text 统一产占位，
+// `[图: 屏幕截图 … 1543x983]`。抽取口径只有一份，三个调用方（本文件 /
+// continuity / hot-memory）共用，避免同一件事写成三份会漂移的实现。
 function textOf(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((block) => (typeof block === "string" ? block : (block && block.type === "text" && typeof block.text === "string" ? block.text : "")))
-    .filter((s) => s)
-    .join("\n");
+  return contentToText(content);
 }
 
 /**
@@ -395,6 +397,10 @@ function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, th
   const events = snapshotSessionEvents(session, afterSeq, throughSeq);
   const lines = [];
   const seenSubagentMessages = new Set();
+  // Issue #611：这一窗里被折成占位的图片张数。占位本身不丢信息，但「折了几张」
+  // 必须是个能读到的数——否则 off 档和旧版静默丢弃在观测上无法区分，下次再有人
+  // 问「图到底进来没有」还是得翻源码。计量只数窗口内事件，不受截断影响。
+  let imageCount = 0;
   const trim = (s, n) => (typeof s === "string" && s.length > n ? `${s.slice(0, n)}…` : s);
   const trimTranscript = (s, n) => {
     if (typeof s !== "string" || s.length <= n) return s;
@@ -415,6 +421,14 @@ function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, th
   };
   for (const event of events) {
     const data = event?.data ?? {};
+    // Issue #611 计量：只数公开正文里的图块（user 消息的 data.content、
+    // assistant 消息的 data.message.content 与子会话插入的消息体）。私有的
+    // reasoning 块里不会有 image，这里不额外分支。
+    imageCount += countImages(data.content);
+    imageCount += countImages(data.message?.content);
+    if (Array.isArray(data.inserted)) {
+      for (const message of data.inserted) imageCount += countImages(message?.content);
+    }
     // #399：用户提示 / 助手公开正文 / 子会话交付三种可公开内容由共享谓词产出，
     // 渲染与落盘因此不可能对「什么算公开」产生分歧（见 publicTranscriptParts）。
     for (const part of publicTranscriptParts(event)) {
@@ -485,6 +499,9 @@ function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, th
       : [],
     hasEvents: events.length > 0,
     lastSeq,
+    // Issue #611：这一窗折成占位的图片张数。调用方把它写进审计 metadata，
+    // 让「图进来了几张」成为可对账的事实而不是推断。
+    imageCount,
     // Issue #493：只数**转录正文**的字符数。minWindowChars 闸门与审计里的
     // distillChars 量的都是「这一窗有多少可提炼内容」，不是「我们额外包了多少
     // 提示词」——若把围栏与角色句算进去，一条「短」也会凭空越过任何阈值，
@@ -850,6 +867,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         0
       );
       const minWindowChars = config.summarizeMinWindowChars ?? 0;
+      const imageCount = collected.imageCount ?? 0;
       if (minWindowChars > 0 && distillChars < minWindowChars) {
         commitCursor(session.id, nextSeq);
         writeAudit({
@@ -857,7 +875,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           model_id: route ? `${route.provider}:${route.model}` : "unknown",
           status: "skipped",
           error_message: "window-too-small",
-          metadata: { distillChars, minWindowChars }
+          metadata: { distillChars, minWindowChars, ...(imageCount > 0 ? { imageCount } : {}) }
         });
         return;
       }
@@ -1064,6 +1082,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           audit.errorMessage = failureAudit.errorMessage;
           audit.metadata = {
             distillChars,
+            ...(imageCount > 0 ? { imageCount } : {}),
             ...failureAudit.metadata,
             streak,
             ...(maxParseRetries > 0 ? { maxRetries: maxParseRetries } : {}),
@@ -1203,6 +1222,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       if (audit) {
         audit.metadata = {
           distillChars,
+          ...(imageCount > 0 ? { imageCount } : {}),
           parsed: parsed.length,
           ...(parsedResult.salvaged ? { json_salvaged: true } : {}),
           ...(capped > 0 ? { capped } : {}),

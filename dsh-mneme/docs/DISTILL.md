@@ -67,6 +67,7 @@ UNIQUE idx_memory_provenance_link(memory_id, session_id, seq_start, seq_end)
 |---|---|---|
 | 真实 `user/message`（`kind` 缺失 / `user` / `agent-message` / `subagent-settled`） | ✅ | ✅ |
 | 助手公开 `text` 块 | ✅ | ✅ |
+| 消息里的 `image` 块（#611） | ✅（只留 `[图: 名称 宽x高]` 占位） | ✅（同占位，不含字节） |
 | 助手 `reasoning` 块（私有推理链） | ❌ | ❌ |
 | 插件注入机器内容（`kind: "plugin:dsh-mneme"` / skill 正文 / AGENTS.md / 文件变更通知） | ❌ | ❌ |
 | 工具调用入参、工具结果、code 输出 | ✅（截断） | ❌ |
@@ -306,3 +307,43 @@ audit 行，归因会跟着悬空；而 `memory_provenance` 刻意活得比原�
 `distill_run_id / run_type / trigger_source / run_status`（读不到整组 null），答复级另带
 `mints[]`（`{run_id, run_type, trigger_source, created_at}`）。面板详情抽屉有一个
 「蒸发归因」区块渲染这两层。
+
+## 12. 图片块：占位而不是丢（#611）
+
+在 #611 之前，会话里的图片是**从入口到落库整条断掉的**：三份 `textOf` 的实现都是
+`p?.type && p.type !== "text"` → 空串，于是
+
+- 图-only 消息在 `collectMessages` 里读出一串空文本，`publicTranscriptParts` 返回 `[]`，
+  这一条整条不进转录；窗口里如果只有图，连蒸馏都不会触发（`collected.messages.length === 0`
+  直接 `commitCursor` 走人）；
+- 图+文消息只剩文字，图那部分静默消失；
+- 两侧都没有任何计数，事后没法回答「图到底进来没有」，只能翻源码。
+
+本批的修法是把「块 → 文本」抽成唯一一份 `src/attachment-text.js`
+（`blockToText` / `contentToText` / `countImages` / `imageLabel`），三处调用方共用：
+`src/summarize.js` 的 `textOf`、`src/continuity.js` 的快照抽取、`src/hot-memory.js`
+的 `roundsFromEvents`。抽一份而不是各加一遍 image 分支，理由和 §4 那条一样——同一件事
+写成三份，迟早会漂移，而这次漂移的代价恰恰是「一处记得图、另一处忘了」。
+
+**占位口径**：`[图: 屏幕截图 2026-10-19 072000.png image/png 1543x983]`。有名字用名字，
+没名字退 `mediaType`，什么都没有也要落一个裸 `[图]`——**绝不返回空串**，返回空串正是
+本次要修的那个 bug。宽高留着是因为它是唯一能区分「同一张图的不同版本」的线索。
+
+**不做（本批）**：不调 vision、不读字节、不落原图。宿主侧其实齐全
+（`attachments.readImage()` / `supportsAcpImagePrompts()` 判 `inputModalities`），
+但记忆库已 273MB，原图档明确不做；描述档（多模态模型出 1 段描述 + attachmentId 溯源）
+是下一批，需要单独一个 provider 槽，不占蒸馏那个。
+
+**观测**：`collectMessages` 逐事件数 `imageCount`（user 的 `data.content`、
+assistant 的 `data.message.content`、子会话 `data.inserted[].content` 三处），随返回值
+上浮，写进 `llm_audit_logs.metadata.imageCount`——四种审计行（skip / 失败 / 成功）都带。
+**没有图时不写这个键**，老档位 metadata 逐字节不变。
+
+**验收**：`test/attachment-text.test.js` 9 例锁口径（占位非空、三级退化、宽松字符串形状
+逐字节不变、reasoning 仍被挡、图+文顺序、countImages）；
+`test/image-memory.test.js` 4 例锁端到端（图+文进转录、图-only 现在也会蒸馏、
+两张图数出 2、无图不写 imageCount）。变异自证：把 `blockToText` 的 image 分支改回
+`return ""` → 图-only 那条立刻红（`calls.length` 0 ≠ 1），恢复后 46/46 绿。
+`test/continuity.test.js` 那条静态 import 锁同步从「恰好一行」改成「恰好两行」——
+新增一行仍然转红，仍然要人看一眼它是不是纯的（`attachment-text.js` 不 import 任何东西，
+所以它不调模型这条约束没被削弱）。
