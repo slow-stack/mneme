@@ -1237,7 +1237,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     handler(req, res) {
       try {
         if (!embedder) {
-          sendJson(res, 200, { indexed: 0, skipped: 0, error: "vector-unavailable" });
+          sendJson(res, 200, { indexed: 0, failed: 0, skipped: 0, error: "vector-unavailable" });
           return;
         }
         const url = new URL(req.url, "http://localhost");
@@ -1247,13 +1247,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const viaIndex = semantic?.vectorIndex && semantic?.vectorIndex.rebuildIndex;
         const task = viaIndex
           ? semantic.vectorIndex.rebuildIndex(embedder, { limit })
-          : embedder.reindexMissing ? embedder.reindexMissing(limit) : Promise.resolve({ indexed: 0, skipped: 0, error: "vector-unavailable" });
+          : embedder.reindexMissing ? embedder.reindexMissing(limit) : Promise.resolve({ indexed: 0, failed: 0, skipped: 0, error: "vector-unavailable" });
         // Return the chain so awaiting callers (tests/health checks) observe the
         // finished response rather than racing the async backfill.
         return task.then((result) => {
           sendJson(res, 200, result);
         }).catch(() => {
-          sendJson(res, 200, { indexed: 0, skipped: 0, error: "vector-failed" });
+          sendJson(res, 200, { indexed: 0, failed: 0, skipped: 0, error: "vector-failed" });
         });
       } catch {
         sendJson(res, 500, { error: "internal" });

@@ -125,6 +125,11 @@ export function createVectorIndex({ store, logger }) {
       const remaining = typeof store.countNeedsEmbeddingFor === "function"
         ? store.countNeedsEmbeddingFor(model)
         : null;
+      // `skipped` is 0 by definition here, not as a placeholder: every row the
+      // selector returned is attempted in the loop above, so nothing is left
+      // untouched. Rows that produced no vector are `failed`. The remaining
+      // bucket is the selector's own count, which is why a row can be both
+      // failed and remaining — it was tried and it is still stale.
       return { indexed, failed, skipped: 0, remaining };
     },
 
