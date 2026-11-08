@@ -30,6 +30,10 @@ import { bootstrapFromDirectory } from "./bootstrap.js";
 // 这里引的是同一份（不是照抄），谁改白名单都对得上。
 import { describeConfigKeys, flagKeysFromSpec } from "./config-keys.js";
 import { parseShareBody, shareReply, shareFilename, parseReceiveBody, receiveReply, parseUndoBody, undoReply } from "./share-http.js";
+// 知识库第二层（契约 §3.6）：路径表与 handler 全在 kb/routes.js 里，本文件只负责
+// 把 kbGate 与基础设施递进去。**不在这里登记任何 /kb/* 路径**——registrar 对重复的
+// kind+path 直接抛，插件会起不来。
+import { registerKbRoutes } from "./kb/routes.js";
 import { readPipelineDoc, loadPipelines, projectPipelineDir } from "./pipeline.js";
 import { loadRunsById, runsDir, RUNS_SUFFIX } from "./pipeline-runs.js";
 import { observationDir, loadObservationsById } from "./pipeline-observations.js";
@@ -205,10 +209,13 @@ function parseBody(text) {
 // choro（M1）：chorography 读侧查询对象（createChoroQueries 产物）。缺省 null =
 // 宿主内 API 在 headless/测试环境没有接 queries，choro 路由回 503。它与 service
 // 刻意分开传——chorography 的所有权模型与记忆域相反（spec §3），不塞进 service。
-// diary（v0.13）是第 13 个位置参数，缺省 null：旧调用点（测试里 14 处）继续工作，
+// kb（第二层）：知识库装配对象（createKb 产物）。缺省 null = 这个宿主没装它，
+// /kb/* 一律 503（装配缺件），与开关关着的 409（用户没开）是两件事。
+// diary（v0.13）是第 14 个位置参数，缺省 null：旧调用点（测试里 14 处）继续工作，
 // 不传时日记路由一律 503 diary-unavailable（装配缺件），而不是伪装成「用户没开」。
 // 与 choro 同一套 503/409 分叉：#497 定下「503 = 环境缺件，409 = 用户没开」。
-export function createApi(ctx, service, settings, commands, embedder, semantic = null, apiToken = "", config = null, maintenance = null, profileExtract = null, choro = null, facts = null, diary = null) {
+// 顺序是刻意的：kb 先占第 13 位（它先合进 main），diary 追加在其后，谁先合谁靠前。
+export function createApi(ctx, service, settings, commands, embedder, semantic = null, apiToken = "", config = null, maintenance = null, profileExtract = null, choro = null, facts = null, kb = null, diary = null) {
   const disposers = [];
 
   // #182 注入状态探测：面板状态页的「极简模式下注入按宿主设计关闭」提示需要
@@ -398,7 +405,16 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         // merge/update verdict ∪ source=dream 直写）——状态页「查看全部」
         // 与记忆库的「沉淀」筛选 chip 共用这个视图。
         const depositedOnly = url.searchParams.get("deposited") === "only";
-        const rows = service.list({ type, limit, offset, order, minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly });
+        // id: 按主键取单条（含归档行）。面板打开/保存前要拿「这一条」的最新值，
+        // 分页扫列表最多只能看到前 1000 条，已归档的更不在默认视图里；扫不到就
+        // 只能拿陈旧缓存去比对 updated_at，等于没有版本检查。
+        const idFilter = (url.searchParams.get("id") ?? "").trim();
+        const rows = idFilter === ""
+          ? service.list({ type, limit, offset, order, minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly })
+          // getById 是裸 SELECT，没有 forgotten 谓词；这条路由是 open 的，
+          // 不过滤等于让本机任意进程按 id 读到已遗忘记忆的全文（评审 #1）。
+          // 归档行仍要放行：归档 ≠ 遗忘，面板保存前要用它比对 updated_at。
+          : [service.getById(idFilter)].filter((memo) => memo && !memo.forgotten);
         // 面板行在 wire DTO 之上补 archived/quality_score——模型工具的输出
         // schema 严格复用 toApiList，扩展只发生在 HTTP 层。
         // heat 投影（阶段二前端数据源）：仅 heatEnabled=true 时下发逐条热度
@@ -421,8 +437,11 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         }));
         // Total honors the same filters as the rows, or the pager's
         // has-more math breaks whenever minImportance/source/updated-at
-        // bounds are active.
-        sendJson(res, 200, { items, total: service.count(type, { minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly }) });
+        // bounds are active. 按 id 取单条时总数就是命中的行数。
+        const total = idFilter === ""
+          ? service.count(type, { minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly })
+          : rows.length;
+        sendJson(res, 200, { items, total });
       } catch {
         sendJson(res, 500, { error: "internal" });
       }
@@ -597,7 +616,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         // 预览（面板「Agent 眼中的画像」用）：由注入器同一个渲染函数产出，前端只显示
         // 返回的文本——以前端自己拼列表冒充「生效文本」是这个面板最容易漂的地方。
         // ?agent=<身份> 让面板能逐张卡预览：传了就按那个身份寻址，没传按「解析不到身份」
-        // 走（也就是 default 卡的受众）。
+        // 走（也就是 default 卡的受众）。?session=<会话 id>（#606）同理作用于绑会话卡，
+        // 优先级高于 ?agent——与 resolvePersonaCard 的寻址次序一致，预览不许比注入更乐观。
         // 这里不加鉴权是有意的：画像、规则、人格三处在同一条开放读面上本来就能各读一次
         // （GET /profile 与 GET /persona 都无 token 可读），本字段只是把同样的内容拼成
         // 模型实际看到的形状，没有新增可达面；真要锁，配 apiToken（写面与它同源）。
@@ -605,6 +625,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           settings,
           config,
           agentId: url.searchParams.get("agent"),
+          sessionId: url.searchParams.get("session"),
           // 事实段与注入共用同一渲染函数（user-settings.js 的同源纪律）：装配了
           // profile-facts 就传读口，开关与有无的判定在渲染函数内部（关=零读数）。
           factsProvider: typeof facts?.factsProvider === "function" ? facts.factsProvider : null
@@ -1695,7 +1716,11 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
       try {
         const url = new URL(req.url, "http://localhost");
         const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") ?? 500) || 500));
-        const entities = service.listEntities?.({ limit }) ?? [];
+        // q = 名字过滤。必须下推到 store：面板此前取回 limit 条再本地过滤，
+        // 排在 limit 之后的实体永远搜不到（评审 #9）。老宿主没有这个形参时
+        // 多传一个键不会报错，只是过滤失效——与 limit 的处理一致。
+        const q = url.searchParams.get("q") ?? "";
+        const entities = service.listEntities?.({ limit, q }) ?? [];
         // total 是**全库**实体数，不是本次切片长度：目录带 limit，面板拿它当
         // 「一共抽出多少实体」，填切片长度会让 1.6 万实体永远显示成 500。
         // 老宿主（service 上没有 countEntities）回落到切片长度，不抛。计数本身失败也
@@ -2293,11 +2318,17 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         // materialize and persist one here. 只有通过上面那道门才会走到这里，
         // 否则「未鉴权的 GET 顺手写库」就是一条不需要凭证的写路径。
         const kv = settings.getExternalApi() ?? {};
-        if (!kv.token) {
+        // ?token=omit：只读配置、不生成也不落库 Bearer。
+        // 手机端面板（src/dsh-go）只需要 enabled/port/host 来渲染表单，而默认的
+        // GET 会顺手 materialize 一个 token 写进 user_settings —— 一次纯读请求
+        // 变成写路径，既污染审计也违反「面板不显示明文令牌」的承诺。带上这个
+        // 参数时 token 字段一律留空；不传的老客户端行为完全不变。
+        const omitToken = new URL(req.url, "http://localhost").searchParams.get("token") === "omit";
+        if (!omitToken && !kv.token) {
           kv.token = randomBytes(24).toString("base64url");
           settings.setExternalApi({ token: kv.token });
         }
-        sendJson(res, 200, { config: fullExternalConfig(kv) });
+        sendJson(res, 200, { config: fullExternalConfig(omitToken ? { ...kv, token: "" } : kv) });
       } catch {
         sendJson(res, 500, { error: "internal" });
       }
@@ -2852,13 +2883,61 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     return repo;
   }
 
+  // 读侧自动重跑（chorographyAutoRefresh）。面板的语义是「读地志页时发现仓库代码
+  // 变了就顺手重跑一次 T0」——T0 是零模型的确定性扫描，成本只在磁盘；但它会重写
+  // 仓库里的 .chorography/**，所以默认关，且一次请求最多刷一个仓库。
+  //
+  // 为什么失败不 500：读是主诉求、刷新是附赠。git rev-parse 偶发失败或磁盘只读时，
+  // 把整张仓库列表打成 500 等于「因为顺手的事没办成，连正式的事都不给办了」。
+  // 错误塞进 autoRefreshError 让面板能说清，数据照发。
+  //
+  // 为什么要 caller 指定 repo：一次面板加载若把 5 个 stale 仓库全扫一遍，用户只是
+  // 打开一个页面却付了 5 次全仓扫描；列表路径只在 ?repo= 明确点名时才刷。
+  function autoRefreshOne(repoId, facts) {
+    const result = { autoRefreshed: false, autoRefreshError: undefined, repo: facts };
+    if (!config || config.chorographyAutoRefresh !== true) return result;
+    if (!facts || facts.staleReason !== "git") return result;
+    if (typeof choro.runT0Apply !== "function") return result;
+    try {
+      choro.runT0Apply({ repoRoot: facts.rootPath });
+      result.autoRefreshed = true;
+      // 重跑之后基线推进了，回执里的 stale 必须按新基线说话：沿用旧行的判定会让
+      // 面板刚刷完就显示「代码已变」，也就是谎报一次失败。
+      const fresh = typeof choro.repoFactsById === "function" ? choro.repoFactsById(repoId) : null;
+      if (fresh) result.repo = fresh;
+    } catch (err) {
+      result.autoRefreshError = String(err?.message ?? err);
+      ctx.logger?.warn?.(`dsh-mneme: choro auto refresh failed for repo ${repoId}: ${result.autoRefreshError}`);
+    }
+    return result;
+  }
+
   register({
     kind: "exact",
     path: "/api/dsh-mneme/choro/repos",
     policy: "open",
     handler(req, res) {
       if (!choroGate(req, res)) return;
-      sendJson(res, 200, { repos: choro.listRepos() });
+      // 契约 §3.2 的字段（stale / staleReason / lastRunAt / legacy / claims）由
+      // queries 层的 listRepoFacts 出；这里留 fallback 是因为既有测试与工具层会
+      // 用裸对象冒充 choro（只实现 runT0Apply），缺一个方法就 500 是没必要的脆。
+      const repos = typeof choro.listRepoFacts === "function" ? choro.listRepoFacts() : choro.listRepos();
+      const repoParam = new URL(req.url, "http://localhost").searchParams.get("repo");
+      let autoRefreshed = false;
+      let autoRefreshError;
+      if (repoParam !== null && repoParam !== "") {
+        const target = choro.resolveRepo(repoParam);
+        if (target && !target.ambiguous) {
+          const idx = repos.findIndex((r) => Number(r.id) === Number(target.id));
+          if (idx >= 0) {
+            const refreshed = autoRefreshOne(target.id, repos[idx]);
+            autoRefreshed = refreshed.autoRefreshed;
+            autoRefreshError = refreshed.autoRefreshError;
+            if (refreshed.repo) repos[idx] = refreshed.repo;
+          }
+        }
+      }
+      sendJson(res, 200, { repos, autoRefreshed, autoRefreshError });
     }
   });
 
@@ -2892,7 +2971,16 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         sendJson(res, 400, { error: "slug-required" });
         return;
       }
+      // 读页是面板的主路径，也正是「读地志页时发现代码变了就重跑」这句文案对应的
+      // 那一刻——自动刷新优先挂在这里（/choro/repos 只在 ?repo= 点名时才刷）。
+      // 刷新必须在 readPage 之前：T0 会重写页文件，先读后刷会把刚被替换掉的旧正文
+      // 回给面板，用户下一次刷新才看到新内容，看起来就像「刷了没用」。
+      const before = typeof choro.repoFactsById === "function" ? choro.repoFactsById(repo.id) : null;
+      const refreshed = autoRefreshOne(repo.id, before);
       const page = choro.readPage(repo.id, slug);
+      // 顶栏「代码已变」徽章读 state.repo.stale：这一份 repo 必须和 page 同源同刻，
+      // 否则刚刷完还会亮着旧徽章。
+      const repoNow = refreshed.repo ?? before;
       if (!page) {
         sendJson(res, 404, { error: "page-not-found", slug });
         return;
@@ -2909,7 +2997,20 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         });
         return;
       }
-      sendJson(res, 200, { page });
+      sendJson(res, 200, {
+        page,
+        repo: repoNow ? {
+          id: repoNow.id,
+          name: repoNow.name,
+          rootPath: repoNow.rootPath,
+          stale: repoNow.stale,
+          staleReason: repoNow.staleReason,
+          legacy: repoNow.legacy,
+          lastRunAt: repoNow.lastRunAt
+        } : { id: repo.id, name: repo.name },
+        autoRefreshed: refreshed.autoRefreshed,
+        autoRefreshError: refreshed.autoRefreshError
+      });
     }
   });
 
@@ -2945,9 +3046,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     }
   });
 
-  // 面板重建入口（收尾档 P34）：T0 apply 秒级同步回执；**T1 不上 HTTP**——单模块
-  // 30–240s 起步的长任务不适合挂死面板请求，CLI（--t1）仍是 T1 唯一入口。
+  // 面板重建入口（收尾档 P34）：T0 apply 秒级同步回执。
   // policy token-write：写的是仓库磁盘的 .chorography/**，属数据面写。
+  //
+  // 扩容（契约 §3.2，607 修复）：body 支持 { repo?, path? | rootPath?, refresh? }。
+  // 必须支持按**绝对路径**登记新仓库，否则「一个仓库都没登记」的空态面板永远出不来
+  // ——面板没有 id 可传，只能给路径。已登记路径则复用既有 id（T0 的 upsertChoroRepo
+  // 按 root_path 冲突更新，本来就不会重号）。
   register({
     kind: "exact",
     path: "/api/dsh-mneme/choro/run",
@@ -2963,6 +3068,100 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         if (text === null) return; // readBody 已回 413
         const body = parseBody(text);
         const repoRef = body && typeof body === "object" ? body.repo : null;
+        const rootInput = body && typeof body === "object"
+          ? (typeof body.path === "string" ? body.path : (typeof body.rootPath === "string" ? body.rootPath : null))
+          : null;
+        // refresh 是「我要求重建」的意图标记，不是「需要额外再刷一次」的开关：
+        // 这条路由本身就是显式重建，T0 会在自己那次 apply 里把 git 基线推进到当前
+        // HEAD，之后没有第二件事可做。保留字段是为了让面板把「用户点了重建」与
+        // 「读侧顺手刷新」两种来源区分开——回执里 autoRefreshed 因此恒为 false，
+        // 它不是失败信号，而是「这次没人替你偷偷刷」。
+        const refresh = body && typeof body === "object" ? body.refresh === true : false;
+
+        let repoRoot;
+        if (typeof rootInput === "string" && rootInput.trim() !== "") {
+          // 路径必须绝对：相对路径的语义取决于宿主进程的 cwd，同一个请求在 CLI 与
+          // 面板里会落到不同目录——那种「有时行有时不行」最难查。
+          if (!isAbsolute(rootInput.trim())) {
+            sendJson(res, 400, { error: "path-not-absolute", path: rootInput });
+            return;
+          }
+          repoRoot = rootInput.trim();
+        } else {
+          const repo = choro.resolveRepo(repoRef);
+          if (!repo || repo.ambiguous) {
+            sendJson(res, repo && repo.ambiguous ? 400 : 404, {
+              error: repo && repo.ambiguous ? "repo-ambiguous" : "repo-not-found",
+              repos: repo && repo.ambiguous ? repo.ambiguous : undefined
+            });
+            return;
+          }
+          repoRoot = repo.root_path;
+        }
+
+        try {
+          const receipt = choro.runT0Apply({ repoRoot });
+          // autoRefreshed 恒 false：显式重建已经是最强的刷新，没有「额外自动刷新」
+          // 这回事。写成常量而不是省略字段，是为了让面板的两种来源（显式 / 顺手）
+          // 共用同一个回执形状，不必按路由分支判 undefined。
+          sendJson(res, 200, { ok: true, autoRefreshed: false, refresh, receipt });
+        } catch (err) {
+          // 结构化分叉而不是 500 一锅烩：路径不存在 / 不是 git 仓库都是「用户给错了
+          // 东西」，面板要能据此说人话并让他改路径，而不是显示「服务端错误，重试」。
+          // 判据走 err.code 字符串（ChoroRefusal.code / PlanInvalidError.name），
+          // 因为 api.js 刻意不 import src/wiki/*（不让 HTTP 面依赖编排层）。
+          const code = err && typeof err.code === "string" ? err.code : null;
+          if (code === "no-such-dir") {
+            sendJson(res, 400, { error: "path-not-found", path: repoRoot, detail: String((err && err.message) || err) });
+            return;
+          }
+          if (code === "not-git") {
+            sendJson(res, 409, { error: "not-a-git-repo", path: repoRoot, detail: String((err && err.message) || err) });
+            return;
+          }
+          if (err && err.name === "PlanInvalidError") {
+            sendJson(res, 409, {
+              error: "plan-invalid",
+              path: repoRoot,
+              detail: String((err && err.message) || err),
+              issues: Array.isArray(err.issues) ? err.issues : undefined
+            });
+            return;
+          }
+          sendJson(res, 500, { error: "t0-failed", detail: String((err && err.message) || err) });
+        }
+      });
+    }
+  });
+
+  // T1 后台任务（契约 §3.2 / 面板 §3.5）。**不在这里 spawn**：进程账住在
+  // wiki/t1-jobs.js（api.js 不 import child_process），这里只做参数解析、闸门与
+  // 409 分叉。choro.startT1Job 缺席（CLI / 测试装配）→ 503，与读侧同一条语义：
+  // 503 = 环境缺件，409 = 用户没开。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/choro/t1",
+    policy: "token-write",
+    handler(req, res) {
+      if (req.method !== "POST") {
+        sendJson(res, 405, { error: "method-not-allowed", allow: "POST" }, { Allow: "POST" });
+        return;
+      }
+      if (!choroGate(req, res)) return;
+      if (typeof choro.startT1Job !== "function") {
+        sendJson(res, 503, { error: "unavailable", reason: "t1-jobs-unavailable" });
+        return;
+      }
+      // T1 花模型额度，所以除了总闸之外还有一道单独的用户闸（契约 §3.1 的理由：
+      // 关总闸等于整个子系统不可见，而只想关「面板能不能花钱」的人需要更细的闸）。
+      if (!config || config.chorographyT1FromPanel !== true) {
+        sendJson(res, 409, { error: "disabled", reason: "t1-from-panel-disabled" });
+        return;
+      }
+      return readBody(req, res).then((text) => {
+        if (text === null) return;
+        const body = parseBody(text);
+        const repoRef = body && typeof body === "object" ? body.repo : null;
         const repo = choro.resolveRepo(repoRef);
         if (!repo || repo.ambiguous) {
           sendJson(res, repo && repo.ambiguous ? 400 : 404, {
@@ -2971,15 +3170,65 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           });
           return;
         }
-        try {
-          const receipt = choro.runT0Apply({ repoRoot: repo.root_path });
-          sendJson(res, 200, { ok: true, receipt });
-        } catch (err) {
-          sendJson(res, 500, { error: "t0-failed", detail: String((err && err.message) || err) });
+        const started = choro.startT1Job({
+          repo,
+          module: body && typeof body.module === "string" && body.module.trim() !== "" ? body.module.trim() : null,
+          retryFailed: body && typeof body === "object" ? body.retryFailed === true : false
+        });
+        if (!started || started.started !== true) {
+          // 同一仓库并发跑 T1 会把两个进程写进同一批页面（claims 交错），必须挡。
+          const errCode = started && started.code === "job-running" ? "job-running" : "t1-start-failed";
+          sendJson(res, errCode === "job-running" ? 409 : 500, {
+            error: errCode,
+            jobId: started && started.jobId ? started.jobId : undefined
+          });
+          return;
         }
+        sendJson(res, 200, { jobId: started.jobId, started: true });
       });
     }
   });
+
+  // 任务状态轮询（面板 2s 一次）。jobId 未知 → 404：任务记录只在内存里，宿主重启
+  // 后旧 id 必然查不到，回 404 让面板回到「没有正在跑的任务」而不是假装 running。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/choro/t1/status",
+    policy: "token-write",
+    handler(req, res) {
+      if (!choroGate(req, res)) return;
+      if (typeof choro.t1JobStatus !== "function") {
+        sendJson(res, 503, { error: "unavailable", reason: "t1-jobs-unavailable" });
+        return;
+      }
+      const jobId = new URL(req.url, "http://localhost").searchParams.get("jobId");
+      if (!jobId) {
+        sendJson(res, 400, { error: "jobId-required" });
+        return;
+      }
+      const job = choro.t1JobStatus(jobId);
+      if (!job) {
+        sendJson(res, 404, { error: "job-not-found", jobId });
+        return;
+      }
+      sendJson(res, 200, job);
+    }
+  });
+
+  // 知识库第二层（契约 §3.6）。闸与 choro 同款分叉：装配缺件 503 / 用户没开 409。
+  // 这里只判开关，不判「有没有集合」——空知识库是合法状态（面板要能显示空态）。
+  function kbGate(req, res) {
+    if (!kb) {
+      sendJson(res, 503, { error: "unavailable", reason: "kb-unavailable" });
+      return false;
+    }
+    if (!config || config.kbEnabled !== true) {
+      sendJson(res, 409, { error: "disabled", reason: "kb-not-enabled" });
+      return false;
+    }
+    return true;
+  }
+  registerKbRoutes(register, { kb, cfg: config ?? {}, sendJson, readBody, parseBody, gate: kbGate });
 
   return {
     routes: countRoutes(),

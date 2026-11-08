@@ -27,9 +27,15 @@ import { createChoroInject } from "./wiki/inject.js";
 import { registerChoroCommand } from "./choro-command.js";
 // 收尾档：面板重建按钮走 runChoroT0（P34；T1 不上 HTTP）。
 import { runChoroT0 } from "./wiki/t0.js";
+// T1 后台任务账（契约 §3.2）：面板点「补语义正文」走 HTTP 起一个 spawn 子进程，
+// 进程账不能住在 api.js（HTTP 面刻意不摸 child_process），装配点在这里。
+import { createT1Jobs } from "./wiki/t1-jobs.js";
 import { createSettings } from "./settings.js";
 // 「Agent 眼中的你」自动事实（2026-11-06）：逐卡事实清单 + dream 后自动维护轮。
 import { createProfileFacts } from "./profile-facts.js";
+// 知识库第二层（契约 §3.4）：装配与开关无关（createKb 只建对象，读侧零 IO），
+// 闸在路由与工具两层——这样「没开」与「没装配」在 HTTP 面上是两个可区分答案。
+import { createKb } from "./kb/index.js";
 import { createCommandManager } from "./commands.js";
 import { createExecutionRecorder } from "./pipeline-runner.js";
 import { registerMoRunCommand } from "./pipeline-command.js";
@@ -628,10 +634,17 @@ export const apply = (ctx, config) => {
     disposers.push(createContinuityRescue(ctx, store, sessionGate));
   }
 
+  // 知识库第二层（契约 §3.4）：装配与开关无关（createKb 只建对象，读侧零 IO），闸在
+  // 路由与工具两层——这样「没开」（409）与「没装配」（503）在对外两面都是可区分的。
+  // 位置必须在 tools/api 两处消费点之前：cordis 的 inject 回调可能在任一之后才触发，
+  // 在消费点里现建就会造出第二份实例（两份缓存、两套 dispose）。
+  const kb = createKb({ store, embedder, cfg });
+  disposers.push(() => kb.dispose?.());
+
   ctx.inject(["tools"], (toolsCtx) => {
     // choro（M1）：只读查询对象，chorographyEnabled 关着时工具压根不注册（闸在
     // createTools 的 hiddenTools，与 organizeEnabled 同款反向语义）。
-    disposers.push(createTools(toolsCtx, service, cfg, embedder, sessionGate, createChoroQueries({ store })));
+    disposers.push(createTools(toolsCtx, service, cfg, embedder, sessionGate, createChoroQueries({ store }), kb));
   });
 
   // chorography M3：/choro 只读回执。与 /mo-run 同形（ctx.commands.register），
@@ -687,17 +700,33 @@ export const apply = (ctx, config) => {
     // 闸在路由/工具两层（关着 409 / 不注册），queries 本体装配与开关无关。
     // 收尾档：choro 对象加两件 host 侧能力——embedder（向量惰性物化，P37）与
     // runT0Apply（面板重建按钮的写路径，P34；T1 不上 HTTP，CLI 仍是它的入口）。
+    // T1 任务账随 choro 装配建立（与开关无关：开关在路由那侧判，没开时这些方法一次
+    // 都不会被调到，符合「503=装配缺件 / 409=用户没开」的分叉）。
+    const t1Jobs = createT1Jobs({ store, dbPath: join(memoryDir, "memory.db") });
+    disposers.push(() => t1Jobs.dispose());
     const choro = {
       ...createChoroQueries({ store }),
       embedder,
       runT0Apply: ({ repoRoot }) => runChoroT0({ repoRoot, store, apply: true }),
+      startT1Job: (args) => t1Jobs.start(args),
+      t1JobStatus: (jobId) => t1Jobs.status(jobId),
     };
     const api = createApi(ctx, service, settings, commands ?? {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,
       list: () => []
-    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro, profileFacts, diary);
+    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro, profileFacts, kb, diary);
     disposers.push(api.dispose);
+
+    // dsh-go 原生面板：只有宿主提供 dshGo 服务（dsh-go 手机 App）时才挂载。
+    // 动态 import 是刻意的——静态导入会让「没有桥就整块不加载」这句承诺落空。
+    // cfg.apiToken 一并交给面板：createApi 给 token / token-write 路由包了鉴权，
+    // 进程内调用不带令牌会被自家路由拦成 401，不为此在服务端开白名单。
+    ctx.inject(["dshGo"], (dshCtx) => {
+      import("./dsh-go/panel.js")
+        .then((panel) => panel.mountDshGoPanel(dshCtx, { apiToken: cfg.apiToken }))
+        .catch((error) => ctx.logger?.warn?.(`[dsh-mneme] dsh-go 面板未加载：${error?.message ?? error}`));
+    });
   }
 
   // M.O. 自动沉淀（v0.9.3）：项目里重复走的那套动作，自动变成 memoryDir 里的一条

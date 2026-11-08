@@ -75,7 +75,7 @@ test("internal PUT /persona without token is rejected and store untouched", asyn
   const res = new FakeRes();
   await route.handler(req("/api/dsh-mneme/persona", "PUT", { persona: { name: "evil" } }), res);
   assert.equal(res.statusCode, 401);
-  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {} });
+  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {}, bySession: {} });
   store.close();
 });
 
@@ -140,7 +140,7 @@ test("standalone GET/PUT /persona behind Bearer gate round-trips", async () => {
   try {
     const get1 = await fetch(`${t.base}/persona`, { headers: t.auth });
     assert.equal(get1.status, 200);
-    assert.deepEqual((await get1.json()).persona, { default: {}, byAgent: {} });
+    assert.deepEqual((await get1.json()).persona, { default: {}, byAgent: {}, bySession: {} });
     const put = await fetch(`${t.base}/persona`, {
       method: "PUT",
       headers: { ...t.auth, "content-type": "application/json" },
@@ -165,7 +165,7 @@ test("standalone /persona without Bearer is 401", async () => {
   try {
     const res = await fetch(`${t.base}/persona`, { method: "PUT", body: "{}" });
     assert.equal(res.status, 401);
-    assert.deepEqual(t.settings.getPersona(), { default: {}, byAgent: {} });
+    assert.deepEqual(t.settings.getPersona(), { default: {}, byAgent: {}, bySession: {} });
   } finally {
     t.close();
   }

@@ -115,6 +115,33 @@ test("list total excludes forgotten entries", async () => {
   assert.equal(data.total, 1, "total matches visible items, forgotten excluded");
 });
 
+test("list?id= also excludes forgotten entries", async () => {
+  // getById 是裸 SELECT，不套 list 的 forgotten 谓词；这条路由是 open 的，
+  // 漏掉过滤等于让本机任意进程按 id 读到遗忘记忆的全文（评审 #1）。
+  const { routes, service } = setup();
+  const forgotten = service.saveWithDedupe({ type: "preference", title: "遗忘", content: "隐藏" });
+  service.setForget(forgotten.memory.id, true);
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/list");
+  const res = new FakeRes();
+  await route.handler(req(`/api/dsh-mneme/list?id=${forgotten.memory.id}`), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.deepEqual(data.items, []);
+  assert.equal(data.total, 0);
+});
+
+test("list?id= still returns archived rows (archive is not forget)", async () => {
+  const { routes, service } = setup();
+  const archived = service.saveWithDedupe({ type: "preference", title: "归档", content: "仍可比对" });
+  service.setArchived(archived.memory.id, true);
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/list");
+  const res = new FakeRes();
+  await route.handler(req(`/api/dsh-mneme/list?id=${archived.memory.id}`), res);
+  const data = JSON.parse(res.body);
+  assert.equal(data.items.length, 1);
+  assert.equal(data.items[0].title, "归档");
+});
+
 test("list honors limit/offset", async () => {
   const { routes, service } = setup();
   service.saveWithDedupe({ type: "preference", title: "a", content: "1" });
@@ -766,9 +793,19 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 顶层扁平原值 "light"，不需要 NESTED_FLAG_PATHS 条目）= 113。
   // 「Agent 眼中的你」自动事实新增 profileFactsEnabled（dream 后逐卡维护 + 手动轮
   // + 注入段的顶层总闸；顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 114。
-  // v0.13 新增 diaryEnabled（QQ 日记本：跨天判定 + 手写入口 + 面板页的总闸；
-  // 顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 115。
-  assert.equal(Object.keys(data.effective).length, 115);
+  // 2026-11-08 kb-qoder parity（契约 §3.1）新增 chorographyAutoRefresh /
+  // chorographyT1FromPanel / kbEnabled（面板闭环的两个授权闸 + kb 子系统总闸；
+  // 三个都是顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 117。
+  // issue #603 第 4 层再新增 conflictAutoResolveEnabled（自动裁决档开关；顶层布尔键）
+  // 与 conflictAutoResolveMinSimilarity（阈值，走 NUMBER_RANGES 表）= 119。
+  // v0.13 再新增 diaryEnabled（QQ 日记本：跨天判定 + 手写入口 + 面板页的总闸；
+  // 顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 120。
+  assert.equal(Object.keys(data.effective).length, 120);
+  // 三个 kb 新键的默认值单独钉一遍：计数锁只钉数量，钉不住值（缺省值翻转时
+  // 面板会静默换上一套授权语义），这里补上值这一层。
+  assert.equal(data.effective.chorographyAutoRefresh, false);
+  assert.equal(data.effective.chorographyT1FromPanel, true);
+  assert.equal(data.effective.kbEnabled, false);
   assert.equal(data.effective.chorographyEnabled, false);
   assert.equal(data.effective.chorographyInject, "light");
   assert.equal(data.effective.dreamSkipInvalid, true);

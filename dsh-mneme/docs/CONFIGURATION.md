@@ -248,6 +248,8 @@
 | `reflectionFailureRetentionDays` | `90` | `failure_memories`（失败/纠正记录）的启动期清理保留天数（1–3650） | 只读 bundle 配置：未进 feature_flags 白名单，面板改不了。`dsh-mneme reclaim` 不读这个键（它对三个表用同一条 `--older-than`，本表不在其中）。此前这个 90 天是写死的（#275 伞下的欠账） |
 | `conflictFreezeEnabled` | `false` | 冲突不自动合并、冻结待人工复核 | opt-in |
 | `conflictFreezeMaxPending` | `100` | 冻结队列上限（≤1000） | — |
+| `conflictAutoResolveEnabled` | `false` | 相似度极高的**同 scope** 重复对自动裁决（保留新条、归档旧条），不进人工队列 | opt-in。会归档记忆，所以默认关；跨 scope 对永不自动（归属是用户的决定，#170）。用 supersede 而非 conflict：注记写在被归档侧，幸存记忆正文不动 |
+| `conflictAutoResolveMinSimilarity` | `0.95` | 自动裁决的相似度门槛（0.85–1） | 实测 live 库 345 条有相似度的历史行里 ≥0.95 只占 5.8%、≥0.94 占 8.1%——这一档减的是峰值，不是把队列清零。低于 0.85 就不是「重复」而是「相似」，不该自动归档任何一条 |
 
 ## 实体
 
@@ -330,6 +332,9 @@
 | `organizeEnabled` | `false` | 对模型开放 `memory_organize` 工具（#231：先 dryRun 出比对报告，agent 判断后 apply 落库） | 与上面两个**反向**：那两个藏默认在场的工具，本键开默认不在场的能力。关 = 工具根本不注册（模型看不到就不会调）。dryRun→apply 是两步协议，弱模型容易漏 `run_id` 或跳过报告，所以 `LIGHT_MODE_OFF` 里有它；apply 只能引用一次真实报告、且一份报告只许落地一次 |
 | `chorographyEnabled` | `false` | chorography（仓库地志，spec 见 docs/specs/）暴露闸：对模型开放三个只读工具（`choro_search` / `choro_read_page` / `choro_module_map`）+ 面板「仓库地志」浏览页 + 每轮的开局提纲注入 + `/choro` 命令 | 与 `organizeEnabled` 同款反向语义：关 = 工具根本不注册、面板页空态、注入块不渲染、命令不注册，行为与旧版逐字节一致。本键是「是否启用这个子系统」，不是「每轮付多少」——所以它仍**不进 `LIGHT_MODE_OFF`**，轻量档要压的是下面那条 `chorographyInject`。检索是关键词子串（M1）；生成走 `dsh-mneme-choro` CLI（T0 确定性骨架 + `--t1` headless 语义富化） |
 | `chorographyInject` | `"light"` | 开局注入档位：`light` 只列文件数最多的 6 个模块（约 8 行）、`full` 列全部模块、`off` 不注入 | 只注模块名 / 文件数 / 页状态 / 页相对路径，**不含正文**（正文由模型 `choro_read_page` 取）；注入块折进既有 memory context，不新开 context（spec §7「合并成一次拼装」）。`lightMode: true` 时在消费侧压成 `off`（见 `wiki/inject.js` 的 `resolveInjectTier`）——它**不进 `LIGHT_MODE_OFF` 表**，因为那张表对平铺键一律赋 `false`，枚举值塞进去会与 schema 不符 |
+| `chorographyAutoRefresh` | `false` | 重建骨架后是否顺手把「过期」标记也刷掉：`POST /choro/run` 带 `refresh: true` 时，面板发起的一次重建会同时重算 `choro_repos` 的 git 基线与 plan 指纹 | opt-in 默认关。它与 `chorographyEnabled` 同属「谁按下按钮」而非「每轮付多少」，故不进 `LIGHT_MODE_OFF`；关着时重建照常跑，只是过期判据留旧基线，面板会继续显示「代码已变更」 |
+| `chorographyT1FromPanel` | `true` | 面板「补语义正文（T1）」按钮的暴露闸：开 = 地志页能发起 `POST /choro/t1`，后台 spawn 一次 `dsh-mneme-choro --t1 --apply` 并轮询 `/choro/t1/status` | 默认**开**（只在 `chorographyEnabled` 已开时才有意义；关整个子系统仍然全灭）。它管的是「面板能不能点这一下」，T1 花的是模型额度但每次都是人的显式动作，所以不设第二道默认关；T1 有模块数/时长/重试三重上限（`src/wiki/t1.js`） |
+| `kbEnabled` | `false` | 知识库第二层（AI-Native 知识库，对标 Qoder Knowledge）暴露闸：对模型开放三个只读工具（`kb_list_collections` / `kb_search` / `kb_read_doc`）+ 面板「知识库」页 + `/api/dsh-mneme/kb/*` 路由 | 与 `chorographyEnabled` 同款反向语义：关 = 工具不注册、面板页空态、路由 409。知识库收的是外来原文副本，真源在 `kb_*` 三张表（不是磁盘 MD），**只碰 kb_* 绝不写 `memories`**、不进巩固/质量过滤任何池子。检索是 BM25 + 可选向量；单文档上限 2 MB，超限/不可读落 `status='error'` 行并回人话，不静默截断。不进 `LIGHT_MODE_OFF`：它没有每轮注入物，模型只在被问到时才调用 |
 | `actionPipelineEnabled` | `false` | M.O. 只读视图的门控：做法图谱 + 对话行结算卡 | opt-in beta；只是纯 UI 入口、不引入重型后台路径，故不进 `LIGHT_MODE_OFF`。写账另有独立的执行记账键（`/mo-run`），看图 ≠ 写账 |
 | `actionRunEnabled` | `false` | M.O. 执行记账：`/mo-run` 开一次执行窗口，窗口内命令执行才可能被记成一条 run | opt-in beta；挂在热路径（每个会话事件都过一次监听），故 `LIGHT_MODE_OFF` 里有它 |
 | `actionNudgeEnabled` | `false` | M.O. 自动沉淀：每轮结束（`turn/end`）后挖一次「这个项目重复走的动作」，结果落成 `memoryDir/proposals/<项目键>/` 里的提议，等人确认 | opt-in beta；三个 M.O. 键里最重的一条——挂 `session/event` 且要**同步解压 zstd 会话日志**（本机 118 份实测 16.2s，单次预算 `budgetMs`=4s 兜底），故 `LIGHT_MODE_OFF` 里有它。**永不自动落草稿**：`materialize` 恒 false，进仓库必须是人的显式动作 |

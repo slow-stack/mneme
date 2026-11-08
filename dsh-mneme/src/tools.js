@@ -9,6 +9,8 @@ import { TOOL_GUIDE, CONTINUITY_TOOL_RULE } from "./guide.js";
 import { injectChildEnabled } from "./config.js";
 import { normalizeScopeStateDimension, normalizeScopeStateValue, normalizeScopeStateState } from "./scope-state.js";
 import { lastUserQuery } from "./inject.js";
+// 知识库三工具（契约 §3.4）：定义住在 kb/tools.js，本文件只决定注册不注册。
+import { kbToolDefinitions } from "./kb/tools.js";
 
 const TEXT_OUTPUT = (text) => [{ type: "text", text }];
 const incompleteChoroSearch = (pages) =>
@@ -81,7 +83,8 @@ const MEMORY_PROVENANCE = (m) => {
 // choro（M1）：chorography 只读查询对象（createChoroQueries 产物）。缺省 null =
 // 装配层没接（headless/测试），三个 choro_* 工具走 hiddenTools 闸根本不注册。
 // 它与 service 刻意分开传——chorography 的所有权模型与记忆域相反（spec §3）。
-export function createTools(ctx, service, config, embedder, sessionGate = null, choro = null) {
+// kb：知识库装配对象（createKb 产物）；缺省 null = 宿主没装它，三个 kb 工具不注册。
+export function createTools(ctx, service, config, embedder, sessionGate = null, choro = null, kb = null) {
   const toolsRegistry = ctx.tools;
   let registration = REGISTERED_TOOLS.get(toolsRegistry);
   if (!registration) {
@@ -1288,6 +1291,24 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
     hiddenTools.add("choro_module_map");
     hiddenTools.add("choro_read_page");
     hiddenTools.add("choro_search");
+  }
+  // 知识库三工具（契约 §3.4）：与 choro 同款反向语义。装配缺件（kb 为 null）与没开
+  // 对模型同样不可见——可区分性归路由层（503 / 409），模型侧不需要看见半个知识库。
+  if (config?.kbEnabled !== true || !kb) {
+    hiddenTools.add("kb_list_collections");
+    hiddenTools.add("kb_search");
+    hiddenTools.add("kb_read_doc");
+  }
+
+  // 知识库工具定义在 kb/tools.js。**必须过 defineTool**：那里返回的是「describe 形状」
+  // （属性上的 required:true、output.schema 用 spec 写法），直接 ctx.tools.register
+  // 会被宿主的 JSON Schema 校验拒（"required is not supported on type string"）——
+  // 这是接线时踩到的真故障，不是可选加工。判定按 parameters.type==="object" 分：
+  // 已经是 JSON Schema 的说明调用方自己包过，再包一次会把 schema 转坏。
+  if (typeof kbToolDefinitions === "function") {
+    for (const def of kbToolDefinitions({ kb, cfg: config })) {
+      tools.push(def?.parameters?.type === "object" ? def : defineTool(def));
+    }
   }
 
   for (const tool of tools) {

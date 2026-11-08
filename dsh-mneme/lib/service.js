@@ -2260,6 +2260,10 @@ export function createService({ store, mirror, config, onWrite, logger, document
       id: r.id,
       run_id: r.run_id ?? null,
       reason: r.reason ?? null,
+      // Issue #603 第 2 层：入队时记下的相似度（0–1）。存量行与 LLM 裁决路径
+      // 没记 → null。面板据此排序与画条，不再从 reason 文本里正则回收；
+      // null 与 0 必须区分开（「没测过」不是「不相似」）。
+      similarity: typeof r.similarity === "number" ? r.similarity : null,
       created_at: r.created_at,
       memory_a: side(r.memory_a),
       memory_b: side(r.memory_b)

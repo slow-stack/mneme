@@ -319,19 +319,83 @@ window.__ModuleLoader__.load({
         "wiki.rebuilding": "重建中…",
         "wiki.rebuild.done": "重建完成",
         "wiki.rebuild.failed": "重建失败",
-        "wiki.rebuild.hint": "重跑 T0 确定性骨架（秒级；T1 语义富化请用 CLI --t1）。注意：富化页会退回骨架，语义段需重新生成",
+        "wiki.rebuild.hint": "重跑 T0 确定性骨架（秒级）。T1 语义正文用旁边的「补语义正文」按钮（长任务，会轮询进度）；重建后富化页会退回骨架，需再补一次",
         "wiki.rebuild.modules": "个模块",
         "wiki.rebuild.pages": "页",
-        "wiki.empty.noRepo": "还没有登记的仓库。先在仓库目录里跑 `dsh-mneme-choro <仓库路径> --apply` 生成骨架页并登记，然后回到这里。",
-        "wiki.empty.disabled": "chorography（仓库地志）未启用：在「设置」里打开「仓库地志」后重启 DSH 生效。",
+        // issue #607：空态原来说「在仓库目录里跑 dsh-mneme-choro」——那命令不在 PATH
+        // 里、也根本不需要 cd（它收的是路径参数）。文案改成三步：说清这是什么、给出
+        // 可直接点的生成入口、把 CLI 兜底写成带绝对路径的完整示例。
+        "wiki.empty.noRepo": "这是 mneme 插件的「仓库地志」：把仓库代码结构铺成可浏览的模块页。还没有登记任何仓库——在下面填入仓库目录的绝对路径，点「生成骨架」就会直接生成并登记。也可以在本机命令行里跑（这个命令不在 PATH 里，要给绝对路径）：",
+        "wiki.empty.disabled": "「仓库地志」未启用：打开 设置 → 记忆(mneme) → 功能 → 仓库地志，打开开关后重启 DSH 生效。",
         "wiki.empty.pickRepo": "已登记多个仓库，选一个：",
+        "wiki.empty.generate": "生成骨架",
+        "wiki.empty.generating": "生成中…",
+        "wiki.empty.pathPlaceholder": "仓库目录的绝对路径，例如 D:\\code\\my-repo",
+        "wiki.empty.cliSummary": "在命令行里生成（可选）",
+        "wiki.empty.cliCmd": "node \"<profile>/node_modules/@modusensus/dsh-mneme/bin/dsh-mneme-choro.mjs\" \"<仓库路径>\" --apply",
+        "wiki.empty.cliHint": "命令收的是一个路径参数，不必先 cd 进仓库；<profile> 指 DSH 的配置目录。",
+        "wiki.flag.autoRefresh": "自动更新",
+        "wiki.flag.t1FromPanel": "面板可发起 T1",
+        "wiki.flag.saveFailed": "开关保存失败",
+        "wiki.t1": "补语义正文（T1）",
+        "wiki.t1.running": "T1 进行中…",
+        "wiki.t1.done": "T1 语义正文已补完",
+        "wiki.t1.failed": "T1 失败",
+        "wiki.t1.disabled": "面板发起 T1 是关着的：打开 设置 → 记忆(mneme) → 功能 → 仓库地志，打开「面板可发起 T1」。",
+        "wiki.t1.progress": "已完成",
+        "wiki.t1.modules": "个模块",
+        "wiki.t1.failedCount": "失败",
+        "wiki.stale": "代码已变",
+        "wiki.stale.hint": "上次生成之后仓库代码变过，页面可能和现状对不上：点「重建骨架」刷新。",
+        "wiki.run.pathRequired": "先填仓库目录的绝对路径",
+        "wiki.run.failed": "生成失败",
+        "wiki.run.notAbsolute": "要给绝对路径（例如 D:\\code\\my-repo）：相对路径会按服务端进程的当前目录解析，同一个请求换个启动位置就落到别的目录。",
+"wiki.run.notFound": "这个路径不存在，或不是一个目录。请检查拼写。",
+"wiki.run.notGit": "这个目录不是 git 仓库，所以没有登记：仓库地志按 git 的提交与文件树生成模块结构，非 git 目录没有可比对的基线。请填仓库根目录（含 .git 的那一层），或先在该目录 git init。",
         "wiki.search.placeholder": "在页面里检索…",
         "wiki.state.loading": "加载中…",
         "wiki.state.pickPage": "从左侧选一个模块页。",
-        "wiki.state.pageMissing": "索引还在、磁盘页面缺失：在仓库目录重跑一次 `dsh-mneme-choro <仓库路径> --apply` 即可重建。",
+        "wiki.state.pageMissing": "索引还在、但磁盘上的页面文件没了：点上面的「重建骨架」重新生成（等价于 node \"<profile>/node_modules/@modusensus/dsh-mneme/bin/dsh-mneme-choro.mjs\" \"<仓库路径>\" --apply）。",
         "wiki.state.unavailable": "chorography 查询装配不可用（宿主环境缺件）。",
         "wiki.state.error": "加载失败",
         "wiki.tree.title": "模块",
+        // 知识库（契约 §3.5-3 / §3.6）：照 #607 的教训，每个空态都要说清「这是什么、
+        // 属于哪个插件、在哪开」——一句话答不上来就会变成用户来报的 bug。
+        "kb.panel.open": "知识库",
+        "kb.search": "检索",
+        "kb.col.intro": "知识库是 mneme 插件的功能：把外部资料（本地文件 / 网页 / 仓库地志页）切块索引，检索与注入时一起用。",
+        "kb.empty.disabled": "「知识库」未启用：打开 设置 → 记忆(mneme) → 功能 → 知识库，打开开关后重启 DSH 生效。",
+        "kb.empty.unavailable": "知识库后端不可用：宿主里还没装配 kb 模块，重启 DSH 或升级插件后再看。",
+        "kb.empty.collections": "还没有集合。左边先建一个集合（比如「项目文档」），再把本地文件、网页或地志页收进去；入库的正文会被切块索引。",
+        "kb.empty.docs": "这个集合还没有文档：右边选来源类型，填路径或 URL 后点「入库」。",
+        "kb.col.title": "集合",
+        "kb.col.key": "集合键（英文/数字/短横线，入库与检索的寻址名）",
+        "kb.col.name": "集合标题（可选）",
+        "kb.col.create": "新建集合",
+        "kb.col.delete": "删除集合",
+        "kb.col.deleteConfirm": "再点一次确认删除",
+        "kb.col.docs": "篇",
+        "kb.col.chunks": "块",
+        "kb.doc.title": "文档",
+        "kb.doc.kind": "来源类型",
+        "kb.doc.kind.file": "本地路径",
+        "kb.doc.kind.url": "网页 URL",
+        "kb.doc.kind.choro": "从地志页导入",
+        "kb.doc.source": "本地绝对路径或网页 URL",
+        "kb.doc.titleField": "标题（可选，缺省用文件名或 URL）",
+        "kb.doc.ingest": "入库",
+        "kb.doc.ingesting": "入库中…",
+        "kb.doc.done": "入库完成",
+        "kb.doc.skipped": "内容未变，已跳过（幂等）",
+        "kb.doc.failed": "入库失败",
+        "kb.doc.empty": "—",
+        "kb.repo.pick": "仓库",
+        "kb.repo.module": "模块页",
+        "kb.repo.pickFirst": "先在上面选一个仓库",
+        "kb.repo.none": "还没有登记的仓库：先去「仓库地志」页生成一次，再回来导入。",
+        "kb.repo.noPath": "这个仓库的根路径拿不到（后端没回 rootPath），拼不出地志页的绝对路径。",
+        "kb.repo.noRelPath": "这个模块还没生成骨架页（后端没回 relPath），先回「仓库地志」页生成一次再来导入。",
+        "kb.load.failed": "加载失败",
         "memory.tab.all": "全部",
         "memory.tab.preference": "偏好",
         "memory.tab.project": "项目",
@@ -448,6 +512,13 @@ window.__ModuleLoader__.load({
         "memory.features.chorographyInject.off": "off（不注入）",
         "memory.features.chorographyInject.light": "light（前 6 个模块）",
         "memory.features.chorographyInject.full": "full（全部模块）",
+        "memory.features.chorographyAutoRefresh": "自动更新",
+        "memory.features.chorographyAutoRefresh.hint": "读地志页时如果发现仓库代码变了（git 基线与登记时不同），自动重跑一次 T0 骨架，省掉手动重建。默认关：它会在读路径上触发写盘，不想让浏览面板偷偷改文件就别开。",
+        "memory.features.chorographyT1FromPanel": "面板可发起 T1",
+        "memory.features.chorographyT1FromPanel.hint": "允许面板「仓库地志」页上的「补语义正文（T1）」按钮起一个 headless 会话逐模块补语义段。默认开：按钮是人主动点的，不是后台行为。关掉后按钮仍在，但点了会提示去命令行跑。",
+        "memory.features.kbEnabled": "知识库",
+        "memory.features.kbEnabled.hint": "把外部资料（本地文件 / 网页 / 仓库地志页）切块索引，供检索与注入使用；面板新增「知识库」页管理与入库。默认关。",
+        "memory.features.group.kb": "知识库",
         "memory.settings.rules": "规则",
         "memory.settings.rulesHint": "给 Agent 立下必须遵守的规矩，随时增删，下一轮即生效。",
         "memory.settings.ruleAdd": "添加规则",
@@ -1106,6 +1177,9 @@ window.__ModuleLoader__.load({
         "memory.status.conflictQueue.emptyTitle": "暂无待确认冲突",
         "memory.status.conflictQueue.emptyBody": "当巩固发现两条互相矛盾或高度相似的记忆时，会先冻结在这里等你裁决，不会自动修改。裁决前双方都不参与注入。",
         "memory.status.conflictQueue.applyHintTitle": "确认后：保留方正文追加已否决注记，另一方归档",
+    // #603 第 3 层：列表被服务端上限截断时必须明说。徽章上的总数与列表行数
+    // 不一致、却没有任何提示，是最容易让人以为「就这些了」的假成功。
+    "memory.status.conflictQueue.truncated": "已显示 {shown}/{total}（按相似度从高到低，其余请先处理上面的）",
         "memory.status.workbench": "工作动态",
         "memory.status.dreamConsolidate": "记忆巩固",
         "memory.status.summarize": "总结提炼",
@@ -1257,19 +1331,78 @@ window.__ModuleLoader__.load({
         "wiki.rebuilding": "Rebuilding…",
         "wiki.rebuild.done": "Rebuilt",
         "wiki.rebuild.failed": "Rebuild failed",
-        "wiki.rebuild.hint": "Re-runs the deterministic T0 skeleton (seconds; T1 semantic enrichment stays on the CLI --t1). Note: enriched pages fall back to skeleton — regenerate semantics afterwards",
+        "wiki.rebuild.hint": "Re-runs the deterministic T0 skeleton (seconds). T1 semantic prose uses the \"Enrich prose (T1)\" button next to it (long job, polls progress). Rebuilding drops enriched pages back to skeleton — re-run T1 after",
         "wiki.rebuild.modules": "modules",
         "wiki.rebuild.pages": "pages",
-        "wiki.empty.noRepo": "No repository registered yet. Run `dsh-mneme-choro <repo-path> --apply` inside the repository to generate skeleton pages and register it, then come back here.",
-        "wiki.empty.disabled": "chorography (Repo Atlas) is disabled: turn it on under Settings and restart DSH to apply.",
+        "wiki.empty.noRepo": "This is the mneme plugin's \"Repo Atlas\": it turns a repository's code structure into browsable module pages. No repository is registered yet — put the repository directory's absolute path below and press \"Generate skeleton\" to build and register it. You can also run it from a terminal (the command is not on PATH, so give the absolute path):",
+        "wiki.empty.disabled": "Repo Atlas is disabled: open Settings → Memory (mneme) → Features → Repo Atlas, turn it on, then restart DSH to apply.",
         "wiki.empty.pickRepo": "Multiple repositories registered — pick one:",
+        "wiki.empty.generate": "Generate skeleton",
+        "wiki.empty.generating": "Generating…",
+        "wiki.empty.pathPlaceholder": "Absolute path of the repository, e.g. D:\\code\\my-repo",
+        "wiki.empty.cliSummary": "Or generate from a terminal (optional)",
+        "wiki.empty.cliCmd": "node \"<profile>/node_modules/@modusensus/dsh-mneme/bin/dsh-mneme-choro.mjs\" \"<repo-path>\" --apply",
+        "wiki.empty.cliHint": "The command takes the path as an argument — there is no need to cd into the repository first. <profile> is the DSH profile directory.",
+        "wiki.flag.autoRefresh": "Auto-refresh",
+        "wiki.flag.t1FromPanel": "Allow T1 from panel",
+        "wiki.flag.saveFailed": "Could not save the switch",
+        "wiki.t1": "Enrich prose (T1)",
+        "wiki.t1.running": "T1 running…",
+        "wiki.t1.done": "T1 prose enrichment finished",
+        "wiki.t1.failed": "T1 failed",
+        "wiki.t1.disabled": "Starting T1 from the panel is turned off: open Settings → Memory (mneme) → Features → Repo Atlas and enable \"Allow T1 from panel\".",
+        "wiki.t1.progress": "done",
+        "wiki.t1.modules": "modules",
+        "wiki.t1.failedCount": "failed",
+        "wiki.stale": "Code changed",
+        "wiki.stale.hint": "The repository's code changed since the last run, so these pages may be out of date — press \"Rebuild skeleton\" to refresh.",
+        "wiki.run.pathRequired": "Enter the repository's absolute path first",
+        "wiki.run.failed": "Generate failed",
+        "wiki.run.notAbsolute": "Give an absolute path (for example /home/me/code/my-repo): relative paths resolve against the server process's working directory, so the same request can land somewhere else depending on how the host was started.",
+"wiki.run.notFound": "That path does not exist, or it is not a directory. Check the spelling.",
+"wiki.run.notGit": "That directory is not a git repository, so it was not registered: the Repo Atlas derives module structure from git commits and the tracked file tree, and a non-git directory has no baseline to compare against. Point at the repository root (the directory containing .git), or run git init there first.",
         "wiki.search.placeholder": "Search pages…",
         "wiki.state.loading": "Loading…",
         "wiki.state.pickPage": "Pick a module page from the tree.",
-        "wiki.state.pageMissing": "Index exists but the page file is missing: re-run `dsh-mneme-choro <repo-path> --apply` to rebuild.",
+        "wiki.state.pageMissing": "The index is still here but the page file is gone from disk: press \"Rebuild skeleton\" above to regenerate it (equivalent to node \"<profile>/node_modules/@modusensus/dsh-mneme/bin/dsh-mneme-choro.mjs\" \"<repo-path>\" --apply).",
         "wiki.state.unavailable": "chorography queries are unavailable (host wiring missing).",
         "wiki.state.error": "Failed to load",
         "wiki.tree.title": "Modules",
+        "kb.panel.open": "Knowledge Base",
+        "kb.search": "Search",
+        "kb.col.intro": "The knowledge base is an mneme plugin feature: it chunks and indexes external material (local files / web pages / Repo Atlas pages) so recall and injection can use it.",
+        "kb.empty.disabled": "The knowledge base is disabled: open Settings → Memory (mneme) → Features → Knowledge base, turn it on, then restart DSH to apply.",
+        "kb.empty.unavailable": "The knowledge base backend is unavailable: the host has not wired the kb module yet — restart DSH or update the plugin and try again.",
+        "kb.empty.collections": "No collections yet. Create one on the left (say \"Project docs\"), then add local files, web pages or atlas pages; ingested text gets chunked and indexed.",
+        "kb.empty.docs": "This collection has no documents yet: pick a source type on the right, fill in a path or URL, then press \"Ingest\".",
+        "kb.col.title": "Collections",
+        "kb.col.key": "Collection key (letters/digits/dashes; the address used for ingest and search)",
+        "kb.col.name": "Collection title (optional)",
+        "kb.col.create": "New collection",
+        "kb.col.delete": "Delete collection",
+        "kb.col.deleteConfirm": "Click again to confirm delete",
+        "kb.col.docs": "docs",
+        "kb.col.chunks": "chunks",
+        "kb.doc.title": "Documents",
+        "kb.doc.kind": "Source type",
+        "kb.doc.kind.file": "Local path",
+        "kb.doc.kind.url": "Web URL",
+        "kb.doc.kind.choro": "From Repo Atlas",
+        "kb.doc.source": "Absolute local path or web URL",
+        "kb.doc.titleField": "Title (optional; defaults to the file name or URL)",
+        "kb.doc.ingest": "Ingest",
+        "kb.doc.ingesting": "Ingesting…",
+        "kb.doc.done": "Ingested",
+        "kb.doc.skipped": "Unchanged content — skipped (idempotent)",
+        "kb.doc.failed": "Ingest failed",
+        "kb.doc.empty": "—",
+        "kb.repo.pick": "Repository",
+        "kb.repo.module": "Module page",
+        "kb.repo.pickFirst": "Pick a repository above first",
+        "kb.repo.none": "No repository registered yet: generate one on the Repo Atlas page first, then come back to import.",
+        "kb.repo.noPath": "This repository's root path is unavailable (the backend did not return rootPath), so the atlas page's absolute path cannot be composed.",
+        "kb.repo.noRelPath": "This module has no skeleton page yet (the backend did not return relPath). Generate it on the Repo Atlas page first, then import.",
+        "kb.load.failed": "Failed to load",
         "memory.tab.all": "All",
         "memory.tab.preference": "Preferences",
         "memory.tab.project": "Projects",
@@ -1386,6 +1519,13 @@ window.__ModuleLoader__.load({
         "memory.features.chorographyInject.off": "off (no injection)",
         "memory.features.chorographyInject.light": "light (top 6 modules)",
         "memory.features.chorographyInject.full": "full (all modules)",
+        "memory.features.chorographyAutoRefresh": "Auto-refresh",
+        "memory.features.chorographyAutoRefresh.hint": "When reading atlas pages, if the repository's code changed (git baseline differs from registration time), re-run the T0 skeleton automatically instead of asking you to rebuild. Off by default: it turns a read path into a write.",
+        "memory.features.chorographyT1FromPanel": "Allow T1 from panel",
+        "memory.features.chorographyT1FromPanel.hint": "Lets the \"Enrich prose (T1)\" button on the Repo Atlas panel start a headless session that fills in the semantic sections module by module. On by default: it is a button a human presses, not a background behaviour. With it off the button stays but points you at the CLI.",
+        "memory.features.kbEnabled": "Knowledge base",
+        "memory.features.kbEnabled.hint": "Chunks and indexes external material (local files / web pages / Repo Atlas pages) for recall and injection, plus a \"Knowledge base\" panel page to manage and ingest it. Off by default.",
+        "memory.features.group.kb": "Knowledge base",
         "memory.settings.rules": "Rules",
         "memory.settings.rulesHint": "Rules the agent must follow — add or remove anytime, effective next turn.",
         "memory.settings.ruleAdd": "Add Rule",
@@ -2021,6 +2161,7 @@ window.__ModuleLoader__.load({
         "memory.status.conflictQueue.emptyTitle": "No pending conflicts",
         "memory.status.conflictQueue.emptyBody": "When consolidation finds two contradictory or highly similar memories, it freezes them here for your review instead of changing anything automatically. Neither side participates in injection until resolved.",
         "memory.status.conflictQueue.applyHintTitle": "On confirm: a veto note is appended to the kept side and the other side is archived",
+    "memory.status.conflictQueue.truncated": "Showing {shown} of {total} (most similar first; clear these before the rest appear)",
         "memory.status.workbench": "Activity",
         "memory.status.dreamConsolidate": "Consolidation",
         "memory.status.summarize": "Summarization",
@@ -2496,6 +2637,32 @@ window.__ModuleLoader__.load({
       // 相对定位由 .mneme-panel 提供？它没有——检索浮层需要定位上下文，给页面列加
       // position:relative（不能动 .mneme-panel 本身：记忆面板还挂在同一根上）。
       ".mneme-wikipage{position:relative}",
+      // #607：空态里的「填路径 → 生成」那一行；宽度跟着空态列走，输入框吃掉
+      // 剩余空间，按钮不吃（按钮换行会让空态看着像表单坏了）。
+      ".mneme-wikirunrow{display:flex;align-items:center;gap:8px;margin-top:4px}",
+      ".mneme-wikirunwide{flex:1;min-width:0;white-space:normal}",
+      ".mneme-wikicli{margin-top:10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}",
+      ".mneme-wikicli summary{cursor:pointer;color:var(--dsw-alias-label-secondary);font-size:12.5px}",
+      ".mneme-wikicli summary:hover{color:var(--dsw-alias-label-primary)}",
+      ".mneme-wikiclihint{margin:6px 0 0;font-size:11.5px;line-height:17px;color:var(--mneme-fg-dim)}",
+      // 开关按钮的激活态只改边框，不改前景色：wikibar 的底色是 bg-layer-1，
+      // 叠一层强调色块会跟右侧徽章抢注意力；而把 color 换成强调色会让正文掉到
+      // AA 以下（contrast.test.js 的主锁实测 1.00），所以状态字面靠「✓」承担。
+      ".mneme-wikitoggle.mneme-on{border-color:var(--dsw-alias-state-business-primary)}",
+      ".mneme-wikistale{margin-inline-end:2px}",
+      ".mneme-wikit1bar{flex:none;padding:6px 16px;border-top:1px solid var(--dsw-alias-border-l2);font-size:11.5px;line-height:16px;color:var(--mneme-fg-dim);background:var(--dsw-alias-bg-layer-1)}",
+      // --- 知识库页（契约 §3.6）---
+      // 左列复用 wikitree 的宽度与分隔线，只是树项改成了集合行；右边沿用
+      // wikipage 的阅读排版。颜色全部走语义层，不新增任何宿主 token。
+      ".mneme-kbcol{display:flex;flex-direction:column;gap:2px;overflow-y:auto;padding:8px}",
+      ".mneme-kbcolhead{margin:0;font-size:11.5px;line-height:17px;color:var(--mneme-fg-dim)}",
+      ".mneme-kbcolnew{display:flex;flex-direction:column;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l1)}",
+      ".mneme-kbkey{height:28px;padding:0 8px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);font-size:12.5px}",
+      ".mneme-kbform{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}",
+      ".mneme-kbsechead{margin-top:16px;font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary)}",
+      ".mneme-kbdocrow{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;padding:6px 0;border-top:1px solid var(--dsw-alias-border-l1)}",
+      ".mneme-kbdoctitle{font-size:12.5px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-kbdocmeta{font-size:11.5px;line-height:17px;color:var(--mneme-fg-dim)}",
       // --- 记忆库页面：居中 sheet，非全屏 ---
       // 从对话直接打开一页记忆库：背板压暗 + 居中圆角卡片（上限 1180×880），
       // 对话仍留在背板之后，任何状态下（含新会话 hero、无 tab 环）都可用。
@@ -2596,6 +2763,7 @@ window.__ModuleLoader__.load({
       // 冲突集中处理队列（v0.8.0）：状态页的待确认冲突列表
       ".mneme-conflictq{display:flex;flex-direction:column;gap:10px}",
       ".mneme-conflictq-head{display:flex;align-items:center;gap:8px}",
+".mneme-conflictq-truncated{flex:1;font-size:12px;line-height:16px;color:var(--mneme-fg-dim);text-align:right}",
       ".mneme-conflict-item{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px}",
       ".mneme-conflict-reason{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary)}",
       ".mneme-conflict-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}",
@@ -4297,7 +4465,13 @@ window.__ModuleLoader__.load({
           },
             CHORO_TIERS.map((r) => h("option", { key: r, value: r }, t(`memory.features.chorographyInject.${r}`))))
         ),
-        h("div", { className: "mneme-featsubhint" }, t("memory.features.chorographyInject.hint"))
+        h("div", { className: "mneme-featsubhint" }, t("memory.features.chorographyInject.hint")),
+        // 契约 §3.1 的两枚子开关，落在同一个子块里：它们只在仓库地志启用后
+        // 才有意义，散到全部设置里就变成「看不见总闸却先看到子项」。
+        // 两个都 opt-in/opt-out 按契约默认（自动更新默认关——它会读盘比 git 基线；
+        // 面板发起 T1 默认开——它是人主动点的按钮，不是后台行为）。
+        boolRow("chorographyAutoRefresh", { sub: true }),
+        boolRow("chorographyT1FromPanel", { sub: true })
       );
 
       if (error && !state) return h("section", { className: "mneme-set-card" },
@@ -7180,6 +7354,11 @@ window.__ModuleLoader__.load({
     // 队列为空时整块不渲染（不打扰无冲突实例）。
     function ConflictsQueue({ t }) {
       const [items, setItems] = useState(null);
+      // Issue #603 第 3 层：服务端一直返回 { items, total }，这里此前把 total 丢掉、
+      // 请求也不带 limit —— 面板列 50 条而徽章显示 60，第 51–60 条既翻不到也没有
+      // 任何提示（「假成功」）。total 现在存下来，items.length < total 时明说
+      // 「已显示 X/Y」，并一次请求取满服务端上限 200。
+      const [total, setTotal] = useState(null);
       const [loadError, setLoadError] = useState(false);
       const [busy, setBusy] = useState(false);
       // 展开态按冲突条目记（一对两侧同时展开，便于逐行对照）；复制态按
@@ -7194,12 +7373,18 @@ window.__ModuleLoader__.load({
         );
       };
       const load = (silent) => {
-        apiFetch("/api/dsh-mneme/conflicts")
+        // limit=200 = 服务端 Math.min(200, ...) 的上限（lib/api.js 的 conflicts 路由）。
+        apiFetch("/api/dsh-mneme/conflicts?limit=200")
           .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
-          .then((d) => { setItems(d.items || []); setLoadError(false); if (!silent) announce(t("memory.status.conflictQueue.refreshed")); })
+          .then((d) => {
+            setItems(d.items || []);
+            setTotal(typeof d.total === "number" ? d.total : null);
+            setLoadError(false);
+            if (!silent) announce(t("memory.status.conflictQueue.refreshed"));
+          })
           // #295 评审：加载失败 ≠ 没有冲突——错误态渲染错误卡而不是空态教育卡，
           // 不能让 500 把「暂时看不到」伪装成「没有冲突」。
-          .catch(() => { setItems([]); setLoadError(true); });
+          .catch(() => { setItems([]); setTotal(null); setLoadError(true); });
       };
       useEffect(() => { load(); }, []);
       // 参与记忆在别处被删除/编辑时（通用失效广播），队列联表出的那一侧会失真
@@ -7291,18 +7476,28 @@ window.__ModuleLoader__.load({
                 title: `${t("memory.status.conflictQueue.frozenTitle")} ${t("memory.status.conflictQueue.applyHintTitle")}`
               }, t("memory.status.conflictQueue.frozenBadge")))
       );
-      // #177：相似度从 reason 文本中回收（sleep 路径写「相似度 0.87」，dream 路径
-      // 是 LLM 自由文本）——回收得到就画进度条，否则不画，绝不显示编造的数字。
+      // #177：相似度优先取服务端新落列的值（#603 第 2 层）；老行与 LLM 裁决
+      // 路径没有该列 → 回落到从 reason 文本回收。回收不到就返回 null，绝不
+      // 显示编造的数字。
       // 防误报：只认「相似度 0.87 / similarity 0.87」这类锚定短语，不在全文里
       // 捞数字（否则 reason 里的年份、条数都会被当成相似度）。
-      const similarityOf = (reason) => {
-        const m = /(?:相似度|similarity)\s*([01](?:\.\d+)?)/i.exec(String(reason || ""));
+      const similarityOf = (it) => {
+        if (typeof it.similarity === "number" && it.similarity >= 0 && it.similarity <= 1) return it.similarity;
+        const m = /(?:相似度|similarity)\s*([01](?:\.\d+)?)/i.exec(String(it.reason || ""));
         const v = m ? Number(m[1]) : NaN;
         return v >= 0 && v <= 1 ? v : null;
       };
+      const shown = items.length;
+      const hidden = typeof total === "number" && total > shown ? total - shown : 0;
       return h("div", { className: "mneme-conflictq" },
         h("div", { className: "mneme-conflictq-head" },
           h("span", { className: "mneme-xcount" }, t("memory.status.conflicts")),
+          // Issue #603 第 3 层：截断必须说出来。此前 50/60 的差额只体现在徽章
+          // 数字上，列表本身看不出少了东西。
+          hidden > 0
+            ? h("span", { className: "mneme-conflictq-truncated" },
+                t("memory.status.conflictQueue.truncated").replace("{shown}", String(shown)).replace("{total}", String(total)))
+            : null,
           h("button", { className: "mneme-footbtn", onClick: () => load() },
             h(Icon, { name: "refresh", size: 12 }), t("memory.status.conflictQueue.refresh"))),
         // #177 空态教育卡：队列没有条目时也渲染（整块此前直接 return null），
@@ -7315,7 +7510,7 @@ window.__ModuleLoader__.load({
               h("div", { className: "mneme-conflict-empty-title" }, t("memory.status.conflictQueue.emptyTitle")),
               h("div", { className: "mneme-conflict-empty-body" }, t("memory.status.conflictQueue.emptyBody")))),
         items.map((it) => {
-          const sim = similarityOf(it.reason);
+          const sim = similarityOf(it);
           const open = openItems[it.id] === true;
           const aText = (it.memory_a && it.memory_a.content) || "";
           const bText = (it.memory_b && it.memory_b.content) || "";
@@ -11230,7 +11425,18 @@ window.__ModuleLoader__.load({
       }
 
       function WikiMainPanel({ t }) {
-        const [state, setState] = useState({ phase: "loading", repos: [], repo: null, modules: [], edges: [], page: null, hits: [], q: "", selected: null, disabled: false, error: null, rebuilding: false, rebuildNote: null });
+        // #607：这个面板以前只有一条「去看 CLI」的空态，一个可点的东西都没有。
+        // 现在空态自带「填绝对路径 → 生成」的入口，所以 state 里多三样东西：
+        // path（那个输入框）、flags（顶栏两枚子开关的生效值）、t1（T1 长任务的
+        // 进度快照）与 toast（补完之后的一次性回执）。
+        const [state, setState] = useState({
+          phase: "loading", repos: [], repo: null, modules: [], edges: [], page: null,
+          hits: [], q: "", selected: null, disabled: false, error: null,
+          rebuilding: false, rebuildNote: null, path: "", flags: null, t1: null, toast: ""
+        });
+        // T1 跑完要重读当前仓库的模块树，但轮询的闭包里拿不到最新的 state.repo：
+        // 用 ref 记住加载成功的仓库 id，避免把整棵树塞进 effect 依赖里。
+        const repoIdRef = useRef(null);
         // apiFetch 是裸 fetch：非 2xx 不抛错，返回 Response。这里统一解 JSON 并把
         // 状态码带回来——409 disabled（用户没开）/ 503 unavailable（装配缺件）
         // 各有各的空态文案（#497 的语义分叉在这里接住）。
@@ -11239,23 +11445,47 @@ window.__ModuleLoader__.load({
           try { data = await res.json(); } catch { /* 空响应体 */ }
           return { status: res.status, data };
         };
+        // 顶栏两枚子开关的生效值：/features 是 open 读路由，和设置卡读的是同一份
+        // 快照（overrides ?? config），面板不再自己猜默认值——猜错的表现是开关
+        // 显示「开」但按钮照样回 disabled。
+        const loadFlags = useCallback(async () => {
+          try {
+            const { status, data } = await readJson(await apiFetch("/api/dsh-mneme/features"));
+            if (status !== 200) return;
+            const eff = (data && data.effective) || {};
+            // 键名原样保留（不在这里改写成短名）：界面上两枚开关切换时要把
+            // 同一个键 PUT 回 /features，两份名字只会多一次映射错的机会。
+            setState((s) => ({
+              ...s,
+              flags: {
+                chorographyAutoRefresh: eff.chorographyAutoRefresh === true,
+                chorographyT1FromPanel: eff.chorographyT1FromPanel !== false
+              }
+            }));
+          } catch { /* 读不到就按契约默认渲染，不把整页打成错误态 */ }
+        }, []);
         const load = useCallback(async (repoRef) => {
           try {
             const { status, data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/repos`));
             if (status === 409) { setState((s) => ({ ...s, phase: "disabled" })); return; }
             if (status === 503) { setState((s) => ({ ...s, phase: "unavailable" })); return; }
             const repos = data.repos ?? [];
-            if (repos.length === 0) { setState((s) => ({ ...s, phase: "no-repo", repos: [] })); return; }
+            if (repos.length === 0) { setState((s) => ({ ...s, phase: "no-repo", repos: [], repo: null })); return; }
             const ref = repoRef ?? (repos.length === 1 ? repos[0].id : null);
-            if (ref === null) { setState((s) => ({ ...s, phase: "pick-repo", repos })); return; }
+            if (ref === null) { setState((s) => ({ ...s, phase: "pick-repo", repos, repo: null })); return; }
             const mod = await readJson(await apiFetch(`/api/dsh-mneme/choro/modules?repo=${encodeURIComponent(ref)}`));
             if (mod.status !== 200) { setState((s) => ({ ...s, phase: "error", error: `modules ${mod.status}` })); return; }
-            setState((s) => ({ ...s, phase: "ready", repos, repo: mod.data.repo, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null }));
+            // T1 轮询的闭包拿不到最新的 state.repo，用 ref 记住当前仓库 id；
+            // 同时把 repos 一起存进 state，顶栏的「代码已变」标记按 id 在列表里找
+            // （/choro/modules 的 repo 只有 id/name，没有 stale）。
+            const loaded = mod.data.repo;
+            repoIdRef.current = loaded && loaded.id != null ? loaded.id : ref;
+            setState((s) => ({ ...s, phase: "ready", repos, repo: loaded, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null }));
           } catch (err) {
             setState((s) => ({ ...s, phase: "error", error: String(err?.message ?? err) }));
           }
         }, []);
-        useEffect(() => { load(); }, [load]);
+        useEffect(() => { load(); loadFlags(); }, [load, loadFlags]);
         const openPage = useCallback(async (slug) => {
           const repo = state.repo;
           if (!repo) return;
@@ -11307,14 +11537,175 @@ window.__ModuleLoader__.load({
           }
         }, [state.repo, state.rebuilding, load, t]);
 
+        // #607 的另一半：空态那条路也得能直接生成。这里收的是一个【路径】而不是
+        // 一个已登记的 repo id——新目录第一次进来自报家门用的就是它。body 同时
+        // 带 repo（有的话）与 path：A 线按 §3.2 扩出来的处理取 path、老实现取
+        // repo，两版后端都能跑，面板不用跟着后端版本改。
+        const runPaths = useCallback(async () => {
+          const p = state.path.trim();
+          if (!p) { setState((s) => ({ ...s, rebuildNote: t("wiki.run.pathRequired") })); return; }
+          if (state.rebuilding) return;
+          setState((s) => ({ ...s, rebuilding: true, rebuildNote: null, error: null }));
+          try {
+            const body = { path: p };
+            if (state.repo && state.repo.id != null) body.repo = state.repo.id;
+            const { status, data } = await readJson(await apiFetch("/api/dsh-mneme/choro/run", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body)
+            }));
+            if (status !== 200 || !data.ok) {
+              // not-git 是这条路上最常见的一次失败（用户填了仓库里的某个子目录），
+              // 单说「生成失败: not-git」等于没说——换成一句解释为什么被拒。
+              // 两个码都要认：服务端把 wiki 层的 err.code "not-git" 翻成了对外契约里的
+              // "not-a-git-repo"（src/api.js 的 run 分叉），只认一个就会出现「同样的
+              // 失败在旧后端有人话、新后端只有错误码」这种半修状态。
+              const why = data.error === "not-git" || data.error === "not-a-git-repo"
+                ? t("wiki.run.notGit")
+                : data.error === "path-not-absolute"
+                  ? t("wiki.run.notAbsolute")
+                  : data.error === "path-not-found"
+                    ? t("wiki.run.notFound")
+                    : (data.detail ?? data.error ?? status);
+              setState((s) => ({ ...s, rebuilding: false, rebuildNote: `${t("wiki.run.failed")}: ${why}` }));
+              return;
+            }
+            const r = data.receipt ?? {};
+            setState((s) => ({
+              ...s,
+              rebuilding: false,
+              rebuildNote: `${t("wiki.rebuild.done")}: ${r.moduleCount ?? "?"} ${t("wiki.rebuild.modules")} / ${r.pageCount ?? "?"} ${t("wiki.rebuild.pages")}`
+            }));
+            // 生成成功之后回到正常浏览态：重新拉一遍 repos 就会自己走进 ready。
+            setState((s) => ({ ...s, path: "" }));
+            await load();
+          } catch (err) {
+            setState((s) => ({ ...s, rebuilding: false, rebuildNote: `${t("wiki.run.failed")}: ${String(err?.message ?? err)}` }));
+          }
+        }, [state.path, state.repo, state.rebuilding, load, t]);
+
+        // 顶栏两枚开关。写回走 /features 的全量快照（PUT 回来就是 snapshot），
+        // 所以成功后直接换掉 flags，不必再打一次 GET。
+        const toggleFlag = useCallback(async (key) => {
+          const cur = state.flags || {};
+          const next = !cur[key];
+          setState((s) => ({ ...s, flags: { ...(s.flags || {}), [key]: next } }));
+          try {
+            const res = await apiFetch("/api/dsh-mneme/features", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ [key]: next })
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            await res.json();
+          } catch (err) {
+            // 回滚显示：开关留在「已开」而服务端没存，是最难查的那种假成功。
+            setState((s) => ({ ...s, flags: { ...(s.flags || {}), [key]: cur[key] }, toast: `${t("wiki.flag.saveFailed")}: ${String(err?.message ?? err)}` }));
+          }
+        }, [state.flags, t]);
+
+        // T1：30–240 秒起步的长任务，POST 只负责起跑，进度靠 2s 一次的轮询。
+        // 回落三种非 200 都有话可说：409 disabled 是开关没开、409 job-running
+        // 是已经有一轮在跑（直接把那个 jobId 接过来看）、其它按失败处理。
+        const startT1 = useCallback(async () => {
+          if (state.t1 && state.t1.state === "running") return;
+          const repo = state.repo;
+          const body = {};
+          if (repo && repo.id != null) body.repo = repo.id;
+          if (state.selected) body.module = state.selected;
+          setState((s) => ({ ...s, toast: "", rebuildNote: null }));
+          try {
+            const { status, data } = await readJson(await apiFetch("/api/dsh-mneme/choro/t1", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body)
+            }));
+            if (status === 200 && data.jobId) {
+              setState((s) => ({ ...s, t1: { jobId: data.jobId, state: "running" } }));
+              return;
+            }
+            if (status === 409 && data.error === "disabled") {
+              setState((s) => ({ ...s, toast: t("wiki.t1.disabled") }));
+              return;
+            }
+            if (status === 409 && data.error === "job-running" && data.jobId) {
+              setState((s) => ({ ...s, t1: { jobId: data.jobId, state: "running" }, toast: t("wiki.t1.running") }));
+              return;
+            }
+            setState((s) => ({ ...s, toast: `${t("wiki.t1.failed")}: ${data.detail ?? data.error ?? status}` }));
+          } catch (err) {
+            setState((s) => ({ ...s, toast: `${t("wiki.t1.failed")}: ${String(err?.message ?? err)}` }));
+          }
+        }, [state.repo, state.selected, state.t1, t]);
+
+        // 轮询只在「有一个 running 的 job」时挂表：依赖故意取 jobId 而不是整个
+        // t1 对象，否则每轮 setState 都会把定时器拆了重建，2s 变成 2s+渲染时间。
+        const t1JobId = state.t1 && state.t1.state === "running" ? state.t1.jobId : null;
+        useEffect(() => {
+          if (!t1JobId) return undefined;
+          let stopped = false;
+          const tick = async () => {
+            try {
+              const { status, data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/t1/status?jobId=${encodeURIComponent(t1JobId)}`));
+              if (stopped || status !== 200 || !data) return;
+              setState((s) => ({ ...s, t1: { ...(s.t1 || {}), ...data } }));
+              if (data.state === "done") {
+                const mods = data.modules || {};
+                setState((s) => ({ ...s, toast: `${t("wiki.t1.done")}: ${mods.done ?? 0}/${mods.total ?? 0} ${t("wiki.t1.modules")}${mods.failed ? ` · ${mods.failed} ${t("wiki.t1.failedCount")}` : ""}` }));
+                // 语义正文补完 = 磁盘页变了，模块树里的页状态跟着变，重读一遍。
+                if (repoIdRef.current != null) await load(repoIdRef.current);
+              } else if (data.state === "failed") {
+                setState((s) => ({ ...s, toast: `${t("wiki.t1.failed")}: ${data.error ?? ""}` }));
+              }
+            } catch { /* 单次轮询失败不终止整轮：下一拍还会重试 */ }
+          };
+          const timer = setInterval(tick, 2000);
+          return () => { stopped = true; clearInterval(timer); };
+        }, [t1JobId, load, t]);
+
+        // toast 自清：和面板里其它 toast 同一个 2.5s 节奏。
+        useEffect(() => {
+          if (!state.toast) return undefined;
+          const timer = setTimeout(() => setState((s) => (s.toast ? { ...s, toast: "" } : s)), 2500);
+          return () => clearTimeout(timer);
+        }, [state.toast]);
+
+        // 「代码已变」标记：/choro/modules 回的 repo 只有 id/name，stale 在
+        // /choro/repos 那份列表里（契约 §3.2），按 id 对回去。
+        const staleRepo = (state.repos || []).find((r) => state.repo && r.id === state.repo.id && r.stale === true);
+
         if (state.phase === "loading") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.state.loading"));
         if (state.phase === "disabled") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.empty.disabled"));
         if (state.phase === "unavailable") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.state.unavailable"));
         if (state.phase === "error") return h("div", { className: "mneme-panel mneme-wikiempty" }, `${t("wiki.state.error")}: ${state.error}`);
+        // issue #607 的正面修复：这一屏不许再「只有一句话」。给出可直接操作的
+        // 入口（填绝对路径 → 生成），CLI 降级成「可选方式」，且写明命令不在
+        // PATH 里、收的是路径参数（以前那句「在仓库目录里跑」把人引去 cd）。
         if (state.phase === "no-repo") {
           return h("div", { className: "mneme-panel mneme-wikiempty" },
             h("div", { className: "mneme-wikiemptytitle" }, t("wiki.panel.open")),
-            h("p", null, t("wiki.empty.noRepo")));
+            h("p", null, t("wiki.empty.noRepo")),
+            h("div", { className: "mneme-wikirunrow" },
+              h("input", {
+                className: "mneme-wikisearch",
+                placeholder: t("wiki.empty.pathPlaceholder"),
+                value: state.path,
+                onChange: (e) => { const v = e.target.value; setState((s) => ({ ...s, path: v })); },
+                onKeyDown: (e) => { if (e.key === "Enter") runPaths(); },
+                "aria-label": t("wiki.empty.pathPlaceholder")
+              }),
+              h("button", {
+                type: "button",
+                className: "mneme-wikibtn",
+                disabled: state.rebuilding,
+                onClick: runPaths
+              }, state.rebuilding ? t("wiki.empty.generating") : t("wiki.empty.generate"))),
+            state.rebuildNote && h("div", { className: "mneme-wikirebuildnote mneme-wikirunwide" }, state.rebuildNote),
+            h("details", { className: "mneme-wikicli" },
+              h("summary", null, t("wiki.empty.cliSummary")),
+              h("pre", { className: "mneme-wikipre" }, t("wiki.empty.cliCmd")),
+              h("p", { className: "mneme-wikiclihint" }, t("wiki.empty.cliHint"))),
+            state.toast && h("div", { className: "mneme-toast", role: "status" }, state.toast));
         }
         if (state.phase === "pick-repo") {
           return h("div", { className: "mneme-panel mneme-wikiempty" },
@@ -11341,9 +11732,17 @@ window.__ModuleLoader__.load({
             ? h("div", { className: "mneme-wikiempty" }, state.page.error === "page-missing" ? t("wiki.state.pageMissing") : state.page.error)
             : renderWikiMarkdown(state.page.content))
           : h("div", { className: "mneme-wikiempty" }, t("wiki.state.pickPage"));
+        const flags = state.flags || {};
+        const t1Running = !!(state.t1 && state.t1.state === "running");
         return h("div", { className: "mneme-panel" },
           h("div", { className: "mneme-wikibar" },
             h("span", { className: "mneme-wikirepo" }, state.repo ? `${state.repo.name}` : ""),
+            // 契约 §3.5-2：stale 的仓库行内显示「代码已变」。徽章复用 pending
+            // 那一档（warn 语义 = 你看到的和你以为的不一样），不新造颜色。
+            staleRepo && h("span", {
+              className: "mneme-badge mneme-badge--pending mneme-wikistale",
+              title: t("wiki.stale.hint")
+            }, t("wiki.stale")),
             h("input", {
               className: "mneme-wikisearch",
               placeholder: t("wiki.search.placeholder"),
@@ -11358,6 +11757,34 @@ window.__ModuleLoader__.load({
               title: t("wiki.rebuild.hint"),
               onClick: rebuild
             }, state.rebuilding ? t("wiki.rebuilding") : t("wiki.rebuild")),
+            // 顶栏两枚开关：和设置卡里那两行是同一对键，面板里就地切是为了
+            // 不必跳出浏览页去设置里找。禁用态只在读不到 /features 时出现。
+            h("button", {
+              type: "button",
+              className: `mneme-wikibtn mneme-wikitoggle${flags.chorographyAutoRefresh ? " mneme-on" : ""}`,
+              role: "switch",
+              "aria-checked": String(!!flags.chorographyAutoRefresh),
+              title: t("memory.features.chorographyAutoRefresh.hint"),
+              onClick: () => toggleFlag("chorographyAutoRefresh")
+            }, `${t("wiki.flag.autoRefresh")}${flags.chorographyAutoRefresh ? " ✓" : ""}`),
+            h("button", {
+              type: "button",
+              className: `mneme-wikibtn mneme-wikitoggle${flags.chorographyT1FromPanel ? " mneme-on" : ""}`,
+              role: "switch",
+              "aria-checked": String(!!flags.chorographyT1FromPanel),
+              title: t("memory.features.chorographyT1FromPanel.hint"),
+              onClick: () => toggleFlag("chorographyT1FromPanel")
+            }, `${t("wiki.flag.t1FromPanel")}${flags.chorographyT1FromPanel ? " ✓" : ""}`),
+            // 发起按钮与上面那枚闸分开：闸关着时按钮仍在（点了回 409 disabled
+            // 并给出「去哪儿打开」），比直接隐藏更好——藏起来的话用户只会觉得
+            // 「按钮没了」，而不会知道是哪个开关。
+            h("button", {
+              type: "button",
+              className: "mneme-wikibtn",
+              disabled: t1Running,
+              title: t("memory.features.chorographyT1FromPanel.hint"),
+              onClick: startT1
+            }, t1Running ? t("wiki.t1.running") : t("wiki.t1")),
             state.rebuildNote && h("span", { className: "mneme-wikirebuildnote" }, state.rebuildNote)),
           h("div", { className: "mneme-wikibody" },
             h("nav", { className: "mneme-wikitree", "aria-label": t("wiki.tree.title") }, tree),
@@ -11370,8 +11797,366 @@ window.__ModuleLoader__.load({
                   onClick: () => { setState((s) => ({ ...s, hits: [] })); openPage(hit.slug); }
                 }, `${hit.slug} · ${hit.section} · L${hit.line}: ${hit.excerpt}`)),
                 h("button", { type: "button", className: "mneme-wikihitsclose", onClick: () => setState((s) => ({ ...s, hits: [] })) }, "×")),
-              pageBody)));
+              pageBody)),
+          // T1 进度：只在一个 job 活着时出现。数字来自 /choro/t1/status 的
+          // modules 汇总，不再由面板自己数模块——那是任务侧的真相。
+          t1Running && h("div", { className: "mneme-wikit1bar", role: "status" },
+            `${t("wiki.t1.running")} ${t("wiki.t1.progress")} ${(state.t1.modules && state.t1.modules.done) || 0}/${(state.t1.modules && state.t1.modules.total) || "?"} ${t("wiki.t1.modules")}`),
+          state.toast && h("div", { className: "mneme-toast", role: "status" }, state.toast));
       }
+
+    // 知识库座位的图标：书脊 + 书页，和「仓库地志」的地图图标区分开。
+    // 这里只画 glyph，不自己造按钮（宿主 PanelRow 负责点击，见座位块注释）。
+    function KbGlyph({ size }) {
+      const s = size || 18;
+      return h("span", { className: "mneme-paneliglyph", "aria-hidden": "true" },
+        h("svg", {
+          width: s, height: s, viewBox: "0 0 24 24", fill: "none",
+          stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round"
+        },
+          h("path", { d: "M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z" }),
+          h("path", { d: "M8 3v18" }),
+          h("path", { d: "M12 8h5" })));
+    }
+
+    // 知识库面板（契约 §3.6）。两种失败态必须自己解释清楚，#607 的教训：
+    // 空态本身就是说明书——说清这是什么、属于哪个插件、去哪儿打开。
+    // 后端每 409/503 都有专门文案，绝不把裸状态码丢到屏幕上。
+    function KbMainPanel({ t }) {
+      const [state, setState] = useState({
+        phase: "loading", error: null,
+        collections: [], active: null, docs: [], docsPhase: "idle",
+        newKey: "", newTitle: "", confirming: null,
+        kind: "file", source: "", title: "",
+        ingesting: false, toast: "",
+        repos: [], repoId: null, modules: [], moduleSlug: "",
+        search: "", searching: false, hits: []
+      });
+      // 选中集合同时存一份 ref：load() 是异步的，等它回来时 state.active 可能
+      // 已经被用户点走，只有 ref 能给出「刚刚那个」。
+      const activeRef = useRef(null);
+      const patch = useCallback((next) => setState((s) => ({ ...s, ...next })), []);
+      // readJson 每次渲染都是新函数，故意不进任何依赖数组：进了会把下面每一个
+      // useCallback 每帧重建，再顺着 useEffect 把请求打成死循环。
+      const readJson = async (res) => {
+        let data = {};
+        try { data = await res.json(); } catch (e) { data = {}; }
+        return { status: res.status, data };
+      };
+
+      const loadDocs = useCallback(async (key) => {
+        if (!key) { patch({ active: null, docs: [], docsPhase: "idle" }); return; }
+        patch({ docsPhase: "loading" });
+        try {
+          const res = await apiFetch("/api/dsh-mneme/kb/docs?collection=" + encodeURIComponent(key));
+          const json = await readJson(res);
+          if (json.status === 200) patch({ docs: json.data.docs || [], docsPhase: "ready" });
+          else patch({ docs: [], docsPhase: "error", error: String(json.status) });
+        } catch (e) {
+          patch({ docs: [], docsPhase: "error", error: String((e && e.message) || e) });
+        }
+      }, [patch]);
+
+      const load = useCallback(async () => {
+        try {
+          const res = await apiFetch("/api/dsh-mneme/kb/collections");
+          const json = await readJson(res);
+          // 409 = 开关没开，503 = 宿主没装配。两者都给说明书，不给状态码。
+          if (json.status === 409) { patch({ phase: "disabled" }); return; }
+          if (json.status === 503) { patch({ phase: "unavailable" }); return; }
+          if (json.status !== 200) { patch({ phase: "error", error: String(json.status) }); return; }
+          const cols = json.data.collections || [];
+          const prev = activeRef.current;
+          const next = prev && cols.some((c) => c.key === prev) ? prev : (cols.length > 0 ? cols[0].key : null);
+          activeRef.current = next;
+          patch({ phase: "ready", collections: cols, active: next, error: null });
+          await loadDocs(next);
+        } catch (e) {
+          patch({ phase: "error", error: String((e && e.message) || e) });
+        }
+      }, [patch, loadDocs]);
+
+      const loadModules = useCallback(async (repoId) => {
+        try {
+          const res = await apiFetch("/api/dsh-mneme/choro/modules?repo=" + encodeURIComponent(repoId));
+          const json = await readJson(res);
+          if (json.status !== 200) { patch({ modules: [], moduleSlug: "" }); return; }
+          const mods = json.data.modules || [];
+          patch({ modules: mods, moduleSlug: mods.length > 0 ? mods[0].slug : "" });
+        } catch (e) {
+          patch({ modules: [], moduleSlug: "" });
+        }
+      }, [patch]);
+
+      // 地志页导入要的是磁盘上的绝对路径，根路径只有 /choro/repos 有（契约 §3.2），
+      // 所以这里单取一份仓库列表，不去改 /choro/page 的回执形状（那是两处真源）。
+      const loadRepos = useCallback(async () => {
+        try {
+          const res = await apiFetch("/api/dsh-mneme/choro/repos");
+          const json = await readJson(res);
+          if (json.status !== 200) { patch({ repos: [] }); return; }
+          const repos = json.data.repos || [];
+          patch({ repos });
+          if (repos.length > 0 && repos[0].id !== undefined) {
+            patch({ repoId: repos[0].id });
+            await loadModules(repos[0].id);
+          }
+        } catch (e) {
+          patch({ repos: [] });
+        }
+      }, [patch, loadModules]);
+
+      const createCollection = useCallback(async () => {
+        const key = String(state.newKey || "").trim();
+        if (!key) { patch({ toast: t("kb.col.key") }); return; }
+        try {
+          const res = await apiFetch("/api/dsh-mneme/kb/collections", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key, title: String(state.newTitle || "").trim() || key, description: "" })
+          });
+          const json = await readJson(res);
+          if (json.status !== 200 || json.data.ok !== true) {
+            patch({ toast: t("kb.load.failed") + ": " + (json.data.detail || json.data.error || json.status) });
+            return;
+          }
+          activeRef.current = key;
+          patch({ newKey: "", newTitle: "", confirming: null });
+          await load();
+        } catch (e) {
+          patch({ toast: t("kb.load.failed") + ": " + String((e && e.message) || e) });
+        }
+      }, [state.newKey, state.newTitle, patch, load, t]);
+
+      // 删除是两步：第一次只把按钮换成「再点一次确认」。不用 window.confirm，
+      // 宿主 webview 里它不一定存在（同样的理由见 :6134 的批注）。
+      const deleteCollection = useCallback(async (key) => {
+        if (state.confirming !== key) { patch({ confirming: key }); return; }
+        try {
+          const res = await apiFetch("/api/dsh-mneme/kb/collections?key=" + encodeURIComponent(key), { method: "DELETE" });
+          const json = await readJson(res);
+          if (json.status !== 200 || json.data.ok !== true) {
+            patch({ toast: t("kb.load.failed") + ": " + (json.data.detail || json.data.error || json.status), confirming: null });
+            return;
+          }
+          if (activeRef.current === key) activeRef.current = null;
+          patch({ confirming: null });
+          await load();
+        } catch (e) {
+          patch({ toast: t("kb.load.failed") + ": " + String((e && e.message) || e), confirming: null });
+        }
+      }, [state.confirming, patch, load, t]);
+
+      const ingest = useCallback(async () => {
+        const collection = state.active;
+        if (!collection) { patch({ toast: t("kb.empty.collections") }); return; }
+        const kind = state.kind === "choro" ? "choro_page" : state.kind;
+        let source = String(state.source || "").trim();
+        if (kind === "choro_page") {
+          const repo = (state.repos || []).filter((r) => r.id === state.repoId)[0] || null;
+          const mod = (state.modules || []).filter((m) => m.slug === state.moduleSlug)[0] || null;
+          const rootPath = repo && repo.rootPath ? String(repo.rootPath) : "";
+          const relPath = mod && mod.relPath ? String(mod.relPath) : "";
+          // 拿不到根路径就停在这儿给一句人话——发出去必然是 404，用户只会更糊涂。
+          if (!rootPath) { patch({ toast: t("kb.repo.noPath") }); return; }
+          // 缺 relPath 与「没选模块」是两件事：前者是后端回执少字段、后者是用户没点。
+          // 用同一句「请先选模块」会把真 bug 说成操作问题（#607 那种假成功），故分开。
+          if (!relPath) { patch({ toast: t("kb.repo.noRelPath") }); return; }
+          source = rootPath.replace(/[\\/]+$/, "") + "/" + relPath.replace(/^[\\/]+/, "");
+        }
+        if (!source) { patch({ toast: t("kb.doc.source") }); return; }
+        patch({ ingesting: true });
+        try {
+          const body = { collection, kind, source };
+          const title = String(state.title || "").trim();
+          if (title) body.title = title;
+          const res = await apiFetch("/api/dsh-mneme/kb/ingest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+          });
+          const json = await readJson(res);
+          if (json.status !== 200 || json.data.ok !== true) {
+            patch({ ingesting: false, toast: t("kb.doc.failed") + ": " + (json.data.detail || json.data.error || json.status) });
+            return;
+          }
+          // skipped 是幂等命中（同 relKey + 同 sha256），不是失败，别混成一种回声。
+          const note = json.data.skipped === true
+            ? t("kb.doc.skipped")
+            : t("kb.doc.done") + ": " + (json.data.chunks || 0) + " " + t("kb.col.chunks");
+          patch({ ingesting: false, source: "", title: "", toast: note });
+          await load();
+        } catch (e) {
+          patch({ ingesting: false, toast: t("kb.doc.failed") + ": " + String((e && e.message) || e) });
+        }
+      }, [state, patch, load, t]);
+
+      const runSearch = useCallback(async () => {
+        const query = String(state.search || "").trim();
+        if (!query) { patch({ hits: [] }); return; }
+        patch({ searching: true });
+        try {
+          const body = state.active ? { query, collection: state.active } : { query };
+          const res = await apiFetch("/api/dsh-mneme/kb/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+          });
+          const json = await readJson(res);
+          if (json.status !== 200) {
+            patch({ searching: false, toast: t("kb.load.failed") + ": " + (json.data.detail || json.data.error || json.status) });
+            return;
+          }
+          patch({ searching: false, hits: json.data.hits || [] });
+        } catch (e) {
+          patch({ searching: false, toast: t("kb.load.failed") + ": " + String((e && e.message) || e) });
+        }
+      }, [state.search, state.active, patch, t]);
+
+      useEffect(() => { load(); }, [load]);
+      // toast 自带计时器：它是回声，不该一直挂在页脚上占位置。
+      useEffect(() => {
+        if (!state.toast) return undefined;
+        const timer = setTimeout(() => patch({ toast: "" }), 2500);
+        return () => clearTimeout(timer);
+      }, [state.toast, patch]);
+
+      if (state.phase === "loading") {
+        return h("div", { className: "mneme-panel mneme-wikiempty" },
+          h("div", { className: "mneme-wikiemptytitle" }, t("kb.panel.open")),
+          h("p", null, t("wiki.state.loading")));
+      }
+      if (state.phase === "disabled") {
+        return h("div", { className: "mneme-panel mneme-wikiempty" },
+          h("div", { className: "mneme-wikiemptytitle" }, t("kb.panel.open")),
+          h("p", null, t("kb.col.intro")),
+          h("p", null, t("kb.empty.disabled")));
+      }
+      if (state.phase === "unavailable") {
+        return h("div", { className: "mneme-panel mneme-wikiempty" },
+          h("div", { className: "mneme-wikiemptytitle" }, t("kb.panel.open")),
+          h("p", null, t("kb.empty.unavailable")));
+      }
+      if (state.phase === "error") {
+        return h("div", { className: "mneme-panel mneme-wikiempty" },
+          h("div", { className: "mneme-wikiemptytitle" }, t("kb.panel.open")),
+          h("p", null, t("kb.load.failed") + ": " + (state.error || "")),
+          h("p", null, t("kb.empty.disabled")));
+      }
+
+      const collectionItems = state.collections.map((c) => h("button", {
+        key: c.key,
+        type: "button",
+        className: "mneme-wikitreeitem" + (state.active === c.key ? " mneme-active" : ""),
+        title: c.description || c.key,
+        onClick: () => {
+          activeRef.current = c.key;
+          patch({ active: c.key, hits: [], confirming: null });
+          loadDocs(c.key);
+        }
+      }, (c.title || c.key) + " · " + (c.docs || 0) + t("kb.col.docs") + " / " + (c.chunks || 0) + t("kb.col.chunks")));
+
+      const docRows = state.docs.map((d) => h("div", { key: d.relKey || d.title, className: "mneme-kbdocrow" },
+        h("span", { className: "mneme-kbdoctitle" }, d.title || d.relKey),
+        h("span", { className: "mneme-kbdocmeta" }, [d.kind, d.bytes ? d.bytes + "B" : "", d.indexedAt || "", d.status && d.status !== "ok" ? d.status : ""].filter(Boolean).join(" · ")),
+        d.error && h("span", { className: "mneme-kbdocmeta" }, d.error)));
+
+      return h("div", { className: "mneme-panel" },
+        h("div", { className: "mneme-wikibar" },
+          h("span", { className: "mneme-wikirepo" }, t("kb.panel.open")),
+          h("input", {
+            className: "mneme-wikisearch",
+            value: state.search,
+            placeholder: t("wiki.search.placeholder"),
+            "aria-label": t("wiki.search.placeholder"),
+            onChange: (e) => patch({ search: e.target.value }),
+            onKeyDown: (e) => { if (e.key === "Enter") runSearch(); }
+          }),
+          h("button", { type: "button", className: "mneme-wikibtn", disabled: state.searching, onClick: runSearch },
+            state.searching ? t("wiki.state.loading") : t("kb.search"))),
+        h("div", { className: "mneme-wikibody" },
+          h("nav", { className: "mneme-wikitree mneme-kbcol", "aria-label": t("kb.col.title") },
+            h("div", { className: "mneme-kbcolhead" }, t("kb.col.title")),
+            state.collections.length === 0 && h("p", { className: "mneme-kbcolhead" }, t("kb.empty.collections")),
+            collectionItems,
+            h("div", { className: "mneme-kbcolnew" },
+              h("input", {
+                className: "mneme-kbkey", value: state.newKey,
+                placeholder: t("kb.col.key"), "aria-label": t("kb.col.key"),
+                onChange: (e) => patch({ newKey: e.target.value }),
+                onKeyDown: (e) => { if (e.key === "Enter") createCollection(); }
+              }),
+              h("input", {
+                className: "mneme-kbkey", value: state.newTitle,
+                placeholder: t("kb.col.name"), "aria-label": t("kb.col.name"),
+                onChange: (e) => patch({ newTitle: e.target.value })
+              }),
+              h("button", { type: "button", className: "mneme-btn", onClick: createCollection }, t("kb.col.create")),
+              state.active && h("button", {
+                type: "button",
+                className: "mneme-btn",
+                onClick: () => deleteCollection(state.active)
+              }, state.confirming === state.active ? t("kb.col.deleteConfirm") : t("kb.col.delete")))),
+          h("div", { className: "mneme-wikipage" },
+            state.hits.length > 0 && h("div", { className: "mneme-wikihits" },
+              state.hits.map((hit, idx) => h("div", { key: idx, className: "mneme-wikihit" },
+                [hit.collection, hit.relKey, hit.heading, hit.line ? "L" + hit.line : ""].filter(Boolean).join(" · ") + ": " + (hit.excerpt || ""))),
+              h("button", { type: "button", className: "mneme-wikihitsclose", onClick: () => patch({ hits: [] }) }, "×")),
+            h("p", { className: "mneme-kbcolhead" }, t("kb.col.intro")),
+            h("div", { className: "mneme-kbform" },
+              h("select", {
+                className: "mneme-select", value: state.kind, "aria-label": t("kb.doc.kind"),
+                onChange: (e) => {
+                  const kind = e.target.value;
+                  patch({ kind });
+                  // 只有切到「从地志页导入」时才去拉仓库，别让普通入库也背上 choro 的请求。
+                  if (kind === "choro" && state.repos.length === 0) loadRepos();
+                }
+              },
+                h("option", { value: "file" }, t("kb.doc.kind.file")),
+                h("option", { value: "url" }, t("kb.doc.kind.url")),
+                h("option", { value: "choro" }, t("kb.doc.kind.choro"))),
+              state.kind === "choro"
+                ? h(react.Fragment, null,
+                  h("select", {
+                    className: "mneme-select",
+                    value: state.repoId === null || state.repoId === undefined ? "" : String(state.repoId),
+                    "aria-label": t("kb.repo.pick"),
+                    onChange: (e) => {
+                      const raw = e.target.value;
+                      const repo = state.repos.filter((r) => String(r.id) === String(raw))[0] || null;
+                      const id = repo ? repo.id : null;
+                      patch({ repoId: id, modules: [], moduleSlug: "" });
+                      if (id !== null) loadModules(id);
+                    }
+                  },
+                    state.repos.length === 0 && h("option", { value: "" }, t("kb.repo.none")),
+                    state.repos.map((r) => h("option", { key: r.id, value: String(r.id) }, r.name || r.rootPath || String(r.id)))),
+                  h("select", {
+                    className: "mneme-select", value: state.moduleSlug, "aria-label": t("kb.repo.module"),
+                    onChange: (e) => patch({ moduleSlug: e.target.value })
+                  },
+                    state.modules.length === 0 && h("option", { value: "" }, t("kb.repo.pickFirst")),
+                    state.modules.map((m) => h("option", { key: m.slug, value: m.slug }, m.title || m.slug))))
+                : h("input", {
+                  className: "mneme-kbkey", value: state.source,
+                  placeholder: t("kb.doc.source"), "aria-label": t("kb.doc.source"),
+                  onChange: (e) => patch({ source: e.target.value }),
+                  onKeyDown: (e) => { if (e.key === "Enter") ingest(); }
+                }),
+              h("input", {
+                className: "mneme-kbkey", value: state.title,
+                placeholder: t("kb.doc.titleField"), "aria-label": t("kb.doc.titleField"),
+                onChange: (e) => patch({ title: e.target.value })
+              }),
+              h("button", { type: "button", className: "mneme-btn", disabled: state.ingesting || !state.active, onClick: ingest },
+                state.ingesting ? t("kb.doc.ingesting") : t("kb.doc.ingest"))),
+            h("div", { className: "mneme-kbsechead" }, t("kb.doc.title")),
+            state.docsPhase === "loading" && h("p", { className: "mneme-kbdocmeta" }, t("wiki.state.loading")),
+            state.docsPhase !== "loading" && state.docs.length === 0 && h("p", { className: "mneme-kbdocmeta" }, t("kb.empty.docs")),
+            docRows)),
+        state.toast && h("div", { className: "mneme-toast", role: "status" }, state.toast));
+    }
 
       // 两套宿主形态，二选一，靠宿主是否声明了 sidebar.panellist 判定：
       //  · 宿主内整页面板（首选）：sidebar.panellist 出图标、main 出中列整页。
@@ -11436,11 +12221,27 @@ window.__ModuleLoader__.load({
           name: "main",
           key: "dsh-mneme-wiki"
         }, () => h(WikiMainPanel, { t }));
+        // 知识库第三个座位（契约 §3.6）。和上面两个同理：id 与 key 逐字相同，
+        // 否则宿主 selectPanel(id) 在 main 槽里找不到 entry 直接抛。
+        // 座位无条件注册，开关只管内容层——这样「未启用」能自己解释去哪儿开，
+        // 而不是让入口凭空消失（#607 的另一种写法）。
+        const disposeKbGlyph = ctx.slots.register({
+          name: "sidebar.panellist",
+          id: "dsh-mneme-kb",
+          order: 62,
+          label: () => t("kb.panel.open")
+        }, (props) => h(KbGlyph, { size: props && props.size }));
+        const disposeKbMain = ctx.slots.register({
+          name: "main",
+          key: "dsh-mneme-kb"
+        }, () => h(KbMainPanel, { t }));
         return () => {
           disposeGlyph();
           disposeMain();
           disposeWikiGlyph();
           disposeWikiMain();
+          disposeKbGlyph();
+          disposeKbMain();
           // 座位被撤（宿主折叠该槽 / 换宿主形态）时把回落装回去：两条路径都
           // 只靠各自的 inject 触发，谁不动谁就永远停在「没有入口」的状态。
           mountFooterSeat();

@@ -538,6 +538,15 @@ export const Config = z.object({
   conflictFreezeEnabled: z.boolean().default(false),
   // Maximum number of frozen conflicts to keep pending for manual review.
   conflictFreezeMaxPending: z.natural().min(1).max(1000).default(100),
+  // Issue #603 第 4 层（自动裁决档）：freeze 模式里相似度极高的同 scope 对直接
+  // 裁决（保留新条、归档旧条），不进人工队列——人只看模糊地带。默认关：这是
+  // 会归档记忆的自动动作，必须显式打开。
+  //   实测口径（live 库 345 条有相似度的历史行）：>=0.95 只有 20 条（5.8%），
+  //   >=0.94 是 28 条（8.1%）。所以这一档减量约一半的峰值，减不到个位数；
+  //   阈值留在配置里就是为了让人按自己队列的分布调，而不是信一个拍脑袋的数。
+  //   跨 scope 对永不自动裁决：归属是用户的决定（v0.8.1 #170 的既有约束）。
+  conflictAutoResolveEnabled: z.boolean().default(false),
+  conflictAutoResolveMinSimilarity: z.number().min(0.85).max(1).default(0.95),
 
   // --- entity gene (v0.3.0) -----------------------------------------------
   // Opt-in: when false (default) nothing in the pipeline extracts entities.
@@ -1061,6 +1070,25 @@ export const Config = z.object({
   // 是预设不是强制，用户显式勾选仍然赢。注入段本身极轻（几十行文本），不额外
   // 占用轻量档预算的考量见键注释末句。
   profileFactsEnabled: z.boolean().default(false),
+
+  // chorography 面板闭环（2026-11-08 kb-qoder parity，契约见
+  // docs/plans/2026-11-08-kb-qoder-parity.md §3.1）。三个键都是「面板能不能替人
+  // 动手」的授权闸，与上面的 chorographyEnabled（子系统总闸）分层：总闸关着时
+  // 它们一律不生效，所以不必再进 LIGHT_MODE_OFF —— 轻量档要压的是「每轮付多少」，
+  // 而这三个键管的是「谁按下了重跑按钮」，关了也省不下一次调用，反倒让面板在
+  // 轻量档里静默少一块可操作区（同 chorographyEnabled 的定性与理由）。
+  //
+  // 过期的仓库在面板上直接刷新（POST /choro/run 的 refresh）。默认关：一次 T0 重跑
+  // 会扫整个仓库并重写 .chorography/ 下的页面，属于「改动工作区」的动作，不该在
+  // 没人要求时被面板顺手触发。
+  chorographyAutoRefresh: z.boolean().default(false),
+  // 面板发起 T1（POST /choro/t1）。默认**开**：这是面板闭环的主路径，关掉等于面板
+  // 上那个按钮永远是死的；真花钱的那一步仍由用户点按钮触发，且有
+  // chorographyEnabled 总闸在前面。需要「只读面板」的部署可以单独关它。
+  chorographyT1FromPanel: z.boolean().default(true),
+  // kb 子系统（知识库问答，B 线实现）的总闸。本车道只登记键与白名单，接线由后续
+  // 车道做——先有键才能让 /features 稳定暴露 false，客户端不至于静默少键。
+  kbEnabled: z.boolean().default(false),
 
   // #539 逐会话无痕：总开关默认关，保持旧用户行为；子代理选择器默认开，但总开关
   // 未开时不生效。手动名单是精确的 session id 匹配。
