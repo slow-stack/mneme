@@ -793,7 +793,15 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 顶层扁平原值 "light"，不需要 NESTED_FLAG_PATHS 条目）= 113。
   // 「Agent 眼中的你」自动事实新增 profileFactsEnabled（dream 后逐卡维护 + 手动轮
   // + 注入段的顶层总闸；顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 114。
-  assert.equal(Object.keys(data.effective).length, 114);
+  // 2026-11-08 kb-qoder parity（契约 §3.1）新增 chorographyAutoRefresh /
+  // chorographyT1FromPanel / kbEnabled（面板闭环的两个授权闸 + kb 子系统总闸；
+  // 三个都是顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 117。
+  assert.equal(Object.keys(data.effective).length, 117);
+  // 三个新键的默认值单独钉一遍：计数锁只钉数量，钉不住值（缺省值翻转时
+  // 面板会静默换上一套授权语义），这里补上值这一层。
+  assert.equal(data.effective.chorographyAutoRefresh, false);
+  assert.equal(data.effective.chorographyT1FromPanel, true);
+  assert.equal(data.effective.kbEnabled, false);
   assert.equal(data.effective.chorographyEnabled, false);
   assert.equal(data.effective.chorographyInject, "light");
   assert.equal(data.effective.dreamSkipInvalid, true);

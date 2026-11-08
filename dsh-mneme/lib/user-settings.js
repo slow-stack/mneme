@@ -36,6 +36,11 @@ export function escapePromptVars(config, text) {
  * 按会话身份取人格卡。返回 `{ card, source }`，`source` 是给面板解释「用的哪张卡」的
  * 读数，不参与判定。
  *
+ * 寻址维度（#606 起是两维）：`sessionId`（绑会话卡）优先于 `agentId`（按预设建卡）。
+ * 理由是具体性——会话比预设更具体，而 DS Bot 这类宿主里 `agentPreset` 恒为
+ * `"standard"`（`ds-bot/src/host/roster.js:72-80` 强制写入，实测 50 个会话里 43 个是
+ * 它），若让 byAgent 优先，则谁给 `standard` 建一张卡就会盖掉所有按会话建的卡。
+ *
  * `strict`（config.personaStrictAddressing，默认关）决定「有身份、没这张身份的卡」
  * 与「这张卡被显式关掉」这两种情况：
  * - 关（现状）：落 default 卡。default 于是变成「所有没建卡的 agent 都能拿到它」，
@@ -44,20 +49,25 @@ export function escapePromptVars(config, text) {
  *   身份」的会话（无名会话本来就是 default 卡的受众）。
  * 默认关是有意的：这是一次口径变更，不能让老用户的注入文本在升级后静默变化。
  *
- * 严格模式有一格例外（#587）：`byAgent` **整体为空**时仍回落 default。两种处境必须
- * 分开——「建了卡、只是没这张身份的卡」是真该按 none 处理（否则关掉一张卡等于没关），
- * 而「一张身份卡都没建」时 default 是用户手里唯一的一张卡，按 none 处理等于把它永久
- * 废掉，且面板不报错。DS Bot 这类宿主里所有 bot 会话共用 `agentPreset: "standard"`
- * （`ds-bot/src/host/roster.js:72-80` 强制写入），用户按 bot 名字建卡永远不会命中，
- * 于是必然落进后一种处境：开了严格寻址就把唯一那张卡静默关死。
+ * 严格模式有一格例外（#587）：两维**都没建过卡**时仍回落 default。两种处境必须
+ * 分开——「建了卡、只是没这一张的卡」是真该按 none 处理（否则关掉一张卡等于没关），
+ * 而「一张卡都没建」时 default 是用户手里唯一的一张卡，按 none 处理等于把它永久
+ * 废掉，且面板不报错。判据看两维合起来的键数（#606 起）：只建了 bySession 卡时，
+ * 一个按 byAgent 寻址的会话同样不该被 default 兜底——用户已经做过分区了。
  */
-export function resolvePersonaCard(settings, agentId, { strict = false } = {}) {
+export function resolvePersonaCard(settings, agentId, { strict = false, sessionId = null } = {}) {
   const store = settings.getPersona();
   const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "";
+  const sid = typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : "";
+  // 第一维：绑会话卡（最具体）
+  const sessionCard = sid ? store.bySession?.[sid] : null;
+  if (sessionCard && sessionCard.enabled === true) return { card: sessionCard, source: "bySession" };
+  // 第二维：按预设/身份建的卡
   const card = id ? store.byAgent[id] : null;
   if (card && card.enabled === true) return { card, source: "byAgent" };
-  // 严格模式只在「确实建过身份卡」时才拒绝兜底：一张都没建时兜底是唯一的出路。
-  if (id && strict && Object.keys(store.byAgent).length > 0) return { card: {}, source: "none" };
+  // 严格模式只在「确实建过卡」时才拒绝兜底：两维都空时兜底是唯一的出路。
+  const anyCard = Object.keys(store.byAgent ?? {}).length > 0 || Object.keys(store.bySession ?? {}).length > 0;
+  if ((id || sid) && strict && anyCard) return { card: {}, source: "none" };
   return { card: store.default, source: "default" };
 }
 
@@ -78,20 +88,22 @@ export function resolveFactsCard(factsStore, agentId, { strict = false } = {}) {
 }
 
 /**
- * 渲染整块「用户设置」。`agentId` 是会话身份（解析不到传 null → 走 default 兜底）。
+ * 渲染整块「用户设置」。`agentId` 是会话身份（解析不到传 null → 走 default 兜底），
+ * `sessionId` 是绑会话卡的键（#606；解析不到传 null）。
  * `factsProvider` 是 profile-facts 域的读口（返回 `{ default: [...], byAgent: {...} }`），
  * 可选；**开关与 provider 双闸**——profileFactsEnabled 关着时连 provider 都不调，
- * 「关」必须是零读数而不是「读了不渲染」。返回 `{ text, source, agent, configGate }`：
+ * 「关」必须是零读数而不是「读了不渲染」。返回 `{ text, source, agent, session, configGate }`：
  * `text` 为最终注入文本（全空时 ""），`configGate` 是 personaEnabled 的现值——面板
  * 要靠它解释「卡开着为什么没生效」。
  */
-export function renderUserSettingsBlock({ settings, config, agentId = null, factsProvider = null }) {
+export function renderUserSettingsBlock({ settings, config, agentId = null, sessionId = null, factsProvider = null }) {
   const language = langOf(config);
   const profile = settings.getProfile().trim();
   const rules = settings.getRules();
   const enabled = config?.personaEnabled === true;
+  const strict = config?.personaStrictAddressing === true;
   const resolved = enabled
-    ? resolvePersonaCard(settings, agentId, { strict: config?.personaStrictAddressing === true })
+    ? resolvePersonaCard(settings, agentId, { strict, sessionId })
     : { card: {}, source: "default" };
   const persona = resolved.card;
   // 段（#600）：每一行都带上它的 kind 与写回所需的定位信息，供面板按段读、按段改。
@@ -115,11 +127,20 @@ export function renderUserSettingsBlock({ settings, config, agentId = null, fact
       const value = persona.replyStyle.trim();
       personaLines.push({ kind: "personaReplyStyle", field: "replyStyle", value, text: STR.personaReplyStyleLine[language](value) });
     }
+    // scenario / mesExample（#606）：只有设置了才输出，未设置时本块逐字节不变。
+    if (typeof persona.scenario === "string" && persona.scenario.trim()) {
+      const value = persona.scenario.trim();
+      personaLines.push({ kind: "personaScenario", field: "scenario", value, text: STR.personaScenarioLine[language](value) });
+    }
+    if (typeof persona.mesExample === "string" && persona.mesExample.trim()) {
+      const value = persona.mesExample.trim();
+      personaLines.push({ kind: "personaMesExample", field: "mesExample", value, text: STR.personaMesExampleLine[language](value) });
+    }
   }
   // 事实段：开关关 / 无 provider / 该卡没事实三种情况都不渲染，注入文本与
   // 未启用事实时逐字节一致（老用户零变化）。
   const factsResolved = config?.profileFactsEnabled === true && typeof factsProvider === "function"
-    ? resolveFactsCard(factsProvider(), agentId, { strict: config?.personaStrictAddressing === true })
+    ? resolveFactsCard(factsProvider(), agentId, { strict })
     : { facts: [], source: "none" };
   const factLines = [];
   if (factsResolved.facts.length) {
@@ -146,8 +167,9 @@ export function renderUserSettingsBlock({ settings, config, agentId = null, fact
     }
   }
   const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : null;
+  const sid = typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : null;
   if (!profile && !rules.length && !personaLines.length && !factLines.length) {
-    return { text: "", segments: [], source: resolved.source, agent: id, configGate: enabled };
+    return { text: "", segments: [], source: resolved.source, agent: id, session: sid, configGate: enabled };
   }
   const segments = [{ kind: "header", text: STR.userSettingsHeader[language] }];
   segments.push(...personaLines);
@@ -155,5 +177,5 @@ export function renderUserSettingsBlock({ settings, config, agentId = null, fact
   segments.push(...factLines);
   for (const rule of rules) segments.push({ kind: "rule", value: rule, text: STR.ruleLine[language](rule) });
   const lines = segments.map((s) => s.text);
-  return { text: escapePromptVars(config, lines.join("\n")), segments, source: resolved.source, agent: id, configGate: enabled };
+  return { text: escapePromptVars(config, lines.join("\n")), segments, source: resolved.source, agent: id, session: sid, configGate: enabled };
 }
