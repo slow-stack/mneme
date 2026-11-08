@@ -1058,6 +1058,25 @@ export const Config = z.object({
   // 占用轻量档预算的考量见键注释末句。
   profileFactsEnabled: z.boolean().default(false),
 
+  // chorography 面板闭环（2026-11-08 kb-qoder parity，契约见
+  // docs/plans/2026-11-08-kb-qoder-parity.md §3.1）。三个键都是「面板能不能替人
+  // 动手」的授权闸，与上面的 chorographyEnabled（子系统总闸）分层：总闸关着时
+  // 它们一律不生效，所以不必再进 LIGHT_MODE_OFF —— 轻量档要压的是「每轮付多少」，
+  // 而这三个键管的是「谁按下了重跑按钮」，关了也省不下一次调用，反倒让面板在
+  // 轻量档里静默少一块可操作区（同 chorographyEnabled 的定性与理由）。
+  //
+  // 过期的仓库在面板上直接刷新（POST /choro/run 的 refresh）。默认关：一次 T0 重跑
+  // 会扫整个仓库并重写 .chorography/ 下的页面，属于「改动工作区」的动作，不该在
+  // 没人要求时被面板顺手触发。
+  chorographyAutoRefresh: z.boolean().default(false),
+  // 面板发起 T1（POST /choro/t1）。默认**开**：这是面板闭环的主路径，关掉等于面板
+  // 上那个按钮永远是死的；真花钱的那一步仍由用户点按钮触发，且有
+  // chorographyEnabled 总闸在前面。需要「只读面板」的部署可以单独关它。
+  chorographyT1FromPanel: z.boolean().default(true),
+  // kb 子系统（知识库问答，B 线实现）的总闸。本车道只登记键与白名单，接线由后续
+  // 车道做——先有键才能让 /features 稳定暴露 false，客户端不至于静默少键。
+  kbEnabled: z.boolean().default(false),
+
   // #539 逐会话无痕：总开关默认关，保持旧用户行为；子代理选择器默认开，但总开关
   // 未开时不生效。手动名单是精确的 session id 匹配。
   sessionGateEnabled: z.boolean().default(false),
