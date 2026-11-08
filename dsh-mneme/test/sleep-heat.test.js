@@ -124,3 +124,52 @@ test("demote tier (30-90d) fires when the type's λ is cold enough", async () =>
   assert.ok(after._full_content, "全文停放在 _full_content");
   store.close();
 });
+
+// Issue #603 台账虚报：phaseDemotion 原来不看 demoteToSummary 的返回值、无条件
+// push，于是「已经降级过的行」每轮都被选中、空转一次事务、再被记成降级了一次。
+// live 库实测 12 轮里虚报 43%–99%（有一轮报 81 条、81 条全是重复）。这里钉住两件事：
+//   1. 已降级的行不再进 demoted（台账不再虚报）；
+//   2. 它也不再被重复处理（省掉那 138 次空事务）。
+test("#603 demotion: an already-demoted memory is not reported as demoted again", async () => {
+  const { store, service } = setup();
+  const mem = saveMemory(service, "旧会话记录", "可压缩的历史内容", "history", 2);
+  const config = sleepConfig({ heatTypeDecay: { history: 0.05 } });
+
+  // 第一轮：真的降级一次。
+  const first = await run([[mem, 40]], service, config);
+  assert.ok(first.demoted.includes(mem.id), "the first run really demotes it");
+  assert.ok(store.getById(mem.id)._full_content, "full text moved to _full_content");
+
+  // 第二轮：同一行已经降级过 → 台账里不能再出现它。
+  const second = await run([[mem, 40]], service, config);
+  assert.equal(second.demoted.includes(mem.id), false,
+    "an already-demoted row must not be reported as demoted again");
+  assert.deepEqual(second.demoted, [], "the ledger must be empty, not a replay of the same row");
+  assert.equal(second.status, "noop", "nothing happened, so the phase is a noop");
+  store.close();
+});
+
+// 与上一条互补：被 demoteToSummary 的 minRefTimeMs 挡下（快照之后被 recall 摸热）
+// 也返回 undefined。这种「判定该降、实际没动」必须单独报出来，不能混进 demoted。
+test("#603 demotion: a row the freshness guard spares is counted as skipped, not demoted", async () => {
+  const { store, service } = setup();
+  const mem = saveMemory(service, "刚被摸过的记录", "正文内容", "history", 2);
+  const config = sleepConfig({ heatTypeDecay: { history: 0.05 } });
+
+  // 把 demoteToSummary 包一层，模拟「事务内发现这行刚被 recall 摸热」→ 返回 undefined。
+  const realDemote = service.demoteToSummary.bind(service);
+  let touched = 0;
+  service.demoteToSummary = (...args) => {
+    touched++;
+    return undefined;
+  };
+
+  const demotion = await run([[mem, 40]], service, config);
+  service.demoteToSummary = realDemote;
+
+  assert.ok(touched > 0, "the demote path was attempted");
+  assert.equal(demotion.demoted.includes(mem.id), false, "nothing landed, so nothing is reported as demoted");
+  assert.equal(demotion.demoteSkipped, 1, "the spared row is reported separately");
+  assert.equal(demotion.status, "noop", "no work landed");
+  store.close();
+});

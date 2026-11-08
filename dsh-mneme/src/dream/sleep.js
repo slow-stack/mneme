@@ -442,9 +442,87 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     // 只报「有位置但被每轮上限截住」的那部分：队列满时再追一轮也没用，
     // 报成 backlog 会让调度器空转（catchup 上限 24 轮）。
     const perRunSkipped = withinRoom.length - pool.length;
+    // Issue #603 第 4 层（自动裁决档，默认关）：相似度极高的**同 scope** 对不再
+    // 进人工队列，直接保留新条、归档旧条。人只看模糊地带。
+    //
+    // 为什么阈值留在配置里而不是写死 0.95：live 库 345 条有相似度的历史行里，
+    // >=0.95 只有 20 条（5.8%）、>=0.94 是 28 条（8.1%）。这一档减的是峰值，
+    // 不是把队列清零——把阈值当常量会让人以为「开了就没事了」。
+    //
+    // 为什么跨 scope 永不自动：归属是用户的决定（v0.8.1 #170），归档败者可能
+    // 销毁某归属下的唯一副本。这条约束比减负重要。
+    //
+    // 为什么用 supersede 而不是 conflict：conflict 会把「（已否决旧信息：…）」
+    // 追加到**赢家**正文，而赢家正是留下来的那条；近重复对再叠一段互相引用的
+    // 注记，等于用冗余污染幸存记忆。supersede 把可追溯性留在被归档的一侧，
+    // 赢家正文一字不动（#126 的原设计）。
+    const autoEnabled = config.conflictAutoResolveEnabled === true;
+    const autoMin = typeof config.conflictAutoResolveMinSimilarity === "number"
+      ? config.conflictAutoResolveMinSimilarity
+      : 0.95;
+    const autoPool = [];
+    const parkPool = [];
+    for (const p of pool) {
+      const eligible = autoEnabled
+        && !isCrossScopePair(p)
+        && typeof p.similarity === "number"
+        && p.similarity >= autoMin;
+      (eligible ? autoPool : parkPool).push(p);
+    }
+    let autoResolved = 0;
+    let autoFailed = 0;
+    // 这一档不走 LLM，没有批次时间戳可借（judgedAt 在下面那条 LLM 通路里才定义），
+    // 自己取一个：台账要能回答「什么时候判的」，不能留空。
+    const autoJudgedAt = new Date().toISOString();
+    // 保留较新的那条：updated_at 相等时用 id 兜底，保证同一对每次判出同一个
+    // 赢家（否则重放会来回翻，归档的可能是刚刚保住的那条）。
+    const newerFirst = (p) => {
+      const au = p.a.updated_at ?? "";
+      const bu = p.b.updated_at ?? "";
+      if (au !== bu) return au > bu ? [p.a, p.b] : [p.b, p.a];
+      return p.a.id > p.b.id ? [p.a, p.b] : [p.b, p.a];
+    };
+    for (const p of autoPool) {
+      const [winner, loser] = newerFirst(p);
+      const snapshot = new Map();
+      for (const m of [winner, loser]) {
+        snapshot.set(m.id, { updated_at: m.updated_at, content: m.content, title: m.title });
+      }
+      // trustEpistemicWeighting 显式关掉：它会在 applySupersede 里按 epistemic_status
+      // 交换赢家，那会让「保留新条」这条契约随数据漂移。自动档的承诺必须是确定的。
+      const { applied, conflicts } = applyDecisions(
+        [{ action: "supersede", winner: winner.id, loser: loser.id }],
+        service, logger, snapshot, { ...config, trustEpistemicWeighting: false }
+      );
+      if (applied > 0) {
+        autoResolved++;
+        // 记进机器侧台账：自动动作也要能事后回答「这一对什么时候、被谁判的」。
+        try {
+          service.saveConflictReviewed?.({
+            run_id: runId, memory_a: p.a.id, memory_b: p.b.id,
+            outcome: "supersede", judged_at: autoJudgedAt
+          });
+        } catch (error) {
+          logger?.warn?.(`dsh-mneme sleep: failed to record auto-resolved pair ${p.a.id}/${p.b.id}: ${String(error)}`);
+        }
+        continue;
+      }
+      // 自动档没落地 → 退回人工队列。绝不因为「本来想自动处理」就把这一对丢掉，
+      // 那才是真正的静默丢失。两种没落地的原因都要说清楚：
+      //   · CAS 冲突（applyDecisions 记在 conflicts 里）——两侧在快照之后被改过，
+      //     自动判的赢家可能已经不是该保的那条，人看一眼最稳；
+      //   · 其余异常（记在 failures 里）——写库失败之类，重试无意义就交给人。
+      autoFailed++;
+      logger?.warn?.(
+        `dsh-mneme sleep: auto-resolve skipped ${p.a.id}/${p.b.id}`
+        + (conflicts.length ? ` (concurrent edit)` : "")
+        + `, falling back to manual review`
+      );
+      parkPool.push(p);
+    }
     let frozen = 0;
     let parkFailed = 0;
-    for (const p of pool) {
+    for (const p of parkPool) {
       const outcome = parkPair(p, isCrossScopePair(p) ? scopeReason(p) : simReason(p));
       if (outcome === "fresh") frozen++;
       else if (outcome === "failed") parkFailed++;
@@ -453,8 +531,12 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       logger?.warn?.(`dsh-mneme sleep: conflict freeze queue full (${pendingNow}/${maxPending}), skipped ${pendingSkipped} conflict(s)`);
     }
     return {
-      status: frozen > 0 ? "ok" : "noop",
+      status: frozen > 0 || autoResolved > 0 ? "ok" : "noop",
       frozen,
+      // 自动裁决掉的不进队列，但确实是这一轮干的活——分开报，别混进 frozen
+      // （frozen 的语义是「给人工队列新增了几行」，混进去面板就会虚高）。
+      autoResolved,
+      autoFailed,
       // 写库抛错的对既没入队也不算落地：clean=false，别让调度器当「追完了」。
       clean: parkFailed === 0,
       scopeCandidates: crossPairs.length,
@@ -794,6 +876,9 @@ function phaseDemotion(service, config, logger, runId, signal = null) {
   const compressCut = Date.now() - compressDays * 86400000;
   const demoted = [];
   const archived = [];
+  // 被判定为「该降级」但 demoteToSummary 实际没动手的条数。单独报出来：
+  // 它正是「台账说降级了 N 条、实际一条没变」那个缺口，藏起来就等于没修。
+  let demoteSkipped = 0;
   // 政策轴在这里尤其要紧：下面两行会真改归档面（setArchived / demoteToSummary）。
   // 把过滤放在循环之外、而不是在循环体里 continue：一旦将来有人在循环体里加
   // 副作用（现已有），漏掉那条 continue 就是静默改到被按下的行。
@@ -803,6 +888,10 @@ function phaseDemotion(service, config, logger, runId, signal = null) {
   for (const m of withoutPaused(service, service.all().filter((m) => !isImportedRow(m)))) {
     if (signal?.aborted) break;
     if (m.archived || m.forgotten) continue;
+    // 已降级的行不必再进判定链：demoteToSummary 见到 _full_content 会直接返回，
+    // 但这行每轮仍会被选中、空转一次事务，再被下面无条件 push 进 demoted。
+    // 提前挡掉既省事务，也让「这一轮到底动了什么」从源头算得准（#603 台账）。
+    if (m._full_content) continue;
     const ref = m.last_accessed_at ?? m.created_at;
     if (!ref) continue;
     const t = new Date(ref).getTime();
@@ -825,14 +914,20 @@ function phaseDemotion(service, config, logger, runId, signal = null) {
     } else if (t < archiveCut) {
       // minRefTimeMs re-checks freshness inside demoteToSummary's transaction:
       // a recall touch landing after this snapshot must not demote the memory.
-      service.demoteToSummary(m.id, makeSummary(m), { minRefTimeMs: archiveCut });
-      demoted.push(m.id);
+      //
+      // 返回值必须看：demoteToSummary 在三种情况下返回 undefined（行不存在、
+      // 已降级、快照后被 recall 摸热），而这里原来无条件 push，于是台账把没发生
+      // 的降级记成发生了——live 库实测 12 轮里虚报 43%–99%（#603）。
+      const updated = service.demoteToSummary(m.id, makeSummary(m), { minRefTimeMs: archiveCut });
+      if (updated) demoted.push(m.id);
+      else demoteSkipped++;
     }
   }
   return {
     status: demoted.length || archived.length ? "ok" : "noop",
     demoted,
-    archived
+    archived,
+    demoteSkipped
   };
 }
 

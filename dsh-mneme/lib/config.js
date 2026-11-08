@@ -525,6 +525,15 @@ export const Config = z.object({
   conflictFreezeEnabled: z.boolean().default(false),
   // Maximum number of frozen conflicts to keep pending for manual review.
   conflictFreezeMaxPending: z.natural().min(1).max(1000).default(100),
+  // Issue #603 第 4 层（自动裁决档）：freeze 模式里相似度极高的同 scope 对直接
+  // 裁决（保留新条、归档旧条），不进人工队列——人只看模糊地带。默认关：这是
+  // 会归档记忆的自动动作，必须显式打开。
+  //   实测口径（live 库 345 条有相似度的历史行）：>=0.95 只有 20 条（5.8%），
+  //   >=0.94 是 28 条（8.1%）。所以这一档减量约一半的峰值，减不到个位数；
+  //   阈值留在配置里就是为了让人按自己队列的分布调，而不是信一个拍脑袋的数。
+  //   跨 scope 对永不自动裁决：归属是用户的决定（v0.8.1 #170 的既有约束）。
+  conflictAutoResolveEnabled: z.boolean().default(false),
+  conflictAutoResolveMinSimilarity: z.number().min(0.85).max(1).default(0.95),
 
   // --- entity gene (v0.3.0) -----------------------------------------------
   // Opt-in: when false (default) nothing in the pipeline extracts entities.

@@ -302,6 +302,97 @@ test("#603 freeze: a pair parked without a measured similarity stays unknown", a
   store.close();
 });
 
+// Issue #603 第 4 层：自动裁决档。相似度极高的**同 scope** 对直接保留新条、归档
+// 旧条，不进人工队列；跨 scope 对永不自动（归属是用户的决定）。
+test("#603 auto-resolve: a near-duplicate same-scope pair is superseded without entering the queue", async () => {
+  const { store, service, vectorIndex } = setup();
+  const [first, second] = savePair(service, vectorIndex, "缓存策略A", "缓存策略B", { agent: "coder" }, { agent: "coder" });
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictAutoResolveEnabled: true, conflictAutoResolveMinSimilarity: 0.95 }),
+    { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null
+  );
+  assert.equal(result.status, "ok");
+
+  // 队列必须是空的：这一对根本没进人工队列。
+  assert.equal(store.countConflictPending(), 0, "auto-resolved pairs must not reach the manual queue");
+  // 不猜 id 顺序，用归档状态反推哪一侧被取代。
+  const archivedIds = [first.id, second.id].filter((id) => store.getById(id).archived);
+  assert.equal(archivedIds.length, 1, "exactly one side is archived");
+  const loser = archivedIds[0];
+  const survivor = [first.id, second.id].find((id) => !store.getById(id).archived);
+  // 留下的那条正文一字不动（supersede 把注记写在败者侧，不污染幸存者）。
+  assert.doesNotMatch(store.getById(survivor).content, /已被取代|superseded by/,
+    "the survivor's body must stay clean");
+  // 败者侧带可追溯注记（#126 的原设计）。
+  assert.match(store.getById(loser).content, /已被取代|superseded by/,
+    "traceability lives on the archived side");
+  // 机器台账也要有一条：自动动作必须能事后回答「什么时候、被谁判的」。
+  const reviewed = typeof store.listConflictReviewed === "function" ? store.listConflictReviewed({ limit: 10 }) : [];
+  assert.ok(reviewed.length >= 1, "auto-resolve must leave a ledger row");
+  assert.equal(reviewed[0].outcome, "supersede");
+  store.close();
+});
+
+test("#603 auto-resolve: a cross-scope pair is never auto-adjudicated, even at similarity 1", async () => {
+  const { store, service, vectorIndex } = setup();
+  const [xNew, xOld] = savePair(service, vectorIndex, "部署清单A", "部署清单B", { agent: "coder" }, { agent: "writer" });
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictAutoResolveEnabled: true, conflictAutoResolveMinSimilarity: 0.95 }),
+    { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null
+  );
+  assert.equal(result.status, "ok");
+
+  // 向量完全相同（余弦 1），但归属不同 → 只能停车等人判。
+  assert.equal(store.countConflictPending(), 1, "cross-scope pair still goes to the manual queue");
+  assert.equal(store.getById(xOld.id).archived, false, "cross-scope loser is never auto-archived");
+  assert.equal(store.getById(xNew.id).archived, false, "cross-scope winner is untouched too");
+  store.close();
+});
+
+test("#603 auto-resolve: with the switch off nothing is auto-adjudicated", async () => {
+  const { store, service, vectorIndex } = setup();
+  savePair(service, vectorIndex, "主题A", "主题B", { agent: "coder" }, { agent: "coder" });
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictAutoResolveEnabled: false }),
+    { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null
+  );
+  assert.equal(result.status, "ok");
+  assert.equal(store.countConflictPending(), 1, "with the switch off, nothing is auto-adjudicated");
+  store.close();
+});
+
+test("#603 auto-resolve: a failed adjudication falls back to the manual queue instead of vanishing", async () => {
+  const { store, service, vectorIndex } = setup();
+  savePair(service, vectorIndex, "回退A", "回退B", { agent: "coder" }, { agent: "coder" });
+
+  // 让 supersede 一定失败：把 applyDecisions 依赖的 update 打断。
+  const realUpdate = service.update.bind(service);
+  let calls = 0;
+  service.update = (...args) => {
+    calls++;
+    throw new Error("write refused");
+  };
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictAutoResolveEnabled: true, conflictAutoResolveMinSimilarity: 0.95 }),
+    { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null
+  );
+  service.update = realUpdate;
+
+  assert.ok(calls > 0, "the auto path did try to apply");
+  // 自动档没落地 → 这一对必须退回人工队列。丢掉它才是真正的静默丢失。
+  assert.equal(store.countConflictPending(), 1, "a failed auto-resolve must land in the manual queue");
+  assert.equal(result.status, "ok", "the run itself is not a failure");
+  store.close();
+});
+
 test("non-freeze with an LLM: cross-scope pair bypasses adjudication; same-scope pair is adjudicated", async () => {
   const { store, service, vectorIndex } = setup();
   const [yNew, yOld] = savePair(service, vectorIndex, "缓存策略A", "缓存策略B", { agent: "coder" }, { agent: "coder" });

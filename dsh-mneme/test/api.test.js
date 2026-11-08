@@ -766,7 +766,9 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 顶层扁平原值 "light"，不需要 NESTED_FLAG_PATHS 条目）= 113。
   // 「Agent 眼中的你」自动事实新增 profileFactsEnabled（dream 后逐卡维护 + 手动轮
   // + 注入段的顶层总闸；顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 114。
-  assert.equal(Object.keys(data.effective).length, 114);
+  // issue #603 第 4 层新增 conflictAutoResolveEnabled（自动裁决档开关；顶层布尔键）
+  // 与 conflictAutoResolveMinSimilarity（阈值，走 NUMBER_RANGES 表）= 116。
+  assert.equal(Object.keys(data.effective).length, 116);
   assert.equal(data.effective.chorographyEnabled, false);
   assert.equal(data.effective.chorographyInject, "light");
   assert.equal(data.effective.dreamSkipInvalid, true);

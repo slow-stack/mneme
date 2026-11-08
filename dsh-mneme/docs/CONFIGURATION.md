@@ -236,6 +236,8 @@
 | `reflectionFailureRetentionDays` | `90` | `failure_memories`（失败/纠正记录）的启动期清理保留天数（1–3650） | 只读 bundle 配置：未进 feature_flags 白名单，面板改不了。`dsh-mneme reclaim` 不读这个键（它对三个表用同一条 `--older-than`，本表不在其中）。此前这个 90 天是写死的（#275 伞下的欠账） |
 | `conflictFreezeEnabled` | `false` | 冲突不自动合并、冻结待人工复核 | opt-in |
 | `conflictFreezeMaxPending` | `100` | 冻结队列上限（≤1000） | — |
+| `conflictAutoResolveEnabled` | `false` | 相似度极高的**同 scope** 重复对自动裁决（保留新条、归档旧条），不进人工队列 | opt-in。会归档记忆，所以默认关；跨 scope 对永不自动（归属是用户的决定，#170）。用 supersede 而非 conflict：注记写在被归档侧，幸存记忆正文不动 |
+| `conflictAutoResolveMinSimilarity` | `0.95` | 自动裁决的相似度门槛（0.85–1） | 实测 live 库 345 条有相似度的历史行里 ≥0.95 只占 5.8%、≥0.94 占 8.1%——这一档减的是峰值，不是把队列清零。低于 0.85 就不是「重复」而是「相似」，不该自动归档任何一条 |
 
 ## 实体
 
