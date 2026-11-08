@@ -2705,6 +2705,18 @@ function setupDiary(config, diary = { compose: async () => ({ ok: true }) }) {
   return { routes, emitSession }; 
 }
 
+/**
+ * 一个在本平台一定是绝对路径的项目根。
+ *
+ * 这里原先写死 `D:/proj`：Windows 上 isAbsolute() 为真、Linux/macOS 上为假，
+ * 于是 src/api.js 的 diaryProject() 直接回 400 project-not-absolute，ubuntu 22/24
+ * 与 test-host-legacy 两腿全红，而本机 Windows 全绿——产品代码没错，是断言不可移植。
+ * tmpdir() 在两种平台上都返回绝对路径，用例才真正等价。
+ */
+function portableProjectRoot() {
+  return join(tmpdir(), "mneme-diary-compose");
+}
+
 /** 抓一个 compose 调用参数的 spy：既要知道调没调、也要知道传了什么。 */
 function composeSpy() {
   const calls = [];
@@ -2832,16 +2844,17 @@ test("POST /diary/compose 带 ?agent= 时把它作为 agentId 传下去", async 
   const { calls, diary } = composeSpy();
   const { routes } = setupDiary({ diaryEnabled: true }, diary);
   const route = findHandler(routes, "/api/dsh-mneme/diary/compose");
+  const project = portableProjectRoot();
   const res = new FakeRes();
   await route.handler(
-    req("/api/dsh-mneme/diary/compose?project=" + encodeURIComponent("D:/proj") + "&agent=amarre", "POST", {}),
+    req("/api/dsh-mneme/diary/compose?project=" + encodeURIComponent(project) + "&agent=amarre", "POST", {}),
     res
   );
   assert.equal(res.statusCode, 200);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].agentId, "amarre");
   assert.equal(calls[0].trigger, "manual");
-  assert.equal(calls[0].projectRoot, "D:/proj");
+  assert.equal(calls[0].projectRoot, project);
 });
 
 test("POST /diary/compose 只带 ?session= 时按会话账本反查身份", async () => {
@@ -2850,9 +2863,10 @@ test("POST /diary/compose 只带 ?session= 时按会话账本反查身份", asyn
   // 账本由真实的 session/event 通道喂料，不手搓内部结构。
   emitSession({ id: "sess-1", header: { agentPreset: "attune" } });
   const route = findHandler(routes, "/api/dsh-mneme/diary/compose");
+  const project = portableProjectRoot();
   const res = new FakeRes();
   await route.handler(
-    req("/api/dsh-mneme/diary/compose?project=" + encodeURIComponent("D:/proj") + "&session=sess-1", "POST", {}),
+    req("/api/dsh-mneme/diary/compose?project=" + encodeURIComponent(project) + "&session=sess-1", "POST", {}),
     res
   );
   assert.equal(res.statusCode, 200);
@@ -2863,8 +2877,9 @@ test("POST /diary/compose 两个身份参数都没有时传 null，不假装自�
   const { calls, diary } = composeSpy();
   const { routes } = setupDiary({ diaryEnabled: true }, diary);
   const route = findHandler(routes, "/api/dsh-mneme/diary/compose");
+  const project = portableProjectRoot();
   const res = new FakeRes();
-  await route.handler(req("/api/dsh-mneme/diary/compose?project=" + encodeURIComponent("D:/proj"), "POST", {}), res);
+  await route.handler(req("/api/dsh-mneme/diary/compose?project=" + encodeURIComponent(project), "POST", {}), res);
   assert.equal(res.statusCode, 200);
   assert.equal(calls[0].agentId, null, "不知道是谁 ≠ 以为是 default");
 });
