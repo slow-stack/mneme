@@ -322,13 +322,22 @@ window.__ModuleLoader__.load({
         "wiki.rebuild.hint": "重跑 T0 确定性骨架（秒级；T1 语义富化请用 CLI --t1）。注意：富化页会退回骨架，语义段需重新生成",
         "wiki.rebuild.modules": "个模块",
         "wiki.rebuild.pages": "页",
-        "wiki.empty.noRepo": "还没有登记的仓库。先在仓库目录里跑 `dsh-mneme-choro <仓库路径> --apply` 生成骨架页并登记，然后回到这里。",
-        "wiki.empty.disabled": "chorography（仓库地志）未启用：在「设置」里打开「仓库地志」后重启 DSH 生效。",
+        // issue #607：原文案「在仓库目录里跑 dsh-mneme-choro …」有两处错——插件装在
+        // profile 依赖里，shim 不在 PATH（照抄必然 command not found）；参数与 cwd 无关
+        // （cd 进去裸跑只打印帮助）。现在改成「贴一条能直接跑的命令」，命令串由
+        // /choro/repos 的 cliCommand 从服务端带下来（面板 bundle 拿不到 CLI 路径）。
+        "wiki.empty.noRepo": "还没有登记任何仓库。先把下面这条命令复制到终端跑一次（用你自己的仓库路径替换占位符），它会生成骨架页并登记；跑完回到这里刷新即可。",
+        "wiki.empty.noRepo.fallback": "找不到插件自带的命令入口。用 `node <你安装目录>/node_modules/@modusensus/dsh-mneme/bin/dsh-mneme-choro.mjs <仓库路径> --apply` 跑一次。",
+        "wiki.empty.noRepo.where": "仓库地志属于本插件（记忆库），开关在「设置 → 记忆库设置 → 功能开关 → 它什么时候写进去」里的「仓库地志（chorography）」，打开后要重启 DSH 才生效。",
+        "wiki.empty.copy": "复制命令",
+        "wiki.empty.copied": "已复制",
+        "wiki.empty.copyFailed": "复制失败，请手动选中命令文本。",
+        "wiki.empty.disabled": "chorography（仓库地志）未启用。它属于本插件（记忆库）：打开「设置 → 记忆库设置 → 功能开关 → 它什么时候写进去 → 仓库地志（chorography）」，然后重启 DSH 生效。",
         "wiki.empty.pickRepo": "已登记多个仓库，选一个：",
         "wiki.search.placeholder": "在页面里检索…",
         "wiki.state.loading": "加载中…",
         "wiki.state.pickPage": "从左侧选一个模块页。",
-        "wiki.state.pageMissing": "索引还在、磁盘页面缺失：在仓库目录重跑一次 `dsh-mneme-choro <仓库路径> --apply` 即可重建。",
+        "wiki.state.pageMissing": "索引还在、磁盘上的页面文件缺失。点顶部「重建骨架」即可重新生成（不用离开这个面板）。",
         "wiki.state.unavailable": "chorography 查询装配不可用（宿主环境缺件）。",
         "wiki.state.error": "加载失败",
         "wiki.tree.title": "模块",
@@ -1214,7 +1223,7 @@ window.__ModuleLoader__.load({
         "memory.status.token.op.dream_summarize": "总览摘要",
         "memory.status.token.op.sleep_pattern": "睡眠模式",
         "memory.status.token.op.write_admission": "写入准入",
-        "memory.status.error": "加载失败"
+        "memory.status.error": "加载失败",
       },
       en: {
         "memory.panel.empty": "No memories yet",
@@ -1227,13 +1236,18 @@ window.__ModuleLoader__.load({
         "wiki.rebuild.hint": "Re-runs the deterministic T0 skeleton (seconds; T1 semantic enrichment stays on the CLI --t1). Note: enriched pages fall back to skeleton — regenerate semantics afterwards",
         "wiki.rebuild.modules": "modules",
         "wiki.rebuild.pages": "pages",
-        "wiki.empty.noRepo": "No repository registered yet. Run `dsh-mneme-choro <repo-path> --apply` inside the repository to generate skeleton pages and register it, then come back here.",
-        "wiki.empty.disabled": "chorography (Repo Atlas) is disabled: turn it on under Settings and restart DSH to apply.",
+        "wiki.empty.noRepo": "No repository registered yet. Copy the command below into a terminal once (swap the placeholder for your own repository path) — it generates the skeleton pages and registers the repo. Refresh here afterwards.",
+        "wiki.empty.noRepo.fallback": "Could not locate the bundled command entry. Run `node <your install dir>/node_modules/@modusensus/dsh-mneme/bin/dsh-mneme-choro.mjs <repo path> --apply`.",
+        "wiki.empty.noRepo.where": "The repo atlas belongs to this plugin (memory store). The switch lives under Settings → Mneme settings → Features → When it gets written → Repo atlas (chorography); restart DSH after turning it on.",
+        "wiki.empty.copy": "Copy command",
+        "wiki.empty.copied": "Copied",
+        "wiki.empty.copyFailed": "Copy failed — select the command text manually.",
+        "wiki.empty.disabled": "chorography (Repo Atlas) is disabled. It belongs to this plugin (memory store): enable Settings → Mneme settings → Features → When it gets written → Repo atlas (chorography), then restart DSH.",
         "wiki.empty.pickRepo": "Multiple repositories registered — pick one:",
         "wiki.search.placeholder": "Search pages…",
         "wiki.state.loading": "Loading…",
         "wiki.state.pickPage": "Pick a module page from the tree.",
-        "wiki.state.pageMissing": "Index exists but the page file is missing: re-run `dsh-mneme-choro <repo-path> --apply` to rebuild.",
+        "wiki.state.pageMissing": "The index is there but the page file is missing. Use the “Rebuild” button in the top bar to regenerate it — no need to leave this panel.",
         "wiki.state.unavailable": "chorography queries are unavailable (host wiring missing).",
         "wiki.state.error": "Failed to load",
         "wiki.tree.title": "Modules",
@@ -10799,7 +10813,7 @@ window.__ModuleLoader__.load({
       }
 
       function WikiMainPanel({ t }) {
-        const [state, setState] = useState({ phase: "loading", repos: [], repo: null, modules: [], edges: [], page: null, hits: [], q: "", selected: null, disabled: false, error: null, rebuilding: false, rebuildNote: null });
+        const [state, setState] = useState({ phase: "loading", repos: [], repo: null, modules: [], edges: [], page: null, hits: [], q: "", selected: null, disabled: false, error: null, rebuilding: false, rebuildNote: null, cliCommand: null, copied: false });
         // apiFetch 是裸 fetch：非 2xx 不抛错，返回 Response。这里统一解 JSON 并把
         // 状态码带回来——409 disabled（用户没开）/ 503 unavailable（装配缺件）
         // 各有各的空态文案（#497 的语义分叉在这里接住）。
@@ -10814,7 +10828,10 @@ window.__ModuleLoader__.load({
             if (status === 409) { setState((s) => ({ ...s, phase: "disabled" })); return; }
             if (status === 503) { setState((s) => ({ ...s, phase: "unavailable" })); return; }
             const repos = data.repos ?? [];
-            if (repos.length === 0) { setState((s) => ({ ...s, phase: "no-repo", repos: [] })); return; }
+            // #607：命令串由服务端算好（面板 bundle 拿不到 CLI 入口路径）。缺字段时
+            // 留 null，空态退回 fallback 文案——不在这里拼一条可能跑不起来的命令。
+            const cliCommand = typeof data.cliCommand === "string" && data.cliCommand ? data.cliCommand : null;
+            if (repos.length === 0) { setState((s) => ({ ...s, phase: "no-repo", repos: [], cliCommand })); return; }
             const ref = repoRef ?? (repos.length === 1 ? repos[0].id : null);
             if (ref === null) { setState((s) => ({ ...s, phase: "pick-repo", repos })); return; }
             const mod = await readJson(await apiFetch(`/api/dsh-mneme/choro/modules?repo=${encodeURIComponent(ref)}`));
@@ -10876,6 +10893,19 @@ window.__ModuleLoader__.load({
           }
         }, [state.repo, state.rebuilding, load, t]);
 
+        // 复制命令（#607）：issue 作者的原话是「用户怎么可能手动跑起来这个命令」。
+        // 光把命令写好不够——长路径手抄一遍就是一次抄错的机会，所以给复制按钮。
+        // 失败必须说出来：剪贴板在非安全上下文里不存在，静默失败等于点了没反应。
+        const copyCommand = useCallback(() => {
+          const text = state.cliCommand;
+          if (!text) return;
+          const done = () => { setState((s) => ({ ...s, copied: true })); announce(t("wiki.empty.copied")); setTimeout(() => setState((s) => ({ ...s, copied: false })), 1500); };
+          const failed = () => announce(t("wiki.empty.copyFailed"));
+          const clip = typeof navigator !== "undefined" ? navigator.clipboard : null;
+          if (clip && typeof clip.writeText === "function") { clip.writeText(text).then(done, failed); return; }
+          failed();
+        }, [state.cliCommand, t]);
+
         if (state.phase === "loading") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.state.loading"));
         if (state.phase === "disabled") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.empty.disabled"));
         if (state.phase === "unavailable") return h("div", { className: "mneme-panel mneme-wikiempty" }, t("wiki.state.unavailable"));
@@ -10883,7 +10913,13 @@ window.__ModuleLoader__.load({
         if (state.phase === "no-repo") {
           return h("div", { className: "mneme-panel mneme-wikiempty" },
             h("div", { className: "mneme-wikiemptytitle" }, t("wiki.panel.open")),
-            h("p", null, t("wiki.empty.noRepo")));
+            h("p", null, t("wiki.empty.noRepo")),
+            state.cliCommand
+              ? h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" } },
+                  h("code", { className: "mneme-set-token", style: { flex: 1, minWidth: 0, wordBreak: "break-all" } }, state.cliCommand),
+                  h("button", { className: "mneme-btn", type: "button", onClick: copyCommand }, state.copied ? t("wiki.empty.copied") : t("wiki.empty.copy")))
+              : h("code", { className: "mneme-set-token", style: { display: "block", marginTop: 8, wordBreak: "break-all" } }, t("wiki.empty.noRepo.fallback")),
+            h("p", { className: "mneme-set-hint", style: { marginTop: 10 } }, t("wiki.empty.noRepo.where")));
         }
         if (state.phase === "pick-repo") {
           return h("div", { className: "mneme-panel mneme-wikiempty" },

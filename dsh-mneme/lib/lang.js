@@ -474,24 +474,24 @@ export const STR = {
     zh: {
       off: "chorography（仓库地志）没开。在设置的「仓库地志」里打开后重启 DSH；开之前只有空态，没有数据可看。",
       noCwd: "拿不到这个会话的工作目录，无法判断你在哪个仓库里。",
-      noRepo: (cwd) => `当前工作目录没有登记过地志：${cwd}\n生成一份：dsh-mneme-choro <仓库路径> --apply（确定性骨架，零模型）`,
+      noRepo: (cwd, cmd) => `当前工作目录没有登记过地志：${cwd}\n生成一份：${cmd ?? "dsh-mneme-choro <仓库路径> --apply"}（确定性骨架，零模型）`,
       title: (repo, count, date) => `仓库地志 · ${repo}（${count} 个模块，生成于 ${date}）`,
       empty: "这个仓库还没扫出任何模块（可能全部被 plan.yaml 的 include/exclude 排掉了）。",
       truncated: (rest) => `……另有 ${rest} 个模块。完整提纲用工具 choro_module_map 看。`,
       fresh: (head) => `基线一致：当前 HEAD 就是 ${head}，地志没过期。`,
-      stale: (baseline, head) => `⚠️ 可能已过期：地志基线 ${baseline}，当前 HEAD ${head}。它只提示、不会自己重跑——要更新就手动跑 dsh-mneme-choro <仓库路径> --apply。`,
+      stale: (baseline, head, cmd) => `⚠️ 可能已过期：地志基线 ${baseline}，当前 HEAD ${head}。它只提示、不会自己重跑——要更新就手动跑 ${cmd ?? "dsh-mneme-choro <仓库路径> --apply"}。`,
       noGit: "读不到当前 HEAD（不是 git 仓库或 git 不可用），没法判断是否过期。",
       hint: "正文按模块读：先 choro_search 找命中，再 choro_read_page 取整页。重建、富化都走 CLI，不在这条命令里。"
     },
     en: {
       off: "Chorography (repo atlas) is off. Turn on the atlas switch in settings, then restart DSH; until then there is nothing to read.",
       noCwd: "Cannot determine the working directory of this session, so the repo cannot be resolved.",
-      noRepo: (cwd) => `No atlas registered for this working directory: ${cwd}\nBuild one: dsh-mneme-choro <repo path> --apply (deterministic skeleton, no model)`,
+      noRepo: (cwd, cmd) => `No atlas registered for this working directory: ${cwd}\nBuild one: ${cmd ?? "dsh-mneme-choro <repo path> --apply"} (deterministic skeleton, no model)`,
       title: (repo, count, date) => `Repo atlas · ${repo} (${count} modules, generated ${date})`,
       empty: "No modules were produced for this repo (plan.yaml include/exclude may have filtered everything).",
       truncated: (rest) => `...${rest} more modules. Use the choro_module_map tool for the full outline.`,
       fresh: (head) => `Baseline matches: HEAD is ${head}, the atlas is not stale.`,
-      stale: (baseline, head) => `Possibly stale: atlas baseline ${baseline}, current HEAD ${head}. It only warns and never rebuilds itself — rerun dsh-mneme-choro <repo path> --apply to refresh.`,
+      stale: (baseline, head, cmd) => `Possibly stale: atlas baseline ${baseline}, current HEAD ${head}. It only warns and never rebuilds itself — rerun ${cmd ?? "dsh-mneme-choro <repo path> --apply"} to refresh.`,
       noGit: "Cannot read HEAD (not a git repo, or git unavailable), so staleness is unknown.",
       hint: "Read bodies per module: choro_search to locate, choro_read_page to load a whole page. Rebuilds and enrichment stay in the CLI, not in this command."
     }

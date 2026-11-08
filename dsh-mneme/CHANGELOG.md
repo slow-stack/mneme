@@ -16,6 +16,15 @@
   - **测试盲区修复（CodeRabbit 2026-11-07 评审指出）**：`segments 拼回去等于未转义的整串` 这条用例原先只比「转义后的段拼装等于 `text`」，抓不到「某一段被提前转义」——`escapePromptVars` 是幂等的（`/[{}]{2,}/g` 只在连续花括号前插反斜杠，已插过的串不再匹配），提前转义一遍再整体转义一遍与只转义一遍逐字节相同。两处修法：① 人格用例的 `name` 改成 `"Amarre {{x}}"`（原来没有裸花括号，人格段被污染也无从暴露）；② 另取一份独立基线——同一套 23 种配置把 `escapePromptVariables` 关掉跑 `legacyRender`，段拼装必须等于它。两条缺一不可，已各自变异验证：只提前转义人格段 `text` → 有 `{{x}}` 时 1 红（本条用例），去掉 `{{x}}` 后 21/21 全绿（证明样例是承重的）；只提前转义画像段 `text` → 2 红（本条 + `段文本本身保持原样`）。
   - **不做**：不加路由、不碰 `setPersonaFor`、不改 `wordDiff`、不动事实段的两顶帽子（40 行 / 1200 字符）、不做面板 UI。第 2 期人格字段级写回 + 规则并发控制，第 3 期面板按段渲染与就地编辑（含 `wordDiff` 解 800 词上限与 hunk 分组层），第 4 期 `profile-extract` 输出段形状。
 
+## 🎨 面板
+
+- **仓库地志的指引改成「贴一条能直接跑的命令」，面板带复制按钮（#607）**。原本文案是「在仓库目录里跑 `dsh-mneme-choro <仓库路径> --apply`」，两处都是错的：插件装在 profile 依赖里，npm 只为**全局**安装把 shim 放进 PATH，`<profile>/node_modules/.bin` 不在 PATH 上，照抄必然 `command not found`；而参数与 cwd 无关，cd 进仓库裸跑只打印帮助、什么都不做。issue 作者的原话是「完全就是 AI 自己编的」。
+
+  - **命令串从插件自身位置推导，不信 PATH 也不信 cwd**：新增 `src/wiki/cli-hint.js`，从调用方的 `import.meta.url` 逐级上溯（上限 6 层）找「同时存在 `bin/dsh-mneme-choro.mjs` 与 `package.json`」的目录，产出 `node "<entry>" <repo> --apply`；Windows 用双引号、POSIX 用单引号并把内嵌单引号转成 `'\''`（安装路径带空格是常态）。找不到入口返回 `null`，调用方退回通用文案——不硬编一个假路径。**刻意不按固定 dirname 次数推导**：`src/` 与 `lib/` 同层、`src/wiki/` 在第二层、`bin/` 在第一层，写死层数只要有一处调用方挪位置就悄悄算错，而算错的表现正是又给一条跑不起来的命令。**也只给 `node <entry>` 一种形态**：`.bin` 的 shim 在 hoisted 与 pnpm isolated 两种 linker 下位置不同，猜错就是再给一条错的——宁可只给一条一定对的。
+  - **五个入口共用同一份推导**：面板空态（`GET /choro/repos` 新增 `cliCommand` 字段）、`/choro` 命令的「仓库没登记」、`/choro/page` 的 409 hint、三个基于 DSH 工具错误的 choro 工具（`choro_module_map` / `choro_read_page` / `choro_search` 的 repo 解析与 page-missing）、T1 的 `not-registered` 拒绝原因。面板 bundle 拿不到 CLI 路径，所以命令串由服务端算好一起下发；缺字段时面板显示 fallback 文案（`node <安装目录>/node_modules/@modusensus/dsh-mneme/bin/dsh-mneme-choro.mjs …`），不在前端再拼一条可能跑不起来的命令。
+  - **面板补三件事**：无仓库空态加「复制命令」按钮（`navigator.clipboard`，成功 `announce` 「已复制」1.5s 复位、失败明说「请手动选中」——非安全上下文里 `clipboard` 不存在，静默失败等于点了没反应）；`wiki.empty.noRepo.where` 点名开关位置「设置 → 记忆库设置 → 功能开关 → 它什么时候写进去 → 仓库地志（chorography）」并说明要重启；`wiki.state.pageMissing` 从「重跑 CLI」改成「点顶部『重建骨架』即可」（面板里本来就有那个按钮，让人离开面板去跑命令是多余的一步）。
+  - **验证**：新增 `test/wiki-cli-hint.test.js` 5 例——四个不同深度的真实模块位置必须收敛到同一个入口（写死层数的实现会在这里红）、推导出的入口必须真实存在且包根同时有 `bin/` 与 `package.json`、裁剪树（只有 `bin/` 或只有 `package.json`）返回 `null`、两种平台的引号与单引号转义逐字比对、以及**真的用推导出的入口 spawn 一次 `--help` 并断言退出码 0**（这条 issue 的验收标准就是「用户照着能跑起来」，字符串断言证明不了）。定向 135 例全绿；`npm run sync` 后 `lib/wiki/cli-hint.js` 同步产出、check-sync 96 个文件一致。
+
 ## [0.12.0] - 2026-11-07
 
 ## 🆕 新增
