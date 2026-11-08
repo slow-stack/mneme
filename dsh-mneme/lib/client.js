@@ -1144,6 +1144,9 @@ window.__ModuleLoader__.load({
         "memory.status.conflictQueue.emptyTitle": "暂无待确认冲突",
         "memory.status.conflictQueue.emptyBody": "当巩固发现两条互相矛盾或高度相似的记忆时，会先冻结在这里等你裁决，不会自动修改。裁决前双方都不参与注入。",
         "memory.status.conflictQueue.applyHintTitle": "确认后：保留方正文追加已否决注记，另一方归档",
+    // #603 第 3 层：列表被服务端上限截断时必须明说。徽章上的总数与列表行数
+    // 不一致、却没有任何提示，是最容易让人以为「就这些了」的假成功。
+    "memory.status.conflictQueue.truncated": "已显示 {shown}/{total}（按相似度从高到低，其余请先处理上面的）",
         "memory.status.workbench": "工作动态",
         "memory.status.dreamConsolidate": "记忆巩固",
         "memory.status.summarize": "总结提炼",
@@ -2092,6 +2095,7 @@ window.__ModuleLoader__.load({
         "memory.status.conflictQueue.emptyTitle": "No pending conflicts",
         "memory.status.conflictQueue.emptyBody": "When consolidation finds two contradictory or highly similar memories, it freezes them here for your review instead of changing anything automatically. Neither side participates in injection until resolved.",
         "memory.status.conflictQueue.applyHintTitle": "On confirm: a veto note is appended to the kept side and the other side is archived",
+    "memory.status.conflictQueue.truncated": "Showing {shown} of {total} (most similar first; clear these before the rest appear)",
         "memory.status.workbench": "Activity",
         "memory.status.dreamConsolidate": "Consolidation",
         "memory.status.summarize": "Summarization",
@@ -2693,6 +2697,7 @@ window.__ModuleLoader__.load({
       // 冲突集中处理队列（v0.8.0）：状态页的待确认冲突列表
       ".mneme-conflictq{display:flex;flex-direction:column;gap:10px}",
       ".mneme-conflictq-head{display:flex;align-items:center;gap:8px}",
+".mneme-conflictq-truncated{flex:1;font-size:12px;line-height:16px;color:var(--mneme-fg-dim);text-align:right}",
       ".mneme-conflict-item{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px}",
       ".mneme-conflict-reason{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary)}",
       ".mneme-conflict-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}",
@@ -7233,6 +7238,11 @@ window.__ModuleLoader__.load({
     // 队列为空时整块不渲染（不打扰无冲突实例）。
     function ConflictsQueue({ t }) {
       const [items, setItems] = useState(null);
+      // Issue #603 第 3 层：服务端一直返回 { items, total }，这里此前把 total 丢掉、
+      // 请求也不带 limit —— 面板列 50 条而徽章显示 60，第 51–60 条既翻不到也没有
+      // 任何提示（「假成功」）。total 现在存下来，items.length < total 时明说
+      // 「已显示 X/Y」，并一次请求取满服务端上限 200。
+      const [total, setTotal] = useState(null);
       const [loadError, setLoadError] = useState(false);
       const [busy, setBusy] = useState(false);
       // 展开态按冲突条目记（一对两侧同时展开，便于逐行对照）；复制态按
@@ -7247,12 +7257,18 @@ window.__ModuleLoader__.load({
         );
       };
       const load = (silent) => {
-        apiFetch("/api/dsh-mneme/conflicts")
+        // limit=200 = 服务端 Math.min(200, ...) 的上限（lib/api.js 的 conflicts 路由）。
+        apiFetch("/api/dsh-mneme/conflicts?limit=200")
           .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
-          .then((d) => { setItems(d.items || []); setLoadError(false); if (!silent) announce(t("memory.status.conflictQueue.refreshed")); })
+          .then((d) => {
+            setItems(d.items || []);
+            setTotal(typeof d.total === "number" ? d.total : null);
+            setLoadError(false);
+            if (!silent) announce(t("memory.status.conflictQueue.refreshed"));
+          })
           // #295 评审：加载失败 ≠ 没有冲突——错误态渲染错误卡而不是空态教育卡，
           // 不能让 500 把「暂时看不到」伪装成「没有冲突」。
-          .catch(() => { setItems([]); setLoadError(true); });
+          .catch(() => { setItems([]); setTotal(null); setLoadError(true); });
       };
       useEffect(() => { load(); }, []);
       // 参与记忆在别处被删除/编辑时（通用失效广播），队列联表出的那一侧会失真
@@ -7344,18 +7360,28 @@ window.__ModuleLoader__.load({
                 title: `${t("memory.status.conflictQueue.frozenTitle")} ${t("memory.status.conflictQueue.applyHintTitle")}`
               }, t("memory.status.conflictQueue.frozenBadge")))
       );
-      // #177：相似度从 reason 文本中回收（sleep 路径写「相似度 0.87」，dream 路径
-      // 是 LLM 自由文本）——回收得到就画进度条，否则不画，绝不显示编造的数字。
+      // #177：相似度优先取服务端新落列的值（#603 第 2 层）；老行与 LLM 裁决
+      // 路径没有该列 → 回落到从 reason 文本回收。回收不到就返回 null，绝不
+      // 显示编造的数字。
       // 防误报：只认「相似度 0.87 / similarity 0.87」这类锚定短语，不在全文里
       // 捞数字（否则 reason 里的年份、条数都会被当成相似度）。
-      const similarityOf = (reason) => {
-        const m = /(?:相似度|similarity)\s*([01](?:\.\d+)?)/i.exec(String(reason || ""));
+      const similarityOf = (it) => {
+        if (typeof it.similarity === "number" && it.similarity >= 0 && it.similarity <= 1) return it.similarity;
+        const m = /(?:相似度|similarity)\s*([01](?:\.\d+)?)/i.exec(String(it.reason || ""));
         const v = m ? Number(m[1]) : NaN;
         return v >= 0 && v <= 1 ? v : null;
       };
+      const shown = items.length;
+      const hidden = typeof total === "number" && total > shown ? total - shown : 0;
       return h("div", { className: "mneme-conflictq" },
         h("div", { className: "mneme-conflictq-head" },
           h("span", { className: "mneme-xcount" }, t("memory.status.conflicts")),
+          // Issue #603 第 3 层：截断必须说出来。此前 50/60 的差额只体现在徽章
+          // 数字上，列表本身看不出少了东西。
+          hidden > 0
+            ? h("span", { className: "mneme-conflictq-truncated" },
+                t("memory.status.conflictQueue.truncated").replace("{shown}", String(shown)).replace("{total}", String(total)))
+            : null,
           h("button", { className: "mneme-footbtn", onClick: () => load() },
             h(Icon, { name: "refresh", size: 12 }), t("memory.status.conflictQueue.refresh"))),
         // #177 空态教育卡：队列没有条目时也渲染（整块此前直接 return null），
@@ -7368,7 +7394,7 @@ window.__ModuleLoader__.load({
               h("div", { className: "mneme-conflict-empty-title" }, t("memory.status.conflictQueue.emptyTitle")),
               h("div", { className: "mneme-conflict-empty-body" }, t("memory.status.conflictQueue.emptyBody")))),
         items.map((it) => {
-          const sim = similarityOf(it.reason);
+          const sim = similarityOf(it);
           const open = openItems[it.id] === true;
           const aText = (it.memory_a && it.memory_a.content) || "";
           const bText = (it.memory_b && it.memory_b.content) || "";

@@ -1264,6 +1264,12 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     }
 
     let listText;
+    // Issue #603 第 2 层：把预分组阶段算出的向量相似度留下来，供停车入队时落列。
+    // 这是**本进程内唯一**真实的相似度来源——LLM 裁决给出的只有理由文本，从文本
+    // 里回收数字是猜测。键与 conflict_pending 的对序归一化一致（sort 后的 id 对）。
+    // 拿不到（无向量、跨进程重放、模型自由裁决）就写 NULL，排序按「未知」处理。
+    const pairSimilarity = new Map();
+    const similarityKey = (x, y) => (x < y ? `${x}\u0000${y}` : `${y}\u0000${x}`);
     if (semantic?.embedder && semantic?.vectorIndex) {
       try {
         const vectors = await collectVectors(memories, semantic);
@@ -1272,6 +1278,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
           const clusters = clusterMemories(memories, vectors, k);
           const conflicts = findPotentialConflicts(memories, vectors, 0.85);
           const conflictIds = new Set(conflicts.flatMap((c) => [c.a.id, c.b.id]));
+          for (const c of conflicts) pairSimilarity.set(similarityKey(c.a.id, c.b.id), c.similarity);
           const parts = [];
           clusters.forEach((cluster, ci) => {
             parts.push(STR.clusterHeader[language](ci + 1));
@@ -1488,8 +1495,10 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
             try {
               // 返回 undefined = 该对已被人工裁决且两侧内容未变（issue #170 复核
               // 项 4：内容变了才重新入队）——不算停车、不进 frozenIds。
-              const parked = service.saveConflictPending({ run_id: runId, memory_a: d.winner, memory_b: d.loser, reason: d.reason });
-              if (parked == null) continue;
+              const parked = service.saveConflictPending({ run_id: runId, memory_a: d.winner, memory_b: d.loser, reason: d.reason, similarity: pairSimilarity.get(similarityKey(d.winner, d.loser)) });
+              // 只有真的新插了一行才算停车：这一对已在队列里时返回的是旧行
+              // （fresh=false），旧代码把它也算进 frozen，虚报由此而来（#603）。
+              if (parked?.fresh !== true) continue;
               frozenCount++;
               frozenIds.push(d.winner, d.loser);
             } catch (error) {
@@ -1510,9 +1519,10 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
             run_id: runId,
             memory_a: d.winner,
             memory_b: d.loser,
-            reason: STR.scopeConflictParkReason[language](d.reason)
+            reason: STR.scopeConflictParkReason[language](d.reason),
+            similarity: pairSimilarity.get(similarityKey(d.winner, d.loser))
           });
-          if (parked != null) {
+          if (parked?.fresh === true) {
             frozenCount++;
             frozenIds.push(d.winner, d.loser);
           }

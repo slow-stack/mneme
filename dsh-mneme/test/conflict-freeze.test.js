@@ -82,6 +82,50 @@ test("store: 不同对不去重", () => {
   store.close();
 });
 
+// Issue #603 第 2 层：排序键从 created_at 换成相似度。原键在同一次 sleep 轮次里
+// 全同（实测 60 条落在 60ms 内），队列在面板上等于随机——而「先看哪对」的唯一
+// 客观信号就是相似度。这组用例锁三件事：相似度真的落库、排序真的按它、以及
+// NULL（没记过）排在最后而不是被当成 0。
+test("#603 store: similarity is persisted and read back", () => {
+  const store = openStore();
+  const row = store.saveConflictPending({ memory_a: "a", memory_b: "b", reason: "r", similarity: 0.87 });
+  assert.equal(row.similarity, 0.87, "fresh row carries the similarity it was parked with");
+  const [read] = store.listConflictPending();
+  assert.equal(read.similarity, 0.87, "listConflictPending reads the column back");
+  store.close();
+});
+
+test("#603 store: the queue is ordered by similarity, newest only as a tiebreak", () => {
+  const store = openStore();
+  // 写入顺序与相似度顺序相反：如果仍按 created_at 排，结果会是 low → high。
+  const low = store.saveConflictPending({ memory_a: "a", memory_b: "b", reason: "low", similarity: 0.61 });
+  const high = store.saveConflictPending({ memory_a: "c", memory_b: "d", reason: "high", similarity: 0.94 });
+  const mid = store.saveConflictPending({ memory_a: "e", memory_b: "f", reason: "mid", similarity: 0.78 });
+  const order = store.listConflictPending().map((r) => r.id);
+  assert.deepEqual(order, [high.id, mid.id, low.id], "most similar first, regardless of insertion order");
+  store.close();
+});
+
+test("#603 store: rows without a similarity sort last, they are not 'zero similar'", () => {
+  const store = openStore();
+  // 存量行（加列之前入队的）与 LLM 裁决路径（只有理由文本）都没有相似度。
+  const unknown = store.saveConflictPending({ memory_a: "a", memory_b: "b", reason: "no number" });
+  const known = store.saveConflictPending({ memory_a: "c", memory_b: "d", reason: "r", similarity: 0.7 });
+  assert.equal(unknown.similarity, undefined, "an unmeasured row must not report a number");
+  const order = store.listConflictPending().map((r) => r.id);
+  assert.deepEqual(order, [known.id, unknown.id], "unknown similarity goes after every measured row");
+  store.close();
+});
+
+test("#603 store: an out-of-range or non-numeric similarity is stored as unknown", () => {
+  const store = openStore();
+  for (const bad of [1.5, -0.2, Number.NaN, "0.9", null]) {
+    const row = store.saveConflictPending({ memory_a: `a${String(bad)}`, memory_b: `b${String(bad)}`, reason: "r", similarity: bad });
+    assert.equal(row.similarity, undefined, `similarity ${String(bad)} must not be stored as a number`);
+  }
+  store.close();
+});
+
 test("store: resolveConflictPending 标 resolved + winner，默认列表不再返回", () => {
   const store = openStore();
   const pending = store.saveConflictPending({ memory_a: "a", memory_b: "b", reason: "r" });
@@ -294,7 +338,7 @@ test("dream: freeze=true 同一对跨 run 去重 —— 只保留一条 pending"
   const ctx2 = freezeCtx({ conflicts: [{ action: "conflict", winner: w.id, loser: l.id, reason: "日期矛盾" }] });
   const r2 = await dream.runDream(ctx2, service, { ...BASE_CONFIG, conflictFreezeEnabled: true });
   assert.equal(r1.frozen, 1);
-  assert.equal(r2.frozen, 1, "每次 run 都检出并上报该对");
+  assert.equal(r2.frozen, 0, "第二次检出的是已在队列里的对，不算新停车（#603 第 1 层）");
   assert.equal(store.countConflictPending(), 1, "但队列只有一条 pending");
   store.close();
 });
