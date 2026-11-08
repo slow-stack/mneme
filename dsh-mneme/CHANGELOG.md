@@ -12,6 +12,7 @@
   - **仓库里没有 `memories.type = "diary"`**：`document` 行的唯一铸造口是 `registerDocument`（`src/api.js` 对 document 直接 400，`test/standalone-api.test.js:188` 把 diary 钉成反例）。所以正文是 md 文件、索引是 `type="document" + tags:["diary"]` 指针行，且只在 `documentMemoryEnabled` 另外开着时才落。
   - **面板（`lib/client.js`）**：右栏 tab `dsh-mneme:diary`，独立旗标闸（不复用 `actionPipelineEnabled` 那条 effect）；503「没装配」与 409「没开」两种文案分开、读失败可见可重试；「补写今天」把 `written / already-written / no-material` 三种结果分开说，**不把 skip 当成功含糊过去**；「入库」409（目标已存在）单独提示。视觉是手绘风——只靠不对称圆角、1.5px 描边、dash 分隔与 ±0.3deg 轻微歪斜表达，颜色一律走 `--mneme-*` / `--dsw-*` 语义层（无新增 token、无字体依赖）。
   - **四条路由**（`/api/dsh-mneme/diary`、`/diary/entry` 读 `open`；`/diary/compose`、`/diary/export` 写 `token-write`；缺装配 503、未开启 409、project 非绝对路径 400——服务端没有「当前项目」这个概念），`SECURITY.md` 中英两处清单已同步。
+  - **页签必须配入口**：只注册 `sidebarRightTabs` 类型 + `sidebar.right.pane.tab` 正文，页签在界面上是不可达的——没有任何座位能调 `sidebarRight.openTab`，用户重启完只会看到「侧边栏没有入口」。v0.13.0 首发即踩此坑（类型、正文、旗标闸三条测试全绿，功能等于失踪）。现补 `conversation.session.header.actions` 座位（`id: "dsh-mneme:diary"`, `order: 31`, 带 `inject: (sessionId) => ({ sessionId })`），按钮点击直开页签；宿主没有 `sidebarRight` 服务时不注册并 `console.info` 留痕（宁可不放，也不放一个点了没反应的按钮）；打开失败由按钮自身 `announce` 说出来。`test/client.test.js` 加锁：`registerDiarySeats` 内必须同时出现 `.actions` 座位与 `sb.openTab(DIARY_TAB_KIND)`，缺任一条即红。
 
 - **「Agent 眼中的你」按段化第一期：注入渲染函数产出段边界（`segments`），面板从此能按段读（#600）**。`renderUserSettingsBlock` 原先只回一整串 `text`，面板那张卡只能整段只读显示——想改注入文本里的某一句，得走「整段提取 → 复制 → 粘进画像框」的剪贴板中转，而画像段是手写原文、人格段是结构化卡、事实段是逐条维护的行，三者写回语义完全不同。段边界是这三条路能分开走的前提。
 

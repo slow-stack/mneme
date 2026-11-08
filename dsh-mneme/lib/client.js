@@ -790,6 +790,7 @@ window.__ModuleLoader__.load({
         "memory.diary.exporting": "正在存…",
         "memory.diary.loading": "正在读…",
         "memory.diary.noProject": "不知道这个会话属于哪个项目",
+        "memory.diary.openFailed": "右栏打不开",
         "memory.diary.noProjectHint": "会话还没有工作目录，日记不知道该写到哪里。换一个有工作目录的会话再打开。",
         "memory.diary.disabled": "日记本没有开",
         "memory.diary.disabledHint": "到「设置 › 增强」里打开「日记本」，重启 DSH 之后这个入口才可用。",
@@ -1708,6 +1709,7 @@ window.__ModuleLoader__.load({
         "memory.diary.exporting": "Saving…",
         "memory.diary.loading": "Loading…",
         "memory.diary.noProject": "This session has no project directory",
+        "memory.diary.openFailed": "Cannot open the panel",
         "memory.diary.noProjectHint": "The session has no working directory yet, so there is nowhere to write a diary to. Open this in a session that has one.",
         "memory.diary.disabled": "The diary is off",
         "memory.diary.disabledHint": "Turn on Diary under Settings › Enhance, then restart DSH — the entry becomes available after that.",
@@ -3091,6 +3093,13 @@ window.__ModuleLoader__.load({
       ".mneme-diary-audit{flex:none;border-top:1px dashed var(--dsw-alias-border-l2);padding-top:8px;display:flex;flex-direction:column;gap:3px;max-height:96px;overflow:auto}",
       ".mneme-diary-audithead{font-size:11px;line-height:16px;letter-spacing:.4px;text-transform:uppercase;color:var(--mneme-fg-dim)}",
       ".mneme-diary-auditrow{font-size:11px;line-height:16px;color:var(--mneme-fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+      // 会话头入口按钮：尺寸与 M.O. 的 .mneme-pipe-trigger 对齐（28px 行高 / 12px 字号），
+      // 手绘感只靠不对称圆角 + 1.5px 描边，颜色仍走宿主语义 token（不新增色值）。
+      ".mneme-diary-trigger{min-height:28px;color:var(--dsw-alias-label-secondary);cursor:pointer;background:0 0;border:1.5px solid var(--dsw-alias-border-l2);border-radius:10px 7px 11px 6px;align-items:center;gap:5px;padding:2px 9px;font-family:inherit;font-size:12px;display:inline-flex}",
+      ".mneme-diary-trigger:hover{background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-diary-trigger:focus-visible{color:var(--dsw-alias-label-primary);outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
+      ".mneme-diary-triggerLabel{white-space:nowrap}",
+      "@container (width<=480px){.mneme-diary-triggerLabel{display:none}}",
       // ===== 移动端适配（mobile-adapt 车道）=====
       // 为什么主通道是 @container 而不是 @media：面板有两种形态（overlay 弹层与
       // better-sidebar 工作台 tab），容器宽度与视口宽度并不相等；`.mneme-x` 是
@@ -10984,11 +10993,54 @@ window.__ModuleLoader__.load({
       );
     }
 
-    // 座位注册（仅在 diaryEnabled 开启后被调用）。与 M.O. 那套同样的两条纪律：
+    // 会话头入口按钮：日记本是右栏的一个 tab，但**注册了 tab 类型不等于用户点得到**——
+    // 没有能调 openTab 的按钮，页签就永远打不开，界面上等于不存在。v0.13.0 就是这么发的：
+    // 类型、正文、旗标闸全绿，用户重启后却「侧边栏没有入口」。入口与页签是一对，缺一不可。
+    // 这里只做「点一下开页签」，不复刻 M.O. 那套 hover 浮层——日记本身就是那个 pane。
+    function DiaryEntryButton(props) {
+      const { t, openPane } = props;
+      const [failed, setFailed] = useState(false);
+      const onClick = () => {
+        const ok = openPane();
+        setFailed(!ok);
+        // 按钮空间只够一个短标签，但点不开必须**说出来**，不能静默。
+        announce(ok ? t("memory.diary.title") : t("memory.diary.openFailed"));
+      };
+      return h("button", {
+        type: "button",
+        className: "mneme-diary-trigger",
+        title: failed ? t("memory.diary.openFailed") : t("memory.diary.title"),
+        onClick
+      },
+        h(DiaryMark, { size: 14 }),
+        h("span", { className: "mneme-diary-triggerLabel" },
+          failed ? t("memory.diary.openFailed") : t("memory.diary.title"))
+      );
+    }
+
+    // 座位注册（仅在 diaryEnabled 开启后被调用）。与 M.O. 那套同样的三条纪律：
     // ① 类型注册与正文座位各自兜自己的异常；② 类型注册要幂等（宿主对重复的
-    // 类型 id 会抛）。这里没有会话头入口——日记本是「打开才看」的常驻页，
-    // 不该在每一轮会话头多一个图标。
+    // 类型 id 会抛）；③ **必须同时给一个能 openTab 的入口**，否则页签不可达。
     function registerDiarySeats(ctx, t) {
+      let hasPane = false;
+      try {
+        const sb = typeof ctx.get === "function" ? ctx.get("sidebarRight") : null;
+        hasPane = !!(sb && typeof sb.openTab === "function");
+      } catch { hasPane = false; }
+      // 与 M.O. 同一个判据：右栏页面类型按 kind 打开（openTab(kind)）。
+      // 服务半可用 / kind 未注册时抛错 → 返回 false，入口按钮如实报「打不开」。
+      const openPane = () => {
+        try {
+          const sb = typeof ctx.get === "function" ? ctx.get("sidebarRight") : null;
+          if (sb && typeof sb.openTab === "function") {
+            sb.openTab(DIARY_TAB_KIND);
+            return true;
+          }
+        } catch (err) {
+          console.warn("[dsh-mneme] sidebarRight.openTab failed for diary:", err);
+        }
+        return false;
+      };
       try {
         const tabs = typeof ctx.get === "function" ? ctx.get("sidebarRightTabs") : null;
         if (tabs && typeof tabs.register === "function") {
@@ -11012,6 +11064,26 @@ window.__ModuleLoader__.load({
         console.warn("[dsh-mneme] diary tab type registration failed:", err);
       }
 
+      // 会话头入口（.actions 座位；.corner 被原生侧栏展开键占用，别用）。
+      // 只在宿主真有右栏服务时注册：没有 sidebarRight 的宿主上放一个点不出东西的按钮，
+      // 正是用户最讨厌的「点了没反应」，不如不放——console.info 留一条线索给排查。
+      // 每个座位都要 inject: (sessionId) => ({ sessionId })，否则读到的永远是全局层。
+      if (hasPane) {
+        try {
+          ctx.slots.inject("conversation.session.header.actions", () => {
+            return ctx.slots.register({
+              name: "conversation.session.header.actions",
+              id: "dsh-mneme:diary",
+              order: 31,
+              inject: (sessionId) => ({ sessionId })
+            }, () => h(DiaryEntryButton, { t, openPane }));
+          });
+        } catch (err) {
+          console.warn("[dsh-mneme] diary header entry registration failed:", err);
+        }
+      } else {
+        console.info("[dsh-mneme] diary: host has no sidebarRight service, header entry skipped");
+      }
       try {
         const tabs = typeof ctx.get === "function" ? ctx.get("sidebarRightTabs") : null;
         if (tabs && typeof tabs.register === "function") {
