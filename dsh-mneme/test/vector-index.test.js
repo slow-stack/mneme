@@ -266,3 +266,70 @@ test("search returns empty when nothing is embedded", () => {
   addMemory(store, { title: "也无向量", content: "B" });
   assert.deepEqual(vectorIndex.search([1, 0, 0], { limit: 10 }), []);
 });
+
+test("rebuildIndex prefers a detailed adapter so a provider outage is not reported as a dead row (#604)", async () => {
+  const { store, vectorIndex } = setup();
+  addMemory(store, { title: "甲", content: "A" });
+  addMemory(store, { title: "乙", content: "B" });
+
+  let detailedCalls = 0;
+  let plainCalls = 0;
+  const embedder = {
+    // A 503 from the provider: transient, and only the detailed path can say so.
+    embedSingleDetailed: async () => {
+      detailedCalls++;
+      return { vector: null, reason: "http-503" };
+    },
+    embedSingle: async () => {
+      plainCalls++;
+      return null;
+    },
+    modelHash: "mock#detailed",
+    dimension: 3
+  };
+
+  const result = await vectorIndex.rebuildIndex(embedder, { limit: 100 });
+  assert.equal(detailedCalls, 2, "every row went through the detailed entry point");
+  assert.equal(plainCalls, 0, "the reason-dropping path was not used");
+  assert.equal(result.indexed, 0);
+  assert.equal(result.failed, 2);
+  assert.deepEqual(
+    result.failureReasons,
+    { "error:http-503": 2 },
+    "the button path keeps the provider reason instead of flattening it"
+  );
+});
+
+test("rebuildIndex separates a permanent row from a transient one on the same run (#604)", async () => {
+  const { store, vectorIndex } = setup();
+  addMemory(store, { title: "甲", content: "A" });
+  addMemory(store, { title: "乙", content: "B" });
+
+  let calls = 0;
+  const embedder = {
+    embedSingleDetailed: async () => {
+      calls++;
+      // First row cannot ever embed; second row is a provider hiccup.
+      return calls === 1 ? { vector: null, reason: "response-no-vector" } : { vector: null, reason: "http-503" };
+    },
+    modelHash: "mock#mixed",
+    dimension: 3
+  };
+
+  const result = await vectorIndex.rebuildIndex(embedder, { limit: 100 });
+  assert.equal(result.failed, 2);
+  assert.deepEqual(result.failureReasons, {
+    "error:response-no-vector": 1,
+    "error:http-503": 1
+  });
+});
+
+test("rebuildIndex still names the plain path's failure when no detailed adapter exists (#604)", async () => {
+  const { store, vectorIndex } = setup();
+  addMemory(store, { title: "甲", content: "A" });
+
+  const embedder = { embedSingle: async () => null, modelHash: "mock#plain", dimension: 3 };
+  const result = await vectorIndex.rebuildIndex(embedder, { limit: 100 });
+  assert.equal(result.failed, 1);
+  assert.deepEqual(result.failureReasons, { "empty-vector": 1 });
+});

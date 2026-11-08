@@ -77,13 +77,25 @@ export function createVectorIndex({ store, logger }) {
       // embed-only OpenAI-compatible clients (issue #10) are accepted too via
       // their `embed` single-text interface, so /vector-reindex no longer
       // silently returns 0 for them. An embedder exposing neither is ignored.
+      // #604: prefer the detailed entry point when the embedder has one. The
+      // legacy OpenAI-compatible client drops the failure reason on its normal
+      // path (embedText returns only the vector), so a provider outage and an
+      // unembeddable row both surfaced here as a bare null. The reason is what
+      // tells them apart, and the operator needs it to know whether pressing
+      // the button again is worth anything.
       let embedOne = null;
+      let embedOneDetailed = null;
+      if (embedder && typeof embedder.embedSingleDetailed === "function") {
+        embedOneDetailed = (text) => embedder.embedSingleDetailed(text);
+      }
       if (embedder && typeof embedder.embedSingle === "function") {
         embedOne = (text) => embedder.embedSingle(text);
       } else if (embedder && typeof embedder.embed === "function") {
         embedOne = (text) => Promise.resolve(embedder.embed(text));
       }
-      if (!embedOne) return { indexed: 0, failed: 0, skipped: 0, remaining: 0, error: "no-embedder" };
+      if (!embedOne && !embedOneDetailed) {
+        return { indexed: 0, failed: 0, skipped: 0, remaining: 0, error: "no-embedder" };
+      }
       const model = embedder?.modelHash ?? null;
       // #604: this used to call needsEmbedding(), which only matches empty
       // vectors. After a model switch every row already has a vector — from the
@@ -96,10 +108,21 @@ export function createVectorIndex({ store, logger }) {
         : store.needsEmbedding(limit);
       let indexed = 0;
       let failed = 0;
+      const failureReasons = {};
+      const noteFailure = (reason) => {
+        failureReasons[reason] = (failureReasons[reason] ?? 0) + 1;
+      };
       for (const row of rows) {
         try {
           const text = [row.title, row.content].filter(Boolean).join("\n");
-          const vector = await embedOne(text);
+          let vector;
+          if (embedOneDetailed) {
+            const detailed = await embedOneDetailed(text);
+            vector = detailed ? detailed.vector : null;
+            if (!vector && detailed?.reason) noteFailure(`error:${detailed.reason}`);
+          } else {
+            vector = await embedOne(text);
+          }
           if (vector && vector.length) {
             // #604: the model fingerprint was omitted here, so every rebuilt
             // row kept embedding_model NULL. needsEmbeddingFor() then treated
@@ -111,10 +134,14 @@ export function createVectorIndex({ store, logger }) {
             indexed++;
           } else {
             failed++;
+            // A detailed adapter already recorded why; the plain path has no
+            // reason to record, so name the only thing it can mean.
+            if (!embedOneDetailed) noteFailure("empty-vector");
             logger?.warn?.(`[dsh-mneme] rebuild produced no vector for ${row.id}`);
           }
         } catch (error) {
           failed++;
+          noteFailure(`error:${String(error)}`);
           logger?.warn?.(`[dsh-mneme] rebuild embed failed for ${row.id}: ${String(error)}`);
         }
       }
@@ -130,7 +157,13 @@ export function createVectorIndex({ store, logger }) {
       // untouched. Rows that produced no vector are `failed`. The remaining
       // bucket is the selector's own count, which is why a row can be both
       // failed and remaining — it was tried and it is still stale.
-      return { indexed, failed, skipped: 0, remaining };
+      //
+      // `failureReasons` mirrors the boot sweep's bucket names so the two paths
+      // read the same: `empty-vector` means this row will never embed, while an
+      // `error:` bucket means the provider or the store failed and the same
+      // press may well succeed next time. A run that only ever reports
+      // empty-vector is not a retry candidate.
+      return { indexed, failed, skipped: 0, remaining, failureReasons };
     },
 
     /** Index stats for the Web panel / debugging. */
