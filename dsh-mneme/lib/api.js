@@ -232,12 +232,28 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   // 的 SessionHeader，降级 requestHeader().config；agentPreset 取不到留 null，
   // 面板对 null 静默）。任何失败静默：纯可观测性，不新增故障面。
   let lastAgentPreset = null;
+  // 会话 → 身份名的账本（人格页与手动写日记用）。lastAgentPreset 只记「最近一次」，
+  // 而手动写日记必须知道「这个会话是谁」，否则只能落 default 卡——那正是
+  // 「设定好人格的 agent 只以这个人格的口吻写日记」这条需求的缺口。
+  // 只存 id → 身份名，容量封顶：会话对象不进这里，避免把大对象挂住。
+  const agentBySession = new Map();
+  const AGENT_BY_SESSION_MAX = 200;
   try {
     const unsubscribe = ctx.on?.("session/event", (session) => {
       try {
         const header = session?.header ?? session?.requestHeader?.()?.config ?? null;
         const preset = header?.agentPreset;
-        lastAgentPreset = typeof preset === "string" && preset.trim() ? preset.trim() : null;
+        const name = typeof preset === "string" && preset.trim() ? preset.trim() : null;
+        lastAgentPreset = name;
+        const id = typeof session?.id === "string" ? session.id.trim() : "";
+        if (id) {
+          // 先删再插：Map 的迭代顺序即「最近活跃」，满了就淘汰最旧的键。
+          agentBySession.delete(id);
+          agentBySession.set(id, name);
+          while (agentBySession.size > AGENT_BY_SESSION_MAX) {
+            agentBySession.delete(agentBySession.keys().next().value);
+          }
+        }
       } catch { /* 观测失败不影响会话流 */ }
     });
     if (typeof unsubscribe === "function") disposers.push(unsubscribe);
@@ -2811,7 +2827,24 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
       }
       const project = diaryProject(req, res);
       if (!project) return;
-      Promise.resolve(diary.compose({ trigger: "manual", projectRoot: project }))
+      // 会话身份（「设定好人格的 agent 只以这个人格的口吻写日记」）：手动「写一篇」
+      // 以前不传 agentId，于是永远落 default 卡——自动轮传了、手动轮没传，同一天
+      // 从两个入口写出来的日记会用两张人格卡，这是最难发现的一类不一致。
+      //
+      // 身份来源只认两处，且**不带身份就不猜**：查询参数 ?agent= 是前端从会话行
+      // 上读到的 agentPreset（与它算 project 用的是同一条快照），?session= 则让
+      // 服务端按自己那份「会话 → 身份」账本反查。两处都空就照旧落 default 卡，
+      // 但那是「不知道是谁」，不是「以为是 default」——frontmatter 的 persona 字段
+      // 会如实写成 default 卡的名字，面板读得出来。
+      const q = new URL(req.url, "http://localhost").searchParams;
+      const rawAgent = typeof q.get("agent") === "string" ? q.get("agent").trim() : "";
+      const rawSession = typeof q.get("session") === "string" ? q.get("session").trim() : "";
+      const agentId = rawAgent || (rawSession ? (agentBySession.get(rawSession) || "") : "");
+      Promise.resolve(diary.compose({
+        trigger: "manual",
+        projectRoot: project,
+        agentId: agentId || null
+      }))
         .then((result) => {
           // skip 不是错：already-written / no-material 都是关于这个项目的答案，回 200。
           const status = result && result.ok === false ? 500 : 200;

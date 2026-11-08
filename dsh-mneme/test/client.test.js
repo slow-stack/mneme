@@ -352,8 +352,8 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
   // spec 存在时点火：一把全点会把新座位的注册塞进老宿主，测出来的就不是真行为。
   const fire = (ctx, key) => ctx.injected.filter((i) => i.key === key).map((i) => i.cb());
 
-  // 新宿主：panellist 已声明。panellist + main 各四份（记忆 + chorography +
-  // 知识库 + 日记四个座位），每对各自 id/key 逐字同名；footer 回落不装。
+  // 新宿主：panellist 已声明。panellist + main 各五份（记忆 + chorography +
+  // 知识库 + 日记 + 人格五个座位），每对各自 id/key 逐字同名；footer 回落不装。
   {
     const { ctx, regs } = makeCtx((key) => (key === "sidebar.panellist" ? { kind: "list" } : undefined));
     const api = boot(ctx, (k) => k, () => null);
@@ -362,10 +362,10 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
     fire(ctx, "sidebar.footer.action");
     assert.equal(disposes.length, 1);
     const ids = (name) => regs.filter((r) => r.alive && r.opts.name === name).map((r) => r.opts.id ?? r.opts.key).sort();
-    assert.equal(alive(regs, "sidebar.panellist"), 4, "memory + wiki + kb + diary glyphs");
-    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-diary", "dsh-mneme-kb", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
-    assert.equal(alive(regs, "main"), 4, "memory + wiki + kb + diary pages");
-    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-diary", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
+    assert.equal(alive(regs, "sidebar.panellist"), 5, "memory + wiki + kb + diary + persona glyphs");
+    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-diary", "dsh-mneme-kb", "dsh-mneme-persona", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
+    assert.equal(alive(regs, "main"), 5, "memory + wiki + kb + diary + persona pages");
+    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-diary", "dsh-mneme-kb", "dsh-mneme-persona", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
     assert.equal(alive(regs, "sidebar.footer.action"), 0, "the footer fallback must not mount on a host that has the seat");
   }
 
@@ -2432,12 +2432,15 @@ test("right-pane tab renders a named component instead of a bare hook callback",
 // ④ 503（没装配）与 409（没开）是两种不同的「不能用」，合并文案用户会以为日记坏了。
 test("diary pane: own gate, named component, and distinct outcomes", () => {
   assert.match(clientSource, /function DiaryPane\(/, "DiaryPane must exist");
-  assert.ok(
-    clientSource.includes(
-      "}, (props) => h(DiaryPane, { t, project: sessionProject(ctx, props && props.sessionId) }));"
-    ),
-    "the diary tab callback must delegate to the named DiaryPane component"
+  // 回调必须把「这个会话是谁」一路传进正文：project 定位素材、agent 定位人格卡。
+  // 少传 agent 就会退回 default 卡——自动轮是带 agentId 的，两个入口写同一天
+  // 会变成两个声音，这正是「只以这个人格的口吻写日记」没做到的那一半。
+  assert.match(
+    clientSource,
+    /\}, \(props\) => \{[\s\S]{0,400}?return h\(DiaryPane, \{[\s\S]{0,200}?project: sessionProject\(ctx, sid\),[\s\S]{0,200}?agent: sessionAgent\(ctx, sid\),[\s\S]{0,200}?session: sid \|\| null[\s\S]{0,40}?\}\);\s*\}\);/,
+    "the diary tab callback must delegate to the named DiaryPane component and pass agent + session"
   );
+  assert.match(clientSource, /function sessionAgent\(ctx, sessionId\)/, "sessionAgent must exist to resolve the persona card");
 
   // 从日记那段注释起算、到自己的 effect 名止：不能退 1600 字符去数，
   // 那会把上面 M.O. 那段（它本来就写着 actionPipelineEnabled）一起框进来。

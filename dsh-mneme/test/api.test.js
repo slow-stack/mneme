@@ -2689,10 +2689,32 @@ function setupDiary(config, diary = { compose: async () => ({ ok: true }) }) {
   const service = createService({ store, mirror: null, config: {} });
   const settings = createSettings(store.db);
   const routes = [];
-  const ctx = { webServer: { register(route) { routes.push(route); return () => {}; } } };
+  const handlers = {};
+  const ctx = {
+    webServer: { register(route) { routes.push(route); return () => {}; } },
+    // 用真的 session/event 通道：agentBySession 账本正是从这里喂料的，
+    // 换成假函数就只测了「我自己的桩」，测不到真实接线。
+    on(name, fn) { handlers[name] = fn; return () => { delete handlers[name]; }; }
+  };
   createApi(ctx, service, settings, { add() {}, remove() {}, list: () => [] }, undefined,
     undefined, "", config, null, null, null, null, null, diary);
-  return { routes };
+  const emitSession = (session) => {
+    const fn = handlers["session/event"];
+    if (fn) fn(session);
+  };
+  return { routes, emitSession }; 
+}
+
+/** 抓一个 compose 调用参数的 spy：既要知道调没调、也要知道传了什么。 */
+function composeSpy() {
+  const calls = [];
+  const diary = {
+    compose: async (args) => {
+      calls.push(args);
+      return { ok: true, status: "written", date: "2026-11-08", path: "x.md" };
+    }
+  };
+  return { calls, diary };
 }
 
 test("GET /api/dsh-mneme/diary/library：不传 project 也能列清单（面板拿不到会话）", async (t) => {
@@ -2799,4 +2821,50 @@ test("中文桶名：清单里列得出来就必须读得到（否则就是点�
     .handler(req(`/api/dsh-mneme/diary/library/entry?bucket=${encodeURIComponent("QQ对话-4f061790")}&date=2026-11-07`), res);
   assert.equal(res.statusCode, 200, "清单里列得出来的桶，点进去必须读得到");
   assert.match(JSON.parse(res.body).text, /旧的那篇/);
+});
+
+// --- 手动写日记必须带身份（「设定好人格的 agent 只以这个人格的口吻写日记」）-----
+// 自动轮（src/diary/auto.js:47）一直传 agentId，手动轮的 /diary/compose 却不传，
+// 于是永远落 default 人格卡：同一天从两个入口写，是两张卡的两种声音。
+// 这三条锁住「带 ?agent= / ?session= 就传、都不带就不猜」。
+
+test("POST /diary/compose 带 ?agent= 时把它作为 agentId 传下去", async () => {
+  const { calls, diary } = composeSpy();
+  const { routes } = setupDiary({ diaryEnabled: true }, diary);
+  const route = findHandler(routes, "/api/dsh-mneme/diary/compose");
+  const res = new FakeRes();
+  await route.handler(
+    req("/api/dsh-mneme/diary/compose?project=" + encodeURIComponent("D:/proj") + "&agent=amarre", "POST", {}),
+    res
+  );
+  assert.equal(res.statusCode, 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].agentId, "amarre");
+  assert.equal(calls[0].trigger, "manual");
+  assert.equal(calls[0].projectRoot, "D:/proj");
+});
+
+test("POST /diary/compose 只带 ?session= 时按会话账本反查身份", async () => {
+  const { calls, diary } = composeSpy();
+  const { routes, emitSession } = setupDiary({ diaryEnabled: true }, diary);
+  // 账本由真实的 session/event 通道喂料，不手搓内部结构。
+  emitSession({ id: "sess-1", header: { agentPreset: "attune" } });
+  const route = findHandler(routes, "/api/dsh-mneme/diary/compose");
+  const res = new FakeRes();
+  await route.handler(
+    req("/api/dsh-mneme/diary/compose?project=" + encodeURIComponent("D:/proj") + "&session=sess-1", "POST", {}),
+    res
+  );
+  assert.equal(res.statusCode, 200);
+  assert.equal(calls[0].agentId, "attune", "会话身份必须从账本里查出来，不能落 default");
+});
+
+test("POST /diary/compose 两个身份参数都没有时传 null，不假装自己是 default", async () => {
+  const { calls, diary } = composeSpy();
+  const { routes } = setupDiary({ diaryEnabled: true }, diary);
+  const route = findHandler(routes, "/api/dsh-mneme/diary/compose");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/diary/compose?project=" + encodeURIComponent("D:/proj"), "POST", {}), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(calls[0].agentId, null, "不知道是谁 ≠ 以为是 default");
 });

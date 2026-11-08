@@ -463,6 +463,38 @@ window.__ModuleLoader__.load({
         "memory.settings.personaViewSourceNone": "按当前寻址口径，这个身份不会注入任何人格——默认卡只兜「解析不到会话身份」的会话。",
         "memory.settings.personaViewGateOff": "总闸「人格定义（beta）」现在是关的：下面这段里不会出现人格，只有画像与规则。",
         "memory.settings.personaViewRefresh": "刷新预览",
+        "memory.persona.open": "人格设计",
+        "memory.persona.title": "人格设计",
+        "memory.persona.hint": "一个身份一张卡。卡上写了名字、性格、回复要求、场景与示例对话，保存后，这个身份说话时就用它，写日记时也只用这张卡的口吻——日记页按身份分开看，就是这里的分区在日记侧的样子。",
+        "memory.persona.cards": "身份卡",
+        "memory.persona.defaultCard": "默认卡（兜底）",
+        "memory.persona.newPlaceholder": "新身份名，如 nyx",
+        "memory.persona.add": "添加身份卡",
+        "memory.persona.delete": "删除这张卡",
+        "memory.persona.enabled": "启用这张卡",
+        "memory.persona.enabledOn": "已启用：这个身份的话与日记都用这张卡的口吻",
+        "memory.persona.enabledOff": "未启用：这个身份会落回默认卡（开严格寻址时不注入人格）",
+        "memory.persona.name": "名字",
+        "memory.persona.personality": "性格设定",
+        "memory.persona.replyStyle": "回复要求",
+        "memory.persona.scenario": "场景（可选）",
+        "memory.persona.scenarioPlaceholder": "这个身份在什么场合出现，面对谁",
+        "memory.persona.mesExample": "示例对话（可选）",
+        "memory.persona.mesExamplePlaceholder": "一两轮示例，最能定住语气",
+        "memory.persona.save": "保存人格卡",
+        "memory.persona.saved": "已保存",
+        "memory.persona.saveFailed": "保存失败",
+        "memory.persona.preview": "注入预览（这一轮真正送进模型的文本）",
+        "memory.persona.previewRefresh": "刷新预览",
+        "memory.persona.previewEmpty": "这一轮没有任何人格文本——卡是空的，或者总闸关着。",
+        "memory.persona.previewUnknown": "读不到预览（请求失败或后端版本过旧），这里不显示猜测的内容。",
+        "memory.persona.diary": "这个身份的日记",
+        "memory.persona.diaryHint": "日记只认卡的口吻：写日记时按会话身份选卡，没身份才用默认卡。",
+        "memory.persona.diaryCount": "{count} 篇 · 最近 {latest}",
+        "memory.persona.diaryNone": "还没有日记。去左侧「ta 的日记」里写一篇，它就会按这张卡的口吻落笔。",
+        "memory.persona.readFailed": "读不到人格库（请求失败或后端版本过旧），这里不显示猜测的内容。",
+        "memory.persona.loading": "读取中…",
+        "memory.persona.factsLinked": "自动事实与人格卡同域：这里的身份分区，也是「Agent 眼中的你」的分区。",
         "memory.settings.factsTitle": "自动事实（Agent 眼中的你）",
         "memory.settings.factsHint": "Agent 在巩固（dream）后从新记忆里提炼的「对你的了解」，按会话身份分卡，与人格卡同域，注在预览里手填画像之后。这里可以逐条修正；删除只是归档，随时可恢复。你自己填的用户画像不受影响。",
         "memory.settings.factsEmpty": "这张卡还没有事实。有新的对话记忆并跑过巩固后，Agent 对你的了解会出现在这里；也可以在下面手动添加。",
@@ -1472,6 +1504,38 @@ window.__ModuleLoader__.load({
         "memory.settings.personaViewSourceNone": "Under the current addressing mode this identity injects no persona at all — the default card only covers sessions with no resolvable identity.",
         "memory.settings.personaViewGateOff": "The master switch “Persona (beta)” is off: the block below contains profile and rules only.",
         "memory.settings.personaViewRefresh": "Refresh preview",
+        "memory.persona.open": "Persona",
+        "memory.persona.title": "Persona",
+        "memory.persona.hint": "One card per identity. Each card carries a name, personality, reply style, scenario and example dialogue. Once saved, that identity speaks from it — and writes its diary in that voice too: the diary page is split by identity because this is where those partitions live.",
+        "memory.persona.cards": "Identity cards",
+        "memory.persona.defaultCard": "Default (fallback)",
+        "memory.persona.newPlaceholder": "New identity, e.g. nyx",
+        "memory.persona.add": "Add identity card",
+        "memory.persona.delete": "Delete this card",
+        "memory.persona.enabled": "Enable this card",
+        "memory.persona.enabledOn": "On — this identity speaks and writes its diary from this card",
+        "memory.persona.enabledOff": "Off — this identity falls back to the default card (no persona at all under strict addressing)",
+        "memory.persona.name": "Name",
+        "memory.persona.personality": "Personality",
+        "memory.persona.replyStyle": "Reply style",
+        "memory.persona.scenario": "Scenario (optional)",
+        "memory.persona.scenarioPlaceholder": "When this identity shows up, and to whom",
+        "memory.persona.mesExample": "Example dialogue (optional)",
+        "memory.persona.mesExamplePlaceholder": "One or two turns; the surest way to pin the voice",
+        "memory.persona.save": "Save persona card",
+        "memory.persona.saved": "Saved",
+        "memory.persona.saveFailed": "Save failed",
+        "memory.persona.preview": "Injected preview (the exact text handed to the model this turn)",
+        "memory.persona.previewRefresh": "Refresh preview",
+        "memory.persona.previewEmpty": "Nothing persona-shaped this turn — the card is empty, or the master switch is off.",
+        "memory.persona.previewUnknown": "Could not read the preview (request failed or backend too old). Nothing is guessed here.",
+        "memory.persona.diary": "This identity's diary",
+        "memory.persona.diaryHint": "The diary only follows the card: writing picks the card by session identity, and falls back to the default card only when there is no identity.",
+        "memory.persona.diaryCount": "{count} entries · latest {latest}",
+        "memory.persona.diaryNone": "No diary yet. Write one from “their diary” on the left and it lands in this card's voice.",
+        "memory.persona.readFailed": "Could not read the persona store (request failed or backend too old). Nothing is guessed here.",
+        "memory.persona.loading": "Loading…",
+        "memory.persona.factsLinked": "Auto facts live in the same domain as persona cards: the identity split here is the split in “you, as the agent sees you”.",
         "memory.settings.factsTitle": "Auto facts (you, as the agent sees you)",
         "memory.settings.factsHint": "What the agent learned about you, distilled from new memories after each dream run — split into cards by session identity (same domain as persona cards) and injected after your handwritten profile in the preview. Fix entries here one by one; deleting only archives a fact and can be undone. The User Profile you wrote yourself is never touched.",
         "memory.settings.factsEmpty": "No facts on this card yet. After new conversation memories go through a dream run, what the agent picked up about you shows up here; you can also add one below.",
@@ -3227,7 +3291,7 @@ window.__ModuleLoader__.load({
       // 语义色层第三份：日记本整页长在右栏 pane 里，既不在 .mneme-x 下、也不是
       // pipe 那套类名。取值与第一份逐字相同，理由同 :2831 那条注释——测试按
       // 首次出现抓 --mneme-* 定义，所以这条只能排在它后面。
-      ".mneme-diary,.mneme-diary-paper,.mneme-diary-head,.mneme-diary-list{" +
+      ".mneme-diary,.mneme-diary-paper,.mneme-diary-head,.mneme-diary-list,.mneme-persona{" +
         "--mneme-fg-dim:color-mix(in srgb,var(--dsw-alias-label-primary) 60%,transparent);" +
         "--mneme-graphic-dim:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent);" +
         "--mneme-accent:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
@@ -3280,6 +3344,33 @@ window.__ModuleLoader__.load({
       ".mneme-diary-trigger:focus-visible{color:var(--dsw-alias-label-primary);outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
       ".mneme-diary-triggerLabel{white-space:nowrap}",
       "@container (width<=480px){.mneme-diary-triggerLabel{display:none}}",
+      // --- 人格设计整页（第五个座位）---------------------------------------
+      // 刻意**不新开一份 --mneme-* 语义色层**：contrast.test.js 按首次出现的
+      // 「--mneme-fg-dim」定义解析色值（:118），再来一份就得保证顺序，收益却为零。
+      // 这一页只用第一份色层已经覆盖到的宿主 token 与既有 -dim 类名，靠形状做手绘感。
+      ".mneme-persona{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;padding:10px 12px;box-sizing:border-box;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-persona-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none}",
+      ".mneme-persona-title{font-size:15px;line-height:21px;font-weight:700;letter-spacing:.3px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-persona-spacer{flex:1 1 auto;min-width:0}",
+      ".mneme-persona-body{display:flex;gap:12px;min-height:0;flex:1 1 auto}",
+      // 左列身份卡：宽度固定，卡片是「贴纸」而不是菜单行。
+      ".mneme-persona-col{flex:0 0 190px;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;padding-right:2px;border-right:1px dashed var(--dsw-alias-border-l2)}",
+      ".mneme-persona-card{display:flex;align-items:center;gap:2px}",
+      ".mneme-persona-pick{flex:1 1 auto;min-width:0;text-align:left;border:1.5px solid transparent;background:0 0;cursor:pointer;font-family:inherit;font-size:12.5px;line-height:18px;padding:5px 10px;border-radius:12px 8px 13px 9px;color:var(--mneme-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".mneme-persona-pick:hover{background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-persona-pick:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
+      ".mneme-persona-pick--on{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
+      ".mneme-persona-del{flex:none;border:0;background:0 0;cursor:pointer;font-family:inherit;font-size:13px;line-height:18px;padding:2px 6px;border-radius:8px;color:var(--mneme-fg-dim)}",
+      ".mneme-persona-del:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--mneme-danger)}",
+      ".mneme-persona-del:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
+      ".mneme-persona-new{display:flex;gap:6px;align-items:center;margin-top:2px}",
+      // 右列编辑区：一张「卡纸」，与日记纸同一种歪斜语言。
+      ".mneme-persona-sheet{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.14deg);display:flex;flex-direction:column;gap:8px}",
+      ".mneme-persona-label{font-size:12px;line-height:17px;font-weight:600;letter-spacing:.2px;color:var(--dsw-alias-label-secondary)}",
+      ".mneme-persona-note{font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
+      ".mneme-persona-diary{flex:none;border-top:1px dashed var(--dsw-alias-border-l2);padding-top:8px;display:flex;flex-direction:column;gap:4px}",
+      ".mneme-persona-diaryrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
+      ".mneme-persona-preview{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;line-height:19px;color:var(--mneme-fg-dim);max-height:180px;overflow:auto;padding:8px 10px;border:1px dashed var(--dsw-alias-border-l2);border-radius:12px 8px 13px 9px}",
       // ===== 移动端适配（mobile-adapt 车道）=====
       // 为什么主通道是 @container 而不是 @media：面板有两种形态（overlay 弹层与
       // better-sidebar 工作台 tab），容器宽度与视口宽度并不相等；`.mneme-x` 是
@@ -4631,6 +4722,10 @@ window.__ModuleLoader__.load({
       // provenance 是 v1.5 协作式人格的预留位，v1 只透传不编辑。
       const [personaDefault, setPersonaDefault] = react.useState({ name: "", personality: "", replyStyle: "", enabled: false });
       const [personaByAgent, setPersonaByAgent] = react.useState({});
+      // 绑会话那一维（#606）：设置页不编辑它，但**必须原样带回去**——
+      // 后端 setPersona 的多卡形是全量替换，少发一维等于把那些卡删掉。
+      // 静默删除用户数据的按钮，比没有这个功能糟得多。
+      const [personaBySession, setPersonaBySession] = react.useState({});
       const [personaEditing, setPersonaEditing] = react.useState("default");
       const [personaNewName, setPersonaNewName] = react.useState("");
       const [personaSaved, setPersonaSaved] = react.useState(false);
@@ -4722,17 +4817,25 @@ window.__ModuleLoader__.load({
           // v1.2 多卡形 {default, byAgent}；旧单对象形读作 default（后端已兼容，
           // 这里双保险再判一次形状）。
           const pj = ps && ps.persona && typeof ps.persona === "object" ? ps.persona : {};
-          const isMulti = "default" in pj || "byAgent" in pj;
+          const isMulti = "default" in pj || "byAgent" in pj || "bySession" in pj;
           const dRaw = isMulti ? (pj.default ?? {}) : pj;
           const bRaw = isMulti && pj.byAgent && typeof pj.byAgent === "object" ? pj.byAgent : {};
+          // bySession 不在这里编辑，但读出来存着：保存时要原样发回去，否则
+          // 后端全量替换语义会把这些卡删掉（见 savePersonaCards 的注释）。
+          const sRaw = isMulti && pj.bySession && typeof pj.bySession === "object" ? pj.bySession : {};
+          // scenario / mesExample 一并读：模型层早就支持（PERSONA_FIELDS），
+          // 只有这里丢掉它们，结果就是「存进去了、再打开就没了」。
           const norm = (c) => ({
             name: typeof c?.name === "string" ? c.name : "",
             personality: typeof c?.personality === "string" ? c.personality : "",
             replyStyle: typeof c?.replyStyle === "string" ? c.replyStyle : "",
+            scenario: typeof c?.scenario === "string" ? c.scenario : "",
+            mesExample: typeof c?.mesExample === "string" ? c.mesExample : "",
             enabled: c?.enabled === true
           });
           setPersonaDefault(norm(dRaw));
           setPersonaByAgent(Object.fromEntries(Object.entries(bRaw).map(([k, c]) => [k, norm(c)])));
+          setPersonaBySession(Object.fromEntries(Object.entries(sRaw).map(([k, c]) => [k, norm(c)])));
           setPersonaEditing("default");
           // 预览不在这里写：它只有一个所有者（loadPreview）。两处写同一个 state 就会
           // 互相覆盖，而这张卡的标题是「注入生效文本」——显示别张卡的文本比不显示更糟。
@@ -4938,15 +5041,18 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // 人格卡保存（v1.2 多卡）：全量多卡形 PUT（{default, byAgent}，后端全量
-      // 替换语义）。保存失败必须冒提示——v1 的静默 catch 曾把 404 吞成「看起来
-      // 保存了」（后端未重装配时 PUT 打 404），桉桉实测踩中，此处不再静默。
-      async function savePersonaCards(nextDefault, nextByAgent) {
+      // 人格卡保存（v1.2 多卡）：全量多卡形 PUT（{default, byAgent, bySession}，
+      // 后端全量替换语义）。保存失败必须冒提示——v1 的静默 catch 曾把 404 吞成
+      // 「看起来保存了」（后端未重装配时 PUT 打 404），桉桉实测踩中，此处不再静默。
+      //
+      // bySession 是第三个参数、默认取当前状态：这一页不编辑绑会话卡，但漏发它就
+      // 会被后端当成「用户删光了会话卡」。少发一维的代价是数据消失，多发的代价是零。
+      async function savePersonaCards(nextDefault, nextByAgent, nextBySession = personaBySession) {
         try {
           const res = await apiFetch("/api/dsh-mneme/persona", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ persona: { default: nextDefault, byAgent: nextByAgent } })
+            body: JSON.stringify({ persona: { default: nextDefault, byAgent: nextByAgent, bySession: nextBySession } })
           });
           if (!res.ok) throw new Error("HTTP " + res.status);
           setPersonaSaved(true);
@@ -9984,6 +10090,38 @@ window.__ModuleLoader__.load({
       return null;
     }
 
+    // 会话身份：`header.agentPreset` 就是这个人格卡的名字（服务侧
+    // sessionAgentId 读的是同一个字段，两边必须同源，否则会写出「A 的人格 +
+    // B 的素材」）。拿不到就回 null——绝不假猜成 default，那是另一张卡的文本。
+    function sessionAgent(ctx, sessionId) {
+      if (!sessionId || !ctx || typeof ctx.get !== "function") return null;
+      const pick = (row) => {
+        if (!row) return null;
+        const preset = (row.header && row.header.agentPreset) || row.agentPreset;
+        return typeof preset === "string" && preset.trim() ? preset.trim() : null;
+      };
+      try {
+        const sessions = ctx.get("sessions");
+        if (!sessions) return null;
+        try {
+          const snap = sessions.list && typeof sessions.list.getSnapshot === "function"
+            ? sessions.list.getSnapshot()
+            : null;
+          const hit = pick(snap && snap.byId ? snap.byId[sessionId] : null);
+          if (hit) return hit;
+        } catch (err) { console.warn("[dsh-mneme] session agent lookup failed:", err); }
+        try {
+          if (typeof sessions.get === "function") {
+            const hit = pick(sessions.get(sessionId));
+            if (hit) return hit;
+          }
+        } catch (err) { console.warn("[dsh-mneme] session agent lookup failed:", err); }
+      } catch (err) {
+        console.warn("[dsh-mneme] sessions service unavailable:", err);
+      }
+      return null;
+    }
+
     // DAG 分层布局：Kahn 最长路分层（层数 = 到该节点最长边数），
     // 防环——正常分层算完后如果还有节点没落位（说明有环），
     // 按输入顺序塞进最后一层，绝不死循环。节点数少，几十行够用。
@@ -11010,8 +11148,15 @@ window.__ModuleLoader__.load({
       body: JSON.stringify(payload || {})
     });
 
-    function diaryUrl(path, project) {
-      return "/api/dsh-mneme/diary" + path + "?project=" + encodeURIComponent(project || "");
+    // agent/session 可选：手动「写今天」必须把「这个会话是谁」带过去，
+    // 否则它永远落 default 人格卡——自动轮（auto.js）是带 agentId 的，
+    // 两个入口写同一天会变成两个声音，正是桉桉说的「只以这个人格的口吻写日记」
+    // 没做到的那一半。服务端已支持这两个查询参数。
+    function diaryUrl(path, project, extra) {
+      let url = "/api/dsh-mneme/diary" + path + "?project=" + encodeURIComponent(project || "");
+      if (extra && extra.agent) url += "&agent=" + encodeURIComponent(extra.agent);
+      if (extra && extra.session) url += "&session=" + encodeURIComponent(extra.session);
+      return url;
     }
 
     // 日记本标记：一本翻开的册子 + 一道书脊。粗细 1.4 与 PipelineMark 对齐，
@@ -11027,7 +11172,7 @@ window.__ModuleLoader__.load({
     // 右栏 tab 的正文。为什么单独包一层具名组件（而不是把 hook 塞进
     // slots.register 的回调里）——同 PipelinePane 那条注释。
     function DiaryPane(props) {
-      const { t, project } = props;
+      const { t, project, agent, session } = props;
       const [doc, setDoc] = useState(undefined); // undefined=读中 null=读不出 对象=拿到
       const [gate, setGate] = useState(null);    // {kind, status} 503/409 的如实说明
       const [tick, setTick] = useState(0);
@@ -11091,7 +11236,7 @@ window.__ModuleLoader__.load({
         if (!project || busy) return;
         setBusy("compose");
         setNotice(null);
-        apiFetch(diaryUrl("/compose", project), DIARY_WRITE_OPTS({}))
+        apiFetch(diaryUrl("/compose", project, { agent, session }), DIARY_WRITE_OPTS({}))
           .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
           .then((r) => {
             const b = r.body || {};
@@ -11366,6 +11511,325 @@ window.__ModuleLoader__.load({
     }
 
 
+    // --- 人格设计整页（第五个座位）---------------------------------------
+    // 一个身份一张卡。为什么必须是**一整页**而不是设置里那张卡：桉桉要的
+    // 「设定好人格的 agent 只以这个人格的口吻写日记」需要三样东西同屏——
+    // 卡本身、这张卡这一轮真正会注入的文本、以及这个身份已经写下的日记。
+    // 设置页那张卡只能放第一样，另外两样放不进去也不该挤进去。
+    //
+    // 一条硬纪律：保存发**全三维**（default / byAgent / bySession）。
+    // settings.setPersona 的多卡形是全量替换，只发两维就会把「绑会话」的卡整片
+    // 抹掉——设置页那张卡原先正是这么发的（同一次改动里一并补上了 bySession：
+    // 用户在任何一处点保存，都不该顺手删掉另一处的数据）。
+    const PERSONA_CARD_FIELDS = ["name", "personality", "replyStyle", "scenario", "mesExample", "enabled"];
+
+    function personaCardShape(raw) {
+      const card = raw && typeof raw === "object" ? raw : {};
+      const out = {};
+      for (const field of PERSONA_CARD_FIELDS) {
+        if (field === "enabled") out.enabled = card.enabled === true;
+        else out[field] = typeof card[field] === "string" ? card[field] : "";
+      }
+      return out;
+    }
+
+    // 后端三种形状都要认：v2 多卡 {default,byAgent,bySession}、v1 单对象（读作
+    // default）、以及 404（旧后端没有 /persona）。只认前两种里的第一种会把老装
+    // 的用户读成「一张卡都没有」，那是最容易被当成「数据丢了」的假象。
+    function personaStoreShape(raw) {
+      const multi = !!raw && (("default" in raw) || ("byAgent" in raw) || ("bySession" in raw));
+      const pick = (bucket) => Object.fromEntries(
+        Object.entries(bucket && typeof bucket === "object" ? bucket : {}).map(([k, c]) => [k, personaCardShape(c)])
+      );
+      return {
+        default: personaCardShape(multi ? raw.default : raw),
+        byAgent: multi ? pick(raw.byAgent) : {},
+        bySession: multi ? pick(raw.bySession) : {}
+      };
+    }
+
+    function emptyPersonaCard() {
+      return { name: "", personality: "", replyStyle: "", scenario: "", mesExample: "", enabled: false };
+    }
+
+    // 人格页图标：一张侧脸（轮廓 + 眼点）。24 网格、1.8 描边，与侧栏其它图标同规格。
+    function PersonaGlyph({ size }) {
+      const s = size || 18;
+      return h("span", { className: "mneme-paneliglyph", "aria-hidden": "true" },
+        h("svg", {
+          width: s, height: s, viewBox: "0 0 24 24", fill: "none",
+          stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round"
+        },
+          h("path", { d: "M12 3a7 7 0 0 0-7 7c0 4 3 5 3 8h8c0-3 3-4 3-8a7 7 0 0 0-7-7z" }),
+          h("path", { d: "M10 11h.01" }),
+          h("path", { d: "M14 11h.01" }),
+          h("path", { d: "M9.5 15c1.6 1 3.4 1 5 0" })));
+    }
+
+    function PersonaMainPanel({ t }) {
+      const [draft, setDraft] = useState(null);      // 三维全量；null = 还没读到
+      const [phase, setPhase] = useState("loading"); // loading | ready | unknown
+      const [editing, setEditing] = useState("default");
+      const [newName, setNewName] = useState("");
+      const [savedAt, setSavedAt] = useState(0);     // 时间戳哨兵：只在 >0 时显示「已保存」
+      const [error, setError] = useState("");
+      const [preview, setPreview] = useState(undefined); // undefined=读中 null=读不出 对象
+      const [diary, setDiary] = useState(undefined);     // undefined=读中 null=读不出 数组
+      const [tick, setTick] = useState(0);
+      const [previewTick, setPreviewTick] = useState(0);
+      const previewSeq = useRef(0);
+
+      useEffect(() => {
+        let dead = false;
+        setPhase("loading");
+        apiFetch("/api/dsh-mneme/persona")
+          .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+          .then((r) => {
+            if (dead) return;
+            const raw = r.ok && r.body && r.body.persona && typeof r.body.persona === "object" ? r.body.persona : null;
+            // 读不到就说读不到：这里不拿空壳冒充「一张卡都没有」。
+            if (!raw) { setPhase("unknown"); return; }
+            setDraft(personaStoreShape(raw));
+            setPhase("ready");
+          })
+          .catch(() => { if (!dead) setPhase("unknown"); });
+        return () => { dead = true; };
+      }, [tick]);
+
+      useEffect(() => {
+        let dead = false;
+        setDiary(undefined);
+        apiFetch("/api/dsh-mneme/diary/library")
+          .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+          .then((r) => {
+            if (dead) return;
+            setDiary(r.ok && r.body && Array.isArray(r.body.buckets) ? r.body.buckets : null);
+          })
+          .catch(() => { if (!dead) setDiary(null); });
+        return () => { dead = true; };
+      }, [tick]);
+
+      // 预览序号守卫同设置页：先切 A 再切 B 时 A 的 GET 可能后回来，
+      // 没这道判断就会「编辑位是 B、预览是 A」——那张卡的标题写着「真正会注入的文本」，
+      // 显示别张卡的文本比不显示更糟。
+      useEffect(() => {
+        const seq = ++previewSeq.current;
+        setPreview(undefined);
+        const q = editing && editing !== "default" ? "?agent=" + encodeURIComponent(editing) : "";
+        apiFetch("/api/dsh-mneme/persona" + q)
+          .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+          .then((r) => {
+            if (seq !== previewSeq.current) return;
+            setPreview(r.ok && r.body && r.body.preview && typeof r.body.preview.text === "string" ? r.body.preview : null);
+          })
+          .catch(() => {
+            if (seq !== previewSeq.current) return;
+            setPreview(null);
+          });
+      }, [editing, previewTick]);
+
+      const ready = phase === "ready" && !!draft;
+      const current = !ready
+        ? emptyPersonaCard()
+        : editing === "default"
+          ? draft.default
+          : draft.byAgent[editing] || emptyPersonaCard();
+
+      const save = async (next) => {
+        try {
+          const res = await apiFetch("/api/dsh-mneme/persona", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ persona: next })
+          });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          setError("");
+          setSavedAt(Date.now());
+          setPreviewTick((n) => n + 1);
+        } catch (err) {
+          // 保存失败必须冒出来：v1 的静默 catch 曾把 404 吞成「看着像保存了」。
+          setError((err && err.message) || "failed");
+        }
+      };
+
+      const setField = (key, value) => {
+        if (!ready) return;
+        if (editing === "default") {
+          setDraft({ ...draft, default: { ...draft.default, [key]: value } });
+          return;
+        }
+        setDraft({
+          ...draft,
+          byAgent: { ...draft.byAgent, [editing]: { ...(draft.byAgent[editing] || emptyPersonaCard()), [key]: value } }
+        });
+      };
+
+      const saveEditing = () => {
+        if (!ready) return;
+        save(draft);
+      };
+
+      // 开关即存（与设置页同语义），但仍走三维全量：只换自己这一维。
+      const toggleEnabled = (checked) => {
+        if (!ready) return;
+        const nextCard = { ...current, enabled: checked };
+        const next = editing === "default"
+          ? { ...draft, default: nextCard }
+          : { ...draft, byAgent: { ...draft.byAgent, [editing]: nextCard } };
+        setDraft(next);
+        save(next);
+      };
+
+      const addCard = () => {
+        const id = newName.trim();
+        if (!ready || !id || id === "default" || draft.byAgent[id]) return;
+        const next = { ...draft, byAgent: { ...draft.byAgent, [id]: { ...emptyPersonaCard(), name: id } } };
+        setDraft(next);
+        setNewName("");
+        setEditing(id);
+        save(next);
+      };
+
+      const removeCard = (id) => {
+        if (!ready || id === "default" || !draft.byAgent[id]) return;
+        const next = { ...draft.byAgent };
+        delete next[id];
+        const out = { ...draft, byAgent: next };
+        setDraft(out);
+        if (editing === id) setEditing("default");
+        save(out);
+      };
+
+      // 日记侧：桶的署名来自 frontmatter 的 `persona: <source> (<agent>)`，
+      // 与「ta 的日记」面板同一个解析器，不另写一份。
+      const buckets = Array.isArray(diary) ? diary : [];
+      const name = String(editing || "");
+      const mine = name && name !== "default"
+        ? buckets.filter((b) => diaryBucketName(b).toLowerCase() === name.toLowerCase())
+        : [];
+      const entryTotal = mine.reduce((sum, b) => sum + (Number(b.count) || 0), 0);
+      const latest = mine.map((b) => String(b.latest || "")).sort().pop() || "";
+      const allTotal = buckets.reduce((sum, b) => sum + (Number(b.count) || 0), 0);
+      const sessionCards = ready ? Object.keys(draft.bySession) : [];
+
+      const head = h("div", { className: "mneme-persona-head" },
+        h(PersonaGlyph, { size: 16 }),
+        h("span", { className: "mneme-persona-title" }, t("memory.persona.title")),
+        h("span", { className: "mneme-persona-spacer" }),
+        h("button", {
+          type: "button", className: "mneme-diary-btn",
+          onClick: () => { setTick((n) => n + 1); setPreviewTick((n) => n + 1); }
+        }, t("memory.diary.retry")));
+
+      let body = null;
+      if (phase === "loading") {
+        body = h("div", { className: "mneme-diary-empty" }, t("memory.persona.loading"));
+      } else if (phase === "unknown") {
+        body = h("div", { className: "mneme-diary-empty" },
+          h("span", { className: "mneme-diary-warn" }, t("memory.persona.readFailed")));
+      } else {
+        const cards = h("div", { className: "mneme-persona-col" },
+          h("div", { className: "mneme-persona-card" },
+            h("button", {
+              type: "button",
+              className: "mneme-persona-pick" + (editing === "default" ? " mneme-persona-pick--on" : ""),
+              onClick: () => setEditing("default")
+            }, t("memory.persona.defaultCard"))),
+          Object.keys(draft.byAgent).map((id) => h("div", { key: id, className: "mneme-persona-card" },
+            h("button", {
+              type: "button",
+              className: "mneme-persona-pick" + (editing === id ? " mneme-persona-pick--on" : ""),
+              title: id,
+              onClick: () => setEditing(id)
+            }, draft.byAgent[id].name || id),
+            h("button", {
+              type: "button", className: "mneme-persona-del",
+              title: t("memory.persona.delete"), "aria-label": t("memory.persona.delete"),
+              onClick: () => removeCard(id)
+            }, "×"))),
+          h("div", { className: "mneme-persona-new" },
+            h("input", {
+              className: "mneme-set-input", style: { marginBottom: 0, flex: "1 1 auto", minWidth: 0 },
+              value: newName, placeholder: t("memory.persona.newPlaceholder"),
+              onChange: (e) => setNewName(e.target.value),
+              onKeyDown: (e) => { if (e.key === "Enter") addCard(); }
+            }),
+            h("button", { type: "button", className: "mneme-btn", onClick: addCard }, t("memory.persona.add"))),
+          sessionCards.length
+            ? h("div", { className: "mneme-persona-note" },
+              t("memory.persona.factsLinked") + " (" + sessionCards.length + ")")
+            : null);
+
+        const field = (key, label, placeholder, rows) => h(react.Fragment, null,
+          h("label", { className: "mneme-persona-label", htmlFor: "mneme-persona-" + key }, label),
+          rows
+            ? h("textarea", {
+              id: "mneme-persona-" + key, className: "mneme-set-input mneme-set-input--area",
+              style: { marginBottom: 0 }, placeholder: placeholder,
+              value: current[key] || "", onChange: (e) => setField(key, e.target.value)
+            })
+            : h("input", {
+              id: "mneme-persona-" + key, className: "mneme-set-input",
+              style: { marginBottom: 0 }, placeholder: placeholder,
+              value: current[key] || "", onChange: (e) => setField(key, e.target.value)
+            }));
+
+        const previewNode = preview === undefined
+          ? h("div", { className: "mneme-persona-note" }, t("memory.persona.loading"))
+          : preview === null
+            ? h("div", { className: "mneme-persona-note" }, t("memory.persona.previewUnknown"))
+            : preview.text
+              ? h("pre", { className: "mneme-persona-preview" }, preview.text)
+              : h("div", { className: "mneme-persona-note" }, t("memory.persona.previewEmpty"));
+
+        const diaryNote = diary === undefined
+          ? t("memory.persona.loading")
+          : diary === null
+            ? t("memory.persona.readFailed")
+            : name === "default"
+              ? t("memory.persona.diaryCount").replace("{count}", String(allTotal)).replace("{latest}", "—")
+              : entryTotal
+                ? t("memory.persona.diaryCount").replace("{count}", String(entryTotal)).replace("{latest}", latest || "—")
+                : t("memory.persona.diaryNone");
+
+        const sheet = h("div", { className: "mneme-persona-sheet" },
+          h("div", { className: "mneme-persona-note" }, t("memory.persona.hint")),
+          h("label", { className: "mneme-persona-label" }, t("memory.persona.enabled")),
+          h("div", { className: "mneme-set-row" },
+            h("label", { className: "mneme-set-ruletext" },
+              h("input", {
+                type: "checkbox", checked: current.enabled === true,
+                onChange: (e) => toggleEnabled(e.target.checked)
+              }),
+              " " + (current.enabled
+                ? t("memory.persona.enabledOn")
+                : t("memory.persona.enabledOff")))),
+          field("name", t("memory.persona.name"), t("memory.settings.personaNamePlaceholder"), false),
+          field("personality", t("memory.persona.personality"), t("memory.settings.personaPersonalityPlaceholder"), true),
+          field("replyStyle", t("memory.persona.replyStyle"), t("memory.settings.personaReplyStylePlaceholder"), true),
+          field("scenario", t("memory.persona.scenario"), t("memory.persona.scenarioPlaceholder"), true),
+          field("mesExample", t("memory.persona.mesExample"), t("memory.persona.mesExamplePlaceholder"), true),
+          h("div", { className: "mneme-persona-diaryrow" },
+            h("button", { type: "button", className: "mneme-diary-btn", onClick: saveEditing }, t("memory.persona.save")),
+            savedAt ? h("span", { className: "mneme-diary-ok" }, t("memory.persona.saved")) : null,
+            error ? h("span", { className: "mneme-diary-warn" }, t("memory.persona.saveFailed") + " (" + error + ")") : null),
+          h("div", { className: "mneme-persona-label" }, t("memory.persona.preview")),
+          previewNode,
+          h("div", { className: "mneme-persona-diary" },
+            h("div", { className: "mneme-persona-label" }, t("memory.persona.diary")),
+            h("div", { className: "mneme-persona-note" }, t("memory.persona.diaryHint")),
+            h("div", { className: "mneme-persona-diaryrow" }, diaryNote,
+              diary === undefined ? null : h("button", {
+                type: "button", className: "mneme-diary-btn",
+                onClick: () => setPreviewTick((n) => n + 1)
+              }, t("memory.persona.previewRefresh")))));
+
+        body = h("div", { className: "mneme-persona-body" }, cards, sheet);
+      }
+
+      return h("div", { className: "mneme-persona" }, head, body);
+    }
+
     // 右栏 tab 的座位注册（仅在 diaryEnabled 开启后被调用）。与 M.O. 那套同样的三条纪律：
     // ① 类型注册与正文座位各自兜自己的异常；② 类型注册要幂等（宿主对重复的
     // 类型 id 会抛）；③ **必须同时给一个能 openTab 的入口**，否则页签不可达。
@@ -11440,7 +11904,17 @@ window.__ModuleLoader__.load({
               name: "sidebar.right.pane.tab",
               key: DIARY_TAB_ID,
               inject: (sessionId) => ({ sessionId })
-            }, (props) => h(DiaryPane, { t, project: sessionProject(ctx, props && props.sessionId) }));
+            }, (props) => {
+              const sid = props && props.sessionId;
+              // agent 与 session 同源（都从这一个 sessionId 取），自动轮那条纪律：
+              // 人格与素材必须是同一个人，否则写出「A 的声音 + B 的事」。
+              return h(DiaryPane, {
+                t,
+                project: sessionProject(ctx, sid),
+                agent: sessionAgent(ctx, sid),
+                session: sid || null
+              });
+            });
           });
           ctx.slots.inject("sidebar.right.pane.tab.title", () => {
             return ctx.slots.register({
@@ -12409,6 +12883,19 @@ window.__ModuleLoader__.load({
           name: "main",
           key: "dsh-mneme-diary"
         }, () => h(DiaryLibraryPanel, { t }));
+        // 人格第五个座位：人格设计本来只是设置页里的一张卡，但「谁的人格」这件事
+        // 决定的不只是聊天口吻，还决定 ta 的日记按什么名字分桶——它得有个自己的
+        // 页面，不必先想起来去「设置」里翻。id 与 key 逐字同为 "dsh-mneme-persona"。
+        const disposePersonaGlyph = ctx.slots.register({
+          name: "sidebar.panellist",
+          id: "dsh-mneme-persona",
+          order: 64,
+          label: () => t("memory.persona.open")
+        }, (props) => h(PersonaGlyph, { size: props && props.size }));
+        const disposePersonaMain = ctx.slots.register({
+          name: "main",
+          key: "dsh-mneme-persona"
+        }, () => h(PersonaMainPanel, { t }));
         return () => {
           disposeGlyph();
           disposeMain();
@@ -12418,6 +12905,8 @@ window.__ModuleLoader__.load({
           disposeKbMain();
           disposeDiaryGlyph();
           disposeDiaryMain();
+          disposePersonaGlyph();
+          disposePersonaMain();
           // 座位被撤（宿主折叠该槽 / 换宿主形态）时把回落装回去：两条路径都
           // 只靠各自的 inject 触发，谁不动谁就永远停在「没有入口」的状态。
           mountFooterSeat();
