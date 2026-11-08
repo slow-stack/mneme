@@ -870,6 +870,8 @@ window.__ModuleLoader__.load({
         "memory.diary.retry": "重试",
         "memory.diary.empty": "这个项目还没有日记",
         "memory.diary.emptyHint": "点「写今天」：它拿这个会话今天真实说过的话写一篇；今天没聊过就不写。",
+"memory.diary.libraryEmpty": "还没有任何一本日记",
+"memory.diary.libraryEmptyHint": "日记按 Agent 分本，写在记忆库的 diaries 目录下。写完第一篇这里就会出现它的名字。",
         "memory.diary.pickHint": "左边选一天，右边看正文。",
         "memory.diary.count": "共 {n} 篇",
         "memory.diary.writtenOk": "写好了：{path}",
@@ -1858,6 +1860,8 @@ window.__ModuleLoader__.load({
         "memory.diary.retry": "Retry",
         "memory.diary.empty": "No diary entries for this project yet",
         "memory.diary.emptyHint": "Press “Write today”: it writes one entry from what this session actually said today, and writes nothing if there was no conversation.",
+"memory.diary.libraryEmpty": "No diaries yet",
+"memory.diary.libraryEmptyHint": "Diaries are kept one per agent under the memory library's diaries folder. The first entry written makes its name appear here.",
         "memory.diary.pickHint": "Pick a day on the left, read the entry on the right.",
         "memory.diary.count": "{n} entries",
         "memory.diary.writtenOk": "Written: {path}",
@@ -3247,6 +3251,14 @@ window.__ModuleLoader__.load({
       ".mneme-diary-btn:disabled{cursor:not-allowed;border-style:dashed;color:var(--mneme-fg-dim)}",
       ".mneme-diary-btn--primary{border-color:var(--mneme-accent);color:var(--mneme-accent)}",
       ".mneme-diary-body{display:flex;gap:10px;min-height:0;flex:1 1 auto}",
+      // 左侧面板的导航栏：一行一个 Agent 名字，横向可滚。
+      // 与右栏那套「左边日期列表」不同层——这里多一层「谁写的」。
+      ".mneme-diary-nav{display:flex;gap:6px;flex-wrap:wrap;flex:none;border-bottom:1px dashed var(--dsw-alias-border-l2);padding-bottom:8px}",
+      ".mneme-diary-agent{border:1.5px solid transparent;background:0 0;cursor:pointer;font-family:inherit;font-size:12px;line-height:17px;padding:3px 10px;border-radius:12px 8px 13px 9px;color:var(--mneme-fg-dim);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".mneme-diary-agent:hover{background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-diary-agent:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
+      ".mneme-diary-agent--on{border-color:var(--mneme-accent);color:var(--mneme-accent);font-weight:600}",
+      ".mneme-diary-agentName{pointer-events:none}",
       ".mneme-diary-list{flex:0 0 108px;display:flex;flex-direction:column;gap:4px;overflow:auto;padding-right:2px;border-right:1px dashed var(--dsw-alias-border-l2)}",
       ".mneme-diary-day{text-align:left;border:0;background:0 0;cursor:pointer;font-family:inherit;font-size:12px;line-height:17px;padding:3px 7px;border-radius:9px 7px 10px 6px;color:var(--mneme-fg-dim)}",
       ".mneme-diary-day:hover{background:var(--dsw-alias-interactive-bg-hover)}",
@@ -11211,7 +11223,150 @@ window.__ModuleLoader__.load({
       );
     }
 
-    // 座位注册（仅在 diaryEnabled 开启后被调用）。与 M.O. 那套同样的三条纪律：
+    // 左侧面板（`sidebar.panellist` + `main` 成对座位）的图标：一本翻开的册子，
+    // 与右栏 tab 的 DiaryMark 同一形状，但这里画成 24 网格的粗描边——侧栏图标
+    // 统一走 1.8px，细描边在 18px 下会糊。
+    function DiaryLibraryGlyph({ size }) {
+      const s = size || 18;
+      return h("span", { className: "mneme-paneliglyph", "aria-hidden": "true" },
+        h("svg", {
+          width: s, height: s, viewBox: "0 0 24 24", fill: "none",
+          stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round"
+        },
+          h("path", { d: "M12 7c-1.8-1.3-4-1.6-7-1v13c3-.6 5.2-.3 7 1 1.8-1.3 4-1.6 7-1V6c-3-.6-5.2-.3-7 1z" }),
+          h("path", { d: "M12 7v14" })));
+    }
+
+    // 一篇日记的 frontmatter 里，人格那一行形如 `persona: settings (amarre)`，
+    // 括号里是 agent 名。这是「一个 Agent 一本」唯一可信的署名来源——库里没有
+    // 第二份，桶名会漂（#613 的双桶就是这么来的）。取不到就退回项目名，再退回桶键，
+    // 三级都不猜。
+    function diaryBucketName(bucket) {
+      const persona = String((bucket && bucket.persona) || "");
+      const hit = /\(([^)]+)\)\s*$/.exec(persona);
+      if (hit) {
+        const name = hit[1].trim();
+        if (name && name !== "default" && name !== "standard") return name;
+      }
+      if (bucket && bucket.project) return String(bucket.project);
+      return String((bucket && bucket.key) || "");
+    }
+
+    // 左侧「ta 的日记」面板：导航栏是 Agent 名字，正文是选中那一篇。
+    //
+    // 与右栏 DiaryPane 的关键差别：右栏拿得到 sessionId（座位 `inject` 透传），
+    // 所以能算出「当前会话的项目」；`main` 座位不注入 sessionId，这里算不出来，
+    // 也不该只给一个项目看——它读的是跨桶清单（/diary/library）。
+    //
+    // 座位无条件注册、开关只管内容层：`diaryEnabled` 关着时后端回 409，面板据此
+    // 渲染「去哪儿打开」的空态，而不是让入口凭空消失（#607 的教训）。
+    function DiaryLibraryPanel({ t }) {
+      const [lib, setLib] = useState(undefined); // undefined=读中 null=读不出 对象=拿到
+      const [gate, setGate] = useState(null);    // {kind, status}
+      const [tick, setTick] = useState(0);
+      const [pick, setPick] = useState(null);    // 选中的桶键
+      const [day, setDay] = useState(null);      // 选中的日期串
+      const [entry, setEntry] = useState(undefined);
+
+      useEffect(() => {
+        let dead = false;
+        setLib(undefined);
+        setGate(null);
+        apiFetch("/api/dsh-mneme/diary/library")
+          .then((res) => res.json().then((body) => ({ status: res.status, ok: res.ok, body })))
+          .then((r) => {
+            if (dead) return;
+            if (r.ok) { setLib(r.body || {}); return; }
+            // 503 = 没装配、409 = 没开。两种都不是「读失败」，文案必须分开。
+            if (r.status === 503 || r.status === 409) {
+              setGate({ kind: r.status === 503 ? "unavailable" : "disabled", status: r.status });
+              setLib(null);
+              return;
+            }
+            setLib(null);
+          })
+          .catch((err) => {
+            console.warn("[dsh-mneme] diary library failed:", err);
+            if (!dead) setLib(null);
+          });
+        return () => { dead = true; };
+      }, [tick]);
+
+      const buckets = (lib && lib.buckets) || [];
+      const activeBucket = buckets.find((b) => b.key === pick) || buckets[0] || null;
+      const activeDay = day || (activeBucket && activeBucket.entries.length ? activeBucket.entries[0].date : null);
+
+      useEffect(() => {
+        if (!activeBucket || !activeDay) { setEntry(undefined); return; }
+        let dead = false;
+        setEntry(undefined);
+        apiFetch("/api/dsh-mneme/diary/library/entry?bucket=" + encodeURIComponent(activeBucket.key)
+          + "&date=" + encodeURIComponent(activeDay))
+          .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+          .then((r) => {
+            if (dead) return;
+            setEntry(r.ok && r.body && typeof r.body.text === "string" ? r.body.text : null);
+          })
+          .catch((err) => {
+            console.warn("[dsh-mneme] diary library entry failed:", err);
+            if (!dead) setEntry(null);
+          });
+        return () => { dead = true; };
+      }, [activeBucket && activeBucket.key, activeDay]);
+
+      const head = h("div", { className: "mneme-diary-head" },
+        h(DiaryMark, { size: 16 }),
+        h("span", { className: "mneme-diary-title" }, t("memory.diary.title")),
+        h("span", { className: "mneme-diary-spacer" }),
+        h("button", {
+          type: "button", className: "mneme-diary-btn",
+          disabled: !!gate, onClick: () => setTick((n) => n + 1)
+        }, t("memory.diary.retry")));
+
+      let body = null;
+      if (gate) {
+        body = h("div", { className: "mneme-diary-empty" },
+          h("div", null, t(gate.kind === "disabled" ? "memory.diary.disabled" : "memory.diary.unavailable")),
+          h("div", null, t(gate.kind === "disabled" ? "memory.diary.disabledHint" : "memory.diary.note")));
+      } else if (lib === undefined) {
+        body = h("div", { className: "mneme-diary-empty" }, t("memory.diary.loading"));
+      } else if (lib === null) {
+        body = h("div", { className: "mneme-diary-empty" },
+          h("span", { className: "mneme-diary-warn" }, t("memory.diary.readFailed")), " ",
+          h("button", { type: "button", className: "mneme-diary-btn", onClick: () => setTick((n) => n + 1) }, t("memory.diary.retry")));
+      } else if (!buckets.length) {
+        body = h("div", { className: "mneme-diary-empty" },
+          h("div", null, t("memory.diary.libraryEmpty")),
+          h("div", null, t("memory.diary.libraryEmptyHint")));
+      } else {
+        const nav = h("div", { className: "mneme-diary-nav" }, buckets.map((b) => h("button", {
+          key: b.key, type: "button",
+          className: "mneme-diary-agent" + (activeBucket && b.key === activeBucket.key ? " mneme-diary-agent--on" : ""),
+          title: (b.project || b.key) + " · " + String(b.count),
+          onClick: () => { setPick(b.key); setDay(null); }
+        }, h("span", { className: "mneme-diary-agentName" }, diaryBucketName(b)))));
+        const days = (activeBucket && activeBucket.entries) || [];
+        const list = h("div", { className: "mneme-diary-list" }, days.map((r) => h("button", {
+          key: r.date, type: "button",
+          className: "mneme-diary-day" + (r.date === activeDay ? " mneme-diary-day--on" : ""),
+          onClick: () => setDay(r.date)
+        }, r.date)));
+        const text = typeof entry === "string" && activeDay ? entry : undefined;
+        const paper = h("div", { className: "mneme-diary-paper" },
+          text === undefined
+            ? h("div", { className: "mneme-diary-empty" }, t("memory.diary.loading"))
+            : text === null
+              ? h("span", { className: "mneme-diary-warn" }, t("memory.diary.readFailed"))
+              : h("pre", { className: "mneme-diary-text" }, text));
+        body = h("div", { className: "mneme-diary-body" }, list, paper);
+        body = h(react.Fragment, null, nav, body);
+      }
+
+      return h("div", { className: "mneme-diary" }, head, body);
+    }
+
+
+    // 右栏 tab 的座位注册（仅在 diaryEnabled 开启后被调用）。与 M.O. 那套同样的三条纪律：
     // ① 类型注册与正文座位各自兜自己的异常；② 类型注册要幂等（宿主对重复的
     // 类型 id 会抛）；③ **必须同时给一个能 openTab 的入口**，否则页签不可达。
     function registerDiarySeats(ctx, t) {
@@ -12235,6 +12390,25 @@ window.__ModuleLoader__.load({
           name: "main",
           key: "dsh-mneme-kb"
         }, () => h(KbMainPanel, { t }));
+        // 日记本第四个座位：桉桉要的是**左侧**入口（「在左侧侧边栏开一个 ta 的日记」），
+        // 不是右栏页签。所以这里与上面三个同形：panellist 出图标、main 出中列整页，
+        // id 与 key 逐字同为 "dsh-mneme-diary"。
+        //
+        // 与右栏那套（registerDiarySeats）并存而不是替代：右栏 pane 按会话的项目定位，
+        // 这个面板按 agent 定位、读的是跨桶清单。两套共用同一个 DiaryMark 与 API 契约。
+        //
+        // 座位**无条件注册**，开关只管内容层——diaryEnabled 关着时面板自己渲染
+        // 「去哪儿打开」的空态，而不是让入口凭空消失（#607 的教训）。
+        const disposeDiaryGlyph = ctx.slots.register({
+          name: "sidebar.panellist",
+          id: "dsh-mneme-diary",
+          order: 63,
+          label: () => t("memory.diary.title")
+        }, (props) => h(DiaryLibraryGlyph, { size: props && props.size }));
+        const disposeDiaryMain = ctx.slots.register({
+          name: "main",
+          key: "dsh-mneme-diary"
+        }, () => h(DiaryLibraryPanel, { t }));
         return () => {
           disposeGlyph();
           disposeMain();
@@ -12242,6 +12416,8 @@ window.__ModuleLoader__.load({
           disposeWikiMain();
           disposeKbGlyph();
           disposeKbMain();
+          disposeDiaryGlyph();
+          disposeDiaryMain();
           // 座位被撤（宿主折叠该槽 / 换宿主形态）时把回落装回去：两条路径都
           // 只靠各自的 inject 触发，谁不动谁就永远停在「没有入口」的状态。
           mountFooterSeat();

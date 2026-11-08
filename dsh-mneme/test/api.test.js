@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
@@ -57,8 +59,12 @@ function setup(embedder, apiToken = "", config = null, semantic = undefined) {
 }
 
 function findHandler(routes, path) {
-  const route = routes.find((r) => r.path === path || (r.kind === "prefix" && path.startsWith(r.path)));
-  return route;
+  // 先找精确登记，再退回 prefix 兜底。不能只写一个 find：`/api/dsh-mneme` 那条
+  // prefix 404 兜底登记得很早，路径以它开头的任何一条都会先命中它，于是不管
+  // 断言什么都是 404。
+  const exact = routes.find((r) => r.kind === "exact" && r.path === path);
+  if (exact) return exact;
+  return routes.find((r) => r.kind === "prefix" && path.startsWith(r.path));
 }
 
 test("registers list, search, and get prefix routes", () => {
@@ -2653,4 +2659,144 @@ test("GET /api/dsh-mneme/memory/provenance?sessionId=：limit 越界 → 400；�
   const data = JSON.parse(ok.body);
   assert.equal(data.windows.length, 2);
   assert.equal(data.truncated, true, "还有第三个窗口没回——必须说出来，否则半份转录会被当成全部");
+});
+
+// --- 日记库两条路由（左侧「ta 的日记」面板的数据源）-----------------------
+// 这两条与上面按 project 定位的五条日记路由不是一回事：面板拿不到当前会话，
+// 只能整体扫 diaries 根目录。所以这里也必须不传 project 就能读。
+
+/** 造一个带 diaries 目录的临时 memoryDir，并按 bucket/date 铺文件。 */
+function diaryFixture(buckets) {
+  const memoryDir = mkdtempSync(join(tmpdir(), "mneme-api-diary-"));
+  const root = join(memoryDir, "diaries");
+  mkdirSync(root, { recursive: true });
+  for (const [bucket, files] of Object.entries(buckets)) {
+    mkdirSync(join(root, bucket), { recursive: true });
+    for (const [date, text] of Object.entries(files)) {
+      writeFileSync(join(root, bucket, `${date}.md`), text, "utf8");
+    }
+  }
+  return { memoryDir, root };
+}
+
+function diaryPage(agent, body = "正文") {
+  return `---\ndate: 2026-11-08\nproject: p\npersona: settings (${agent})\n---\n\n${body}\n`;
+}
+
+/** 只装配日记要的那一个位置参数（第 14 个），其余留空。 */
+function setupDiary(config, diary = { compose: async () => ({ ok: true }) }) {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  const settings = createSettings(store.db);
+  const routes = [];
+  const ctx = { webServer: { register(route) { routes.push(route); return () => {}; } } };
+  createApi(ctx, service, settings, { add() {}, remove() {}, list: () => [] }, undefined,
+    undefined, "", config, null, null, null, null, null, diary);
+  return { routes };
+}
+
+test("GET /api/dsh-mneme/diary/library：不传 project 也能列清单（面板拿不到会话）", async (t) => {
+  const { memoryDir } = diaryFixture({
+    "amarre-c836db6a": { "2026-11-08": diaryPage("amarre") },
+    "attune-dd7a5103": { "2026-11-07": diaryPage("attune") }
+  });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+
+  const { routes } = setupDiary({ memoryDir, diaryEnabled: true });
+  const route = findHandler(routes, "/api/dsh-mneme/diary/library");
+  assert.ok(route, "路由必须注册在 /api/dsh-mneme/diary/library");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/diary/library"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.equal(data.contract, "mneme.diary/v1");
+  assert.equal(data.buckets.length, 2);
+});
+
+test("GET /api/dsh-mneme/diary/library/entry：正常读到正文", async (t) => {
+  const { memoryDir } = diaryFixture({ "amarre-c836db6a": { "2026-11-08": diaryPage("amarre", "今天很好") } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+
+  const { routes } = setupDiary({ memoryDir, diaryEnabled: true });
+  const route = findHandler(routes, "/api/dsh-mneme/diary/library/entry");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/diary/library/entry?bucket=amarre-c836db6a&date=2026-11-08"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.equal(data.bucket, "amarre-c836db6a");
+  assert.equal(data.date, "2026-11-08");
+  assert.match(data.text, /今天很好/);
+});
+
+test("GET /api/dsh-mneme/diary/library/entry：越界桶名与坏日期都回 400，不伪装成 404", async (t) => {
+  const { memoryDir } = diaryFixture({ ok: { "2026-11-08": diaryPage("x") } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+
+  const { routes } = setupDiary({ memoryDir, diaryEnabled: true });
+  const route = findHandler(routes, "/api/dsh-mneme/diary/library/entry");
+
+  // 越界是一种**坏请求**，不是「这本不存在」——回 404 会让调用方以为换个名字再试就行。
+  for (const bad of ["..", "../x", "ok/../ok", ""]) {
+    const res = new FakeRes();
+    await route.handler(req(`/api/dsh-mneme/diary/library/entry?bucket=${encodeURIComponent(bad)}&date=2026-11-08`), res);
+    assert.equal(res.statusCode, 400, `桶名 ${JSON.stringify(bad)} 该回 400`);
+    assert.equal(JSON.parse(res.body).error, "bucket-required");
+  }
+  for (const bad of ["2026-1-1", "../../etc/passwd", ""]) {
+    const res = new FakeRes();
+    await route.handler(req(`/api/dsh-mneme/diary/library/entry?bucket=ok&date=${encodeURIComponent(bad)}`), res);
+    assert.equal(res.statusCode, 400, `日期 ${JSON.stringify(bad)} 该回 400`);
+    assert.equal(JSON.parse(res.body).error, "date-required");
+  }
+});
+
+test("GET /api/dsh-mneme/diary/library/entry：合法但不存在 → 404 diary-not-found", async (t) => {
+  const { memoryDir } = diaryFixture({ ok: { "2026-11-08": diaryPage("x") } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+
+  const { routes } = setupDiary({ memoryDir, diaryEnabled: true });
+  const route = findHandler(routes, "/api/dsh-mneme/diary/library/entry");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/diary/library/entry?bucket=ok&date=2026-01-01"), res);
+  assert.equal(res.statusCode, 404);
+  assert.equal(JSON.parse(res.body).error, "diary-not-found");
+});
+
+test("日记库两条路由与右栏同源：装配缺件 503、开关关着 409", async (t) => {
+  const { memoryDir } = diaryFixture({ ok: { "2026-11-08": diaryPage("x") } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+  for (const path of ["/api/dsh-mneme/diary/library", "/api/dsh-mneme/diary/library/entry?bucket=ok&date=2026-11-08"]) {
+    // 503：diary 位置参数没装配。
+    const off = setupDiary({ memoryDir, diaryEnabled: true }, null);
+    const r1 = new FakeRes();
+    await findHandler(off.routes, "/api/dsh-mneme/diary/library").handler(req(path), r1);
+    assert.equal(r1.statusCode, 503, `${path} 装配缺件该回 503`);
+    assert.equal(JSON.parse(r1.body).reason, "diary-unavailable");
+
+    // 409：装配了但用户没开。
+    const disabled = setupDiary({ memoryDir, diaryEnabled: false });
+    const r2 = new FakeRes();
+    await findHandler(disabled.routes, "/api/dsh-mneme/diary/library").handler(req(path), r2);
+    assert.equal(r2.statusCode, 409, `${path} 开关关着该回 409`);
+    assert.equal(JSON.parse(r2.body).reason, "diary-not-enabled");
+  }
+});
+
+test("中文桶名：清单里列得出来就必须读得到（否则就是点了没反应）", async (t) => {
+  // 现场真有一个保留中文的历史桶。上一版这里两层用了不同判据——清单按路径语义、
+  // 路由按 ASCII 白名单——结果是列得出来、点进去 400。这条用例锁住两者同源。
+  const { memoryDir } = diaryFixture({ "QQ对话-4f061790": { "2026-11-07": diaryPage("amarre", "旧的那篇") } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+
+  const { routes } = setupDiary({ memoryDir, diaryEnabled: true });
+  const list = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/diary/library").handler(req("/api/dsh-mneme/diary/library"), list);
+  const buckets = JSON.parse(list.body).buckets.map((b) => b.key);
+  assert.ok(buckets.includes("QQ对话-4f061790"), "中文桶必须出现在清单里");
+
+  const res = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/diary/library/entry")
+    .handler(req(`/api/dsh-mneme/diary/library/entry?bucket=${encodeURIComponent("QQ对话-4f061790")}&date=2026-11-07`), res);
+  assert.equal(res.statusCode, 200, "清单里列得出来的桶，点进去必须读得到");
+  assert.match(JSON.parse(res.body).text, /旧的那篇/);
 });

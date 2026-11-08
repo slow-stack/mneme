@@ -40,7 +40,13 @@ import { observationDir, loadObservationsById } from "./pipeline-observations.js
 import { projectKey } from "./candidates.js";
 // 日记本（v0.13）：读侧三件（列表/正文/账本）在 diary/index.js 里都是纯函数级的小实现，
 // 路由只做参数校验与闸门——把口径写在这里会让「面板与 CLI 读的是同一份」破功。
-import { diaryDir, listDiaries, readDiary, exportDiary } from "./diary/index.js";
+import {
+  diaryDir, listDiaries, readDiary, exportDiary,
+  // 跨桶清单（左侧「ta 的日记」面板）：它拿不到当前会话的项目，只能整体读。
+  // isBucketName 也走同一处：清单与单篇读取必须用同一道判据，否则会出现
+  // 「列得出来、点进去 400」。
+  listDiaryLibrary, readLibraryEntry, isBucketName
+} from "./diary/index.js";
 import { readCandidateDoc } from "./candidates.js";
 // M.O. 自动沉淀：/nudge 是 pipeline-nudge.js 的第一个运行时消费者（此前它只有测试在用，
 // 是个孤儿模块——「不能自动沉淀工作流」的根因）。
@@ -2847,6 +2853,73 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           sendJson(res, 500, { error: "diary-export-failed", detail: String((error && error.message) || error) });
         }
       });
+    }
+  });
+
+  // --- 日记库（左侧「ta 的日记」面板）-----------------------------------
+  // 与上面五条**按项目定位**的日记路由是两件事：
+  // 左侧面板长在 `main` 座位上，宿主不给它 sessionId，所以它算不出
+  // 「当前会话的项目根」，也没法用 projectKey 定位单个桶。它要的是
+  // 「有哪些桶、各是谁写的、各有多少篇」——那只能整体扫 diaries 根目录。
+  //
+  // 两条都 policy "open"：只读、不写盘、不调模型，鉴权交宿主围栏。
+  // 闸门与上面同源（503 装配缺件 / 409 用户没开），否则会出现「右栏能读、
+  // 左栏 404」这种看起来像坏了的分叉。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/diary/library",
+    policy: "open",
+    handler(req, res) {
+      if (!diaryGate(req, res)) return;
+      try {
+        const { root, buckets } = listDiaryLibrary({
+          memoryDir: config.memoryDir,
+          configured: config.diaryDir
+        });
+        sendJson(res, 200, { contract: "mneme.diary/v1", root, buckets });
+      } catch (error) {
+        sendJson(res, 500, { error: "diary-unreadable", detail: String((error && error.message) || error) });
+      }
+    }
+  });
+
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/diary/library/entry",
+    policy: "open",
+    handler(req, res) {
+      if (!diaryGate(req, res)) return;
+      const params = new URL(req.url, "http://localhost").searchParams;
+      const bucket = params.get("bucket");
+      const date = params.get("date");
+      // 桶名与日期都要校验：这条路径直接拼文件系统路径，`..` 必须在这里挡住。
+      // 用的就是 library.js 那道 `isBucketName`——两层不能各写一份规则，否则
+      // 会出现「清单里列得出来、点进去 400」：历史上真有保留中文的桶
+      // （`QQ对话-4f061790`），ASCII 白名单会把它列出来却读不到，用户看到的是
+      // 点了没反应。真正的越界由 `readLibraryEntry` 里的真实路径解析兜底。
+      if (!bucket || !isBucketName(bucket)) {
+        sendJson(res, 400, { error: "bucket-required" });
+        return;
+      }
+      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        sendJson(res, 400, { error: "date-required" });
+        return;
+      }
+      try {
+        const text = readLibraryEntry({
+          memoryDir: config.memoryDir,
+          configured: config.diaryDir,
+          bucket,
+          date
+        });
+        if (text === null) {
+          sendJson(res, 404, { error: "diary-not-found", bucket, date });
+          return;
+        }
+        sendJson(res, 200, { contract: "mneme.diary/v1", bucket, date, text });
+      } catch (error) {
+        sendJson(res, 500, { error: "diary-unreadable", detail: String((error && error.message) || error) });
+      }
     }
   });
 

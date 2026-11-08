@@ -352,8 +352,8 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
   // spec 存在时点火：一把全点会把新座位的注册塞进老宿主，测出来的就不是真行为。
   const fire = (ctx, key) => ctx.injected.filter((i) => i.key === key).map((i) => i.cb());
 
-  // 新宿主：panellist 已声明。panellist + main 各三份（记忆 + chorography +
-  // 知识库三个座位），每对各自 id/key 逐字同名；footer 回落不装。
+  // 新宿主：panellist 已声明。panellist + main 各四份（记忆 + chorography +
+  // 知识库 + 日记四个座位），每对各自 id/key 逐字同名；footer 回落不装。
   {
     const { ctx, regs } = makeCtx((key) => (key === "sidebar.panellist" ? { kind: "list" } : undefined));
     const api = boot(ctx, (k) => k, () => null);
@@ -362,10 +362,10 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
     fire(ctx, "sidebar.footer.action");
     assert.equal(disposes.length, 1);
     const ids = (name) => regs.filter((r) => r.alive && r.opts.name === name).map((r) => r.opts.id ?? r.opts.key).sort();
-    assert.equal(alive(regs, "sidebar.panellist"), 3, "memory + wiki + kb glyphs");
-    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
-    assert.equal(alive(regs, "main"), 3, "memory + wiki + kb pages");
-    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
+    assert.equal(alive(regs, "sidebar.panellist"), 4, "memory + wiki + kb + diary glyphs");
+    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-diary", "dsh-mneme-kb", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
+    assert.equal(alive(regs, "main"), 4, "memory + wiki + kb + diary pages");
+    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-diary", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
     assert.equal(alive(regs, "sidebar.footer.action"), 0, "the footer fallback must not mount on a host that has the seat");
   }
 
