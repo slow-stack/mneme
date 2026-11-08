@@ -394,7 +394,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // 「返回非 null」一律当停车成功，existing 因此每轮虚报一遍 frozen（#603）。
   const parkPair = (p, reason) => {
     try {
-      const parked = service.saveConflictPending({ run_id: runId, memory_a: p.a.id, memory_b: p.b.id, reason });
+      const parked = service.saveConflictPending({ run_id: runId, memory_a: p.a.id, memory_b: p.b.id, reason, similarity: p.similarity });
       if (parked == null) return "suppressed";
       return parked.fresh === true ? "fresh" : "existing";
     } catch (error) {

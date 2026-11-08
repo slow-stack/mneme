@@ -960,6 +960,10 @@ function toConflictPending(row) {
     memory_a: row.memory_a,
     memory_b: row.memory_b,
     reason: row.reason ?? undefined,
+    // Issue #603 第 2 层：入队时的相似度。存量行与调用方没给的行是 NULL，
+    // 这里如实透出 undefined（条件展开：带 undefined 键会让 in-process schema
+    // 校验判违规，同 toApiList 的处理）。
+    ...(typeof row.similarity === "number" ? { similarity: row.similarity } : {}),
     created_at: row.created_at,
     resolved_at: row.resolved_at ?? undefined,
     resolved_winner: row.resolved_winner ?? undefined
@@ -1492,6 +1496,18 @@ export function createStore(path) {
   // 索引建在加列之后：老库打开时列还不存在（SCHEMA 的 CREATE TABLE 只对新建库生效）。
   addColumn("memory_provenance", "distill_run_id", "ALTER TABLE memory_provenance ADD COLUMN distill_run_id TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS idx_memory_provenance_run ON memory_provenance(distill_run_id);");
+
+  // Issue #603 第 2 层：冲突待审队列此前只能按 created_at 倒序排。一次 sleep 轮次
+  // 里产出的对全部落在同一毫秒（实测 60 条挤在 60ms 内），排序键全同，队列在面板
+  // 上看起来是随机的——而「哪一对最该先看」的唯一客观信号是相似度，此前只存在
+  // reason 文本里（「相似度 0.87」），前端靠正则回收。落成列之后排序键是数据，
+  // 不是解析结果。
+  //
+  // 可空且不带 DEFAULT：存量行没有这个信息，NULL = 「入队时没记」（比填 0 诚实——
+  // 0 会被排到最后，等于替用户断言「这两条毫不相似」）。排序用 NULLS LAST。
+  addColumn("conflict_pending", "similarity", "ALTER TABLE conflict_pending ADD COLUMN similarity REAL");
+  // 索引建在加列之后（同 idx_memory_provenance_run 的理由）：老库打开时列才刚加上。
+  db.exec("CREATE INDEX IF NOT EXISTS idx_conflict_pending_similarity ON conflict_pending(similarity DESC, created_at DESC);");
 
   // Audit peer F: a legacy DB may hold a non-integer generation/applied_generation
   // (pre-v0.3.9 the JS gate truncated with Math.trunc and SQLite's CHECK only
@@ -3723,7 +3739,7 @@ export function createStore(path) {
    * updated_at 是宽松代理（任何字段更新都会触发重新评审）——宁可多看一眼，
    * 不静音真冲突。
    */
-  function saveConflictPending({ run_id, memory_a, memory_b, reason }) {
+  function saveConflictPending({ run_id, memory_a, memory_b, reason, similarity }) {
     const [a, b] = [memory_a, memory_b].sort();
     const existing = db.prepare(
       "SELECT * FROM conflict_pending WHERE memory_a = ? AND memory_b = ? AND resolved_at IS NULL LIMIT 1"
@@ -3740,16 +3756,29 @@ export function createStore(path) {
     }
     const id = randomUUID();
     const now = nowIso();
+    // Issue #603 第 2 层：相似度落列。调用方拿不到（LLM 裁决路径只有理由文本）
+    // 就写 NULL，不猜——面板与排序都按「未知」处理，而不是当成 0。
+    const sim = typeof similarity === "number" && Number.isFinite(similarity)
+      && similarity >= 0 && similarity <= 1 ? similarity : null;
     db.prepare(
-      `INSERT INTO conflict_pending (id, run_id, memory_a, memory_b, reason, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(id, run_id ?? null, a, b, reason ?? null, now);
+      `INSERT INTO conflict_pending (id, run_id, memory_a, memory_b, reason, similarity, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, run_id ?? null, a, b, reason ?? null, sim, now);
     return { ...toConflictPending(db.prepare("SELECT * FROM conflict_pending WHERE id = ?").get(id)), fresh: true };
   }
 
   /**
-   * List pending conflicts, newest first. Unresolved rows only by default;
-   * pass includeResolved to include resolved ones (audit view).
+   * List pending conflicts, most-similar first. Unresolved rows only by
+   * default; pass includeResolved to include resolved ones (audit view).
+   *
+   * Issue #603 第 2 层：排序键从「created_at DESC」改成「相似度 DESC → created_at
+   * DESC」。原键在同一次 sleep 轮次里全同（实测 60 条落在 60ms 内），队列在面板
+   * 上等于随机；相似度是「该先看哪对」的唯一客观信号，现在它是一列而不是 reason
+   * 文本里的正则。
+   *
+   * NULL 排最后而不是当 0：存量行与 LLM 裁决路径没记相似度，把它们混进「低相似
+   * 度」会把「未知」伪装成「已测量」。`(similarity IS NULL)` 前缀让这条不依赖
+   * SQLite 的 NULL 排序约定，两个方向都稳。
    */
   function listConflictPending({ limit = 50, offset = 0, includeResolved = false } = {}) {
     const { limit: lim, offset: off } = sanitizePage(limit, offset, 50);
@@ -3758,7 +3787,9 @@ export function createStore(path) {
     if (!includeResolved) clauses.push("resolved_at IS NULL");
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = db.prepare(
-      `SELECT * FROM conflict_pending ${where} ORDER BY created_at DESC, id LIMIT ? OFFSET ?`
+      `SELECT * FROM conflict_pending ${where}
+       ORDER BY (similarity IS NULL), similarity DESC, created_at DESC, id
+       LIMIT ? OFFSET ?`
     ).all(...params, lim, off);
     return rows.map(toConflictPending);
   }

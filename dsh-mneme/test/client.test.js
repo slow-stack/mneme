@@ -1394,9 +1394,28 @@ test("conflict queue ships a central review surface on the status tab", () => {
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
   assert.ok(/function ConflictsQueue\(\{ t \}\)/.test(clientSource), "ConflictsQueue component must exist");
-  assert.ok(clientSource.includes('"/api/dsh-mneme/conflicts"'), "queue must fetch the conflicts endpoint");
+  assert.ok(clientSource.includes('"/api/dsh-mneme/conflicts?limit=200"'), "queue must fetch the conflicts endpoint");
   assert.ok(clientSource.includes('"/api/dsh-mneme/conflicts/resolve"'), "queue must call the resolve endpoint");
   assert.ok(clientSource.includes("h(ConflictsQueue, { t })"), "status tab must render the queue");
+});
+
+// Issue #603 第 3 层：服务端一直返回 { items, total }，面板此前既不带 limit 也不读
+// total——列 50 条而徽章 60，第 51–60 条翻不到、也没有任何提示。这条锁三件事：
+// 请求要取满服务端上限、total 要存下来、被截断时要说出来。
+test("#603 conflict queue: the panel asks for the server cap and admits truncation", () => {
+  assert.ok(clientSource.includes('"/api/dsh-mneme/conflicts?limit=200"'),
+    "the queue must request the server's 200-row cap, not the 50-row default");
+  assert.ok(clientSource.includes("setTotal(typeof d.total === \"number\" ? d.total : null)"),
+    "the response total must be kept (it was dropped before)");
+  assert.ok(clientSource.includes("memory.status.conflictQueue.truncated"),
+    "a truncated list must say so");
+  for (const key of ["memory.status.conflictQueue.truncated"]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  // 差额才提示：总数等于行数时不该多出一行噪声。
+  assert.ok(clientSource.includes("total > shown ? total - shown : 0"),
+    "the notice must only appear when rows are actually hidden");
 });
 
 // --- issue #178 批次一：无障碍（aria-live 网络 / 语义标题 / 焦点管理 / 图摘要） ---
@@ -1446,10 +1465,12 @@ test("a11y: entity graph svg exposes a count summary", () => {
 
 // --- issue #177：冲突队列交互与视觉重做 ---
 
-// 相似度进度条：只从「相似度 X / similarity X」锚定短语回收数字（防把年份当
-// 相似度），A/B 卡片带侧色类，冻结徽章替代预裁决阶段的「已归档」徽章。
+// 相似度进度条：优先取服务端落列的 similarity（#603 第 2 层），老行才回落到
+// 「相似度 X / similarity X」锚定短语（防把年份当相似度）；A/B 卡片带侧色类，
+// 冻结徽章替代预裁决阶段的「已归档」徽章。
 test("conflict queue: similarity bar, side colors and frozen badge", () => {
-  assert.ok(clientSource.includes("similarityOf(it.reason)"), "reason must be parsed for similarity");
+  assert.ok(clientSource.includes("similarityOf(it)"), "the whole item must be parsed, not just reason");
+  assert.ok(clientSource.includes("typeof it.similarity === \"number\""), "the server-side column wins over text parsing");
   assert.ok(clientSource.includes("/(?:相似度|similarity)\\s*([01](?:\\.\\d+)?)/i"), "parse must anchor on the similarity phrase");
   for (const key of ["memory.status.conflictQueue.similarity", "memory.status.conflictQueue.frozenBadge"]) {
     const occurrences = clientSource.split(`"${key}"`).length - 1;

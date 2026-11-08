@@ -270,6 +270,38 @@ test("#603 freeze: the pending queue budget stops parking and says so", async ()
   store.close();
 });
 
+// Issue #603 第 2 层：sleep 停车时必须把候选对的相似度一起落库。此前这个数字只
+// 活在 reason 文本里（「相似度 0.87」），面板靠正则回收、排序无从下手——同一轮
+// 产出的对 created_at 全同，队列顺序等于随机。
+test("#603 freeze: the parked row carries the similarity the detector measured", async () => {
+  const { store, service, vectorIndex } = setup();
+  savePair(service, vectorIndex, "排序A1", "排序A2", { agent: "coder" }, { agent: "coder" });
+
+  await runSleep(llmCtx(), service, baseConfig({ conflictFreezeEnabled: true }), { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null);
+
+  const [row] = store.listConflictPending();
+  assert.ok(row, "the pair must be parked");
+  // 两条记忆的向量都是 [1,0,0]，余弦为 1。断言「是数字且等于 1」而不是「非空」：
+  // 前者能抓住「传了 undefined / 传了字符串」这类静默降级。
+  assert.equal(typeof row.similarity, "number", "similarity must be a number, not a string or undefined");
+  assert.equal(row.similarity, 1, "identical vectors are similarity 1");
+  store.close();
+});
+
+// 与上一条互补：拿不到相似度时必须是「未知」而不是 0。0 会被排到最后，等于替
+// 用户断言「这两条毫不相似」——那是编造。
+test("#603 freeze: a pair parked without a measured similarity stays unknown", async () => {
+  const { store, service } = setup();
+  // 直接走 service 的停车口（没有向量索引参与 = 没测过相似度）。
+  const a = service.saveWithDedupe({ type: "project", title: "未知A", content: "正文A" }).memory;
+  const b = service.saveWithDedupe({ type: "project", title: "未知B", content: "正文B" }).memory;
+  service.saveConflictPending({ run_id: "r1", memory_a: a.id, memory_b: b.id, reason: "人工停车" });
+
+  const [row] = store.listConflictPending();
+  assert.equal(row.similarity, undefined, "no measurement must read back as unknown, not 0");
+  store.close();
+});
+
 test("non-freeze with an LLM: cross-scope pair bypasses adjudication; same-scope pair is adjudicated", async () => {
   const { store, service, vectorIndex } = setup();
   const [yNew, yOld] = savePair(service, vectorIndex, "缓存策略A", "缓存策略B", { agent: "coder" }, { agent: "coder" });
