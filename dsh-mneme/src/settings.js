@@ -181,6 +181,11 @@ const FEATURE_FLAG_BOOLEANS = [
   "reflectionFailureTracking",
   "bm25SearchEnabled",
   "conflictFreezeEnabled",
+  // Issue #603 第 4 层：自动裁决档（默认关）。相似度极高的同 scope 重复对直接
+  // 保留新条、归档旧条，不进人工队列；模糊地带照旧留给人。会归档记忆，所以必须
+  // 显式打开，面板可启停。阈值见 FEATURE_FLAG_NUMBER_RANGES 的
+  // conflictAutoResolveMinSimilarity。
+  "conflictAutoResolveEnabled",
   "trustEpistemicWeighting",
   // Plan #2: attach per-source {keyword, vector, bm25, final} signals to each
   // search result for transparency/debugging. Default off, purely decorative.
@@ -348,7 +353,10 @@ const FEATURE_FLAG_NUMBER_RANGES = {
   // Issue #125：hybrid 判"高相似"的阈值。
   dreamCandidateMinSim: [0.5, 0.99],
   // Issue #24 块2：单次有效触达的边权抬升幅度（与 config.js 的闭区间对齐）。
-  graphWeightDelta: [0, 1]
+  graphWeightDelta: [0, 1],
+  // Issue #603 第 4 层：自动裁决的相似度门槛。下界 0.85 与冲突检测阈值同源——
+  // 低于它就不是「重复」而是「相似」，不该自动归档任何一条。
+  conflictAutoResolveMinSimilarity: [0.85, 1]
 };
 // 自由字符串开关（与 config.js 的 z.string() 同名同型）：trim 后 ≤200 字符，
 // 空串合法（= 跟随主对话模型/默认路径，面板显示 placeholder）。

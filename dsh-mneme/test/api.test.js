@@ -796,8 +796,10 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 2026-11-08 kb-qoder parity（契约 §3.1）新增 chorographyAutoRefresh /
   // chorographyT1FromPanel / kbEnabled（面板闭环的两个授权闸 + kb 子系统总闸；
   // 三个都是顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 117。
-  assert.equal(Object.keys(data.effective).length, 117);
-  // 三个新键的默认值单独钉一遍：计数锁只钉数量，钉不住值（缺省值翻转时
+  // issue #603 第 4 层再新增 conflictAutoResolveEnabled（自动裁决档开关；顶层布尔键）
+  // 与 conflictAutoResolveMinSimilarity（阈值，走 NUMBER_RANGES 表）= 119。
+  assert.equal(Object.keys(data.effective).length, 119);
+  // 三个 kb 新键的默认值单独钉一遍：计数锁只钉数量，钉不住值（缺省值翻转时
   // 面板会静默换上一套授权语义），这里补上值这一层。
   assert.equal(data.effective.chorographyAutoRefresh, false);
   assert.equal(data.effective.chorographyT1FromPanel, true);
