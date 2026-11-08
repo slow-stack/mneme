@@ -334,6 +334,8 @@
 | `actionRunEnabled` | `false` | M.O. 执行记账：`/mo-run` 开一次执行窗口，窗口内命令执行才可能被记成一条 run | opt-in beta；挂在热路径（每个会话事件都过一次监听），故 `LIGHT_MODE_OFF` 里有它 |
 | `actionNudgeEnabled` | `false` | M.O. 自动沉淀：每轮结束（`turn/end`）后挖一次「这个项目重复走的动作」，结果落成 `memoryDir/proposals/<项目键>/` 里的提议，等人确认 | opt-in beta；三个 M.O. 键里最重的一条——挂 `session/event` 且要**同步解压 zstd 会话日志**（本机 118 份实测 16.2s，单次预算 `budgetMs`=4s 兜底），故 `LIGHT_MODE_OFF` 里有它。**永不自动落草稿**：`materialize` 恒 false，进仓库必须是人的显式动作 |
 
+> **M.O. 已下架（v0.13.x）**：上面三个键仍留在 schema 与设置白名单里、语义不变，但面板不再渲染 `group.mo` 那一组（从 `FEATURE_GROUPS` 摘掉，首屏位一并收回）。想恢复：把该组加回 `FEATURE_GROUPS` 与 `FEATURE_FIRST_SCREEN` 即可，旗标与座位注册逻辑零改动。设置只能走配置文件。
+
 ## 运行时与本地模型
 
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |

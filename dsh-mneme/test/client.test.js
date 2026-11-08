@@ -1304,14 +1304,23 @@ test("scope isolation ships panel switches and provenance surfaces (A4)", () => 
 // 默认值），面板自判、不加后端字段；④分组与折叠键中英成对。验收口径：首屏
 // 可点项 = 3 总开关 + autoInject 的 2 个子开关 + scope 2 开关 + 「全部设置」
 // 按钮 = 8（≤ 8），由 ①② 的组成正则共同钉死，不另数 DOM。
-// v0.9.0 复验修订：首屏加 group.mo（M.O. 独立组），可点项预算 8→9。这不是
-// 悄悄放宽——是产品主人点名「别藏在里面」：M.O. 独立成组却仍折在「全部
-// 设置」后等于换个地方继续藏。≤8 原为 #427 自设软预算，owner 豁免一项。
+// v0.9.0 复验修订：首屏加 group.mo（M.O. 独立组），可点项预算 8→9——产品
+// 主人点名「别藏在里面」，M.O. 独立成组却仍折在「全部设置」后等于换个地方
+// 继续藏。**v0.13.x 反转**：主人决定把 M.O. 下架，那一组连同首屏位一起摘掉，
+// 预算回到 8，本锁随之收紧回两组。反转是产品决策、不是放宽，注释留档防下次
+// 有人照着旧注释把组加回来。
 test("settings card folds everything beyond the first screen behind All settings (issue #427)", () => {
-  // ① 首屏层组成：三组都要在（basic 总开关 / mo 座位闸门 / scope 必答题），
+  // ① 首屏层组成：两组都要在（basic 总开关 / scope 必答题），
   // 且 basic 的成员是从 core/dream 移走的。
-  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.mo", "group\.scope"\];/.test(clientSource),
-    "the first screen must be exactly the basic, mo and scope groups");
+  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.scope"\];/.test(clientSource),
+    "the first screen must be exactly the basic and scope groups (M.O. was taken down in v0.13.x)");
+  // M.O. 下架锁：组从 FEATURE_GROUPS 摘掉 ≠ 只把首屏位去掉。少了这一条，下次
+  // 有人「顺手把组加回来」时会折进「全部设置」，测试照绿而 M.O. 又出现在面板上。
+  assert.ok(!/\{ key: "group\.mo", items: \[/.test(clientSource),
+    "M.O. must stay off the panel: group.mo is deliberately absent from FEATURE_GROUPS (taken down in v0.13.x)");
+  // 但键本身不能删——config schema / settings 白名单里还在，恢复时零改动。
+  assert.ok(clientSource.includes("actionPipelineEnabled"),
+    "the M.O. flags must remain reachable (config + settings whitelist) so the takedown stays reversible");
   assert.ok(/key: "group\.basic", items: \["autoInject", "autoSummarize", "autoDream"\]/.test(clientSource),
     "group.basic must carry exactly the three master switches");
   assert.ok(!/key: "group\.core", items: \["autoInject/.test(clientSource) && !/key: "group\.dream", items: \["autoDream/.test(clientSource),

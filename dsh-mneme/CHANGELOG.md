@@ -26,6 +26,16 @@
   - **测试盲区修复（CodeRabbit 2026-11-07 评审指出）**：`segments 拼回去等于未转义的整串` 这条用例原先只比「转义后的段拼装等于 `text`」，抓不到「某一段被提前转义」——`escapePromptVars` 是幂等的（`/[{}]{2,}/g` 只在连续花括号前插反斜杠，已插过的串不再匹配），提前转义一遍再整体转义一遍与只转义一遍逐字节相同。两处修法：① 人格用例的 `name` 改成 `"Amarre {{x}}"`（原来没有裸花括号，人格段被污染也无从暴露）；② 另取一份独立基线——同一套 23 种配置把 `escapePromptVariables` 关掉跑 `legacyRender`，段拼装必须等于它。两条缺一不可，已各自变异验证：只提前转义人格段 `text` → 有 `{{x}}` 时 1 红（本条用例），去掉 `{{x}}` 后 21/21 全绿（证明样例是承重的）；只提前转义画像段 `text` → 2 红（本条 + `段文本本身保持原样`）。
   - **不做**：不加路由、不碰 `setPersonaFor`、不改 `wordDiff`、不动事实段的两顶帽子（40 行 / 1200 字符）、不做面板 UI。第 2 期人格字段级写回 + 规则并发控制，第 3 期面板按段渲染与就地编辑（含 `wordDiff` 解 800 词上限与 hunk 分组层），第 4 期 `profile-extract` 输出段形状。
 
+## 🎨 面板
+
+- **M.O.（工作流）下架**：`group.mo` 从 `FEATURE_GROUPS` 摘掉，首屏位（`FEATURE_FIRST_SCREEN`）一并收回，首屏可点项预算回到 8。三个旗标（`actionPipelineEnabled` / `actionRunEnabled` / `actionNudgeEnabled`）**仍留在 schema 与设置白名单里、语义零改动**，座位注册逻辑与 `/mo-run` 命令一字未改——只是面板不再渲染那一组。
+
+  - **这是一次产品决策的反转，不是放宽**：v0.9.0 是产品主人点名「M.O. 别藏在里面」才把它提进首屏并豁免了 ≤8 的软预算。本轮主人决定先下架，所以 `test/client.test.js` 的首屏锁从三组收紧回两组，注释里把反转理由写清楚——免得下次有人照着旧注释把组加回来。
+  - **两条防半吊子回归的新锁**：① `FEATURE_GROUPS` 里不得再出现 `{ key: "group.mo", items: [`（防止「只去首屏位、组折进全部设置」）；② 源码里 `actionPipelineEnabled` 必须仍然存在（防止顺手把旗标也删了、下架变成不可逆）。
+  - **恢复方式**：把 `{ key: "group.mo", items: ["actionPipelineEnabled", "actionNudgeEnabled"] }` 加回 `FEATURE_GROUPS`，并把 `"group.mo"` 加回 `FEATURE_FIRST_SCREEN`。文案键 `memory.features.group.mo` 中英两条**故意保留**（渲染层已不引用），恢复时不必重写措辞。
+  - **下架期间设置只能走配置文件**：面板上没有入口，`actionPipelineEnabled` 等仍可从 `config.yml` / `feature_flags` 改。`docs/CONFIGURATION.md` 在三个键后加了引用块说明。
+  - 线上库已先行关旗标（`actionPipelineEnabled` / `actionRunEnabled` / `actionNudgeEnabled` 全 false，`diaryEnabled` 保持 true），写入前 50 键 JSON 备份留档；`actionRunEnabled` 原本不在 kv，本次显式写入 false，故键数 50→51。
+
 ## [0.12.0] - 2026-11-07
 
 ## 🆕 新增

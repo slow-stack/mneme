@@ -640,8 +640,8 @@ window.__ModuleLoader__.load({
         // 「别的会话能不能看到」由同在首屏的 scope 组回答。
         "memory.features.group.basic": "常用（先动这几个）",
         "memory.features.group.core": "它会记住什么",
-        // group.mo 是 v0.9.0 新增的独立分组（座位闸门，不是行为开关）；渲染
-        // 走 t(`memory.features.${g.key}`)，缺这行会把键名直接写上屏。
+        // group.mo 是 v0.9.0 的独立分组（座位闸门，不是行为开关），现已随 M.O.
+        // 下架从 FEATURE_GROUPS 摘掉；这条文案留着是为了恢复时不必再想措辞。
         "memory.features.group.mo": "它的工作流（M.O.）",
         "memory.features.group.enhance": "它什么时候写进去",
         "memory.features.group.dream": "它怎么用回来",
@@ -3800,26 +3800,24 @@ window.__ModuleLoader__.load({
     // 用户敢动的总开关；group.scope 也在首屏——它回答新用户的第二个必答题
     // 「它记的东西会不会被别的会话看到」。其余组整组收进「全部设置」折叠
     // （showAll）。成员从原组里移走而不是渲染时过滤：同一项永远只渲染一次。
-    // 首屏可点项 = 3 总开关 + autoInject 的 2 个子开关 + M.O. 1 开关 +
-    // scope 2 开关 + 「全部设置」按钮 = 9。复验修订：产品主人点名 M.O.
-    // 「别藏在里面」，独立成组但仍折在「全部设置」后等于换个地方藏；
-    // ≤8 是本仓库 #427 自设的软预算，owner 点名豁免一项，锁随注释同步改。
+    // 首屏可点项 = 3 总开关 + autoInject 的 2 个子开关 + scope 2 开关 +
+    // 「全部设置」按钮 = 8。v0.9.0 曾按产品主人点名把 M.O. 独立成组并提进
+    // 首屏（当时豁免 ≤8 软预算，理由记在 test/client.test.js 的同名用例里）；
+    // 本轮主人决定把 M.O. 下架，那一组连同首屏位一起摘掉，预算回到 8。
     // RuntimeProvisionBlock 配好即消失，常态首屏更少。
-    const FEATURE_FIRST_SCREEN = ["group.basic", "group.mo", "group.scope"];
+    const FEATURE_FIRST_SCREEN = ["group.basic", "group.scope"];
     const FEATURE_GROUPS = [
       { key: "group.basic", items: ["autoInject", "autoSummarize", "autoDream"] },
       { key: "group.core", items: ["hotMemoryEnabled", "injectTimePrefix", "memoryQualityFilter.enabled", "llmAudit.enabled", "writeAdmission.enabled", "writeAdmission.enforce", "preInjectGate.enabled", "preInjectGate.enforce", "sensitiveScanEnabled",
         // #399 的留存总闸（见下方 distillSub：天数行是它的子块）。放在组末，
         // 子块才能紧跟在它后面展开——items.map 之后的子块是按组尾渲染的。
         "distillRecords.enabled"] },
-      // v0.9.0 M.O.（beta）复验修订：独立分组行——它不是行为开关而是座位闸门
-      // （关=一个座位都不注册，见 apply 内的 M.O. 块）。独立成组只解决「混在
-      // enhance 末位」；可见层由 FEATURE_FIRST_SCREEN 决定（见其注释），
-      // 本轮已把组名提进首屏——组成员资格不决定可见性。
-      // 同一组的三个键是**三件独立能力**，不是一条链的三段：看图（座位闸门）、
-      // 自动沉淀（写提议到记忆库）、执行记账（/mo-run 开窗）。各自默认关，
-      // 开了任何一个都不会顺带打开另一个——写能力必须由人一项一项点。
-      { key: "group.mo", items: ["actionPipelineEnabled", "actionNudgeEnabled"] },
+      // M.O. 已下架（v0.13.x）：这一组连同首屏位一起摘掉，不是「折进全部设置」。
+      // 反转的是 v0.9.0 时产品主人「别藏在里面」的点名——本轮主人明确要求下架，
+      // 所以反向操作。三个键仍在 config schema 与 settings 白名单里，座位闸门那条
+      // effect 也仍在（fail-closed：旗标 false 时一个座位都不注册），随时可恢复：
+      // 把这行加回 FEATURE_GROUPS 与 FEATURE_FIRST_SCREEN 即可。
+      // 面板不再渲染它，等于只剩配置文件一条入口——这是「下架」的本意。
       { key: "group.enhance", items: ["entityExtractionEnabled", "codingRetrospect", "rerankEnabled", "resilientModelDownload", "searchSemanticDedup", "bm25SearchEnabled", "heatEnabled", "documentMemoryEnabled",
         // 人格定义页（beta）：注入总闸。分组随 enhance（行为开关，非座位闸门）；
         // 人格内容在设置页「个性化」区的人格卡。
