@@ -165,6 +165,13 @@ test("moduleMap：模块、页面状态与跨模块边同源返回", () => {
     assert.deepEqual(slugs, ["root", "src"]);
     const src = modules.find((m) => m.slug === "src");
     assert.equal(src.page_status, "skeleton");
+    // 面板从地志页导入知识点时读的是 mod.relPath（契约 §3.6）；SQL 行里只有
+    // page_rel_path，缺这层映射会让「选完模块点导入」永远提示请先选模块（#607）。
+    // 同时锁住原 snake_case 字段还在——choro_module_map 的 render 与 CLI 都在用。
+    assert.equal(typeof src.relPath, "string", "relPath 必须与 page_rel_path 同值");
+    assert.equal(src.relPath, src.page_rel_path);
+    assert.ok(src.relPath.endsWith(".md"), "页相对路径是磁盘上真实存在的 .md");
+    assert.equal(typeof src.file_count, "number", "file_count 原字段必须保留（choro_module_map 的 render 在吃）");
     // fixture 的引用全在 src 模块内部（a→b→b2），left-pad 是外部依赖，root 只有
     // package.json 没有代码——跨模块边应为空集。跨模块聚erge本身由 wiki-store 的
     // 整仓替换用例与 t0 的 moduleEdges 排序覆盖。

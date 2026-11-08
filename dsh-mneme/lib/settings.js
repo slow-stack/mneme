@@ -255,7 +255,14 @@ const FEATURE_FLAG_BOOLEANS = [
   // #539：逐会话无痕默认关闭；子代理开关受总开关约束。手动 session id 名单留在配置，
   // 不进入只支持标量的 feature_flags 白名单。
   "sessionGateEnabled",
-  "sessionGateSubagents"
+  "sessionGateSubagents",
+  // 2026-11-08 kb-qoder parity（契约 §3.1）：chorography 面板闭环的两个授权闸 +
+  // kb 子系统总闸。三条都与 config.js schema 成对出现，计数锁 test/api.test.js 钉住。
+  // 不进 LIGHT_MODE_OFF —— 它们是「谁按下了按钮」而不是「每轮付多少」，理由写在
+  // config.js 那三个键的注释里。kbEnabled 本车道只登记、不接线（B 线做子系统）。
+  "chorographyAutoRefresh",
+  "chorographyT1FromPanel",
+  "kbEnabled"
 ];
 // 整数开关的闭区间，与 config.js 里 z.natural().min().max() 对齐。
 const FEATURE_FLAG_INT_RANGES = {

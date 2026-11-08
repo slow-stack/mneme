@@ -706,6 +706,59 @@ CREATE TABLE IF NOT EXISTS profile_fact_runs (
   finished_at    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_profile_fact_runs_card ON profile_fact_runs(agent_key, started_at);
+
+-- ============================================================
+-- knowledge base（知识库第二层，spec: docs/plans/2026-11-08-kb-qoder-parity.md §3.3）。
+-- 与记忆行物理隔离的硬边界同 choro 那组表：kb 的行永不进 memories /
+-- saveWithDedupe / dream / 质量过滤的任何池子。这里存的是「用户/agent 主动
+-- 收进知识库的资料」——文件、网页、仓库地志页的**副本**与索引，天生属于外来
+-- 原文，让巩固流程够得着它就会把用户刚存的手册自己归档掉。
+-- 幂等键是 (collection_id, rel_key)：同一来源重入库按 sha256 判 no-op，
+-- 变了才替换 chunks（替换语义在 replaceKbDoc 里，事务包住删除与插入）。
+-- rel_key 是来源的稳定相对键（本地文件=绝对路径、网页=URL、地志页=repo#slug），
+-- 不是展示名——展示名在 kb_docs.title。
+CREATE TABLE IF NOT EXISTS kb_collections (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  key         TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  description TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_collections_key ON kb_collections(key);
+
+-- kind 限定三类（§3.3）：file | url | choro_page。sha256 是**正文内容**的哈希，
+-- 不是文件 stat 的指纹——文件 mtime 变了内容没变时重入库必须是 no-op，
+-- 否则每次保存键盘敲一下都全量重切块。
+CREATE TABLE IF NOT EXISTS kb_docs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  collection_id INTEGER NOT NULL,
+  rel_key       TEXT NOT NULL,
+  kind          TEXT NOT NULL,
+  source_path   TEXT,
+  title         TEXT NOT NULL,
+  bytes         INTEGER NOT NULL DEFAULT 0,
+  sha256        TEXT,
+  indexed_at    TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'ok',
+  error         TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_docs_collection_relkey ON kb_docs(collection_id, rel_key);
+
+-- 分块正文。heading 是块所属的二级标题节（无节则空串），ordinal 是块在
+-- 文档内的序号——检索命中要能回指「第几块、哪一节」，面板/工具靠它跳段落。
+-- text 存原文切片（含分块时带的标题行？不含：标题在 heading 里，text 只放正文，
+-- 免得同一条命中把标题算两遍）。
+CREATE TABLE IF NOT EXISTS kb_chunks (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_id     INTEGER NOT NULL,
+  ordinal    INTEGER NOT NULL,
+  heading    TEXT NOT NULL DEFAULT '',
+  text       TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc_ordinal ON kb_chunks(doc_id, ordinal);
+
 `;
 
 // Exported for API-layer type validation (standalone API POST /memories and
@@ -5128,6 +5181,139 @@ export function createStore(path) {
     ).all().map((r) => r.k);
   }
 
+  /* --------------------- knowledge base（知识库第二层，§3.3） --------------------- */
+  // 与 choro 那组表同一套纪律：本域只读写 kb_* 三张表，绝不进 memories /
+  // saveWithDedupe / dream / 质量过滤的任何池子。时间戳由调用方传（一次 ingest
+  // 的所有行共用一个时刻），store 不自取 now()——两处时钟会把「同一次入库」拆成
+  // 两个版本，sha256 幂等判据也会跟着抖。
+
+  function kbCollectionByKey(key) {
+    return db.prepare("SELECT * FROM kb_collections WHERE key = ?").get(String(key)) ?? undefined;
+  }
+
+  /** 集合列表带计数：面板左栏要的不是空壳 key 列表，docs/chunks 是它的主信息。 */
+  function listKbCollections() {
+    return db.prepare(
+      `SELECT c.*,
+              (SELECT COUNT(*) FROM kb_docs d WHERE d.collection_id = c.id) AS doc_count,
+              (SELECT COUNT(*) FROM kb_chunks k JOIN kb_docs d2 ON k.doc_id = d2.id
+                 WHERE d2.collection_id = c.id) AS chunk_count
+         FROM kb_collections c ORDER BY c.key`
+    ).all();
+  }
+
+  // key 是外部键（面板/工具用它寻址），title 是展示名。ON CONFLICT 不动 created_at：
+  // 「这个集合哪天建的」是事实，重命名不该改写它。
+  function upsertKbCollection({ key, title, description = null, at }) {
+    db.prepare(
+      `INSERT INTO kb_collections (key, title, description, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         title = excluded.title,
+         description = excluded.description,
+         updated_at = excluded.updated_at`
+    ).run(String(key), String(title), description ?? null, at, at);
+    return kbCollectionByKey(key);
+  }
+
+  /** 删集合连带删它的文档与分块（三张表是一个整体，留孤儿行等于悄悄占空间）。 */
+  function deleteKbCollection(key) {
+    const row = kbCollectionByKey(key);
+    if (!row) return false;
+    return runAtomically(() => {
+      db.prepare(
+        "DELETE FROM kb_chunks WHERE doc_id IN (SELECT id FROM kb_docs WHERE collection_id = ?)"
+      ).run(row.id);
+      db.prepare("DELETE FROM kb_docs WHERE collection_id = ?").run(row.id);
+      db.prepare("DELETE FROM kb_collections WHERE id = ?").run(row.id);
+      return true;
+    });
+  }
+
+  function listKbDocs(collectionId) {
+    return db.prepare(
+      "SELECT * FROM kb_docs WHERE collection_id = ? ORDER BY rel_key"
+    ).all(collectionId);
+  }
+
+  function kbDocByRelKey(collectionId, relKey) {
+    return db.prepare(
+      "SELECT * FROM kb_docs WHERE collection_id = ? AND rel_key = ?"
+    ).get(collectionId, String(relKey)) ?? undefined;
+  }
+
+  function kbChunksByDoc(docId) {
+    return db.prepare(
+      "SELECT * FROM kb_chunks WHERE doc_id = ? ORDER BY ordinal"
+    ).all(docId);
+  }
+
+  /**
+   * 入库落库的唯一写口。幂等判据是 **正文 sha256**（不是文件 stat）：同 rel_key +
+   * 同 sha256 = 整件事 no-op，回执 skipped 且不动 chunks——否则编辑器保存一次
+   * （mtime 变、内容没变）就要全量重切块，库和索引一起白忙。
+   *
+   * 变了才替换：删旧 chunks 再插新的，事务包住，半截失败整体回滚，库里保持上一版
+   * 完整文档。上一版 status=error 的行不算命中（它没有可分块的正文，重来必须真跑）。
+   */
+  function replaceKbDoc({ collectionId, relKey, kind, sourcePath = null, title, bytes = 0, sha256 = null, at, chunks = [] }) {
+    return runAtomically(() => {
+      const prev = kbDocByRelKey(collectionId, relKey);
+      if (prev && prev.status === "ok" && sha256 && prev.sha256 === sha256) {
+        return { docId: prev.id, chunks: kbChunksByDoc(prev.id).length, skipped: true };
+      }
+      db.prepare("DELETE FROM kb_chunks WHERE doc_id IN (SELECT id FROM kb_docs WHERE collection_id = ? AND rel_key = ?)")
+        .run(collectionId, String(relKey));
+      let docId;
+      if (prev) {
+        db.prepare(
+          `UPDATE kb_docs SET kind = ?, source_path = ?, title = ?, bytes = ?, sha256 = ?,
+                  indexed_at = ?, status = 'ok', error = NULL WHERE id = ?`
+        ).run(kind, sourcePath, String(title), bytes, sha256, at, prev.id);
+        docId = prev.id;
+      } else {
+        const info = db.prepare(
+          `INSERT INTO kb_docs (collection_id, rel_key, kind, source_path, title, bytes, sha256, indexed_at, status, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ok', NULL)`
+        ).run(collectionId, String(relKey), kind, sourcePath, String(title), bytes, sha256, at);
+        docId = Number(info.lastInsertRowid);
+      }
+      const ins = db.prepare(
+        "INSERT INTO kb_chunks (doc_id, ordinal, heading, text, created_at) VALUES (?, ?, ?, ?, ?)"
+      );
+      for (const c of chunks) ins.run(docId, c.ordinal, c.heading ?? "", c.text ?? "", at);
+      return { docId, chunks: chunks.length, skipped: false };
+    });
+  }
+
+  /** 入库失败也要留痕：面板要能显示「这份文档上次为什么没进来」，静默丢来源等于假成功。 */
+  function markKbDocError({ collectionId, relKey, kind, sourcePath = null, title, error, at }) {
+    const prev = kbDocByRelKey(collectionId, relKey);
+    if (prev) {
+      db.prepare(
+        "UPDATE kb_docs SET status = 'error', error = ?, indexed_at = ?, source_path = ?, kind = ?, title = ? WHERE id = ?"
+      ).run(String(error ?? ""), at, sourcePath, kind, String(title ?? prev.title), prev.id);
+      return prev.id;
+    }
+    const info = db.prepare(
+      `INSERT INTO kb_docs (collection_id, rel_key, kind, source_path, title, bytes, sha256, indexed_at, status, error)
+       VALUES (?, ?, ?, ?, ?, 0, NULL, ?, 'error', ?)`
+    ).run(collectionId, String(relKey), kind, sourcePath, String(title ?? relKey), at, String(error ?? ""));
+    return Number(info.lastInsertRowid);
+  }
+
+  /** 检索候选集：跨集合或单集合，一次取全（BM25 需要全语料算 df，不能分页取）。 */
+  function kbChunksForSearch(collectionId = null) {
+    return db.prepare(
+      `SELECT k.id, k.doc_id, k.ordinal, k.heading, k.text,
+              d.rel_key, d.title, d.kind, c.key AS collection_key
+         FROM kb_chunks k
+         JOIN kb_docs d ON k.doc_id = d.id
+         JOIN kb_collections c ON d.collection_id = c.id
+        WHERE d.status = 'ok' AND (? IS NULL OR d.collection_id = ?)`
+    ).all(collectionId, collectionId);
+  }
+
   return {
     db,
     count,
@@ -5303,6 +5489,17 @@ export function createStore(path) {
     getContinuityProposal,
     listContinuityProposals,
     countContinuityProposals,
+    // knowledge base（知识库第二层，§3.3）：三张 kb_* 表，与记忆行物理隔离。
+    kbCollectionByKey,
+    listKbCollections,
+    upsertKbCollection,
+    deleteKbCollection,
+    listKbDocs,
+    kbDocByRelKey,
+    kbChunksByDoc,
+    replaceKbDoc,
+    markKbDocError,
+    kbChunksForSearch,
     // chorography（仓库地志）：M0 只写不读，消费面 M1 接（见上面注释块）。
     choroRepoByRoot,
     upsertChoroRepo,
