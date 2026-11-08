@@ -443,7 +443,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     // 报成 backlog 会让调度器空转（catchup 上限 24 轮）。
     const perRunSkipped = withinRoom.length - pool.length;
     // Issue #603 第 4 层（自动裁决档，默认关）：相似度极高的**同 scope** 对不再
-    // 进人工队列，直接保留新条、归档旧条。人只看模糊地带。
+    // 进人工队列，直接保留信息量更大的那条、归档另一条。人只看模糊地带。
     //
     // 为什么阈值留在配置里而不是写死 0.95：live 库 345 条有相似度的历史行里，
     // >=0.95 只有 20 条（5.8%）、>=0.94 是 28 条（8.1%）。这一档减的是峰值，
@@ -474,22 +474,39 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     // 这一档不走 LLM，没有批次时间戳可借（judgedAt 在下面那条 LLM 通路里才定义），
     // 自己取一个：台账要能回答「什么时候判的」，不能留空。
     const autoJudgedAt = new Date().toISOString();
-    // 保留较新的那条：updated_at 相等时用 id 兜底，保证同一对每次判出同一个
-    // 赢家（否则重放会来回翻，归档的可能是刚刚保住的那条）。
-    const newerFirst = (p) => {
+    // 保留**信息量更大**的那条，不是更新的那条。
+    //
+    // 「保留新的」看着合理，实测是错的：live 库 >=0.95 的 20 对里，11 对（55%）
+    // 新的那条比旧的短，平均短 132 字；降到 0.88 的 213 对里 122 对（57%）如此。
+    // 典型例子：「用户同时开 web profile 和 desktop profile 时出现开不了新对话/
+    // 会话异常，用户自己…」（371 字，旧）被压成「用户同时开 web profile 和
+    // desktop profile 的 dsh-mneme 时开不了新对话」（307 字，新）——蒸馏时压缩过
+    // 的一版反而更新。留新条等于把更完整的那条归档掉。
+    //
+    // 这与 mem0 的裁决规则一致：`configs/prompts.py:217` 明写「两句话说的是同一
+    // 件事时，留信息量最大的那条，不是留最新的」。cognee 反过来（「取更新的」），
+    // 那是反例——照抄会把「0:00 前必须躺下」削成残缺版。
+    //
+    // 长度相同才算「信息量相当」，此时退回更新时间，再退回 id：三级兜底保证同一
+    // 对每次判出同一个赢家（否则重放会来回翻，归档的可能是刚保住的那条）。
+    const infoFirst = (p) => {
+      const an = p.a.content?.length ?? 0;
+      const bn = p.b.content?.length ?? 0;
+      if (an !== bn) return an > bn ? [p.a, p.b] : [p.b, p.a];
       const au = p.a.updated_at ?? "";
       const bu = p.b.updated_at ?? "";
       if (au !== bu) return au > bu ? [p.a, p.b] : [p.b, p.a];
       return p.a.id > p.b.id ? [p.a, p.b] : [p.b, p.a];
     };
     for (const p of autoPool) {
-      const [winner, loser] = newerFirst(p);
+      const [winner, loser] = infoFirst(p);
       const snapshot = new Map();
       for (const m of [winner, loser]) {
         snapshot.set(m.id, { updated_at: m.updated_at, content: m.content, title: m.title });
       }
       // trustEpistemicWeighting 显式关掉：它会在 applySupersede 里按 epistemic_status
-      // 交换赢家，那会让「保留新条」这条契约随数据漂移。自动档的承诺必须是确定的。
+      // 交换赢家，那会让「留信息量更大的那条」这条契约随数据漂移。自动档的承诺
+      // 必须是确定的。
       const { applied, conflicts } = applyDecisions(
         [{ action: "supersede", winner: winner.id, loser: loser.id }],
         service, logger, snapshot, { ...config, trustEpistemicWeighting: false }

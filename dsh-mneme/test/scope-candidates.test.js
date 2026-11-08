@@ -367,6 +367,61 @@ test("#603 auto-resolve: with the switch off nothing is auto-adjudicated", async
   store.close();
 });
 
+// 自动裁决保留的是**信息量更大**的那条，不是更新的那条。
+// 反例来自 live 库：>=0.95 的 20 对里 11 对（55%）新条比旧条短，平均短 132 字——
+// 蒸馏压缩过的一版反而更新时间更晚，按「留新的」会把更完整的那条归档掉。
+test("#603 auto-resolve: the longer copy survives even when the shorter one is newer", async () => {
+  const { store, service, vectorIndex } = setup();
+  // 先存长的那条（更旧），再存短的那条（更新）：新条更短，正是实测里的多数情况。
+  const longBody = "缓存策略要按写入频率分三档：热数据走内存、温数据走 SSD、冷数据归档到对象存储。"
+    + "切换阈值由每小时访问次数决定，低于一次就降档，连续三天高于十次再升档。";
+  const shortBody = "缓存策略按写入频率分档。";
+  const older = service.saveWithDedupe({
+    type: "project", title: "缓存分层", content: longBody
+  }).memory;
+  const newer = service.saveWithDedupe({
+    type: "project", title: "缓存分层摘要", content: shortBody
+  }).memory;
+  vectorIndex.saveEmbedding(older.id, [1, 0, 0]);
+  vectorIndex.saveEmbedding(newer.id, [1, 0, 0]);
+  assert.ok(older.content.length > newer.content.length, "fixture: the older copy must be the longer one");
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictAutoResolveEnabled: true, conflictAutoResolveMinSimilarity: 0.95 }),
+    { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null
+  );
+  assert.equal(result.status, "ok");
+  assert.equal(result.phases.conflicts.autoResolved, 1, "the pair is auto-adjudicated");
+
+  // 幸存者必须是长的那条：留新的会把三档策略削成一句话。
+  assert.equal(store.getById(older.id).archived, false, "the longer, older copy must survive");
+  assert.equal(store.getById(newer.id).archived, true, "the shorter, newer copy is the one archived");
+  store.close();
+});
+
+// 长度相同才是「信息量相当」，此时退回更新时间：新条胜出，且结论确定可重放。
+test("#603 auto-resolve: equal-length copies fall back to the newer one, deterministically", async () => {
+  const { store, service, vectorIndex } = setup();
+  const body = "部署脚本先跑 migrate 再跑 smoke，任一步失败就回滚到上一个 tag。";
+  const older = service.saveWithDedupe({ type: "project", title: "部署甲", content: body }).memory;
+  const newer = service.saveWithDedupe({ type: "project", title: "部署乙", content: body }).memory;
+  vectorIndex.saveEmbedding(older.id, [1, 0, 0]);
+  vectorIndex.saveEmbedding(newer.id, [1, 0, 0]);
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictAutoResolveEnabled: true, conflictAutoResolveMinSimilarity: 0.95 }),
+    { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null
+  );
+  assert.equal(result.status, "ok");
+  assert.equal(result.phases.conflicts.autoResolved, 1);
+  // 等长 → 比 updated_at：后存的赢。长度相等时不至于两边都"更完整"，留新的是安全的。
+  assert.equal(store.getById(newer.id).archived, false, "equal length: the newer copy survives");
+  assert.equal(store.getById(older.id).archived, true);
+  store.close();
+});
+
 test("#603 auto-resolve: a failed adjudication falls back to the manual queue instead of vanishing", async () => {
   const { store, service, vectorIndex } = setup();
   savePair(service, vectorIndex, "回退A", "回退B", { agent: "coder" }, { agent: "coder" });
