@@ -352,8 +352,9 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
   // spec 存在时点火：一把全点会把新座位的注册塞进老宿主，测出来的就不是真行为。
   const fire = (ctx, key) => ctx.injected.filter((i) => i.key === key).map((i) => i.cb());
 
-  // 新宿主：panellist 已声明。panellist + main 各五份（记忆 + chorography +
-  // 知识库 + 日记 + 人格五个座位），每对各自 id/key 逐字同名；footer 回落不装。
+  // 新宿主：panellist 已声明。panellist + main 各四份（记忆 + chorography +
+  // 知识库 + 日记四个座位），每对各自 id/key 逐字同名；footer 回落不装。
+  // 人格页是面板内的第五个标签页（不是座位），它不在这里出现。
   {
     const { ctx, regs } = makeCtx((key) => (key === "sidebar.panellist" ? { kind: "list" } : undefined));
     const api = boot(ctx, (k) => k, () => null);
@@ -362,10 +363,10 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
     fire(ctx, "sidebar.footer.action");
     assert.equal(disposes.length, 1);
     const ids = (name) => regs.filter((r) => r.alive && r.opts.name === name).map((r) => r.opts.id ?? r.opts.key).sort();
-    assert.equal(alive(regs, "sidebar.panellist"), 5, "memory + wiki + kb + diary + persona glyphs");
-    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-diary", "dsh-mneme-kb", "dsh-mneme-persona", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
-    assert.equal(alive(regs, "main"), 5, "memory + wiki + kb + diary + persona pages");
-    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-diary", "dsh-mneme-kb", "dsh-mneme-persona", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
+    assert.equal(alive(regs, "sidebar.panellist"), 4, "memory + wiki + kb + diary glyphs");
+    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-diary", "dsh-mneme-kb", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
+    assert.equal(alive(regs, "main"), 4, "memory + wiki + kb + diary pages");
+    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-diary", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
     assert.equal(alive(regs, "sidebar.footer.action"), 0, "the footer fallback must not mount on a host that has the seat");
   }
 
@@ -2676,7 +2677,7 @@ test("panel copy and icons must not silently vanish (missing dict lines, unregis
 
 // 人格定义页（beta）面板面回归：形状沿用 A4 的「分组 + i18n 双语 occurrences ≥ 2
 // + 关键接线」断言风格（只做源码断言，不挂 React 渲染环境）。
-test("persona page ships settings card, master switch and i18n (beta v1)", () => {
+test("persona page is a panel tab, not a settings card (beta v2)", () => {
   // 开关进 FEATURE_GROUPS 的 enhance 组（行为开关非座位闸门）。按组解析成员再逐个点名，
   // 而不是把某一行写成字面量正则——那样往组里加第二个键就会把这条护栏弄红（实测踩过）。
   const enhance = clientSource.match(/group\.enhance", items: \[((?:[^\]]|\n)*)\]/);
@@ -2688,82 +2689,91 @@ test("persona page ships settings card, master switch and i18n (beta v1)", () =>
   for (const key of [
     "memory.features.personaEnabled",
     "memory.features.personaEnabled.hint",
-    "memory.settings.persona",
-    "memory.settings.personaHint",
-    "memory.settings.personaName",
-    "memory.settings.personaPersonality",
-    "memory.settings.personaReplyStyle",
-    "memory.settings.personaSave",
-    "memory.settings.personaSaved",
-    "memory.settings.personaEnabledToggle",
-    "memory.settings.personaView",
-    "memory.settings.personaViewHint",
-    "memory.settings.personaViewEmpty",
-    // 预览改由后端渲染之后新增的读数文案（缺一种语言就是半边界面裸奔键名）
     "memory.features.personaStrictAddressing",
     "memory.features.personaStrictAddressing.hint",
-    "memory.settings.personaViewUnknown",
-    "memory.settings.personaViewSourceDefault",
-    "memory.settings.personaViewSourceCard",
-    "memory.settings.personaViewSourceNone",
-    "memory.settings.personaViewSourceFallback",
-    "memory.settings.personaViewGateOff",
-    "memory.settings.personaViewRefresh"
+    "memory.explorer.tabPersona",
+    "memory.persona.title",
+    "memory.persona.hint",
+    "memory.persona.cards",
+    "memory.persona.defaultCard",
+    "memory.persona.name",
+    "memory.persona.personality",
+    "memory.persona.replyStyle",
+    "memory.persona.scenario",
+    "memory.persona.mesExample",
+    "memory.persona.save",
+    "memory.persona.saved",
+    "memory.persona.saveFailed",
+    "memory.persona.enabled",
+    "memory.persona.preview",
+    "memory.persona.previewEmpty",
+    "memory.persona.previewUnknown",
+    "memory.persona.diary",
+    "memory.persona.diaryHint",
+    "memory.persona.loading"
   ]) {
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
-  // 设置卡接线：保存走 PUT /persona、卡内开关改 enabled 即保存、只读卡渲染
-  assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/persona"'), "persona card must talk to /persona");
-  assert.ok(clientSource.includes("method: \"PUT\""), "persona save must PUT");
-  assert.ok(clientSource.includes("t(\"memory.settings.personaView\")"), "read-only injected-view card must exist");
-  // 双闸门提示：hint 文案必须说明「总闸与卡内开关同时打开才生效」
-  assert.ok(
-    clientSource.includes("memory.features.personaEnabled.hint"),
-    "the master-switch hint must document the two-gate semantics"
-  );
-  // 「注入生效文本」必须由后端给：前端再拼一份就是第二张皮（原来正是这段前端拼接
-  // 没有人格行、没有表头与前缀，却自称生效文本）。
-  assert.ok(clientSource.includes("injectedPreview.text"), "the view must render the backend-rendered block");
+  // 形态：面板自己的第五个标签页，设置页那张卡搬走（不是并存）
+  assert.ok(clientSource.includes('{ key: "persona", label: t("memory.explorer.tabPersona") }'),
+    "the persona view must be registered in the panel's subviews");
+  assert.ok(clientSource.includes('view === "persona" &&'), "the panel must route a persona view branch");
+  assert.ok(clientSource.includes("h(PersonaMainPanel, { t })"), "the persona tab must render PersonaMainPanel");
+  assert.ok(!clientSource.includes('t("memory.settings.persona")'),
+    "the settings card must be gone, not duplicated next to the new page");
+  // 只读卡「Agent 眼中的你」的职能并进本页预览：它自己的键与渲染都不许残留
+  assert.ok(!clientSource.includes("memory.settings.personaView"),
+    "the read-only injected-view card must be removed; this page's preview owns that job");
+  // 保存走 PUT /persona，且必须三维全量（settings.setPersona 是全量替换）
+  assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/persona"'), "persona page must talk to /persona");
+  assert.ok(clientSource.includes('method: "PUT"'), "persona save must PUT");
+  assert.ok(clientSource.includes("bySession"), "the store shape must carry bySession through saves");
+  // 预览必须由后端渲染：前端再拼一份就是第二张皮
+  assert.ok(clientSource.includes("preview.text"), "the preview must render the backend-rendered block");
   assert.ok(!clientSource.includes('"- " + profile.trim()'), "frontend hand-splicing of the injected block must be gone");
-  assert.ok(clientSource.includes("setInjectedPreview(null)"), "a failed preview must fail closed to 未知, not to a stale or guessed block");
+  // 读不到就说读不到：失败不许停在上一张卡的旧文本
+  assert.ok(clientSource.includes("setPreview(null)"), "a failed preview must fail closed to 未知, not to a stale block");
   // 预览只能有一个所有者，且要丢掉过期响应：先切卡 A 再切卡 B 时，A 的 GET 可能后回来。
-  // 这张卡的标题是「注入生效文本」，显示另一张卡的文本比不显示更糟。
   assert.ok(clientSource.includes("if (seq !== previewSeq.current) return;"), "preview must drop stale responses");
-  assert.equal(clientSource.split("setInjectedPreview(").length - 1, 2, "loadPreview must be the only preview writer (success + failure)");
-  // source=default 有两种来路：带了 ?agent=<身份> 却回落 ≠ 真的解析不到身份。
-  assert.ok(clientSource.includes("injectedPreview.agent"), "the fallback label must separate a resolved-but-fallen-back identity from an unresolvable one");
+  // #514：轻量档压制要有告示，且这一页自己得说（人是在这里开关人格的）
+  assert.ok(clientSource.includes('t("memory.status.minimalPresetTitle")'), "the page must carry the minimal-preset notice");
 });
 
-// v1.2 多卡回归：卡列表 CRUD 可见、字段标签渲染为可见元素（v1.1 反馈：
-// aria-label 看不见）、保存失败必须冒可见错误（v1 静默 catch 吞 404 教训）。
-test("persona card is multi-card with visible field labels and save-failure error", () => {
+test("persona page is multi-card with visible field labels and save-failure error", () => {
   for (const key of [
-    "memory.settings.personaDefaultCard",
-    "memory.settings.personaAdd",
-    "memory.settings.personaAddPlaceholder",
-    "memory.settings.personaEditingDefault",
-    "memory.settings.personaEditingFor",
-    "memory.settings.personaDeleteCard",
-    "memory.settings.personaSaveFailed",
-    "memory.settings.personaEnabledOn",
-    "memory.settings.personaEnabledOff"
+    "memory.persona.cards",
+    "memory.persona.defaultCard",
+    "memory.persona.add",
+    "memory.persona.newPlaceholder",
+    "memory.persona.delete",
+    "memory.persona.saveFailed",
+    "memory.persona.saved",
+    "memory.persona.enabledOn",
+    "memory.persona.enabledOff"
   ]) {
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
-  // 多卡接线：加卡/删卡/切换/保存全链函数存在
-  for (const fn of ["addPersonaCard", "removePersonaCard", "savePersonaCards", "setPersonaEditing"]) {
+  // 多卡接线：加卡/删卡/改字段/保存全链函数存在
+  for (const fn of ["addCard", "removeCard", "saveEditing", "setField"]) {
     assert.ok(clientSource.includes(fn), `multi-card wiring must include ${fn}`);
   }
-  // 可见字段标签：三个字段名的 t() 调用出现在 label 元素（mneme-featnumlabel）
-  const labelBlock = clientSource.match(/mneme-featnumlabel[^]{0,120}personaName/);
-  assert.ok(labelBlock, "persona field labels must be visible (featnumlabel class), not aria-only");
-  // 保存失败提示：personaError 状态有渲染路径（非仅 setState）
-  assert.ok(clientSource.includes("t(\"memory.settings.personaSaveFailed\")"), "save failure must render an error line");
+  // 可见字段标签：五处字段都走同一个 field() helper，helper 里必须是真 <label>
+  // （v1.1 反馈：aria-label 看不见）。分别锁「字段被渲染成 label」与「builder 用 label 元素」。
+  for (const f of ["name", "personality", "replyStyle", "scenario", "mesExample"]) {
+    assert.ok(
+      new RegExp('field\\("' + f + '", t\\("memory\\.persona\\.' + f + '"\\)').test(clientSource),
+      "persona field " + f + " must go through the labeled field builder"
+    );
+  }
+  assert.ok(/h\("label", \{ className: "mneme-persona-label", htmlFor:/.test(clientSource),
+    "the field builder must render a real label element, not an aria-only name");
+  // 保存失败提示：error 状态有渲染路径（非仅 setState）
+  assert.ok(clientSource.includes('t("memory.persona.saveFailed")'), "save failure must render an error line");
   // 卡删除 × 常显回归锁 v2（#457 内联覆写被 #459 回滚的教训）：× 不得复用
   // mneme-set-del（opacity:0 仅在 .mneme-set-row:hover 解除，卡标签不在该容器
-  // → 永远不可见），必须用独立类 mneme-persona-del 且该类常显（opacity:1）。
+  // → 永远不可见），必须用独立类 mneme-persona-del 且该类常显（opacity 不得为 0）。
   assert.ok(
     /className: "mneme-persona-del"/.test(clientSource),
     "persona card delete × must use the dedicated always-visible class"
@@ -2773,10 +2783,11 @@ test("persona card is multi-card with visible field labels and save-failure erro
   assert.ok(!/opacity:0/.test(delStyle[0]), "mneme-persona-del must not be transparent");
   // 不许再把 mneme-set-del 挂回卡删除按钮（防 #457 式修法回归）；直接锁按钮
   // 的 className 值（onClick 前最近的 className 属性，注释文字不参与）。
-  const delBtn = clientSource.match(/className: "([^"]+)"[\s\S]{0,300}?onClick: \(\) => removePersonaCard\(id\)/);
+  const delBtn = clientSource.match(/className: "([^"]+)"[\s\S]{0,300}?onClick: \(\) => removeCard\(id\)/);
   assert.ok(delBtn, "card delete button wiring must exist");
   assert.strictEqual(delBtn[1], "mneme-persona-del", "card delete × must use mneme-persona-del, not mneme-set-del");
 });
+
 
 // 回归锁（复验实测踩中）：面板「检测更新」的状态名必须与后端 classify
 // （src/version-check.js）逐字对齐。此前前端误写 "latest"/"up_to_date"（后端
@@ -2848,17 +2859,15 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
   assert.ok(/group\.enhance[\s\S]{0,700}"profileExtractEnabled"/.test(clientSource),
     "FEATURE_GROUPS group.enhance must carry profileExtractEnabled");
 
-  // 位置锁（2026-11-04）：提取按钮属于「Agent 眼中的你」卡，不属于「用户画像」卡。
-  // 此前没有任何用例锁位置——整块 UI 搬走测试也不会红，这正是它被放错地方却一直绿的原因。
-  // 锁法：三处锚点的先后顺序 + 两张卡标题之间不许出现 profileExtract。
+  // 位置锁（2026-11-09 改口径）：提取按钮属于「用户画像」卡。
+  // 它跟人格页分家之后，草稿要补的是「用户是谁」这份资料，所以它跟着画像卡走，
+  // 而不是跟着已经搬走的人格只读卡。锁法：画像卡标题 → 按钮 → 规则卡标题，
+  // 搬丢或搬错卡都会红。
   const profileCardIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))');
-  const personaViewIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.personaView"))');
   const extractButtonIdx = clientSource.indexOf('t("memory.settings.profileExtract")');
-  assert.ok(profileCardIdx > 0 && personaViewIdx > profileCardIdx && extractButtonIdx > personaViewIdx,
-    "the extract button must render inside the persona-view card, which comes after the user-profile card");
-  assert.ok(!clientSource.slice(profileCardIdx, personaViewIdx).includes("profileExtract"),
-    "the user-profile card must not carry any extract UI");
-
+  const rulesCardIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.rules"))');
+  assert.ok(profileCardIdx > 0 && extractButtonIdx > profileCardIdx && rulesCardIdx > extractButtonIdx,
+    "the extract button must render inside the user-profile card, ahead of the rules card");
   // 只出副本（2026-11-04 桉桉定的口径）：草稿不许再走落库路径。此前 applyProfileDraft 会
   // 直接 PUT /profile —— 把用户手写的那份覆盖掉，且没有撤销。
   assert.ok(clientSource.includes("function copyProfileDraft()"), "the draft action must be a copy, not a save");
@@ -2932,14 +2941,13 @@ test("profile facts card ships management UI, run outcomes and never touches the
   assert.ok(/group\.enhance[\s\S]{0,1200}"profileFactsEnabled"/.test(clientSource),
     "FEATURE_GROUPS group.enhance must carry profileFactsEnabled");
 
-  // 位置锁：事实卡是 personaView 之后、规则卡之前的独立一张——塞回 personaView 卡
-  // 内部或搬到规则卡后面都不会红，所以先钉住先后顺序（同 profile-extract 的位置锁）。
-  const personaViewIdx = clientSource.indexOf('t("memory.settings.personaView"))');
+  // 位置锁：事实卡是画像卡之后、规则卡之前的独立一张——塞回画像卡内部或搬到
+  // 规则卡后面都不会红，所以先钉住先后顺序（同 profile-extract 的位置锁）。
+  const profileCardIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))');
   const rulesCardIdx = clientSource.indexOf('t("memory.settings.rules"))');
   const factsCardIdx = clientSource.indexOf('t("memory.settings.factsTitle")');
-  assert.ok(personaViewIdx > 0 && factsCardIdx > personaViewIdx && rulesCardIdx > factsCardIdx,
-    "the facts card must sit between the persona-view card and the rules card");
-
+  assert.ok(profileCardIdx > 0 && factsCardIdx > profileCardIdx && rulesCardIdx > factsCardIdx,
+    "the facts card must sit between the user-profile card and the rules card");
   // 手填画像神圣：事实域的全部面板代码（loadFacts 起到事实卡渲染止）里不许出现
   // PUT /profile 的路径字面量。断言的是**带闭引号**的精确串——/profile-facts/* 的
   // 路径都以 /profile 开头，不带闭引号的话这个断言会自己误伤自己。
@@ -2951,10 +2959,15 @@ test("profile facts card ships management UI, run outcomes and never touches the
   for (const fragment of ["/api/dsh-mneme/profile-facts?agent=", "/api/dsh-mneme/profile-facts/apply", "/api/dsh-mneme/profile-facts/run"]) {
     assert.ok(factsSlice.includes(fragment), `the facts handlers must call ${fragment}`);
   }
-  // 人工 apply 成功后注入预览必须跟着刷新：事实段是注入文本的一部分，
-  // 只在 run 后刷新会让「改完一条、预览还是旧的」。
-  assert.ok(factsSlice.includes("loadPreview(personaEditing)"),
-    "both apply and run success paths must refresh the injected preview");
+  // 人工 apply 成功后注入预览必须跟着刷新——但刷新动作现在属于人格页自己。
+  // 事实卡留在设置页，人格页是另一个视图：它每次进入都重新拉 /persona?agent=，
+  // 所以在设置页里调它的 setPreview 属于跨视图写别人的状态（而且那边已经搬走，
+  // 旧写法只会调到一个不存在的函数）。改成锁两边各自的接口：
+  // ①事实卡不跨视图碰预览；②人格页保存后自己重取预览。
+  assert.ok(!factsSlice.includes("loadPreview("),
+    "the facts card must not write the persona view's preview state from another view");
+  assert.ok(clientSource.includes("setPreviewTick((n) => n + 1)"),
+    "the persona page must refetch its own preview after a save");
   // 总闸快照要跟着功能开关走：FeaturesCard 即改即存并广播 mneme:features-changed，
   // 事实卡监听重读——不然按提示开了「自动事实」，按钮还得关面板重开才解禁
   // （评审 P2：快照 effect 是 [] 依赖，监听缺失等于回到「重开才生效」的老病）。

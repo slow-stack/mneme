@@ -151,7 +151,8 @@ window.__ModuleLoader__.load({
       // star 是设置页鼓励入口的行首图标（Lucide 数据，同上 ISC 惯例内联）。
       // Icon 对未注册的名字静默 return null——漏了它就是一行缺图标、闸门全绿，
       // 所以这条表与用法必须同处出现（见 test/client.test.js 的图标名锁）。
-      star: [["polygon", { points: "12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" }]]
+      star: [["polygon", { points: "12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" }]],
+      persona: [["path", { d: "M12 3a7 7 0 0 0-7 7c0 4 3 5 3 8h8c0-3 3-4 3-8a7 7 0 0 0-7-7z" }], ["path", { d: "M10 11h.01" }], ["path", { d: "M14 11h.01" }], ["path", { d: "M9.5 15c1.6 1 3.4 1 5 0" }]],
     };
     const Icon = ({ name, size = 16, className }) => {
       const parts = ICON_PATHS[name];
@@ -433,37 +434,10 @@ window.__ModuleLoader__.load({
         "memory.settings.profileDraftCopyHint": "「用户画像」那一栏只由你自己填写；要把它写进去，请粘贴后自己点保存。",
         "memory.settings.profileDraftCopyFailed": "复制没成功：请选中上面的草稿手动复制。",
         "memory.settings.profileDraftDiscard": "丢弃草稿",
-        "memory.settings.persona": "人格定义（beta）",
-        "memory.settings.personaHint": "给这位 Agent 一张角色卡：名字、性格、回复要求。开关打开且下方「人格定义」总闸开启时，每轮对话都会注入。",
-        "memory.settings.personaName": "名字",
         "memory.settings.personaNamePlaceholder": "例如：Nyx",
-        "memory.settings.personaPersonality": "性格设定",
         "memory.settings.personaPersonalityPlaceholder": "例如：轻松幽默，讲难题时用类比帮用户快速理解",
-        "memory.settings.personaReplyStyle": "回复要求",
         "memory.settings.personaReplyStylePlaceholder": "例如：先给结论再解释；用人在用的词，不用机制名",
-        "memory.settings.personaSave": "保存人格",
-        "memory.settings.personaSaved": "人格已保存",
-        "memory.settings.personaSaveFailed": "保存失败",
-        "memory.settings.personaEnabledToggle": "启用这张卡",
-        "memory.settings.personaEnabledOn": "已启用——身份命中的会话会注入这张卡",
-        "memory.settings.personaEnabledOff": "未启用——默认口径下这个身份的会话会改用默认卡；开着「严格人格寻址」时则完全不注入人格",
         "memory.settings.personaDefaultCard": "默认卡（兜底）",
-        "memory.settings.personaAdd": "添加卡",
-        "memory.settings.personaAddPlaceholder": "输入 agent 身份名（如 nyx），按它寻址注入",
-        "memory.settings.personaEditingDefault": "正在编辑：默认卡——解析不到身份的会话一定用它；身份解析到了却没建卡（或卡被关掉）的会话，在默认口径下也落到这里，开着「严格人格寻址」则不注入人格",
-        "memory.settings.personaEditingFor": "正在编辑身份卡：",
-        "memory.settings.personaDeleteCard": "删除这张卡",
-        "memory.settings.personaView": "Agent 眼中的你（注入生效文本）",
-        "memory.settings.personaViewHint": "下面是这一轮真正会送进模型的整段文本：人格 → 画像 → 规则（后写的覆盖前写的，规则最硬）。文本由插件渲染，前端只显示。",
-        "memory.settings.personaViewEmpty": "三项都是空的——Agent 每轮只会看到记忆库。",
-        "memory.settings.personaViewUnknown": "读不到注入文本（预览请求失败或后端版本过旧）。这里不显示猜测的内容。",
-        "memory.settings.personaViewSourceDefault": "当前按「解析不到会话身份」的会话预览，取默认卡。",
-        "memory.settings.personaViewSourceFallback": "这个身份解析到了，但它没有可用的卡（没建或已关掉），所以落回默认卡——默认口径下这正是「关掉这张卡」不生效的原因；打开「严格人格寻址」后这种情况改为不注入人格。",
-        "memory.settings.personaViewSourceCard": "当前按你正在编辑的这张身份卡预览。",
-        "memory.settings.personaViewSourceNone": "按当前寻址口径，这个身份不会注入任何人格——默认卡只兜「解析不到会话身份」的会话。",
-        "memory.settings.personaViewGateOff": "总闸「人格定义（beta）」现在是关的：下面这段里不会出现人格，只有画像与规则。",
-        "memory.settings.personaViewRefresh": "刷新预览",
-        "memory.persona.open": "人格设计",
         "memory.persona.title": "人格设计",
         "memory.persona.hint": "一个身份一张卡。卡上写了名字、性格、回复要求、场景与示例对话，保存后，这个身份说话时就用它，写日记时也只用这张卡的口吻——日记页按身份分开看，就是这里的分区在日记侧的样子。",
         "memory.persona.cards": "身份卡",
@@ -571,6 +545,7 @@ window.__ModuleLoader__.load({
         "memory.explorer.tabEntities": "实体",
         "memory.explorer.tabSettings": "设置",
         "memory.explorer.tabStatus": "状态",
+        "memory.explorer.tabPersona": "人格",
         "memory.entities.count": "{n} 个实体",
       "memory.entities.countSampled": "列表只列最近 {shown} 个；上方总数是全库",
         "memory.entities.pick": "从左侧选择一个实体，查看它的属性与关系",
@@ -1474,37 +1449,10 @@ window.__ModuleLoader__.load({
         "memory.settings.profileDraftCopyHint": "The User Profile field is yours to write; to keep this text, paste it there and save it yourself.",
         "memory.settings.profileDraftCopyFailed": "Copy failed: select the draft above and copy it manually.",
         "memory.settings.profileDraftDiscard": "Discard draft",
-        "memory.settings.persona": "Persona (beta)",
-        "memory.settings.personaHint": "Give this agent a character card: name, personality, reply style. Injected every turn when the toggle below and the \"Persona\" master switch are both on.",
-        "memory.settings.personaName": "Name",
         "memory.settings.personaNamePlaceholder": "e.g. Nyx",
-        "memory.settings.personaPersonality": "Personality",
         "memory.settings.personaPersonalityPlaceholder": "e.g. relaxed and humorous; use analogies for hard topics",
-        "memory.settings.personaReplyStyle": "Reply style",
         "memory.settings.personaReplyStylePlaceholder": "e.g. conclusion first; plain words over jargon",
-        "memory.settings.personaSave": "Save Persona",
-        "memory.settings.personaSaved": "Persona saved",
-        "memory.settings.personaSaveFailed": "Save failed",
-        "memory.settings.personaEnabledToggle": "Enable this card",
-        "memory.settings.personaEnabledOn": "On — sessions matching this identity get this card",
-        "memory.settings.personaEnabledOff": "Off — by default such sessions fall back to the default card; with strict persona addressing they get no persona at all",
         "memory.settings.personaDefaultCard": "Default (fallback)",
-        "memory.settings.personaAdd": "Add card",
-        "memory.settings.personaAddPlaceholder": "Agent identity (e.g. nyx) used to address injection",
-        "memory.settings.personaEditingDefault": "Editing: default card — always used by sessions with no resolvable identity; a session whose identity has no card (or whose card is off) also lands here under the default mode, while strict persona addressing injects nothing instead",
-        "memory.settings.personaEditingFor": "Editing identity card:",
-        "memory.settings.personaDeleteCard": "Delete this card",
-        "memory.settings.personaView": "You, as the agent sees you (injected text)",
-        "memory.settings.personaViewHint": "This is the exact block handed to the model this turn: persona → profile → rules (later lines override earlier ones; rules are hardest). The plugin renders it; the panel only displays it.",
-        "memory.settings.personaViewEmpty": "All three are empty — the agent only sees the memory store.",
-        "memory.settings.personaViewUnknown": "Could not read the injected text (preview request failed or backend too old). Nothing is guessed here.",
-        "memory.settings.personaViewSourceDefault": "Preview for sessions whose identity cannot be resolved — the default card applies.",
-        "memory.settings.personaViewSourceFallback": "This identity resolved, but it has no usable card (never created, or switched off), so the default card applies — which is exactly why turning this card off changes nothing under the default mode. With strict persona addressing on, such a session gets no persona at all.",
-        "memory.settings.personaViewSourceCard": "Preview for the identity card you are editing.",
-        "memory.settings.personaViewSourceNone": "Under the current addressing mode this identity injects no persona at all — the default card only covers sessions with no resolvable identity.",
-        "memory.settings.personaViewGateOff": "The master switch “Persona (beta)” is off: the block below contains profile and rules only.",
-        "memory.settings.personaViewRefresh": "Refresh preview",
-        "memory.persona.open": "Persona",
         "memory.persona.title": "Persona",
         "memory.persona.hint": "One card per identity. Each card carries a name, personality, reply style, scenario and example dialogue. Once saved, that identity speaks from it — and writes its diary in that voice too: the diary page is split by identity because this is where those partitions live.",
         "memory.persona.cards": "Identity cards",
@@ -1612,6 +1560,7 @@ window.__ModuleLoader__.load({
         "memory.explorer.tabEntities": "Entities",
         "memory.explorer.tabSettings": "Settings",
         "memory.explorer.tabStatus": "Status",
+        "memory.explorer.tabPersona": "Persona",
         "memory.entities.count": "{n} entities",
       "memory.entities.countSampled": "The list shows the newest {shown} only; the total above is the whole library",
         "memory.entities.pick": "Select an entity to see its attributes and relations",
@@ -4718,27 +4667,6 @@ window.__ModuleLoader__.load({
       // 保存失败要可见（persona 那条一直有，画像这条以前是静默 catch）。
       const [profileError, setProfileError] = react.useState("");
       const [cmdError, setCmdError] = react.useState("");
-      // 人格卡（beta，v1.2 多卡）：default 卡草稿 + byAgent 卡列表 + 当前编辑位；
-      // provenance 是 v1.5 协作式人格的预留位，v1 只透传不编辑。
-      const [personaDefault, setPersonaDefault] = react.useState({ name: "", personality: "", replyStyle: "", enabled: false });
-      const [personaByAgent, setPersonaByAgent] = react.useState({});
-      // 绑会话那一维（#606）：设置页不编辑它，但**必须原样带回去**——
-      // 后端 setPersona 的多卡形是全量替换，少发一维等于把那些卡删掉。
-      // 静默删除用户数据的按钮，比没有这个功能糟得多。
-      const [personaBySession, setPersonaBySession] = react.useState({});
-      const [personaEditing, setPersonaEditing] = react.useState("default");
-      const [personaNewName, setPersonaNewName] = react.useState("");
-      const [personaSaved, setPersonaSaved] = react.useState(false);
-      const [personaError, setPersonaError] = react.useState("");
-      // #514：人是在这一页开关人格的，所以「为什么关了没反应」的答案必须在
-      // 这一页。与状态页告示卡共用 useInjectStatus，两边口径不会各自漂。
-      const injectStatus = useInjectStatus();
-      const minimalWarn = !injectStatus.loading && injectStatus.suppressed;
-      // 注入预览：文本由后端渲染（GET /persona 的 preview 字段），前端只显示、不自己拼。
-      // 原先这里是一段前端手拼的 profile + rules 列表，注释却写着「注入生效文本」——
-      // 它既没有表头、没有「- 用户画像：」前缀，也完全没有人格三行，两份渲染代码必然漂。
-      // null = 还没读到或读失败（fail-closed：显示「未知」而不是「空」，也不显示旧值）。
-      const [injectedPreview, setInjectedPreview] = react.useState(null);
       const [vector, setVector] = react.useState({ enabled: false, baseUrl: "", apiKey: "", model: "" });
       const [vectorSaved, setVectorSaved] = react.useState(false);
       const [reindexing, setReindexing] = react.useState(false);
@@ -4802,41 +4730,16 @@ window.__ModuleLoader__.load({
 
       const load = react.useCallback(async () => {
         try {
-          const [p, r, c, v, ps] = await Promise.all([
+          const [p, r, c, v] = await Promise.all([
             apiFetch("/api/dsh-mneme/profile").then((res) => res.json()),
             apiFetch("/api/dsh-mneme/rules").then((res) => res.json()),
             apiFetch("/api/dsh-mneme/commands").then((res) => res.json()),
             apiFetch("/api/dsh-mneme/vector-config").then((res) => res.json()),
-            apiFetch("/api/dsh-mneme/persona").then((res) => res.json()).catch(() => null)
           ]);
           setProfile(p.profile || "");
           setRules(Array.isArray(r.rules) ? r.rules : []);
           setCommands(Array.isArray(c.commands) ? c.commands : []);
           setVector(v.config || { enabled: false, baseUrl: "", apiKey: "", model: "" });
-          // 人格卡：旧后端无 /persona（404）时保持默认空卡，不阻塞其它卡片。
-          // v1.2 多卡形 {default, byAgent}；旧单对象形读作 default（后端已兼容，
-          // 这里双保险再判一次形状）。
-          const pj = ps && ps.persona && typeof ps.persona === "object" ? ps.persona : {};
-          const isMulti = "default" in pj || "byAgent" in pj || "bySession" in pj;
-          const dRaw = isMulti ? (pj.default ?? {}) : pj;
-          const bRaw = isMulti && pj.byAgent && typeof pj.byAgent === "object" ? pj.byAgent : {};
-          // bySession 不在这里编辑，但读出来存着：保存时要原样发回去，否则
-          // 后端全量替换语义会把这些卡删掉（见 savePersonaCards 的注释）。
-          const sRaw = isMulti && pj.bySession && typeof pj.bySession === "object" ? pj.bySession : {};
-          // scenario / mesExample 一并读：模型层早就支持（PERSONA_FIELDS），
-          // 只有这里丢掉它们，结果就是「存进去了、再打开就没了」。
-          const norm = (c) => ({
-            name: typeof c?.name === "string" ? c.name : "",
-            personality: typeof c?.personality === "string" ? c.personality : "",
-            replyStyle: typeof c?.replyStyle === "string" ? c.replyStyle : "",
-            scenario: typeof c?.scenario === "string" ? c.scenario : "",
-            mesExample: typeof c?.mesExample === "string" ? c.mesExample : "",
-            enabled: c?.enabled === true
-          });
-          setPersonaDefault(norm(dRaw));
-          setPersonaByAgent(Object.fromEntries(Object.entries(bRaw).map(([k, c]) => [k, norm(c)])));
-          setPersonaBySession(Object.fromEntries(Object.entries(sRaw).map(([k, c]) => [k, norm(c)])));
-          setPersonaEditing("default");
           // 预览不在这里写：它只有一个所有者（loadPreview）。两处写同一个 state 就会
           // 互相覆盖，而这张卡的标题是「注入生效文本」——显示别张卡的文本比不显示更糟。
         } catch { /* ignore */ }
@@ -4844,26 +4747,6 @@ window.__ModuleLoader__.load({
 
       react.useEffect(() => { load(); }, [load]);
 
-      // 预览请求：切卡与点「刷新预览」时各一次。刻意不挂在卡的数据上——卡内改动是
-      // 逐字自动保存的，那样等于每敲一个字发一次 GET。
-      // 序号守卫：先切 A 再切 B 时，A 的 GET 可能后回来；没有这道判断，界面上就是
-      // 「编辑位显示 B、预览显示 A」。
-      const previewSeq = react.useRef(0);
-      const loadPreview = react.useCallback(async (agentId) => {
-        const seq = ++previewSeq.current;
-        const q = agentId && agentId !== "default" ? `?agent=${encodeURIComponent(agentId)}` : "";
-        try {
-          const res = await apiFetch(`/api/dsh-mneme/persona${q}`);
-          const body = await res.json();
-          if (seq !== previewSeq.current) return;
-          setInjectedPreview(body && body.preview && typeof body.preview.text === "string" ? body.preview : null);
-        } catch {
-          if (seq !== previewSeq.current) return;
-          setInjectedPreview(null);
-        }
-      }, []);
-
-      react.useEffect(() => { loadPreview(personaEditing); }, [personaEditing, loadPreview]);
 
       // 帮助与反馈卡片的版本号：独立小请求，失败不影响其它卡片。
       react.useEffect(() => {
@@ -5041,67 +4924,6 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // 人格卡保存（v1.2 多卡）：全量多卡形 PUT（{default, byAgent, bySession}，
-      // 后端全量替换语义）。保存失败必须冒提示——v1 的静默 catch 曾把 404 吞成
-      // 「看起来保存了」（后端未重装配时 PUT 打 404），桉桉实测踩中，此处不再静默。
-      //
-      // bySession 是第三个参数、默认取当前状态：这一页不编辑绑会话卡，但漏发它就
-      // 会被后端当成「用户删光了会话卡」。少发一维的代价是数据消失，多发的代价是零。
-      async function savePersonaCards(nextDefault, nextByAgent, nextBySession = personaBySession) {
-        try {
-          const res = await apiFetch("/api/dsh-mneme/persona", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ persona: { default: nextDefault, byAgent: nextByAgent, bySession: nextBySession } })
-          });
-          if (!res.ok) throw new Error("HTTP " + res.status);
-          setPersonaSaved(true);
-          setPersonaError("");
-          announce(t("memory.settings.personaSaved"));
-          setTimeout(() => setPersonaSaved(false), 1500);
-        } catch (err) {
-          setPersonaError((err && err.message) || "failed");
-          setTimeout(() => setPersonaError(""), 4000);
-        }
-      }
-      // 当前编辑位的卡：default 或 byAgent[editing]；草稿即编辑位状态本身。
-      const personaEditingCard = personaEditing === "default"
-        ? personaDefault
-        : personaByAgent[personaEditing] || { name: "", personality: "", replyStyle: "", enabled: false };
-      const updatePersonaCard = (key, value) => {
-        if (personaEditing === "default") setPersonaDefault((c) => ({ ...c, [key]: value }));
-        else setPersonaByAgent((c) => ({ ...c, [personaEditing]: { ...(c[personaEditing] || { name: "", personality: "", replyStyle: "", enabled: false }), [key]: value } }));
-      };
-      const saveEditingPersona = () => savePersonaCards(personaDefault, personaByAgent);
-      const toggleEditingPersona = (checked) => {
-        if (personaEditing === "default") {
-          const next = { ...personaDefault, enabled: checked };
-          setPersonaDefault(next);
-          savePersonaCards(next, personaByAgent);
-        } else {
-          const next = { ...(personaByAgent[personaEditing] || { name: "", personality: "", replyStyle: "", enabled: false }), enabled: checked };
-          setPersonaByAgent((c) => ({ ...c, [personaEditing]: next }));
-          savePersonaCards(personaDefault, { ...personaByAgent, [personaEditing]: next });
-        }
-      };
-      const addPersonaCard = () => {
-        const id = personaNewName.trim();
-        if (!id || id === "default" || personaByAgent[id]) return;
-        const fresh = { name: id, personality: "", replyStyle: "", enabled: false };
-        const next = { ...personaByAgent, [id]: fresh };
-        setPersonaByAgent(next);
-        setPersonaNewName("");
-        setPersonaEditing(id);
-        savePersonaCards(personaDefault, next);
-      };
-      const removePersonaCard = (id) => {
-        if (id === "default" || !personaByAgent[id]) return;
-        const next = { ...personaByAgent };
-        delete next[id];
-        setPersonaByAgent(next);
-        if (personaEditing === id) setPersonaEditing("default");
-        savePersonaCards(personaDefault, next);
-      };
 
       // 「Agent 眼中的你」自动事实（profile_facts 三表）：展示与人工修正独立于手填
       // 画像（#497 口径：user_settings 神圣，这里一个字都不写它）。增改删全走
@@ -5215,7 +5037,6 @@ window.__ModuleLoader__.load({
           setFactsNotice({ kind, text });
           announce(text);
           await loadFacts(factsAgent);
-          loadPreview(personaEditing);
           return body;
         } catch {
           setFactsNotice({ kind: "fail", text: t("memory.settings.factsApplyError") });
@@ -5281,7 +5102,6 @@ window.__ModuleLoader__.load({
               : "memory.settings.factsRunFailed"));
           }
           await loadFacts(factsAgent);
-          loadPreview(personaEditing);
         } catch {
           setFactsRunEnd({ kind: "failed" });
           announce(t("memory.settings.factsRunFailed"));
@@ -5532,138 +5352,6 @@ window.__ModuleLoader__.load({
             saved && h("span", { className: "mneme-saved" }, t("memory.settings.profileSaved")),
             profileError ? h("span", { className: "mneme-saved", style: { color: "var(--dsw-danger, #d33)" } },
               t("memory.settings.profileSaveFailed") + " (" + profileError + ")") : null
-          )
-        ),
-        // 人格卡（beta，v1.2 多卡）— who the agent is：多张角色卡按会话身份注入。
-        // 卡内开关只是该卡 enabled 半边；总闸 personaEnabled 在功能开关组，双闸同真。
-        h("section", { className: "mneme-set-card" },
-          h("div", { className: "mneme-set-title" }, t("memory.settings.persona")),
-          h("div", { className: "mneme-set-desc" }, t("memory.settings.personaHint")),
-          // #514：人格卡是最容易撞上宿主极简压制的地方——这里的提示比运行模式卡
-          // 那句更要紧，因为用户就是在这里点开关的。
-          minimalWarn && h("div", {
-            style: { marginBottom: 10, padding: "8px 10px", borderLeft: "3px solid var(--mneme-warn)", fontSize: 12, lineHeight: "18px" }
-          },
-            h("div", { style: { fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, t("memory.status.minimalPresetTitle")),
-            h("div", { style: { marginTop: 4, color: "var(--mneme-fg-dim)" } }, t("memory.status.minimalPresetBody"))
-          ),
-          // 卡列表：default + 各 byAgent 卡，点选切换编辑位；default 标注兜底位
-          h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
-            h("button", {
-              type: "button",
-              className: "mneme-btn" + (personaEditing === "default" ? " mneme-btn--active" : ""),
-              onClick: () => setPersonaEditing("default")
-            }, t("memory.settings.personaDefaultCard")),
-            Object.keys(personaByAgent).map((id) =>
-              h("span", { key: id, style: { display: "inline-flex", alignItems: "center", gap: 2 } },
-                h("button", {
-                  type: "button",
-                  className: "mneme-btn" + (personaEditing === id ? " mneme-btn--active" : ""),
-                  onClick: () => setPersonaEditing(id)
-                }, id),
-                // 卡删除 × 常显：用独立类 mneme-persona-del（见上方样式定义处的
-                // 注释——为何不复用 mneme-set-del，以及 #457→#459 一修一回滚的教训）。
-                h("button", {
-                  type: "button",
-                  className: "mneme-persona-del",
-                  title: t("memory.settings.personaDeleteCard"),
-                  "aria-label": t("memory.settings.personaDeleteCard") + " " + id,
-                  onClick: () => removePersonaCard(id)
-                }, "×")
-              ))
-          ),
-          // 添加卡：输入 agent 身份名（注入时按它寻址）
-          h("div", { style: { display: "flex", gap: 8 } },
-            h("input", {
-              className: "mneme-set-input",
-              style: { marginBottom: 0 },
-              value: personaNewName,
-              placeholder: t("memory.settings.personaAddPlaceholder"),
-              onChange: (e) => setPersonaNewName(e.target.value),
-              onKeyDown: (e) => { if (e.key === "Enter") addPersonaCard(); }
-            }),
-            h("button", { className: "mneme-btn", onClick: addPersonaCard }, t("memory.settings.personaAdd"))
-          ),
-          // 编辑位标题：default 卡 vs 具体身份卡
-          h("div", { className: "mneme-set-desc" },
-            personaEditing === "default"
-              ? t("memory.settings.personaEditingDefault")
-              : t("memory.settings.personaEditingFor") + " " + personaEditing),
-          // 可见字段标签（v1.1 反馈：aria-label 看不见，框上要有字）
-          h("div", { className: "mneme-featnumlabel" }, t("memory.settings.personaEnabledToggle")),
-          h("div", { className: "mneme-set-row" },
-            h("input", {
-              type: "checkbox",
-              checked: personaEditingCard.enabled === true,
-              "aria-label": t("memory.settings.personaEnabledToggle"),
-              onChange: (e) => toggleEditingPersona(e.target.checked)
-            }),
-            h("span", { className: "mneme-set-ruletext" },
-              personaEditingCard.enabled === true
-                ? t("memory.settings.personaEnabledOn")
-                : t("memory.settings.personaEnabledOff"))
-          ),
-          h("div", { className: "mneme-featnumlabel" }, t("memory.settings.personaName")),
-          h("input", {
-            className: "mneme-set-input",
-            value: personaEditingCard.name,
-            placeholder: t("memory.settings.personaNamePlaceholder"),
-            onChange: (e) => updatePersonaCard("name", e.target.value)
-          }),
-          h("div", { className: "mneme-featnumlabel" }, t("memory.settings.personaPersonality")),
-          h("textarea", {
-            className: "mneme-set-input mneme-set-input--area",
-            value: personaEditingCard.personality,
-            placeholder: t("memory.settings.personaPersonalityPlaceholder"),
-            onChange: (e) => updatePersonaCard("personality", e.target.value)
-          }),
-          h("div", { className: "mneme-featnumlabel" }, t("memory.settings.personaReplyStyle")),
-          h("textarea", {
-            className: "mneme-set-input mneme-set-input--area",
-            value: personaEditingCard.replyStyle,
-            placeholder: t("memory.settings.personaReplyStylePlaceholder"),
-            onChange: (e) => updatePersonaCard("replyStyle", e.target.value)
-          }),
-          h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
-            h("button", { className: "mneme-btn", onClick: saveEditingPersona }, t("memory.settings.personaSave")),
-            personaSaved && h("span", { className: "mneme-saved" }, t("memory.settings.personaSaved")),
-            personaError && h("span", { className: "mneme-saved", style: { color: "var(--dsw-danger, #d33)" } },
-              t("memory.settings.personaSaveFailed") + " (" + personaError + ")")
-          )
-        ),
-        // Agent 眼中的你（只读）— 注入生效文本由后端渲染（GET /persona 的 preview 字段），
-        // 前端只显示。以前这一段是前端自己拼的 profile + rules，注释却写着「注入生效文本」：
-        // 没有人格三行、没有表头、没有「- 用户画像：」前缀，两份实现必然漂。
-        h("section", { className: "mneme-set-card" },
-          h("div", { className: "mneme-set-title" }, t("memory.settings.personaView")),
-          h("div", { className: "mneme-set-desc" }, t("memory.settings.personaViewHint")),
-          injectedPreview === null
-            ? h("div", { className: "mneme-xempty" }, t("memory.settings.personaViewUnknown"))
-            : h("div", null,
-                h("div", { className: "mneme-set-desc" },
-                  injectedPreview.source === "byAgent"
-                    ? t("memory.settings.personaViewSourceCard")
-                    : injectedPreview.source === "none"
-                      ? t("memory.settings.personaViewSourceNone")
-                      // source=default 有两种来路，必须分开说：请求带了 ?agent=<身份>
-                      // 却仍落默认卡（身份解析到了，只是没建卡或卡被关掉——关卡的人最想
-                      // 确认的就是这一格），与真的解析不到会话身份。
-                      : injectedPreview.agent
-                        ? t("memory.settings.personaViewSourceFallback")
-                        : t("memory.settings.personaViewSourceDefault")),
-                injectedPreview.configGate === true
-                  ? null
-                  : h("div", { className: "mneme-set-desc" }, t("memory.settings.personaViewGateOff")),
-                injectedPreview.text
-                  ? h("pre", { className: "mneme-set-input mneme-set-input--area", style: { whiteSpace: "pre-wrap", minHeight: 0 } }, injectedPreview.text)
-                  : h("div", { className: "mneme-xempty" }, t("memory.settings.personaViewEmpty"))
-              ),
-          h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 6 } },
-            h("button", {
-              type: "button",
-              className: "mneme-btn",
-              onClick: () => loadPreview(personaEditing)
-            }, t("memory.settings.personaViewRefresh"))
           ),
           // 从记忆提取草稿（#497）。**放在这张卡上而不是「用户画像」卡**：画像那一栏是
           // 用户自己手填的地方；这一段是从记忆里反推出来的「Agent 眼中的你」，属于可
@@ -9353,7 +9041,8 @@ window.__ModuleLoader__.load({
         { key: "memory", label: t("memory.explorer.tabMemory") },
         { key: "entity", label: t("memory.explorer.tabEntities") },
         { key: "status", label: t("memory.explorer.tabStatus") },
-        { key: "settings", label: t("memory.explorer.tabSettings") }
+        { key: "settings", label: t("memory.explorer.tabSettings") },
+        { key: "persona", label: t("memory.explorer.tabPersona") }
       ];
 
       return h("div", { className: "mneme-x" },
@@ -9372,7 +9061,7 @@ window.__ModuleLoader__.load({
                 "aria-pressed": String(view === s.key),
                 onClick: () => leaveMemory(s.key)
               },
-                h(Icon, { name: s.key === "memory" ? "database" : s.key === "entity" ? "waypoints" : s.key === "status" ? "activity" : "settings", size: 14, className: "mneme-vtabico" }),
+                h(Icon, { name: s.key === "memory" ? "database" : s.key === "entity" ? "waypoints" : s.key === "status" ? "activity" : s.key === "persona" ? "persona" : "settings", size: 14, className: "mneme-vtabico" }),
                 s.label
               ))
           ),
@@ -9712,6 +9401,9 @@ window.__ModuleLoader__.load({
         view === "status" && h(StatusPanel, { t, onBrowse: browseWithFilter }),
         view === "settings" && h("div", { className: "mneme-set" },
           h("div", { className: "mneme-set-inner" }, h(SettingsContent, { t }))
+        ),
+        view === "persona" && h("div", { className: "mneme-set" },
+          h("div", { className: "mneme-set-inner" }, h(PersonaMainPanel, { t }))
         ),
         toastMsg && h("div", { className: "mneme-toast", role: "status" }, toastMsg)
       );
@@ -11578,6 +11270,10 @@ window.__ModuleLoader__.load({
       const [tick, setTick] = useState(0);
       const [previewTick, setPreviewTick] = useState(0);
       const previewSeq = useRef(0);
+      // #514：人是在这一页开关人格的，所以「为什么关了没反应」的答案必须在这一页。
+      // 与状态页、设置页共用 useInjectStatus，三处口径不会各自漂。
+      const injectStatus = useInjectStatus();
+      const minimalWarn = !injectStatus.loading && injectStatus.suppressed;
 
       useEffect(() => {
         let dead = false;
@@ -11729,6 +11425,7 @@ window.__ModuleLoader__.load({
           h("span", { className: "mneme-diary-warn" }, t("memory.persona.readFailed")));
       } else {
         const cards = h("div", { className: "mneme-persona-col" },
+          h("div", { className: "mneme-persona-label" }, t("memory.persona.cards")),
           h("div", { className: "mneme-persona-card" },
             h("button", {
               type: "button",
@@ -11794,6 +11491,12 @@ window.__ModuleLoader__.load({
 
         const sheet = h("div", { className: "mneme-persona-sheet" },
           h("div", { className: "mneme-persona-note" }, t("memory.persona.hint")),
+          minimalWarn ? h("div", {
+            style: { padding: "8px 10px", borderLeft: "3px solid var(--mneme-warn)", fontSize: 12, lineHeight: "18px" }
+          },
+            h("div", { style: { fontWeight: 600, color: "var(--dsw-alias-label-primary)" } }, t("memory.status.minimalPresetTitle")),
+            h("div", { style: { marginTop: 4, color: "var(--mneme-fg-dim)" } }, t("memory.status.minimalPresetBody"))
+          ) : null,
           h("label", { className: "mneme-persona-label" }, t("memory.persona.enabled")),
           h("div", { className: "mneme-set-row" },
             h("label", { className: "mneme-set-ruletext" },
@@ -12883,19 +12586,6 @@ window.__ModuleLoader__.load({
           name: "main",
           key: "dsh-mneme-diary"
         }, () => h(DiaryLibraryPanel, { t }));
-        // 人格第五个座位：人格设计本来只是设置页里的一张卡，但「谁的人格」这件事
-        // 决定的不只是聊天口吻，还决定 ta 的日记按什么名字分桶——它得有个自己的
-        // 页面，不必先想起来去「设置」里翻。id 与 key 逐字同为 "dsh-mneme-persona"。
-        const disposePersonaGlyph = ctx.slots.register({
-          name: "sidebar.panellist",
-          id: "dsh-mneme-persona",
-          order: 64,
-          label: () => t("memory.persona.open")
-        }, (props) => h(PersonaGlyph, { size: props && props.size }));
-        const disposePersonaMain = ctx.slots.register({
-          name: "main",
-          key: "dsh-mneme-persona"
-        }, () => h(PersonaMainPanel, { t }));
         return () => {
           disposeGlyph();
           disposeMain();
@@ -12905,8 +12595,6 @@ window.__ModuleLoader__.load({
           disposeKbMain();
           disposeDiaryGlyph();
           disposeDiaryMain();
-          disposePersonaGlyph();
-          disposePersonaMain();
           // 座位被撤（宿主折叠该槽 / 换宿主形态）时把回落装回去：两条路径都
           // 只靠各自的 inject 触发，谁不动谁就永远停在「没有入口」的状态。
           mountFooterSeat();
