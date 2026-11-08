@@ -38,11 +38,15 @@ function setup(config = {}) {
   createInjector(ctx, service, settings, config);
   const settingsCtx = contexts.find((c) => c.name === "user-settings");
   // 造 ctx：只给要测的那几个键，缺省不给（模拟宿主解析不到）。
-  const makeCtx = ({ agentPreset = null, sessionId = null } = {}) => {
-    if (!agentPreset && !sessionId) return {};
+  const makeCtx = ({ agentPreset = null, sessionId = null, parentSession = null } = {}) => {
+    if (!agentPreset && !sessionId && !parentSession) return {};
     const session = {};
     if (sessionId) session.id = sessionId;
-    if (agentPreset) session.header = { agentPreset };
+    if (agentPreset || parentSession) {
+      session.header = {};
+      if (agentPreset) session.header.agentPreset = agentPreset;
+      if (parentSession) session.header.parentSession = parentSession;
+    }
     return { agent: { session } };
   };
   const injectorText = (opts) => settingsCtx.text(makeCtx(opts));
@@ -58,10 +62,11 @@ function setup(config = {}) {
     config
   );
   const route = routes.find((r) => r.path === "/api/dsh-mneme/persona");
-  const preview = async ({ agent = null, session = null } = {}) => {
+  const preview = async ({ agent = null, session = null, parent = null } = {}) => {
     const qs = [];
     if (agent) qs.push(`agent=${encodeURIComponent(agent)}`);
     if (session) qs.push(`session=${encodeURIComponent(session)}`);
+    if (parent) qs.push(`parent=${encodeURIComponent(parent)}`);
     const res = new FakeRes();
     await route.handler(req(`/api/dsh-mneme/persona${qs.length ? `?${qs.join("&")}` : ""}`), res);
     return JSON.parse(res.body);
@@ -427,5 +432,137 @@ test("renderUserSettingsBlock 返回值带 session 字段（面板定位用）",
   assert.equal(out.session, "s1");
   assert.equal(out.agent, "standard");
   assert.equal(out.source, "default");
+  store.close();
+});
+
+// ---- 8. 子 agent 继承父会话人格卡 --------------------------------------------
+//
+// 子 agent 是新会话（header 带 parentSession / origin:"subagent"），用户不可能给每个
+// 派生会话建卡。strict 一开，「有身份、没这张身份的卡」= 不注入人格，子 agent 会从
+// 「自称父会话的人格」变成「不知道自己是谁」。所以自己没卡时继承父会话的卡。
+
+test("子 agent 没自己的卡时继承父会话卡（source 是 parentSession）", () => {
+  const { store, settings, injectorText } = setup({ personaEnabled: true });
+  settings.setPersona({ name: "兜底卡", enabled: true });
+  settings.setPersonaForSession("session-parent", { name: "主控人格", personality: "轻松诙谐", enabled: true });
+  const text = injectorText({ agentPreset: "standard", sessionId: "session-child", parentSession: "session-parent" });
+  assert.ok(text.includes("你的人格名字：主控人格"), "子 agent 必须拿到父会话那张卡");
+  assert.ok(!text.includes("兜底卡"), "不许回落到 default");
+  const out = renderUserSettingsBlock({
+    settings,
+    config: { personaEnabled: true },
+    agentId: "standard",
+    sessionId: "session-child",
+    parentSessionId: "session-parent"
+  });
+  assert.equal(out.source, "parentSession");
+  store.close();
+});
+
+test("子 agent 自己有卡时自己的卡优先（继承不覆盖专门指定的卡）", () => {
+  const { store, settings } = setup({ personaEnabled: true });
+  settings.setPersonaForSession("session-parent", { name: "父卡", enabled: true });
+  settings.setPersonaForSession("session-child", { name: "子卡", enabled: true });
+  const hit = resolvePersonaCard(settings, "standard", { sessionId: "session-child", parentSessionId: "session-parent" });
+  assert.equal(hit.source, "bySession");
+  assert.equal(hit.card.name, "子卡");
+  store.close();
+});
+
+test("父卡优先于 byAgent（同一段对话比同一预设更能说明用谁的人格）", () => {
+  const { store, settings } = setup({ personaEnabled: true });
+  settings.setPersonaFor("standard", { name: "预设卡", enabled: true });
+  settings.setPersonaForSession("session-parent", { name: "父卡", enabled: true });
+  const hit = resolvePersonaCard(settings, "standard", { sessionId: "session-child", parentSessionId: "session-parent" });
+  assert.equal(hit.source, "parentSession");
+  assert.equal(hit.card.name, "父卡");
+  store.close();
+});
+
+test("父卡被显式关掉时不继承，落回 byAgent（关掉就是关掉）", () => {
+  const { store, settings } = setup({ personaEnabled: true });
+  settings.setPersonaFor("standard", { name: "预设卡", enabled: true });
+  settings.setPersonaForSession("session-parent", { name: "父卡", enabled: false });
+  const hit = resolvePersonaCard(settings, "standard", { sessionId: "session-child", parentSessionId: "session-parent" });
+  assert.equal(hit.source, "byAgent");
+  assert.equal(hit.card.name, "预设卡");
+  store.close();
+});
+
+test("strict：子 agent 只解析到父会话 id 时也不许被 default 兜底", () => {
+  const { store, settings } = setup({ personaEnabled: true, personaStrictAddressing: true });
+  settings.setPersonaForSession("session-other", { name: "别人的卡", enabled: true });
+  // 子会话与父会话都没有卡；anyCard=true 且确实有身份 → none
+  const miss = resolvePersonaCard(settings, "standard", {
+    strict: true,
+    sessionId: "session-child",
+    parentSessionId: "session-nobody"
+  });
+  assert.equal(miss.source, "none", "有身份但没卡，strict 下不兜底");
+  store.close();
+});
+
+test("strict 关时子 agent 没父卡照旧落 default（零行为变化）", () => {
+  const { store, settings } = setup({ personaEnabled: true });
+  settings.setPersona({ name: "Amarre", enabled: true });
+  settings.setPersonaForSession("session-other", { name: "别人的卡", enabled: true });
+  const hit = resolvePersonaCard(settings, "standard", { sessionId: "session-child", parentSessionId: "session-nope" });
+  assert.equal(hit.source, "default");
+  assert.equal(hit.card.name, "Amarre");
+  store.close();
+});
+
+test("parentSession 与自身 id 相同（脏数据）时不重复查同一个键", () => {
+  const { store, settings } = setup({ personaEnabled: true });
+  settings.setPersonaForSession("session-same", { name: "同一张", enabled: true });
+  const hit = resolvePersonaCard(settings, "standard", {
+    sessionId: "session-same",
+    parentSessionId: "session-same"
+  });
+  assert.equal(hit.source, "bySession", "自身维度先命中，不会误标成继承");
+  store.close();
+});
+
+test("父会话 id 是空白/非字符串时不影响其余寻址", () => {
+  const { store, settings } = setup({ personaEnabled: true });
+  settings.setPersonaFor("standard", { name: "预设卡", enabled: true });
+  for (const bad of ["", "   ", null, undefined, 42, {}]) {
+    const hit = resolvePersonaCard(settings, "standard", { sessionId: "session-child", parentSessionId: bad });
+    assert.equal(hit.source, "byAgent", `parentSessionId=${JSON.stringify(bad)} 应被忽略`);
+  }
+  store.close();
+});
+
+test("session.header 取不到时不影响 agentPreset 寻址（新加的父会话读取也各自兜错）", () => {
+  const { store, settings, settingsCtx } = setup({ personaEnabled: true });
+  seed(settings);
+  const hostile = {
+    agent: {
+      session: {
+        id: "session-x",
+        get header() { throw new Error("no header accessor"); }
+      }
+    }
+  };
+  const text = settingsCtx.text(hostile);
+  // header 整体取不到 → agentId/parentSessionId 皆 null，只剩 sessionId，落 default
+  assert.ok(text.includes("你的人格名字：Amarre"), "会话卡字段可用时不该整块崩掉");
+  store.close();
+});
+
+test("注入链路端到端：子 agent 拿到父会话人格，且与预览同源", async () => {
+  const { store, settings, injectorText, preview } = setup({ personaEnabled: true });
+  settings.setPersona({ name: "兜底", enabled: true });
+  settings.setPersonaForSession("session-parent", { name: "父会话人格", personality: "父的性格", enabled: true });
+  const fromInjector = injectorText({
+    agentPreset: "standard",
+    sessionId: "session-child",
+    parentSession: "session-parent"
+  });
+  assert.ok(fromInjector.includes("你的人格名字：父会话人格"));
+  const body = await preview({ agent: "standard", session: "session-child", parent: "session-parent" });
+  assert.equal(body.preview.text, fromInjector, "预览必须与注入器逐字节同源");
+  assert.equal(body.preview.source, "parentSession");
+  assert.equal(body.preview.parent, "session-parent");
   store.close();
 });

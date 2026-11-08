@@ -4,6 +4,13 @@
 
 ## 🆕 新增
 
+- **子 agent 继承父会话的人格卡：派生出去的手脚不该变成「不知道自己是谁」**。人格寻址原本两维（`bySession[自身]` → `byAgent` → `default`），而子 agent 是一个新会话 id——用户不可能给每个派生会话都建一张卡。strict（`personaStrictAddressing`）一开，「有身份、没这一张的卡」就直接不注入人格，于是子 agent 从「自称父会话的人格」掉到「完全没有身份」。这比串味更糟：串味至少还有个稳定的「我」，掉到 none 是每派一次活换一次人。
+
+  - **加第三维 `parentSession`（`src/user-settings.js` 的 `resolvePersonaCard`）**：顺序改成 `bySession[自身]` → `bySession[父会话]` → `byAgent` → strict `none` → `default`。父卡排在 `byAgent` 之前——「属于哪段对话」比「属于哪个预设」更能说明该用谁的人格（DS Bot 里 `agentPreset` 恒为 `standard`，这一维本来就分不开人）。`source` 新增读数 `"parentSession"`，面板据此能说清卡是从父会话继承来的。`strict` 的身份判据也把父会话 id 算进来：子 agent 只解析到父会话 id 时同样是「有身份」，不许被 default 兜底。
+  - **与 `src/session-gate.js` 的口径刻意不同，注释里写清了理由**：闸门**不用** `parentSession` 判「是不是子代理」（宿主 `sessions.fork()` 造的主会话分支同样带这个字段，641 个会话实测会多判 3 个主会话）；寻址要问的不是「你是不是子代理」而是「你自己有没有卡」，所以 fork 出的分支继承父卡同样正确——它就是同一段对话的副本。
+  - **`src/inject.js` 的 `sessionIdentity` 扩成三键**：新增 `parentSessionIdOf(ctx)` 读 `session.header.parentSession`，与 `agentPreset` / `session.id` 各自独立兜错（一个 accessor 抛错不拖累其余两个）。`/api/dsh-mneme/persona?parent=` 同步支持，面板预览能复现子代理看到的那一帧，且与注入器逐字节同源。
+  - **验证**：`test/persona-by-session.test.js` 29→39 例。新增 10 条锁五件事：继承命中（source 是 `parentSession`）、自己的卡优先、父卡优先于 `byAgent`、父卡 `enabled:false` 时不继承（关掉就是关掉）、strict 下子 agent 不许被兜底、strict 关时零行为变化、父 id 与自身 id 相同（脏数据）不重复查、父 id 非字符串/空白不干扰其余寻址、`session.header` 整体抛错时不崩、注入与预览同源。全量 3133 用例 / 3132 通过 / 0 失败 / 1 跳过；check-sync 118 一致。
+
 - **仓库地志对齐 Qoder：面板能一键生成、按路径登记新仓库、开关就地切、T1 语义富化从面板发起；另开知识库第二层（#607）**。此前「仓库地志」的第一屏是一句「先在仓库目录里跑 `dsh-mneme-choro <仓库路径> --apply`」——那条命令装在 profile 的 `node_modules/.bin/` 里、不在 PATH，照着做得到的是 command not found；文案还把「cd 进目录」与「传路径参数」混成一句（命令收的是参数，跟 cwd 无关）。更根本的是空态（`phase === "no-repo"`）只渲染一行纯文字、零可点元素，用户看着「未生成」却没有按钮，只能去翻文档、翻到一条跑不通的命令。这一档把「看着应该有但点不到」的四个入口都补上了，并把 Qoder 的 Repo Wiki / AI-Native 知识库两层结构对上号。
 
   - **#607 空态改成「填绝对路径 → 生成骨架」（`lib/client.js` no-repo 分支）**：输入框 + 「生成骨架」按钮，直接 `POST /choro/run`，body `{ path }`（旧后端还认 `{ repo }`，所以已加载过仓库时两个都带）。文案写明这是 mneme 插件的「仓库地志」、开关在 `设置 → 记忆(mneme) → 功能 → 仓库地志`；CLI 降级进 `<details>` 作为**可选**方式，命令给绝对路径、并明说它收路径参数、不必先 cd。失败一律翻人话：`not-git`/`not-a-git-repo` 都认（服务端把 wiki 层的 `err.code` 翻成了契约里的对外码，只认一个就会出现「旧后端有人话、新后端只有错误码」的半修状态）、`path-not-absolute`、`path-not-found` 各有专门一句，其余落 `detail`——不再拿「生成失败: not-git」当解释。

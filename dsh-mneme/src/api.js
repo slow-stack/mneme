@@ -648,6 +648,9 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           config,
           agentId: url.searchParams.get("agent"),
           sessionId: url.searchParams.get("session"),
+          // 父会话 id（子 agent 继承人格卡用）：面板若要复现子代理看到的那一帧，
+          // 传父会话 id 即可，与注入器同一寻址次序——预览不许比注入更乐观。
+          parentSessionId: url.searchParams.get("parent"),
           // 事实段与注入共用同一渲染函数（user-settings.js 的同源纪律）：装配了
           // profile-facts 就传读口，开关与有无的判定在渲染函数内部（关=零读数）。
           factsProvider: typeof facts?.factsProvider === "function" ? facts.factsProvider : null
