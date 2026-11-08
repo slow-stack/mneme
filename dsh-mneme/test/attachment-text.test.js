@@ -115,3 +115,26 @@ test("超长文件名被截断，占位不被撑开", () => {
   assert.ok(text.length < 140, `占位长度应受控，实际 ${text.length}`);
   assert.ok(text.endsWith("]"));
 });
+test("超长文件名在代理对中间截断时不留孤立代理项（CodeRabbit 2026-11-08 指出）", () => {
+  // emoji 占两个 UTF-16 单元。按长度硬切会把它切成半个，孤立高位代理写进 SQLite
+  // 就是 `�`——落盘后原文再也拼不回来，而这条路径正是往库里写文本的那条。
+  const name = "a".repeat(78) + "😀".repeat(10);
+  const label = imageLabel({ attachment: { name } });
+  for (let i = 0; i < label.length; i += 1) {
+    const code = label.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = label.charCodeAt(i + 1);
+      assert.ok(next >= 0xdc00 && next <= 0xdfff, `第 ${i} 位是孤立高位代理（没有配对低位）`);
+    }
+  }
+  assert.ok(label.endsWith("…"));
+  assert.ok(label.length <= 81, `不该超过上限，实际 ${label.length}`);
+});
+
+test("恰好卡在边界上的 emoji 也不会被切坏", () => {
+  // 79 个 a + 一个 emoji：截断点正好落在 emoji 的高位代理上，是这条分支最锋利的样例。
+  const label = imageLabel({ attachment: { name: "a".repeat(79) + "😀" } });
+  const last = label.charCodeAt(label.length - 2);
+  assert.ok(!(last >= 0xd800 && last <= 0xdbff), "末位之前不能是孤立高位代理");
+  assert.ok(label.endsWith("…"));
+});

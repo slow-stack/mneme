@@ -336,6 +336,11 @@ audit 行，归因会跟着悬空；而 `memory_provenance` 刻意活得比原�
 控制字符、连续空白一律折成单个空格，再按 80 字截断（超出加 `…`）。**无元数据时仍返回空串**
 这条既有行为不变，由调用方退化到裸 `[图]`。
 
+截断不能切在 Unicode 代理对中间（同一轮 CodeRabbit 的第二条）：`slice` 按 UTF-16 单元走，
+emoji 占两个单元，切在中间就留下一个孤立的高位代理——那一半写进 SQLite 会变成 `�`，
+落盘后原文再也拼不回来。所以切完要回头看一眼末位 `charCodeAt`：落在 `0xd800..0xdbff`
+就再退一格。
+
 **不做（本批）**：不调 vision、不读字节、不落原图。宿主侧其实齐全
 （`attachments.readImage()` / `supportsAcpImagePrompts()` 判 `inputModalities`），
 但记忆库已 273MB，原图档明确不做；描述档（多模态模型出 1 段描述 + attachmentId 溯源）
@@ -353,13 +358,14 @@ audit 行，归因会跟着悬空；而 `memory_provenance` 刻意活得比原�
 `user/message` 与 `agent/inbox/spliced`（投递路径重叠），按事件数会算两遍，所以累加必须放在
 去重 `continue` 之后。
 
-**验收**：`test/attachment-text.test.js` 12 例锁口径（占位非空、三级退化、宽松字符串形状
-逐字节不变、reasoning 仍被挡、图+文顺序、countImages，加上消毒三条：`]` 不能闭合占位、
-换行不能造新行、超长名被截断）；
+**验收**：`test/attachment-text.test.js` 14 例锁口径（占位非空、三级退化、宽松字符串形状
+逐字节不变、reasoning 仍被挡、图+文顺序、countImages，加上消毒四条：`]` 不能闭合占位、
+换行不能造新行、超长名被截断、代理对中间截断不留孤立代理项）；
 `test/image-memory.test.js` 5 例锁端到端（图+文进转录、图-only 现在也会蒸馏、
-两张图数出 2、无图不写 imageCount、被挡掉的注入消息里的图不计入）。变异自证两条：
+两张图数出 2、无图不写 imageCount、被挡掉的注入消息里的图不计入）。变异自证三条：
 ①把 `blockToText` 的 image 分支改回 `return ""` → 图-only 那条立刻红（`calls.length` 0 ≠ 1）；
-②把计量改回按事件累加 → 「注入消息里的图不计入」那条立刻红。两条各自抓不同的错，
+②把计量改回按事件累加 → 「注入消息里的图不计入」那条立刻红；
+③去掉代理对守卫 → 「代理对中间截断不留孤立代理项」那条立刻红。三条各自抓不同的错，
 恢复后全绿。
 `test/continuity.test.js` 那条静态 import 锁同步从「恰好一行」改成「恰好两行」——
 新增一行仍然转红，仍然要人看一眼它是不是纯的（`attachment-text.js` 不 import 任何东西，

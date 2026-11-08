@@ -38,7 +38,13 @@ function sanitizeLabelPart(value) {
   // eslint-disable-next-line no-control-regex
   const flattened = value.replace(/[\u0000-\u001f\u007f[\]\\]/g, " ").replace(/\s+/g, " ").trim();
   if (flattened.length <= LABEL_PART_MAX) return flattened;
-  return `${flattened.slice(0, LABEL_PART_MAX - 1)}…`;
+  // 按 UTF-16 长度切会切在代理对中间（emoji 占两个单元），留下一个孤立的高位代理——
+  // 那一半写进 SQLite 就是 `�`，落盘后原文再也拼不回来（CodeRabbit 2026-11-08 指出）。
+  // 所以先切到上限，再回头检查末位是不是高位代理：是就再退一格。
+  let cut = flattened.slice(0, LABEL_PART_MAX - 1);
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return `${cut}…`;
 }
 
 /** 一个图片块读出的人类可读标签（不含方括号）。什么元数据都没有时返回空串。 */
