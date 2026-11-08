@@ -398,7 +398,16 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         // merge/update verdict ∪ source=dream 直写）——状态页「查看全部」
         // 与记忆库的「沉淀」筛选 chip 共用这个视图。
         const depositedOnly = url.searchParams.get("deposited") === "only";
-        const rows = service.list({ type, limit, offset, order, minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly });
+        // id: 按主键取单条（含归档行）。面板打开/保存前要拿「这一条」的最新值，
+        // 分页扫列表最多只能看到前 1000 条，已归档的更不在默认视图里；扫不到就
+        // 只能拿陈旧缓存去比对 updated_at，等于没有版本检查。
+        const idFilter = (url.searchParams.get("id") ?? "").trim();
+        const rows = idFilter === ""
+          ? service.list({ type, limit, offset, order, minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly })
+          // getById 是裸 SELECT，没有 forgotten 谓词；这条路由是 open 的，
+          // 不过滤等于让本机任意进程按 id 读到已遗忘记忆的全文（评审 #1）。
+          // 归档行仍要放行：归档 ≠ 遗忘，面板保存前要用它比对 updated_at。
+          : [service.getById(idFilter)].filter((memo) => memo && !memo.forgotten);
         // 面板行在 wire DTO 之上补 archived/quality_score——模型工具的输出
         // schema 严格复用 toApiList，扩展只发生在 HTTP 层。
         // heat 投影（阶段二前端数据源）：仅 heatEnabled=true 时下发逐条热度
@@ -421,8 +430,11 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         }));
         // Total honors the same filters as the rows, or the pager's
         // has-more math breaks whenever minImportance/source/updated-at
-        // bounds are active.
-        sendJson(res, 200, { items, total: service.count(type, { minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly }) });
+        // bounds are active. 按 id 取单条时总数就是命中的行数。
+        const total = idFilter === ""
+          ? service.count(type, { minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly })
+          : rows.length;
+        sendJson(res, 200, { items, total });
       } catch {
         sendJson(res, 500, { error: "internal" });
       }
@@ -1697,7 +1709,11 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
       try {
         const url = new URL(req.url, "http://localhost");
         const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") ?? 500) || 500));
-        const entities = service.listEntities?.({ limit }) ?? [];
+        // q = 名字过滤。必须下推到 store：面板此前取回 limit 条再本地过滤，
+        // 排在 limit 之后的实体永远搜不到（评审 #9）。老宿主没有这个形参时
+        // 多传一个键不会报错，只是过滤失效——与 limit 的处理一致。
+        const q = url.searchParams.get("q") ?? "";
+        const entities = service.listEntities?.({ limit, q }) ?? [];
         // total 是**全库**实体数，不是本次切片长度：目录带 limit，面板拿它当
         // 「一共抽出多少实体」，填切片长度会让 1.6 万实体永远显示成 500。
         // 老宿主（service 上没有 countEntities）回落到切片长度，不抛。计数本身失败也
@@ -2295,11 +2311,17 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         // materialize and persist one here. 只有通过上面那道门才会走到这里，
         // 否则「未鉴权的 GET 顺手写库」就是一条不需要凭证的写路径。
         const kv = settings.getExternalApi() ?? {};
-        if (!kv.token) {
+        // ?token=omit：只读配置、不生成也不落库 Bearer。
+        // 手机端面板（src/dsh-go）只需要 enabled/port/host 来渲染表单，而默认的
+        // GET 会顺手 materialize 一个 token 写进 user_settings —— 一次纯读请求
+        // 变成写路径，既污染审计也违反「面板不显示明文令牌」的承诺。带上这个
+        // 参数时 token 字段一律留空；不传的老客户端行为完全不变。
+        const omitToken = new URL(req.url, "http://localhost").searchParams.get("token") === "omit";
+        if (!omitToken && !kv.token) {
           kv.token = randomBytes(24).toString("base64url");
           settings.setExternalApi({ token: kv.token });
         }
-        sendJson(res, 200, { config: fullExternalConfig(kv) });
+        sendJson(res, 200, { config: fullExternalConfig(omitToken ? { ...kv, token: "" } : kv) });
       } catch {
         sendJson(res, 500, { error: "internal" });
       }

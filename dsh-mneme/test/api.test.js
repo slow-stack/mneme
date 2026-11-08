@@ -115,6 +115,33 @@ test("list total excludes forgotten entries", async () => {
   assert.equal(data.total, 1, "total matches visible items, forgotten excluded");
 });
 
+test("list?id= also excludes forgotten entries", async () => {
+  // getById 是裸 SELECT，不套 list 的 forgotten 谓词；这条路由是 open 的，
+  // 漏掉过滤等于让本机任意进程按 id 读到遗忘记忆的全文（评审 #1）。
+  const { routes, service } = setup();
+  const forgotten = service.saveWithDedupe({ type: "preference", title: "遗忘", content: "隐藏" });
+  service.setForget(forgotten.memory.id, true);
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/list");
+  const res = new FakeRes();
+  await route.handler(req(`/api/dsh-mneme/list?id=${forgotten.memory.id}`), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.deepEqual(data.items, []);
+  assert.equal(data.total, 0);
+});
+
+test("list?id= still returns archived rows (archive is not forget)", async () => {
+  const { routes, service } = setup();
+  const archived = service.saveWithDedupe({ type: "preference", title: "归档", content: "仍可比对" });
+  service.setArchived(archived.memory.id, true);
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/list");
+  const res = new FakeRes();
+  await route.handler(req(`/api/dsh-mneme/list?id=${archived.memory.id}`), res);
+  const data = JSON.parse(res.body);
+  assert.equal(data.items.length, 1);
+  assert.equal(data.items[0].title, "归档");
+});
+
 test("list honors limit/offset", async () => {
   const { routes, service } = setup();
   service.saveWithDedupe({ type: "preference", title: "a", content: "1" });

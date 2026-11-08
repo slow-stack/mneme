@@ -19,6 +19,14 @@
   - **验证**：全量 `node --test test/*.test.js` 2941 用例 / 2940 通过 / 0 失败 / 1 跳过；check-sync 99 一致。新增 `test/kb-collections.test.js`（8）、`test/kb-routes.test.js`（7）、`test/kb-api-wiring.test.js`（4）、`test/wiki-t1-jobs.test.js`（状态机，注入桩）；`test/wiki-api.test.js` 13→18 条、`test/client.test.js` 109 条（座位数 2→3 已同步）、`test/api.test.js` 旗标计数锁 114→117。SECURITY.md 两侧路由清单已按 policy 声明补齐（`test/security-doc.test.js` 双向比对绿）。
   - **已知边界**：T1 的测试全程走注入桩，**真 T1 一次没跑**（花钱的不进 CI）；后端七条 KB 路由与七条 choro 路由已用真装配（createApi + createStore + createKb + createChoroQueries）发真 HTTP 逐个冒烟过，但**面板本身没在真机宿主里点过**——渲染与事件绑定仍只有代码级验证；真机上若 `/kb/docs` 回执字段有出入，只需改 `loadDocs`/`docRows` 一处。本机目前只登记 `dsh-baleen` 一个仓库且 `claims=0`（T0 骨架有、T1 语义正文为空），所以打开面板第一眼看到的仍是「骨架、无语义」的地志。
 
+- **dsh-go 原生记忆库面板：手机 App 里也能看、能改这份记忆库**：`dsh-go`（DSH 的 Android 客户端，[仓库](https://github.com/ccch1mneyyy/dsh-Go)）是 Flutter 原生界面，看不到 Web 面板。新增 `src/dsh-go/` 域随插件一起发布——不另开包，也不另起端口：面板在引擎进程内直接派发 `src/api.js` 已注册的路由 handler，读写与 Web 面板同一批口径（「两张皮只许剩鉴权与路径不同」）。
+
+  - **按宿主能力挂载**：`package.json` 增 `dshGo` 清单（一个面板 `mneme`，placement `session.tab` / `features`）；`src/index.js` 在 webServer 块内 `ctx.inject(["dshGo"], …)` 里动态导入 `src/dsh-go/panel.js`，没有桥的宿主（桌面 / headless）整块不加载。`cfg.apiToken` 一并交给面板：进程内写请求带 `x-dsh-mneme-token`，不给自家路由开白名单。
+  - **视图**：v2 视图协议，顶层是 App 原生 `tabs`（记忆 / 实体 / 设置）；设置页内两格 `segmented` 切「设置 | 状态」——电脑端是四个页签，但 App 页签条每格有 80dp 下限，四格会折行。文案取自 Web 面板的 zh i18n，不自造解释性文字。记忆 / 实体页的树不随数据变（宿主的 `view()` 早于 `data()`，按数据分支的地方首屏会定形、之后只填绑定），空状态提示改成绑定文案；翻页用一行 `chips`（原生按钮组每列至少 136dp×字号，两个按钮在窄屏会折成上下两行），页码兼作 chips 的标签。
+  - **写回不覆盖别人的写入**：编辑页记住打开时的快照，只提交改动过的字段；`updated_at` 对不上就中止并重新载入。删除确认不携带参数（`confirm` 节点只有 id 与按钮文案），所以按面板 scope 记下「这个面板打开了哪条记忆」，确认时核对。
+  - **为面板补了两处读面**：`/entities` 支持 `?q=`（名字过滤下推到 store，`%` / `_` 转义）；`/external-api` 支持 `?token=omit`（只读配置，不生成也不落库 Bearer——默认 GET 会顺手铸造一个）。
+  - **验证**：`test/dsh-go-panel.test.js`（19 屏视图预算 + 页签 / 开关 / 文案锁）、`test/dsh-go-panel-actions.test.js`（点按之后发给宿主的请求、scope 核对、只发差集、视图切换）、`test/dsh-go-host.test.js`（请求体 flush、异步响应、令牌、401、超时）；`test/api-routes-gaps.test.js` 补 `q` 与 `token=omit` 两例。
+
 - **「Agent 眼中的你」按段化第一期：注入渲染函数产出段边界（`segments`），面板从此能按段读（#600）**。`renderUserSettingsBlock` 原先只回一整串 `text`，面板那张卡只能整段只读显示——想改注入文本里的某一句，得走「整段提取 → 复制 → 粘进画像框」的剪贴板中转，而画像段是手写原文、人格段是结构化卡、事实段是逐条维护的行，三者写回语义完全不同。段边界是这三条路能分开走的前提。
 
   - **纯加法，注入字节零变化**：返回值多一个 `segments`，每行带 `kind` 与写回定位信息；`text` 仍是原来的 `escapePromptVars(config, lines.join("\n"))`。段文本存**未转义**原文（面板要显示给人看），转义只发生在 `text` 这一层——转义只动连续花括号、换行不参与，逐段转义与整串转义等价，所以注入行为与改前逐字节相同，老用户零变化。

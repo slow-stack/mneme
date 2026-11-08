@@ -706,6 +706,16 @@ export const apply = (ctx, config) => {
       list: () => []
     }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro, profileFacts, kb);
     disposers.push(api.dispose);
+
+    // dsh-go 原生面板：只有宿主提供 dshGo 服务（dsh-go 手机 App）时才挂载。
+    // 动态 import 是刻意的——静态导入会让「没有桥就整块不加载」这句承诺落空。
+    // cfg.apiToken 一并交给面板：createApi 给 token / token-write 路由包了鉴权，
+    // 进程内调用不带令牌会被自家路由拦成 401，不为此在服务端开白名单。
+    ctx.inject(["dshGo"], (dshCtx) => {
+      import("./dsh-go/panel.js")
+        .then((panel) => panel.mountDshGoPanel(dshCtx, { apiToken: cfg.apiToken }))
+        .catch((error) => ctx.logger?.warn?.(`[dsh-mneme] dsh-go 面板未加载：${error?.message ?? error}`));
+    });
   }
 
   // M.O. 自动沉淀（v0.9.3）：项目里重复走的那套动作，自动变成 memoryDir 里的一条

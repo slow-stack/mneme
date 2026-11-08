@@ -57,6 +57,30 @@
       "patch": "./cordis.patch.yml"
     }
   },
+  "dshGo": {
+    "v": 1,
+    "title": {
+      "zh": "记忆库",
+      "en": "Memory"
+    },
+    "icon": "book",
+    "contributes": {
+      "panels": [
+        {
+          "id": "mneme",
+          "title": {
+            "zh": "记忆库",
+            "en": "Memory"
+          },
+          "icon": "book",
+          "placement": [
+            "session.tab",
+            "features"
+          ]
+        }
+      ]
+    }
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6 <0.2.0 || >=0.1.5-rc.0 <0.3.0 || >=0.2.0-rc.0 <0.3.0",
