@@ -129,3 +129,43 @@ test("#611 没有图时不写 imageCount（零行为变化）", async () => {
   assert.ok(row);
   assert.equal(row.metadata?.imageCount, undefined, "没图就别写这个键，老档位逐字节不变");
 });
+test("#611 被挡掉的注入消息里的图不计入（CodeRabbit 2026-11-08 指出）", async () => {
+  // 计量的口径必须是「真正进了转录的图」，不是「窗口事件里出现过几张图」。
+  // 这条用例造一条带图的插件注入消息：它会被 publicTranscriptParts 整条挡掉
+  // （转录里没有它），所以 imageCount 不该把它算进去——否则审计会报「这窗有 1 张图」
+  // 而模型根本没看到这张图。
+  const { events, service, calls } = setup();
+  const handler = events.find((e) => e.name === "session/event").fn;
+  const injected = {
+    seq: 1,
+    type: "user/message",
+    data: {
+      source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" },
+      content: [
+        { type: "text", text: "插件注入的机器内容" },
+        {
+          type: "image",
+          attachment: { attachmentId: "sha256:zzz", mediaType: "image/png", width: 10, height: 10, name: "不该被数.png" }
+        }
+      ]
+    }
+  };
+  const session = {
+    id: "s611-injected",
+    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    events: [
+      injected,
+      { seq: 2, type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "真人的一句" }] } },
+      { seq: 3, type: "turn/end" }
+    ]
+  };
+  await handler(session, { seq: 3, type: "turn/end" });
+
+  assert.equal(calls.length, 1, "窗口里有真人文本，照常蒸馏");
+  const transcript = calls[0].messages.find((m) => m.role === "user").content[0].text;
+  assert.ok(transcript.includes("真人的一句"));
+  assert.ok(!transcript.includes("插件注入的机器内容"), "注入消息本来就不进转录");
+  const row = service.listLlmAudits().find((r) => r.status === "success");
+  assert.ok(row);
+  assert.equal(row.metadata?.imageCount, undefined, "被挡掉的注入消息里的图不该被数进去");
+});

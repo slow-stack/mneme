@@ -335,6 +335,10 @@ function publicTranscriptParts(event) {
     parts.push({
       role: "agent",
       text,
+      // Issue #611：把产文本的那份 content 一起带出去。判定与文本同源，计量才能
+      // 跟着同一份判定走（见 collectMessages 里的 imageCount）——另写一套「哪些块
+      // 算公开」给计量用，就是第二份实现，迟早与这份漂移。
+      blocks: Array.isArray(message?.content) ? message.content : [],
       // 同一条子会话消息可能同时出现在 user/message 与 agent/inbox/spliced
       // 里（投递路径重叠），按 id（无 id 时按内容）去重，否则转录会重复。
       key: typeof message?.id === "string" && message.id
@@ -348,7 +352,7 @@ function publicTranscriptParts(event) {
       const text = textOf(data?.content);
       if (!text.trim()) break;
       if (SUBAGENT_MESSAGE_KINDS.has(kind)) pushAgentMessage(data);
-      else parts.push({ role: "user", text });
+      else parts.push({ role: "user", text, blocks: Array.isArray(data?.content) ? data.content : [] });
       break;
     }
     case "agent/inbox/spliced": {
@@ -360,7 +364,7 @@ function publicTranscriptParts(event) {
       const blocks = Array.isArray(data?.message?.content) ? data.message.content : [];
       const text = textOf(blocks);
       // 私有推理块（reasoning）刻意不采集：蒸馏记忆不得沉淀模型私有思考链。
-      if (text.trim()) parts.push({ role: "assistant", text });
+      if (text.trim()) parts.push({ role: "assistant", text, blocks });
       break;
     }
     default:
@@ -421,23 +425,26 @@ function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, th
   };
   for (const event of events) {
     const data = event?.data ?? {};
-    // Issue #611 计量：只数公开正文里的图块（user 消息的 data.content、
-    // assistant 消息的 data.message.content 与子会话插入的消息体）。私有的
-    // reasoning 块里不会有 image，这里不额外分支。
-    imageCount += countImages(data.content);
-    imageCount += countImages(data.message?.content);
-    if (Array.isArray(data.inserted)) {
-      for (const message of data.inserted) imageCount += countImages(message?.content);
-    }
     // #399：用户提示 / 助手公开正文 / 子会话交付三种可公开内容由共享谓词产出，
     // 渲染与落盘因此不可能对「什么算公开」产生分歧（见 publicTranscriptParts）。
     for (const part of publicTranscriptParts(event)) {
       if (part.role === "agent") {
         if (part.key && seenSubagentMessages.has(part.key)) continue;
         if (part.key) seenSubagentMessages.add(part.key);
-        lines.push(STR.transcriptAgent[language](part.text));
-      } else if (part.role === "user") {
+      }
+      // Issue #611 计量：数「真正进了转录的图块」，所以按 part 数、并且在去重之后
+      // ——同一条子会话消息会同时出现在 user/message 与 agent/inbox/spliced 里
+      // （投递路径重叠），按事件数会把它算两遍。
+      //
+      // 不按事件数还有个更要紧的理由：被 publicTranscriptParts 挡掉的注入消息
+      // （工具结果、插件注入、陌生 source.kind）里的图根本进不了转录，按事件累加
+      // 会报「这一窗有 2 张图」而转录里一张都没有。part 是渲染与落盘共用的同一份
+      // 判定，计量跟着它走，两处不会再各有一套口径。
+      imageCount += countImages(part.blocks);
+      if (part.role === "user") {
         lines.push(STR.transcriptUser[language](part.text));
+      } else if (part.role === "agent") {
+        lines.push(STR.transcriptAgent[language](part.text));
       } else {
         lines.push(STR.transcriptAssistant[language](part.text));
       }

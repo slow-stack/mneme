@@ -18,11 +18,34 @@
 /** 图片块的占位前缀：审计与测试都按它计数。 */
 export const IMAGE_PLACEHOLDER_PREFIX = "[图";
 
+/** 标签里单段元数据的长度上限。文件名可以任意长，但占位不该被一个长名字撑开。 */
+const LABEL_PART_MAX = 80;
+
+/**
+ * 把一段外部可写的元数据（文件名 / mediaType）压成占位符里安全的一段。
+ *
+ * 为什么必须做：占位形如 `[图: <name>]`，而 `name` 是**外部可写的字符串**（附件的
+ * 原始文件名，用户可以随便起）。名字里出现 `]` 就能提前闭合占位，后面的内容随
+ * 即冒充占位符之外的正文——那是把元数据升格成转录文本的一条路，和 `#493` 的
+ * 围栏断链是同一类问题。换行同理：一段元数据不该能凭空造出一行「用户：…」。
+ * 所以 `[`、`]`、控制字符、连续空白一律折成单个空格，再按长度截断。
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function sanitizeLabelPart(value) {
+  if (typeof value !== "string") return "";
+  // eslint-disable-next-line no-control-regex
+  const flattened = value.replace(/[\u0000-\u001f\u007f[\]\\]/g, " ").replace(/\s+/g, " ").trim();
+  if (flattened.length <= LABEL_PART_MAX) return flattened;
+  return `${flattened.slice(0, LABEL_PART_MAX - 1)}…`;
+}
+
 /** 一个图片块读出的人类可读标签（不含方括号）。什么元数据都没有时返回空串。 */
 export function imageLabel(block) {
   const attachment = block?.attachment ?? {};
-  const name = typeof attachment.name === "string" ? attachment.name.trim() : "";
-  const mediaType = typeof attachment.mediaType === "string" ? attachment.mediaType : "";
+  const name = sanitizeLabelPart(attachment.name);
+  const mediaType = sanitizeLabelPart(attachment.mediaType);
   const width = Number.isFinite(attachment.width) ? attachment.width : undefined;
   const height = Number.isFinite(attachment.height) ? attachment.height : undefined;
   const size = width !== undefined && height !== undefined ? `${width}x${height}` : "";
