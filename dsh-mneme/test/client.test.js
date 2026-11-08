@@ -2824,6 +2824,28 @@ test("update-check status names match the backend classify contract verbatim", (
 
 // 画像提取草稿（#497）面板面：路由对齐、四种结局各有自己的话、按钮坐在哪张卡上、
 // 以及草稿**只出副本**（2026-11-04 改口径：不再把草稿写进画像字段）。
+// 严格寻址的「第一张卡」陷阱（Persis 复验）：live 库 personaStrictAddressing=true，
+// 现在 byAgent/bySession 都空，走 #587 例外回落 default，所以注入正常。但只要在这个
+// 页面建出第一张卡，anyCard 就变 true，strict 立刻生效——所有没建卡的会话（含主会话）
+// 人格静默不再注入，界面一个字都不报。这种「改一个开关，别处的行为跟着变且无提示」
+// 必须在建卡之前就写在脸上，所以锁三件事：①两个阶段的文案都在；②按现有卡数选话；
+// ③文案确实渲染进人格页，而不是定义完没人读。
+test("strict addressing warns before the first card quietly changes everyone else", () => {
+  for (const key of ["memory.persona.strictBefore", "memory.persona.strictAfter"]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  // 生效值来自 /features 的真实快照，不许前端猜默认
+  assert.ok(/personaStrictAddressing === true/.test(clientSource),
+    "the guardrail must read the effective flag from /features, not assume a default");
+  // 两条话按「现在有几张卡」分流：没有卡时说「建第一张会变严」，有了之后说「已经变严」
+  assert.ok(clientSource.includes('t(cardCount > 0 ? "memory.persona.strictAfter" : "memory.persona.strictBefore")'),
+    "the notice must pick its wording from the current card count");
+  // 只有严格寻址真的开着才说，否则是假警报
+  assert.ok(/strict \? h\("div"/.test(clientSource),
+    "the notice must be gated on the effective strict flag");
+});
+
 test("profile extraction ships its button, distinct outcomes and correct save wiring", () => {
   const apiSource = readFileSync(join(root, "src/api.js"), "utf8");
   assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/profile/extract"'),

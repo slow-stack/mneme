@@ -440,6 +440,8 @@ window.__ModuleLoader__.load({
         "memory.settings.personaDefaultCard": "默认卡（兜底）",
         "memory.persona.title": "人格设计",
         "memory.persona.hint": "一个身份一张卡。卡上写了名字、性格、回复要求、场景与示例对话，保存后，这个身份说话时就用它，写日记时也只用这张卡的口吻——日记页按身份分开看，就是这里的分区在日记侧的样子。",
+        "memory.persona.strictBefore": "严格寻址已开：还没有任何身份卡，所有人暂时都用默认卡。建出第一张卡后规则立刻变严——没建卡的会话将不再注入人格，主会话也一样。要保留谁的人格，先给谁建卡。",
+        "memory.persona.strictAfter": "严格寻址已生效：只有建了卡的会话会注入人格，其余会话（含主会话）一律不注入。",
         "memory.persona.cards": "身份卡",
         "memory.persona.defaultCard": "默认卡（兜底）",
         "memory.persona.newPlaceholder": "新身份名，如 nyx",
@@ -1455,6 +1457,8 @@ window.__ModuleLoader__.load({
         "memory.settings.personaDefaultCard": "Default (fallback)",
         "memory.persona.title": "Persona",
         "memory.persona.hint": "One card per identity. Each card carries a name, personality, reply style, scenario and example dialogue. Once saved, that identity speaks from it — and writes its diary in that voice too: the diary page is split by identity because this is where those partitions live.",
+        "memory.persona.strictBefore": "严格寻址已开：现在一张卡都没有，所以所有人都用默认卡。建出第一张卡后规则立刻变严——没建卡的会话将不再注入人格（主会话也一样），届时请先给要保留人格的会话建卡。",
+        "memory.persona.strictAfter": "严格寻址已生效：只有建了卡的会话才注入人格，其余会话（含主会话）不注入。",
         "memory.persona.cards": "Identity cards",
         "memory.persona.defaultCard": "Default (fallback)",
         "memory.persona.newPlaceholder": "New identity, e.g. nyx",
@@ -11269,6 +11273,9 @@ window.__ModuleLoader__.load({
       const [diary, setDiary] = useState(undefined);     // undefined=读中 null=读不出 数组
       const [tick, setTick] = useState(0);
       const [previewTick, setPreviewTick] = useState(0);
+      // 严格寻址的生效值：/features 是 open 读路由，与设置页读同一份快照。
+      // 不自己猜默认值——猜错的表现是「明明开了严格寻址，界面还说所有人都有卡兜」。
+      const [strict, setStrict] = useState(false);
       const previewSeq = useRef(0);
       // #514：人是在这一页开关人格的，所以「为什么关了没反应」的答案必须在这一页。
       // 与状态页、设置页共用 useInjectStatus，三处口径不会各自漂。
@@ -11289,6 +11296,19 @@ window.__ModuleLoader__.load({
             setPhase("ready");
           })
           .catch(() => { if (!dead) setPhase("unknown"); });
+        return () => { dead = true; };
+      }, [tick]);
+
+      useEffect(() => {
+        let dead = false;
+        apiFetch("/api/dsh-mneme/features")
+          .then((res) => (res.ok ? res.json() : null))
+          .then((j) => {
+            if (dead || !j) return;
+            const eff = j.effective || {};
+            setStrict(eff.personaStrictAddressing === true);
+          })
+          .catch(() => { /* 读不到就按关处理：告示宁可不出现，也不给人假警报 */ });
         return () => { dead = true; };
       }, [tick]);
 
@@ -11407,6 +11427,7 @@ window.__ModuleLoader__.load({
       const latest = mine.map((b) => String(b.latest || "")).sort().pop() || "";
       const allTotal = buckets.reduce((sum, b) => sum + (Number(b.count) || 0), 0);
       const sessionCards = ready ? Object.keys(draft.bySession) : [];
+      const cardCount = ready ? Object.keys(draft.byAgent).length + Object.keys(draft.bySession).length : 0;
 
       const head = h("div", { className: "mneme-persona-head" },
         h(PersonaGlyph, { size: 16 }),
@@ -11491,6 +11512,10 @@ window.__ModuleLoader__.load({
 
         const sheet = h("div", { className: "mneme-persona-sheet" },
           h("div", { className: "mneme-persona-note" }, t("memory.persona.hint")),
+          strict ? h("div", {
+            style: { padding: "8px 10px", borderLeft: "3px solid var(--mneme-warn)", fontSize: 12, lineHeight: "18px", color: "var(--mneme-fg-dim)" }
+          },
+            t(cardCount > 0 ? "memory.persona.strictAfter" : "memory.persona.strictBefore")) : null,
           minimalWarn ? h("div", {
             style: { padding: "8px 10px", borderLeft: "3px solid var(--mneme-warn)", fontSize: 12, lineHeight: "18px" }
           },
