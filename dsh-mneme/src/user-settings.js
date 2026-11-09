@@ -36,10 +36,13 @@ export function escapePromptVars(config, text) {
  * 按会话身份取人格卡。返回 `{ card, source }`，`source` 是给面板解释「用的哪张卡」的
  * 读数，不参与判定。
  *
- * 寻址维度（#606 起是两维）：`sessionId`（绑会话卡）优先于 `agentId`（按预设建卡）。
+ * 寻址维度（#606 起两维，子 agent 继承再加一维共三维）：`sessionId`（绑会话卡，
+ * 最具体）优先于 `parentSessionId`（子 agent 继承父会话卡），最后是 `agentId`（按预设建卡）。
  * 理由是具体性——会话比预设更具体，而 DS Bot 这类宿主里 `agentPreset` 恒为
  * `"standard"`（`ds-bot/src/host/roster.js:72-80` 强制写入，实测 50 个会话里 43 个是
  * 它），若让 byAgent 优先，则谁给 `standard` 建一张卡就会盖掉所有按会话建的卡。
+ * 父会话卡排在 byAgent 之前：子 agent 自己没卡时，它属于哪段对话比它属于哪个预设
+ * 更能说明「该用谁的人格」。
  *
  * `strict`（config.personaStrictAddressing，默认关）决定「有身份、没这张身份的卡」
  * 与「这张卡被显式关掉」这两种情况：
@@ -55,19 +58,39 @@ export function escapePromptVars(config, text) {
  * 废掉，且面板不报错。判据看两维合起来的键数（#606 起）：只建了 bySession 卡时，
  * 一个按 byAgent 寻址的会话同样不该被 default 兜底——用户已经做过分区了。
  */
-export function resolvePersonaCard(settings, agentId, { strict = false, sessionId = null } = {}) {
+export function resolvePersonaCard(
+  settings,
+  agentId,
+  { strict = false, sessionId = null, parentSessionId = null } = {}
+) {
   const store = settings.getPersona();
   const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "";
   const sid = typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : "";
+  const pid =
+    typeof parentSessionId === "string" && parentSessionId.trim() ? parentSessionId.trim() : "";
   // 第一维：绑会话卡（最具体）
   const sessionCard = sid ? store.bySession?.[sid] : null;
   if (sessionCard && sessionCard.enabled === true) return { card: sessionCard, source: "bySession" };
-  // 第二维：按预设/身份建的卡
+  // 第二维（子 agent 继承）：自己没卡就取父会话的卡。
+  // 为什么必须有这一维：子 agent 是新会话，用户不可能给每个派生会话都建一张卡；而
+  // strict 一旦生效，「有身份、没这张身份的卡」= 不注入人格，子 agent 会从「自称父
+  // 会话的人格」变成「不知道自己是谁」——比串味更糟。继承父会话卡才是用户能预期的
+  // 语义：同一个 agent 派生出去的手脚，仍是同一个 agent。
+  // 注意与 `src/session-gate.js` 的口径区别：那里**刻意不**用 parentSession 判「是不是
+  // 子代理」（宿主 fork 出来的主会话同样带 parentSession，用它判会把主会话误关）。
+  // 这里要问的不是「你是不是子代理」而是「你自己有没有卡」，所以 fork 出的分支继承
+  // 父卡也是正确的（它就是同一段对话的副本）。父 id 与自身 id 相同（脏数据）时跳过，
+  // 免得一次寻址查两遍同一个键。
+  const parentCard = pid && pid !== sid ? store.bySession?.[pid] : null;
+  if (parentCard && parentCard.enabled === true) return { card: parentCard, source: "parentSession" };
+  // 第三维：按预设/身份建的卡
   const card = id ? store.byAgent[id] : null;
   if (card && card.enabled === true) return { card, source: "byAgent" };
   // 严格模式只在「确实建过卡」时才拒绝兜底：两维都空时兜底是唯一的出路。
   const anyCard = Object.keys(store.byAgent ?? {}).length > 0 || Object.keys(store.bySession ?? {}).length > 0;
-  if ((id || sid) && strict && anyCard) return { card: {}, source: "none" };
+  // 身份判定要把父会话 id 算进来：子 agent 只有父会话 id、没有自己的卡时，也是
+  // 「确实有身份」，不许被 default 兜底。
+  if ((id || sid || pid) && strict && anyCard) return { card: {}, source: "none" };
   return { card: store.default, source: "default" };
 }
 
@@ -96,14 +119,21 @@ export function resolveFactsCard(factsStore, agentId, { strict = false } = {}) {
  * `text` 为最终注入文本（全空时 ""），`configGate` 是 personaEnabled 的现值——面板
  * 要靠它解释「卡开着为什么没生效」。
  */
-export function renderUserSettingsBlock({ settings, config, agentId = null, sessionId = null, factsProvider = null }) {
+export function renderUserSettingsBlock({
+  settings,
+  config,
+  agentId = null,
+  sessionId = null,
+  parentSessionId = null,
+  factsProvider = null
+}) {
   const language = langOf(config);
   const profile = settings.getProfile().trim();
   const rules = settings.getRules();
   const enabled = config?.personaEnabled === true;
   const strict = config?.personaStrictAddressing === true;
   const resolved = enabled
-    ? resolvePersonaCard(settings, agentId, { strict, sessionId })
+    ? resolvePersonaCard(settings, agentId, { strict, sessionId, parentSessionId })
     : { card: {}, source: "default" };
   const persona = resolved.card;
   // 段（#600）：每一行都带上它的 kind 与写回所需的定位信息，供面板按段读、按段改。
@@ -168,8 +198,19 @@ export function renderUserSettingsBlock({ settings, config, agentId = null, sess
   }
   const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : null;
   const sid = typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : null;
+  const pid =
+    typeof parentSessionId === "string" && parentSessionId.trim() ? parentSessionId.trim() : null;
   if (!profile && !rules.length && !personaLines.length && !factLines.length) {
-    return { text: "", segments: [], source: resolved.source, agent: id, session: sid, configGate: enabled };
+    // `parent` 是读数（面板要能说清「这张卡是从父会话继承来的」），不参与判定。
+    return {
+      text: "",
+      segments: [],
+      source: resolved.source,
+      agent: id,
+      session: sid,
+      parent: pid,
+      configGate: enabled
+    };
   }
   const segments = [{ kind: "header", text: STR.userSettingsHeader[language] }];
   segments.push(...personaLines);
@@ -177,5 +218,13 @@ export function renderUserSettingsBlock({ settings, config, agentId = null, sess
   segments.push(...factLines);
   for (const rule of rules) segments.push({ kind: "rule", value: rule, text: STR.ruleLine[language](rule) });
   const lines = segments.map((s) => s.text);
-  return { text: escapePromptVars(config, lines.join("\n")), segments, source: resolved.source, agent: id, session: sid, configGate: enabled };
+  return {
+    text: escapePromptVars(config, lines.join("\n")),
+    segments,
+    source: resolved.source,
+    agent: id,
+    session: sid,
+    parent: pid,
+    configGate: enabled
+  };
 }

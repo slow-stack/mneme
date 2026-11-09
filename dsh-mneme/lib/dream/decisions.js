@@ -119,6 +119,16 @@ export function validateDecisions(decisions, snapshot, options = {}) {
   // 不够的——ACTIONS 是两个模块共用的，模型自发出 supersede / differentiate 时校验器
   // 照样放行，"opt-in 零行为变化"就成了空话。省略 / null = 不限制（沿用全局 ACTIONS）。
   const allowedActions = Array.isArray(options.allowedActions) ? new Set(options.allowedActions) : null;
+  // reflectionUpdateEnabled=false：update 在本次调用里不算合法动作。走与
+  // allowedActions 同一条单条跳过的通路（不是整单拒绝）——用户关掉的是「改写已有
+  // 记忆」这一种动作，模型多输出了几条 update 不该连带丢掉同批的 merge/archive。
+  // 与 prompt 侧后缀双闸：prompt 让模型别写，这里兜住模型仍然写了的情况。
+  const allowUpdate = options.allowUpdate !== false;
+  // 被用户开关关掉的动作单独计数：它们进 skipped（要留痕），但不该触发下面的
+  // 「全部跳过 = 模型坏了」整单拒绝——那是防幻觉 id / 截断输出的护栏，而这里是
+  // 用户自己关掉的动作。混在一起会让「只输出了 update」的一轮被判 failed、调度器
+  // 拿同一批输入重跑同一条必被拒的输出，无限循环。
+  let policySkipped = 0;
   if (!Array.isArray(decisions)) {
     return { ok: false, errors: ["decision list must be an array"], resolvedShortIds: 0 };
   }
@@ -168,6 +178,7 @@ export function validateDecisions(decisions, snapshot, options = {}) {
     // 单条校验错误先进 local：skipInvalid 模式下整条跳过，严格模式下才并入
     // 全局 errors（沿用 v0.6.9 的双轨结构）。
     const local = [];
+    let policyDisabled = false;
     // Issue #126：supersede 与 conflict 一样用 winner/loser 定位双方（沿用同一套
     // 字段，校验与 receipt 逻辑因此可以直接复用）。
     const ids = d && (d.action === "conflict" || d.action === "supersede") ? [d.winner, d.loser] : (d?.ids ?? []);
@@ -176,6 +187,12 @@ export function validateDecisions(decisions, snapshot, options = {}) {
     } else if (allowedActions && !allowedActions.has(d.action)) {
       // 动作本身合法，但不在当前档位允许的集合里（例如默认档收到 supersede）。
       local.push(`${at}: action ${JSON.stringify(d.action)} not allowed in this mode`);
+    } else if (d.action === "update" && !allowUpdate) {
+      // reflectionUpdateEnabled=false：旧记忆永不被自动改写。这条要排在
+      // allowedActions 之后、update 字段校验之前——先判「这个动作本次不许用」，
+      // 再谈字段合不合规，否则同一条会同时报两个错、日志里读不出真实原因。
+      local.push(`${at}: update action is disabled (reflectionUpdateEnabled=false)`);
+      policyDisabled = true;
     } else if (d.action === "conflict" || d.action === "supersede") {
       if (!d.winner || !d.loser || d.winner === d.loser) {
         local.push(`${at}: ${d.action} needs distinct winner and loser`);
@@ -328,11 +345,15 @@ export function validateDecisions(decisions, snapshot, options = {}) {
         // title/content）、还是字段给了但值不合规（has_* 为 true 仍报错）。
         // 只加布尔不加原文：原文进 llm_audit_logs.metadata 与 dream_runs.raw_output，
         // 这里保持每条记录足够小（skipped 会按轮累积进一行 JSON）。
+        if (policyDisabled) policySkipped++;
         skipped.push({
           index,
           action: d?.action,
           ids,
           error: local.join("; "),
+          // true = 用户开关关掉了这个动作（不是模型输出有问题）。调用方据此区分
+          // 「这轮白跑」与「这轮输出坏了」。
+          ...(policyDisabled ? { policyDisabled: true } : {}),
           has_keepSource: d?.keepSource !== undefined && d?.keepSource !== null,
           has_title: typeof d?.title === "string" && d.title.trim().length > 0,
           has_content: typeof d?.content === "string" && d.content.trim().length > 0
@@ -391,7 +412,9 @@ export function validateDecisions(decisions, snapshot, options = {}) {
   // 子集为空时仍整单拒绝——宽容的前提是「有合法子集可应用」；模型输出整体
   // 非法（如全部幻觉 id）是真故障，不能被隐式 keep 洗成 ok。#104 只豁免
   // 「有合法子集但覆盖率不足」的良性挑重点（见下方 coverageShortfall）。
-  if (options.skipInvalid === true && skipped.length > 0 && survivors.length === 0 && errors.length === 0) {
+  // 只把「非策略性跳过」算进这条：policySkipped 是用户关掉的动作，不是模型故障。
+  const modelSkipped = skipped.length - policySkipped;
+  if (options.skipInvalid === true && modelSkipped > 0 && survivors.length === 0 && errors.length === 0) {
     errors.push(`all ${skipped.length} decision(s) invalid — nothing valid survived validation`);
     return { ok: false, errors, skipped, resolvedShortIds };
   }

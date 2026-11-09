@@ -4,6 +4,49 @@
 
 ## 🆕 新增
 
+- **会话头顶那个日记入口撤了；「写今天 / 存到这个项目」补进面板**。两处入口同时存在时，用户点哪一个都像「又开了一本」，而右栏那套是旧版遗留下来的：会话头一个按钮 → 右栏页签 → 里面才是写与导出。现在只留一个入口：记忆面板的「日记」标签页。
+
+  - **删的是什么（`lib/client.js`）**：`registerDiarySeats` 里原本注册三件事——① 右栏页签类型 ② `conversation.session.header.actions` 会话头入口（`id: "dsh-mneme:diary"`、`order: 31`）③ `sidebar.right.pane.tab` 右栏正文。删的是 ②，连同 `DiaryEntryButton` 组件、`.mneme-diary-trigger*` 五条 CSS、`memory.diary.openFailed` 文案。**为什么不是「看着多余」就删**：`openTab` 全仓库只有两处调用（M.O. 一处、日记 ② 一处），所以删掉 ② 之后本插件自己再也打不开右栏那一页。但宿主把页签类型目录 `tabTypes.getSnapshot() => tabs.entries()` 交给了右栏的「新建页签」选择器，用户从宿主自己的列表里仍能打开它——那套正文因此**留着**，不是死代码。
+  - **写入口不能跟着丢**：右栏 `DiaryPane` 是唯一带「写今天」（`/diary/compose`）与「存到这个项目」（`/diary/export`）的地方，面板原本只读。所以两个动作搬进 `DiaryLibraryPanel`：`composeToday()` 按 `status === "written"` / `reason === "already-written"` / `"no-material"` 分三种话说明结果，`exportDay()` 遇到 409 说「这篇已经存过了」；新增 `busy` / `notice` 两个状态，结果用 `role="status"` 或 `role="alert"` 的报告条呈现——**点了必须看得见结果**，这是这个面板一直缺的一环。
+  - **后端补 `projectRoot`（`src/diary/library.js`）**：「写今天」必须知道项目绝对路径，而桶名只有「目录名 + 8 位哈希」，反推不回去。新增 `readBucketState(root)` 读 `diaries/state.json`，清单里每桶带出 `projectRoot` 与 `agentId`（真实账本结构是 `{ "<桶键>": { projectRoot, lastDate, chatId, agentId } }`）。**账本里没有就留空、面板据此禁用按钮**——宁可按钮灰着并说明「不知道这本书属于哪个项目」，也不猜一个路径把日记写到别的项目里去。`state.json` 整个坏掉时清单照常返回（账本只是附加信息，它坏了不该连日记都看不见）。
+  - **验证**：`test/diary-library.test.js` 新增 2 条（清单带 projectRoot/agentId、账本坏掉不塌）→ 10/10；`test/client.test.js` 那条旧用例 `diary tab ships an entry that can actually open it` 改成 `diary has exactly one entry: the panel tab, not a session header button`，既断言会话头入口、`openPane`、`DiaryEntryButton` 都不在，也断言右栏正文注册仍在（不能被顺手删掉）；`test/contrast.test.js` 5/5（报告条用了 `--mneme-accent` / `--mneme-danger`，新色要过 AA）。全量 3154 用例 / 3153 通过 / 0 失败 / 1 跳过。
+
+- **日记正文终于排版了，并且可以「到点自己醒」**。上一版把 `readLibraryEntry` 的返回值直接塞进 `<pre>`：磁盘上写的是 `--- date: … persona: default (ptc) ---` 加 `# 2026-11-08`，界面上也就是这堆字符原样铺开——所谓「本子样」只剩背景纸纹，正文还是一坨 markdown 源码。同时日记只会在「聊完一轮」和「重启 DSH」两个时刻判该不该写，安静一天就一天不写，没有别的唤醒方式。
+
+  - **正文渲染（`lib/client.js`）**：`renderWikiMarkdown` 原本在 `apply(ctx)` 作用域内（缩进 6 空格），日记面板在模块级，够不着。整块 98 行去 2 格缩进提到模块级，`DiaryPane` / `WikiMainPanel` 两边共用一份。新增模块级 `renderDiaryBody(text)`：先吃 frontmatter（首行 `---` 到下一条 `---`）、跳过空行、**只吃掉紧随其后的那一个日期标题**（`/^#\s+\d{4}-\d{2}-\d{2}\s*$/`）——正文中间的小标题是作者自己写的，必须保留。两处 `h("pre", { className: "mneme-diary-text" }, text)` 改成 `h("div", …, renderDiaryBody(text))`。
+  - **CSS 跟着改布局**：`.mneme-diary-text` 去掉 `white-space:pre-wrap`（改块级排版），补一组子选择器：段落 13px 段距、`h2/h3` 16/15px、列表缩进 22px、引用左边框、行内 `code` 等宽。**所有块级行高统一 26px**——横线与方格纸的 `background-size:100% 26px` 就是按这个周期画的，有一处不是 26px 格线立刻错开。
+  - **定时唤醒（`diaryWriteEveryMinutes`）**：`src/config.js` 新增 `z.natural().min(0).max(1440).default(0)`，`settings.js` 的 `FEATURE_FLAG_INT_RANGES` 加 `[0, 1440]`，默认 `0` = 只在 turn/end 与启动时判，行为与此前完全一致。`src/diary/auto.js` 的 `createDiaryAutoRun` 新增 `everyMs` / `listProjects`；`tick()` 扫一遍已知项目把每个都 `schedule(p, null, "timer")`，跑完再 `arm()` 下一次。**刻意不用 `setInterval`**：写一篇要等模型（p90 五十秒级），固定节拍会在慢的那次之后立刻叠一次，改成「跑完再排」天然不重叠也不会并发两篇。`dispose()` 里清 `ticker`，并暴露 `timerArmed` / `tickNow` 供测试与面板观测。
+  - **「一天最多一篇」的边界没被定时器破坏**：定时器只负责唤醒「该不该写」的判定，写不写仍由 `compose` 按磁盘上有没有当天的文件去重。填 5 也不会一天写十篇——这是把定时器做成「判定触发器」而不是「写入触发器」的原因。
+  - **面板**：设置页「记忆增强」组里日记开关展开一个数值行（`diaryWriteEveryMinutes`，i18n 明写「0 = 关」「仍然一天最多一篇，写不写由磁盘上有没有当天的文件决定」），文案直说关着时只有哪两个时刻会判。
+  - **踩到的坑**：① 定时器的测试得等队列排空，只 `await` 一次 `setTimeout(15)` 会和调度竞速（`flush` 每帧取一个、取完看队列还有没有就再排一帧），改成轮询 `pendingCount()` 才稳；② `minIntervalMs` 是 60 秒，测「同一项目不重复判定」要把时钟拨 10 秒而不是 10 分钟，否则真的越过窗口。
+  - **验证**：`test/diary.test.js` 新增 6 条（everyMs=0 不起钟、配了间隔起钟且 dispose 后无钟、定时唤醒排进判定且 trigger 为 timer、`listProjects` 抛错只 warn 且钟重新排上、turn/end 钩子仍在、同项目在窗口内不重复判定）→ 32/32；`test/api.test.js` 的 effective 键数 120 → 121 并补钉默认值 `0`；`test/client.test.js` 的数值清单锁从「整行字面量精确匹配」改成「前三个键顺序不变、允许追加」——原来那种写法每加一个数值键就假红一次；`docs/CONFIGURATION.md` 补该键说明（有「schema 每个键都要有说明」的锁）。全量 3152 用例 / 3151 通过 / 0 失败 / 1 跳过。
+
+- **日记本进面板、长成本子样、导航只写人格名；设置页「个性化」里的画像与自动事实搬到人格页**。上一版日记本的问题全是「看着有、点了不对」：侧边栏还留着旧版第四对座位（面板里同时也有入口，两处各开一个）；风格是一张白纸；导航列的是项目桶键（`QQ---4f061790`、`amarre-c836db6a`），而且写的是 `ptc` 这种 agent 名；用户画像与「自动事实」两张卡躺在设置页的「个性化」分组里，改了一半得翻两个页面。这一档把四件事一起收掉。
+
+  - **侧边栏第四对座位撤掉（`lib/client.js`）**：`disposeDiaryGlyph` / `disposeDiaryMain` 整块与 `return` 里的两行 dispose 全删，`sidebar.panellist` 回到三对（`dsh-mneme` 60 / `dsh-mneme-wiki` 61 / `dsh-mneme-kb` 62）。日记本变成记忆面板内的标签页（`{ key: "diary", label: t("memory.diary.title") }`，`view === "diary"` 渲染 `DiaryLibraryPanel`）；右栏 `registerDiarySeats` 当时保留（下一节把会话头那个入口撤掉了）。
+  - **本子观感：四套纸 + 衬线正文**。`DIARY_BOOKS` = 素纸 / 横线 / 方格 / 牛皮；横线与方格用 `repeating-linear-gradient` 配 `background-size:100% 26px`，正文行高同步成 `26px`，横线正好压在字行下沿（这两处必须一起改，改一个就成了歪格纸）。正文从 `font-size:13px;line-height:22px` 的继承字体换成衬线 `Georgia,"Times New Roman","Songti SC","Noto Serif SC",serif; 14px/26px`。纸的选择存 `localStorage` 单键 `dsh-mneme-diary-book`（非法值回落横线），**面板与右栏共用同一个键**：`writeDiaryBook` 写完后派 `mneme:diary-book-changed`，右栏同时听 `storage` 与这个自定义事件——只监听 `storage` 会漏掉「同一个页面里另一个入口改的」这种情况，用户就会看到两处观感不一致。
+  - **导航按人格名归并，不再泄出桶键与 agent 名**。原 `diaryBucketName(bucket)` 直接读 frontmatter 的 `persona: <source> (<agent>)`，而括号里是**写日记的 agent 名**（本机 6 个桶里 5 个是 `default (ptc)`），所以导航上一直在写 `ptc`——这正是「不要有那个什么 ptc」的来源。新签名 `diaryBucketName(bucket, store)`：取括号里的 agent → `store.byAgent[agent].name`，没有这张卡就回落 `store.default.name`（与写日记时 `resolvePersonaCard` 的回落口径一致）；**拿不到人格卡 store 时退回项目名，绝不把 agent 名顶上**；最后才退回桶键。同名桶在面板里合成一本书（`byName` Map，entries 按日期倒序），一个身份一本，而不是一个项目一本。悬停提示只放篇数，也不放桶键。
+  - **设置页两张卡搬进人格页（同一个数据不该有两个所有者）**。画像卡与自动事实卡（含 #497「从记忆提取草稿」）整体移入 `PersonaMainPanel` 的 `mneme-persona-about` 区，profile / facts 全套状态、`loadFacts`、两个 effect 与十个处理函数一起搬走，设置页 `load()` 的 `Promise.all` 从四路减到三路（rules / commands / vector-config）。画像的读取改成人格页自己的 `useEffect`（依赖原有的 `tick` 哨兵）——**这一条必须补**：原来画像是在设置页 `load()` 里读的，只搬走渲染而不搬读取，人格页的画像框永远是空的，一按保存就把库里的画像写成空字符串。
+  - **踩到的坑**：① `const injectStatus = useInjectStatus();` 在文件里有两处（设置页与人靠页各一），`String.replace` 会命中前一处——插入点必须从 `function PersonaMainPanel` 之后开始找；② `about` 一开始写在分支里，而 `return` 在外面，改成函数顶部 `let about = null`；③ 三条老测试是「在整份源码里比先后」，搬迁后会被设置页里的规则卡骗过去，改成按 `PersonaMainPanel` / `SettingsContent` 切段再比，并反向断言设置页已经没有这两张卡。
+  - **验证**：`test/client.test.js` 新增 3 条（导航名来自人格卡而非 agent 标签、纸的选择两处共用一个键、日记是面板标签页而不是侧边栏座位），117 例全过；全量 `node --test test/*.test.js` 3146 用例 / 3145 通过 / 0 失败 / 1 跳过；`test/contrast.test.js` 5/5（四套纸新增的颜色只用 `--mneme-*` 与 `--dsw-alias-*` 语义层，纸纹走 `background-image` 不参与对比度主锁）。
+  - **已知边界**：本版只绑 `default` 这一张人格卡（`byAgent` / `bySession` 皆空），所以六本日记会合成「Amarre」一本——这是正确的归并结果，不是没分组。会话绑多人格（人设卡绑会话那期）还没做，做完之后 `bySession` 里不同的卡会各自成书，面板代码不用再改。
+
+- **`reflectionUpdateEnabled` 终于接上了：一个从 v0.7.1 起就拨了没反应的开关**。`src/config.js:523` 声明它、`src/settings.js:184` 把它列进白名单、`docs/CONFIGURATION.md:244` 与 `docs/SEMANTIC.md:252` 写着「检索后的反思更新既有记忆 / update 决策总开关」——但全仓库没有任何运行时代码读它（`git log -S` 追到 `5b5a2aa chore: release v0.7.1 (#33)`，从引入那天起就是死开关）。同族的 `reflectionFailureTracking` 有真实消费者（`src/service.js:2684`、`:2945`），`reflectionUpdateMaxPerRun` / `reflectionUpdateMinAgeHours` 也分别被 `src/dream.js:1380/1385` 与 `src/dream/sleep.js:690/796` 用着，只有 Enabled 这个总闸空着。
+
+  - **双侧都接，不只加一行判断**：只在校验侧拦（`validateDecisions` 拒掉 update），模型每轮仍会按 prompt 教的那样输出一批必然被拒的 update——`skipInvalid` 下被丢弃，但 token 照付；只改 prompt，模型仍可能自己写。所以 prompt 与校验各一道。
+  - **prompt 侧**：`src/lang.js` 新增 `noUpdateSuffix`（zh/en 各一句短后缀，中文含「不要输出 update」、英文含「do not output update」），明确是附加说明而不是完整 prompt，不与 `freezeSuffix` 或任务清单互相覆盖。`src/dream.js` 与 `src/dream/sleep.js` 各自拼成 `promptWithUpdateGate` / `conflictPromptGated` 供 system message 使用——**冲突链路也要接**，因为那两处 prompt 都教了「信息部分过时 → update」。
+  - **校验侧**：`validateDecisions` 新增 `allowUpdate`（默认 `!== false`，即不传时行为不变）。关闭时 update 进 `skipped` 并带 `policyDisabled: true`（条件展开，默认不外泄），错误文案点名 `reflectionUpdateEnabled=false`。
+  - **顺带修掉一条会打死调度器的护栏**：原来「全部跳过 = 模型坏了」的整单拒绝（`all N decision(s) invalid`）把策略性跳过也算进去了。用户自己关掉的动作不是模型故障——混在一起会让「这一轮只输出了 update」被判 `failed`，调度器于是拿同一批输入重跑同一条必然被拒的输出，无限循环。现在改成 `modelSkipped = skipped.length - policySkipped`，只把非策略性跳过算进去。这条**是测试逼出来的**：第一次跑 9 条用例挂了 3 条，修法是把产品逻辑改对，不是把测试改松。
+  - **验证**：新增 `test/reflection-update-gate.test.js` 9 例（默认零变化、`allowUpdate=true` 与不传逐字相同、关闭时 update 被拒且原因点名开关、同批 merge/archive 照常应用、strict 模式如实报错不静默、策略跳过优先于字段级错误、关闭后 updateCount 上限不再误触发、两种语言的后缀都存在且含 update、后缀保持短小不重述 schema）。全量 3143 用例 / 3142 通过 / 0 失败 / 1 跳过；check-sync 118 一致。
+  - **同轮撤回一条误判**：`actionPipelineEnabled` 我先前报成「无消费者」，那是因为只在 `src/` 里 grep——它其实在 `lib/client.js` 决定要不要注册 M.O. 座位，有真实消费者。真死开关只有 `reflectionUpdateEnabled` 这一个。
+
+- **子 agent 继承父会话的人格卡：派生出去的手脚不该变成「不知道自己是谁」**。人格寻址原本两维（`bySession[自身]` → `byAgent` → `default`），而子 agent 是一个新会话 id——用户不可能给每个派生会话都建一张卡。strict（`personaStrictAddressing`）一开，「有身份、没这一张的卡」就直接不注入人格，于是子 agent 从「自称父会话的人格」掉到「完全没有身份」。这比串味更糟：串味至少还有个稳定的「我」，掉到 none 是每派一次活换一次人。
+
+  - **加第三维 `parentSession`（`src/user-settings.js` 的 `resolvePersonaCard`）**：顺序改成 `bySession[自身]` → `bySession[父会话]` → `byAgent` → strict `none` → `default`。父卡排在 `byAgent` 之前——「属于哪段对话」比「属于哪个预设」更能说明该用谁的人格（DS Bot 里 `agentPreset` 恒为 `standard`，这一维本来就分不开人）。`source` 新增读数 `"parentSession"`，面板据此能说清卡是从父会话继承来的。`strict` 的身份判据也把父会话 id 算进来：子 agent 只解析到父会话 id 时同样是「有身份」，不许被 default 兜底。
+  - **与 `src/session-gate.js` 的口径刻意不同，注释里写清了理由**：闸门**不用** `parentSession` 判「是不是子代理」（宿主 `sessions.fork()` 造的主会话分支同样带这个字段，641 个会话实测会多判 3 个主会话）；寻址要问的不是「你是不是子代理」而是「你自己有没有卡」，所以 fork 出的分支继承父卡同样正确——它就是同一段对话的副本。
+  - **`src/inject.js` 的 `sessionIdentity` 扩成三键**：新增 `parentSessionIdOf(ctx)` 读 `session.header.parentSession`，与 `agentPreset` / `session.id` 各自独立兜错（一个 accessor 抛错不拖累其余两个）。`/api/dsh-mneme/persona?parent=` 同步支持，面板预览能复现子代理看到的那一帧，且与注入器逐字节同源。
+  - **验证**：`test/persona-by-session.test.js` 29→39 例。新增 10 条锁五件事：继承命中（source 是 `parentSession`）、自己的卡优先、父卡优先于 `byAgent`、父卡 `enabled:false` 时不继承（关掉就是关掉）、strict 下子 agent 不许被兜底、strict 关时零行为变化、父 id 与自身 id 相同（脏数据）不重复查、父 id 非字符串/空白不干扰其余寻址、`session.header` 整体抛错时不崩、注入与预览同源。全量 3133 用例 / 3132 通过 / 0 失败 / 1 跳过；check-sync 118 一致。
+
 - **仓库地志对齐 Qoder：面板能一键生成、按路径登记新仓库、开关就地切、T1 语义富化从面板发起；另开知识库第二层（#607）**。此前「仓库地志」的第一屏是一句「先在仓库目录里跑 `dsh-mneme-choro <仓库路径> --apply`」——那条命令装在 profile 的 `node_modules/.bin/` 里、不在 PATH，照着做得到的是 command not found；文案还把「cd 进目录」与「传路径参数」混成一句（命令收的是参数，跟 cwd 无关）。更根本的是空态（`phase === "no-repo"`）只渲染一行纯文字、零可点元素，用户看着「未生成」却没有按钮，只能去翻文档、翻到一条跑不通的命令。这一档把「看着应该有但点不到」的四个入口都补上了，并把 Qoder 的 Repo Wiki / AI-Native 知识库两层结构对上号。
 
   - **#607 空态改成「填绝对路径 → 生成骨架」（`lib/client.js` no-repo 分支）**：输入框 + 「生成骨架」按钮，直接 `POST /choro/run`，body `{ path }`（旧后端还认 `{ repo }`，所以已加载过仓库时两个都带）。文案写明这是 mneme 插件的「仓库地志」、开关在 `设置 → 记忆(mneme) → 功能 → 仓库地志`；CLI 降级进 `<details>` 作为**可选**方式，命令给绝对路径、并明说它收路径参数、不必先 cd。失败一律翻人话：`not-git`/`not-a-git-repo` 都认（服务端把 wiki 层的 `err.code` 翻成了契约里的对外码，只认一个就会出现「旧后端有人话、新后端只有错误码」的半修状态）、`path-not-absolute`、`path-not-found` 各有专门一句，其余落 `detail`——不再拿「生成失败: not-git」当解释。
@@ -27,6 +70,16 @@
   - **为面板补了两处读面**：`/entities` 支持 `?q=`（名字过滤下推到 store，`%` / `_` 转义）；`/external-api` 支持 `?token=omit`（只读配置，不生成也不落库 Bearer——默认 GET 会顺手铸造一个）。
   - **验证**：`test/dsh-go-panel.test.js`（19 屏视图预算 + 页签 / 开关 / 文案锁）、`test/dsh-go-panel-actions.test.js`（点按之后发给宿主的请求、scope 核对、只发差集、视图切换）、`test/dsh-go-host.test.js`（请求体 flush、异步响应、令牌、401、超时）；`test/api-routes-gaps.test.js` 补 `q` 与 `token=omit` 两例。
 
+- **日记本：让当前会话里那个有人格的 agent 自己写日记（v0.13，beta）**。`diaryEnabled` opt-in 默认关。日记不是「聊天记录的备份」，是**同一个人格在写自己的日记**——正文由人格卡 + 当天真实素材一起生成，落成 `<memoryDir>/diaries/<项目键>/YYYY-MM-DD.md`，右栏「日记本」页只读预览、可手动补写、可「入库」把某天复制进项目自己的 `<项目>/diary/` 目录。
+
+  - **素材默认取当前会话，QQ 只是兜底**：`src/diary/session-provider.js` 从 `session.snapshotEvents()` 取当天 user/assistant 正文（机器注入的 `source.kind !== "user"` 一律挡掉），当日素材为空时才退回只读 `qq-inbox*.jsonl`（跨轮换文件按序号续读、只认 `decision.stage === "dispatch" && decision.ok === true`）。**inbox 里没有机器人自己的回复**（`message_sent` 命中 0），所以 prompt 明令禁止编造自己说过的话。
+  - **人格寻址走同一个入口**：`renderUserSettingsBlock({settings, config, agentId})`——与注入、面板预览共用一份，不另拼第二份。agentId 由 `sessionAgentId(session)` 从 `session.header.agentPreset` 读（先读 `requestHeader` 会返回请求级模型路由头、遮蔽 agentPreset）。
+  - **触发是「跨天惰性判定 + 启动补写」**：宿主没有日历调度原语（`cordis.patch.yml` 无 schedules），所以 `turn/end` 时判 `shouldRollDay(lastDate, today)`，启动时对已知项目做一次 catch-up（只补 1 天，更早的缺口记 `gapDays` 进正文而不补写）。写日记的回合**异步落盘、绝不 await 在 session/event 派发链上**（成本实测 p50 11.6s / p90 51.6s）。
+  - **仓库里没有 `memories.type = "diary"`**：`document` 行的唯一铸造口是 `registerDocument`（`src/api.js` 对 document 直接 400，`test/standalone-api.test.js:188` 把 diary 钉成反例）。所以正文是 md 文件、索引是 `type="document" + tags:["diary"]` 指针行，且只在 `documentMemoryEnabled` 另外开着时才落。
+  - **面板（`lib/client.js`）**：右栏 tab `dsh-mneme:diary`，独立旗标闸（不复用 `actionPipelineEnabled` 那条 effect）；503「没装配」与 409「没开」两种文案分开、读失败可见可重试；「补写今天」把 `written / already-written / no-material` 三种结果分开说，**不把 skip 当成功含糊过去**；「入库」409（目标已存在）单独提示。视觉是手绘风——只靠不对称圆角、1.5px 描边、dash 分隔与 ±0.3deg 轻微歪斜表达，颜色一律走 `--mneme-*` / `--dsw-*` 语义层（无新增 token、无字体依赖）。
+  - **四条路由**（`/api/dsh-mneme/diary`、`/diary/entry` 读 `open`；`/diary/compose`、`/diary/export` 写 `token-write`；缺装配 503、未开启 409、project 非绝对路径 400——服务端没有「当前项目」这个概念），`SECURITY.md` 中英两处清单已同步。
+  - **页签必须配入口**：只注册 `sidebarRightTabs` 类型 + `sidebar.right.pane.tab` 正文，页签在界面上是不可达的——没有任何座位能调 `sidebarRight.openTab`，用户重启完只会看到「侧边栏没有入口」。v0.13.0 首发即踩此坑（类型、正文、旗标闸三条测试全绿，功能等于失踪）。现补 `conversation.session.header.actions` 座位（`id: "dsh-mneme:diary"`, `order: 31`, 带 `inject: (sessionId) => ({ sessionId })`），按钮点击直开页签；宿主没有 `sidebarRight` 服务时不注册并 `console.info` 留痕（宁可不放，也不放一个点了没反应的按钮）；打开失败由按钮自身 `announce` 说出来。`test/client.test.js` 加锁：`registerDiarySeats` 内必须同时出现 `.actions` 座位与 `sb.openTab(DIARY_TAB_KIND)`，缺任一条即红。
+
 - **「Agent 眼中的你」按段化第一期：注入渲染函数产出段边界（`segments`），面板从此能按段读（#600）**。`renderUserSettingsBlock` 原先只回一整串 `text`，面板那张卡只能整段只读显示——想改注入文本里的某一句，得走「整段提取 → 复制 → 粘进画像框」的剪贴板中转，而画像段是手写原文、人格段是结构化卡、事实段是逐条维护的行，三者写回语义完全不同。段边界是这三条路能分开走的前提。
 
   - **纯加法，注入字节零变化**：返回值多一个 `segments`，每行带 `kind` 与写回定位信息；`text` 仍是原来的 `escapePromptVars(config, lines.join("\n"))`。段文本存**未转义**原文（面板要显示给人看），转义只发生在 `text` 这一层——转义只动连续花括号、换行不参与，逐段转义与整串转义等价，所以注入行为与改前逐字节相同，老用户零变化。
@@ -38,6 +91,16 @@
   - **验证**：新增 `test/user-settings-segments.test.js` 21 例。其中最关键的一条把**改动前的渲染实现原样留在测试里当 golden**，逐配置对比 23 种情形（空库 / 单段 / 人格卡三种填充度 / byAgent 命中 / strict 未命中 / 总闸关 / 英文 / 转义开关 / 事实段三种截断态 / 事实段 strict 与 byAgent / 事实里的裸花括号），断言 `text` 逐字节不变——「我看着一样」不算验证。另锁段拼装与 `text` 同源、段顺序（表头恒第一）、`shown/total` 配平、`fact.index` 连续、早退形状、段内保持未转义。变异自证 11 条各自报错、互不重复：段化 5 条（表头 total 改成 shown / 早退去掉 `segments: []` / 段拼装丢掉表头 / `fact.index` 恒 0 / 人格 field 全写成 name），`value` 6 条（画像 value 改成 text / 事实 value 改成 text / 规则去掉 value / 表头塞 value / 人格 value 不 trim / value 存转义文本）。另有一条变异（逐段转义再 join）**未被抓到**，因为逐段转义与整串转义在数学上等价——这条记在这里，免得下次有人以为它该被抓。漂移告警那条单独验过：把生产的事实判据改回 Ephor 抓到的错序 → 2 红（漂移告警 + 逐字节不变），把人格 strict 判据改成「有可用卡才算」→ 1 红（只有漂移告警），把事实的 `byAgent` 空例外去掉 → 2 红，三条互不重复，恢复后 21/21 绿。全量 2902 用例 / 2901 通过 / 0 失败 / 1 跳过；check-sync 95 一致。
   - **测试盲区修复（CodeRabbit 2026-11-07 评审指出）**：`segments 拼回去等于未转义的整串` 这条用例原先只比「转义后的段拼装等于 `text`」，抓不到「某一段被提前转义」——`escapePromptVars` 是幂等的（`/[{}]{2,}/g` 只在连续花括号前插反斜杠，已插过的串不再匹配），提前转义一遍再整体转义一遍与只转义一遍逐字节相同。两处修法：① 人格用例的 `name` 改成 `"Amarre {{x}}"`（原来没有裸花括号，人格段被污染也无从暴露）；② 另取一份独立基线——同一套 23 种配置把 `escapePromptVariables` 关掉跑 `legacyRender`，段拼装必须等于它。两条缺一不可，已各自变异验证：只提前转义人格段 `text` → 有 `{{x}}` 时 1 红（本条用例），去掉 `{{x}}` 后 21/21 全绿（证明样例是承重的）；只提前转义画像段 `text` → 2 红（本条 + `段文本本身保持原样`）。
   - **不做**：不加路由、不碰 `setPersonaFor`、不改 `wordDiff`、不动事实段的两顶帽子（40 行 / 1200 字符）、不做面板 UI。第 2 期人格字段级写回 + 规则并发控制，第 3 期面板按段渲染与就地编辑（含 `wordDiff` 解 800 词上限与 hunk 分组层），第 4 期 `profile-extract` 输出段形状。
+
+## 🎨 面板
+
+- **M.O.（工作流）下架**：`group.mo` 从 `FEATURE_GROUPS` 摘掉，首屏位（`FEATURE_FIRST_SCREEN`）一并收回，首屏可点项预算回到 8。三个旗标（`actionPipelineEnabled` / `actionRunEnabled` / `actionNudgeEnabled`）**仍留在 schema 与设置白名单里、语义零改动**，座位注册逻辑与 `/mo-run` 命令一字未改——只是面板不再渲染那一组。
+
+  - **这是一次产品决策的反转，不是放宽**：v0.9.0 是产品主人点名「M.O. 别藏在里面」才把它提进首屏并豁免了 ≤8 的软预算。本轮主人决定先下架，所以 `test/client.test.js` 的首屏锁从三组收紧回两组，注释里把反转理由写清楚——免得下次有人照着旧注释把组加回来。
+  - **两条防半吊子回归的新锁**：① `FEATURE_GROUPS` 里不得再出现 `{ key: "group.mo", items: [`（防止「只去首屏位、组折进全部设置」）；② 源码里 `actionPipelineEnabled` 必须仍然存在（防止顺手把旗标也删了、下架变成不可逆）。
+  - **恢复方式**：把 `{ key: "group.mo", items: ["actionPipelineEnabled", "actionNudgeEnabled"] }` 加回 `FEATURE_GROUPS`，并把 `"group.mo"` 加回 `FEATURE_FIRST_SCREEN`。文案键 `memory.features.group.mo` 中英两条**故意保留**（渲染层已不引用），恢复时不必重写措辞。
+  - **下架期间设置只能走配置文件**：面板上没有入口，`actionPipelineEnabled` 等仍可从 `config.yml` / `feature_flags` 改。`docs/CONFIGURATION.md` 在三个键后加了引用块说明。
+  - 线上库已先行关旗标（`actionPipelineEnabled` / `actionRunEnabled` / `actionNudgeEnabled` 全 false，`diaryEnabled` 保持 true），写入前 50 键 JSON 备份留档；`actionRunEnabled` 原本不在 kv，本次显式写入 false，故键数 50→51。
 
 ## [0.12.0] - 2026-11-07
 

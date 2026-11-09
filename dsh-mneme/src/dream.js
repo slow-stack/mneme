@@ -1172,6 +1172,9 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     // manual review instead of auto-adjudicated. Read once up front so the
     // prompt hint and the apply-split agree on the same gate.
     const freezeEnabled = config.conflictFreezeEnabled === true;
+    // reflectionUpdateEnabled（默认 true，「关」= 旧记忆永不被自动改写）。同样先读
+    // 一次，prompt 后缀与校验器选项用同一个值，避免两处各读一次 cfg 后彼此不一致。
+    const updateEnabled = config.reflectionUpdateEnabled !== false;
     // Every exit (success or failure) funnels through `finish`, which writes
     // the audit row + receipt. A record failure is logged, never thrown —
     // auditing must not break the consolidation path. Failed runs still
@@ -1308,6 +1311,10 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     const consolidationPrompt = freezeEnabled
       ? STR.prompts.consolidation[language] + STR.prompts.freezeSuffix[language]
       : STR.prompts.consolidation[language];
+    // 两个后缀可以叠加：冻结管冲突怎么处理，关闭改写管 update 能不能用，互不相干。
+    const promptWithUpdateGate = updateEnabled
+      ? consolidationPrompt
+      : consolidationPrompt + STR.prompts.noUpdateSuffix[language];
     let decisionText;
     // 加固（v0.8.1）：配置的 reasoningEffort 被 provider 拒收时回退重试一次
     // （不带该字段），避免 thinking 模型配置 low/medium 直接整单失败。解析放
@@ -1342,7 +1349,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       maxTokens: tokens,
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
-        { role: "system", content: [{ type: "text", text: consolidationPrompt }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
+        { role: "system", content: [{ type: "text", text: promptWithUpdateGate }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
         { role: "user", content: [{ type: "text", text: fenceListBody(language, listText) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
       ]
     }, reportUsage, (reason) => { streamFailure = describeStreamFailure(reason); }));
@@ -1378,6 +1385,8 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     }
     const { ok, errors, skipped, resolvedShortIds, coverageShortfall } = validateDecisions(decisions, snapshot, {
       maxUpdatePerRun: config.reflectionUpdateMaxPerRun,
+      // reflectionUpdateEnabled=false 时校验器单条跳过所有 update（不是整单拒绝）。
+      allowUpdate: updateEnabled,
       // Issue #104 方向 2：archive 批量上限（全局闸门，超限整单拒绝）。
       maxArchivePerRun: config.dreamMaxArchivePerRun,
       // #135 成本审计派生：merge 批量上限（merge 是唯一回吐正文的动作，同款全局闸门）。

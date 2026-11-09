@@ -356,6 +356,11 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   //   · 只筛同 scope 对：跨 scope 对本来就要停车进人工队列，不能被台账吞掉；
   //   · freeze 模式不筛：那一档只停车不送 LLM，台账与它无关（ledgerSkipped 记 0）；
   //   · ledgerSkipped 在这里一次数清，后面 candidates 直接取 samePairs，不再二次过滤。
+  // ⚠️ Issue #616：这个判据把「未标注」当成「同 scope」。scopeKeyOf 把 NULL/空串
+  // 归一成 null，于是两条都没标注时 null !== null 为 false，配对算同 scope、可以进
+  // 自动池。但「归属未知」和「归属相同」不是一回事：按 v0.8.1 #170，前者本该是不可
+  // 自动的范围。live 库活跃 8259 行里 2710 行（32.8%）两个 scope 全 NULL，受影响的
+  // 面不小。修法是把「任一未标注」显式判为不可自动，而不是继续让 null 自我相等。
   const isCrossScopePair = (p) =>
     scopeKeyOf(p.a.agent_scope) !== scopeKeyOf(p.b.agent_scope)
     || scopeKeyOf(p.a.workspace_scope) !== scopeKeyOf(p.b.workspace_scope);
@@ -429,6 +434,11 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   //   · 接预算：conflictFreezeMaxPending 决定队列还能装多少，
   //     sleepConflictMaxPairsPerRun 决定一轮最多处理多少，取两者较小值；
   //   · 只把 fresh 计入 frozen，已入队的对不再虚报。
+  //
+  // ⚠️ Issue #616：下面这段 freeze 分支同时也是「自动裁决档」的唯一宿主——
+  // conflictAutoResolveEnabled 的全部逻辑（autoEnabled / autoPool / autoResolved）
+  // 都在这对花括号里面。两个配置键在面板上看是平行的，实际是父子：把 freeze
+  // 关掉，自动档会跟着静默消失，没有任何提示。拆开之前别把它们当独立开关用。
   if (config.conflictFreezeEnabled === true) {
     const maxPending = Number.isInteger(config.conflictFreezeMaxPending) ? config.conflictFreezeMaxPending : 100;
     const pendingNow = typeof service.countConflictPending === "function" ? (service.countConflictPending() ?? 0) : 0;
@@ -445,12 +455,16 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     // Issue #603 第 4 层（自动裁决档，默认关）：相似度极高的**同 scope** 对不再
     // 进人工队列，直接保留信息量更大的那条、归档另一条。人只看模糊地带。
     //
-    // 为什么阈值留在配置里而不是写死 0.95：live 库 345 条有相似度的历史行里，
-    // >=0.95 只有 20 条（5.8%）、>=0.94 是 28 条（8.1%）。这一档减的是峰值，
+    // 为什么阈值留在配置里而不是写死 0.95：这一档减的是峰值，
     // 不是把队列清零——把阈值当常量会让人以为「开了就没事了」。
     //
     // 为什么跨 scope 永不自动：归属是用户的决定（v0.8.1 #170），归档败者可能
     // 销毁某归属下的唯一副本。这条约束比减负重要。
+    //
+    // ⚠️ Issue #616：这条守卫有一个洞。isCrossScopePair 走 scopeKeyOf，NULL 归一
+    // 成 null，null !== null 判为 false —— 「未标注」因此被当成「同 scope」混进
+    // autoPool。live 库活跃 8259 行里 2710 行（32.8%）两个 scope 全 NULL。改判据
+    // 之前，别把这一档当成「归属安全」。
     //
     // 为什么用 supersede 而不是 conflict：conflict 会把「（已否决旧信息：…）」
     // 追加到**赢家**正文，而赢家正是留下来的那条；近重复对再叠一段互相引用的
@@ -552,6 +566,11 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       frozen,
       // 自动裁决掉的不进队列，但确实是这一轮干的活——分开报，别混进 frozen
       // （frozen 的语义是「给人工队列新增了几行」，混进去面板就会虚高）。
+      // Issue #616：这两个字段目前**没有消费者**。dream.js 的两处 return 只透出
+      // frozen，面板也不读它们；conflict_reviewed 台账同样没有 API 暴露，且 schema
+      // 不记赢家（memory_a/b 是排序过的）。也就是说自动裁决干了什么，事后只能翻
+      // loser 正文的「（已被取代：…）」后缀反推。补可见性之前，别指望从报告里看出
+      // 这一档跑了几对。
       autoResolved,
       autoFailed,
       // 写库抛错的对既没入队也不算落地：clean=false，别让调度器当「追完了」。
@@ -596,6 +615,12 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // actionSet 已在候选构造前解析（跨类型候选需要它），这里只按档位选 prompt：
   // 默认档保持只有 conflict/keep 的窄 prompt，"full" 才开放六分支。
   const conflictPrompt = actionSet === "full" ? STR.prompts.conflictFull[language] : STR.prompts.conflict[language];
+  // reflectionUpdateEnabled=false：两份 conflict prompt 都教了模型怎么用 update
+  // （「信息部分过时 → update」那一支），只靠校验器拒会把每轮这份输出白付掉。
+  // 后缀与 dream 主链路共用同一条文案，两个入口对用户是同一个开关、同一种说法。
+  const conflictPromptGated = config.reflectionUpdateEnabled !== false
+    ? conflictPrompt
+    : conflictPrompt + STR.prompts.noUpdateSuffix[language];
   const runConflict = (batch, withEffort, tokens) => {
     conflictStreamFailure = "";
     const listText = batch.map((p) => STR.candidateConflicts[language](p)).join("\n\n");
@@ -623,7 +648,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     maxTokens: tokens,
     ...(withEffort && sleepEffort ? { reasoningEffort: sleepEffort } : {}),
     messages: [
-      { role: "system", content: [{ type: "text", text: conflictPrompt }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
+      { role: "system", content: [{ type: "text", text: conflictPromptGated }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
       { role: "user", content: [{ type: "text", text: fenceListBody(language, listText) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
     ]
   }, reportUsage, (reason) => { conflictStreamFailure = describeStreamFailure(reason); }));
@@ -687,6 +712,8 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       // Issue #536 review（CodeRabbit ②）：reflectionUpdateMaxPerRun 是**整轮**上限，
       // 分批后不能每批都拿整份额度——那样 N 批就是 N 倍上限。这里用的是本轮的剩余额度。
       maxUpdatePerRun: updateBudget,
+      // reflectionUpdateEnabled=false：update 单条跳过（同 dream 主链路口径）。
+      allowUpdate: config.reflectionUpdateEnabled !== false,
       minAgeHours: config.reflectionUpdateMinAgeHours,
       skipInvalid: config.dreamSkipInvalid !== false,
       allowCrossTypeMerge: config.allowCrossTypeMerge === true,

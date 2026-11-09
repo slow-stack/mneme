@@ -204,6 +204,19 @@
 | `documentDir` | `""` | managed 落盘目录（#296） | 空 = `<memoryDir>/documents/`；目录之外只登记指针、正文零读零写 |
 | `policyEpoch` | `0` | 裁决规则版本号 | bump 后旧 dream_runs 降为历史证据（receipt 不再驱动现行决策） |
 
+## 日记本（diary，v0.13）
+
+| 键 | 默认 | 作用 | 开启后果 / 冲突 |
+|---|---|---|---|
+| `diaryEnabled` **light** | `false` | QQ 日记本总闸：跨天判定 + 手写入口 + 面板页 | opt-in；与 `documentMemoryEnabled` **成对但不相依**——关着也能写正文文件，只是不铸造 `document` 指针行（回执里如实标 `pointer.skipped`） |
+| `diaryDir` | `""` | 日记正文根目录 | 空 = `<memoryDir>/diaries/<项目键>/`；`~` 展开到 home，绝对路径原样，相对路径落 memoryDir 下。**与 `memoryDir` 一样是路径配置，不是行为开关**，故不进 `settings.js` 白名单、也不上面板 |
+| `diaryWriteEveryMinutes` | `0` | 日记自动写的定时唤醒间隔（分钟） | `0` = 只在 turn/end 与插件启动时判定（此前行为）；`>0` 时每隔这么多分钟扫一遍已知项目再判定。**不是 cron**：定时器只负责唤醒「该不该写」的判定，写不写仍由 compose 按落盘日期去重——一天最多一篇，填 5 也不会多写。跑完一篇再排下一次，所以不会与上一次的模型调用重叠。opt-in、可热改（走 `INT_RANGES` 表，0–1440）|
+| `diaryInboxDir` | `""` | QQ 入站素材目录（只读） | 空 = 从 `memoryDir` 推 `<memoryDir>/../media/onebot`（onebot 的默认落点）。本模块**不 import `dsh-onebot-qq` 任何模块**，边界只靠这份「目录 + 文件形状」约定 |
+
+日记不落用户绑定的项目目录：那目录实测非 git、无 `.gitignore`、混着探针脚本，
+写进去没有版本也没有回滚；mneme 成文的写盘面只有 `memoryDir` 与 `documentDir` 两处。
+「入库到项目」是面板上一个**人主动点**的导出动作（复制而非移动）。
+
 ## 睡眠模式（sleep，空闲深维护）
 
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |
@@ -327,6 +340,8 @@
 | `actionRunEnabled` | `false` | M.O. 执行记账：`/mo-run` 开一次执行窗口，窗口内命令执行才可能被记成一条 run | opt-in beta；挂在热路径（每个会话事件都过一次监听），故 `LIGHT_MODE_OFF` 里有它 |
 | `actionNudgeEnabled` | `false` | M.O. 自动沉淀：每轮结束（`turn/end`）后挖一次「这个项目重复走的动作」，结果落成 `memoryDir/proposals/<项目键>/` 里的提议，等人确认 | opt-in beta；三个 M.O. 键里最重的一条——挂 `session/event` 且要**同步解压 zstd 会话日志**（本机 118 份实测 16.2s，单次预算 `budgetMs`=4s 兜底），故 `LIGHT_MODE_OFF` 里有它。**永不自动落草稿**：`materialize` 恒 false，进仓库必须是人的显式动作 |
 
+> **M.O. 已下架（v0.13.x）**：上面三个键仍留在 schema 与设置白名单里、语义不变，但面板不再渲染 `group.mo` 那一组（从 `FEATURE_GROUPS` 摘掉，首屏位一并收回）。想恢复：把该组加回 `FEATURE_GROUPS` 与 `FEATURE_FIRST_SCREEN` 即可，旗标与座位注册逻辑零改动。设置只能走配置文件。
+
 ## 运行时与本地模型
 
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |
@@ -362,7 +377,8 @@
 `organizeEnabled`（#231） ·
 `profileExtractEnabled`（#497） ·
 `profileFactsEnabled`（2026-11-06） ·
-`preInjectGate.enabled`（#380） · `distillRecords.enabled`（#399）
+`preInjectGate.enabled`（#380） · `distillRecords.enabled`（#399） ·
+`diaryEnabled`（v0.13，每天一篇 = 一次 LLM 调用，属重型）
 
 预设只是默认值而非强制：用户显式写进 feature_flags 的值在装配顺序上后展开、仍然生效
 （「用户开关 > 轻量预设 > bundle 配置」）。

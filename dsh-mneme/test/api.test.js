@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
@@ -57,8 +59,12 @@ function setup(embedder, apiToken = "", config = null, semantic = undefined) {
 }
 
 function findHandler(routes, path) {
-  const route = routes.find((r) => r.path === path || (r.kind === "prefix" && path.startsWith(r.path)));
-  return route;
+  // 先找精确登记，再退回 prefix 兜底。不能只写一个 find：`/api/dsh-mneme` 那条
+  // prefix 404 兜底登记得很早，路径以它开头的任何一条都会先命中它，于是不管
+  // 断言什么都是 404。
+  const exact = routes.find((r) => r.kind === "exact" && r.path === path);
+  if (exact) return exact;
+  return routes.find((r) => r.kind === "prefix" && path.startsWith(r.path));
 }
 
 test("registers list, search, and get prefix routes", () => {
@@ -798,7 +804,10 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 三个都是顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 117。
   // issue #603 第 4 层再新增 conflictAutoResolveEnabled（自动裁决档开关；顶层布尔键）
   // 与 conflictAutoResolveMinSimilarity（阈值，走 NUMBER_RANGES 表）= 119。
-  assert.equal(Object.keys(data.effective).length, 119);
+  // v0.13 再新增 diaryEnabled（QQ 日记本：跨天判定 + 手写入口 + 面板页的总闸；
+  // 顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 120。
+  // v0.13 diaryWriteEveryMinutes（日记定时写间隔，走 INT_RANGES 表）= 121。
+  assert.equal(Object.keys(data.effective).length, 121);
   // 三个 kb 新键的默认值单独钉一遍：计数锁只钉数量，钉不住值（缺省值翻转时
   // 面板会静默换上一套授权语义），这里补上值这一层。
   assert.equal(data.effective.chorographyAutoRefresh, false);
@@ -2651,4 +2660,227 @@ test("GET /api/dsh-mneme/memory/provenance?sessionId=：limit 越界 → 400；�
   const data = JSON.parse(ok.body);
   assert.equal(data.windows.length, 2);
   assert.equal(data.truncated, true, "还有第三个窗口没回——必须说出来，否则半份转录会被当成全部");
+});
+
+// --- 日记库两条路由（左侧「ta 的日记」面板的数据源）-----------------------
+// 这两条与上面按 project 定位的五条日记路由不是一回事：面板拿不到当前会话，
+// 只能整体扫 diaries 根目录。所以这里也必须不传 project 就能读。
+
+/** 造一个带 diaries 目录的临时 memoryDir，并按 bucket/date 铺文件。 */
+function diaryFixture(buckets) {
+  const memoryDir = mkdtempSync(join(tmpdir(), "mneme-api-diary-"));
+  const root = join(memoryDir, "diaries");
+  mkdirSync(root, { recursive: true });
+  for (const [bucket, files] of Object.entries(buckets)) {
+    mkdirSync(join(root, bucket), { recursive: true });
+    for (const [date, text] of Object.entries(files)) {
+      writeFileSync(join(root, bucket, `${date}.md`), text, "utf8");
+    }
+  }
+  return { memoryDir, root };
+}
+
+function diaryPage(agent, body = "正文") {
+  return `---\ndate: 2026-11-08\nproject: p\npersona: settings (${agent})\n---\n\n${body}\n`;
+}
+
+/** 只装配日记要的那一个位置参数（第 14 个），其余留空。 */
+function setupDiary(config, diary = { compose: async () => ({ ok: true }) }) {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  const settings = createSettings(store.db);
+  const routes = [];
+  const handlers = {};
+  const ctx = {
+    webServer: { register(route) { routes.push(route); return () => {}; } },
+    // 用真的 session/event 通道：agentBySession 账本正是从这里喂料的，
+    // 换成假函数就只测了「我自己的桩」，测不到真实接线。
+    on(name, fn) { handlers[name] = fn; return () => { delete handlers[name]; }; }
+  };
+  createApi(ctx, service, settings, { add() {}, remove() {}, list: () => [] }, undefined,
+    undefined, "", config, null, null, null, null, null, diary);
+  const emitSession = (session) => {
+    const fn = handlers["session/event"];
+    if (fn) fn(session);
+  };
+  return { routes, emitSession }; 
+}
+
+/**
+ * 一个在本平台一定是绝对路径的项目根。
+ *
+ * 这里原先写死 `D:/proj`：Windows 上 isAbsolute() 为真、Linux/macOS 上为假，
+ * 于是 src/api.js 的 diaryProject() 直接回 400 project-not-absolute，ubuntu 22/24
+ * 与 test-host-legacy 两腿全红，而本机 Windows 全绿——产品代码没错，是断言不可移植。
+ * tmpdir() 在两种平台上都返回绝对路径，用例才真正等价。
+ */
+function portableProjectRoot() {
+  return join(tmpdir(), "mneme-diary-compose");
+}
+
+/** 抓一个 compose 调用参数的 spy：既要知道调没调、也要知道传了什么。 */
+function composeSpy() {
+  const calls = [];
+  const diary = {
+    compose: async (args) => {
+      calls.push(args);
+      return { ok: true, status: "written", date: "2026-11-08", path: "x.md" };
+    }
+  };
+  return { calls, diary };
+}
+
+test("GET /api/dsh-mneme/diary/library：不传 project 也能列清单（面板拿不到会话）", async (t) => {
+  const { memoryDir } = diaryFixture({
+    "amarre-c836db6a": { "2026-11-08": diaryPage("amarre") },
+    "attune-dd7a5103": { "2026-11-07": diaryPage("attune") }
+  });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+
+  const { routes } = setupDiary({ memoryDir, diaryEnabled: true });
+  const route = findHandler(routes, "/api/dsh-mneme/diary/library");
+  assert.ok(route, "路由必须注册在 /api/dsh-mneme/diary/library");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/diary/library"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.equal(data.contract, "mneme.diary/v1");
+  assert.equal(data.buckets.length, 2);
+});
+
+test("GET /api/dsh-mneme/diary/library/entry：正常读到正文", async (t) => {
+  const { memoryDir } = diaryFixture({ "amarre-c836db6a": { "2026-11-08": diaryPage("amarre", "今天很好") } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+
+  const { routes } = setupDiary({ memoryDir, diaryEnabled: true });
+  const route = findHandler(routes, "/api/dsh-mneme/diary/library/entry");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/diary/library/entry?bucket=amarre-c836db6a&date=2026-11-08"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.equal(data.bucket, "amarre-c836db6a");
+  assert.equal(data.date, "2026-11-08");
+  assert.match(data.text, /今天很好/);
+});
+
+test("GET /api/dsh-mneme/diary/library/entry：越界桶名与坏日期都回 400，不伪装成 404", async (t) => {
+  const { memoryDir } = diaryFixture({ ok: { "2026-11-08": diaryPage("x") } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+
+  const { routes } = setupDiary({ memoryDir, diaryEnabled: true });
+  const route = findHandler(routes, "/api/dsh-mneme/diary/library/entry");
+
+  // 越界是一种**坏请求**，不是「这本不存在」——回 404 会让调用方以为换个名字再试就行。
+  for (const bad of ["..", "../x", "ok/../ok", ""]) {
+    const res = new FakeRes();
+    await route.handler(req(`/api/dsh-mneme/diary/library/entry?bucket=${encodeURIComponent(bad)}&date=2026-11-08`), res);
+    assert.equal(res.statusCode, 400, `桶名 ${JSON.stringify(bad)} 该回 400`);
+    assert.equal(JSON.parse(res.body).error, "bucket-required");
+  }
+  for (const bad of ["2026-1-1", "../../etc/passwd", ""]) {
+    const res = new FakeRes();
+    await route.handler(req(`/api/dsh-mneme/diary/library/entry?bucket=ok&date=${encodeURIComponent(bad)}`), res);
+    assert.equal(res.statusCode, 400, `日期 ${JSON.stringify(bad)} 该回 400`);
+    assert.equal(JSON.parse(res.body).error, "date-required");
+  }
+});
+
+test("GET /api/dsh-mneme/diary/library/entry：合法但不存在 → 404 diary-not-found", async (t) => {
+  const { memoryDir } = diaryFixture({ ok: { "2026-11-08": diaryPage("x") } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+
+  const { routes } = setupDiary({ memoryDir, diaryEnabled: true });
+  const route = findHandler(routes, "/api/dsh-mneme/diary/library/entry");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/diary/library/entry?bucket=ok&date=2026-01-01"), res);
+  assert.equal(res.statusCode, 404);
+  assert.equal(JSON.parse(res.body).error, "diary-not-found");
+});
+
+test("日记库两条路由与右栏同源：装配缺件 503、开关关着 409", async (t) => {
+  const { memoryDir } = diaryFixture({ ok: { "2026-11-08": diaryPage("x") } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+  for (const path of ["/api/dsh-mneme/diary/library", "/api/dsh-mneme/diary/library/entry?bucket=ok&date=2026-11-08"]) {
+    // 503：diary 位置参数没装配。
+    const off = setupDiary({ memoryDir, diaryEnabled: true }, null);
+    const r1 = new FakeRes();
+    await findHandler(off.routes, "/api/dsh-mneme/diary/library").handler(req(path), r1);
+    assert.equal(r1.statusCode, 503, `${path} 装配缺件该回 503`);
+    assert.equal(JSON.parse(r1.body).reason, "diary-unavailable");
+
+    // 409：装配了但用户没开。
+    const disabled = setupDiary({ memoryDir, diaryEnabled: false });
+    const r2 = new FakeRes();
+    await findHandler(disabled.routes, "/api/dsh-mneme/diary/library").handler(req(path), r2);
+    assert.equal(r2.statusCode, 409, `${path} 开关关着该回 409`);
+    assert.equal(JSON.parse(r2.body).reason, "diary-not-enabled");
+  }
+});
+
+test("中文桶名：清单里列得出来就必须读得到（否则就是点了没反应）", async (t) => {
+  // 现场真有一个保留中文的历史桶。上一版这里两层用了不同判据——清单按路径语义、
+  // 路由按 ASCII 白名单——结果是列得出来、点进去 400。这条用例锁住两者同源。
+  const { memoryDir } = diaryFixture({ "QQ对话-4f061790": { "2026-11-07": diaryPage("amarre", "旧的那篇") } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+
+  const { routes } = setupDiary({ memoryDir, diaryEnabled: true });
+  const list = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/diary/library").handler(req("/api/dsh-mneme/diary/library"), list);
+  const buckets = JSON.parse(list.body).buckets.map((b) => b.key);
+  assert.ok(buckets.includes("QQ对话-4f061790"), "中文桶必须出现在清单里");
+
+  const res = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/diary/library/entry")
+    .handler(req(`/api/dsh-mneme/diary/library/entry?bucket=${encodeURIComponent("QQ对话-4f061790")}&date=2026-11-07`), res);
+  assert.equal(res.statusCode, 200, "清单里列得出来的桶，点进去必须读得到");
+  assert.match(JSON.parse(res.body).text, /旧的那篇/);
+});
+
+// --- 手动写日记必须带身份（「设定好人格的 agent 只以这个人格的口吻写日记」）-----
+// 自动轮（src/diary/auto.js:47）一直传 agentId，手动轮的 /diary/compose 却不传，
+// 于是永远落 default 人格卡：同一天从两个入口写，是两张卡的两种声音。
+// 这三条锁住「带 ?agent= / ?session= 就传、都不带就不猜」。
+
+test("POST /diary/compose 带 ?agent= 时把它作为 agentId 传下去", async () => {
+  const { calls, diary } = composeSpy();
+  const { routes } = setupDiary({ diaryEnabled: true }, diary);
+  const route = findHandler(routes, "/api/dsh-mneme/diary/compose");
+  const project = portableProjectRoot();
+  const res = new FakeRes();
+  await route.handler(
+    req("/api/dsh-mneme/diary/compose?project=" + encodeURIComponent(project) + "&agent=amarre", "POST", {}),
+    res
+  );
+  assert.equal(res.statusCode, 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].agentId, "amarre");
+  assert.equal(calls[0].trigger, "manual");
+  assert.equal(calls[0].projectRoot, project);
+});
+
+test("POST /diary/compose 只带 ?session= 时按会话账本反查身份", async () => {
+  const { calls, diary } = composeSpy();
+  const { routes, emitSession } = setupDiary({ diaryEnabled: true }, diary);
+  // 账本由真实的 session/event 通道喂料，不手搓内部结构。
+  emitSession({ id: "sess-1", header: { agentPreset: "attune" } });
+  const route = findHandler(routes, "/api/dsh-mneme/diary/compose");
+  const project = portableProjectRoot();
+  const res = new FakeRes();
+  await route.handler(
+    req("/api/dsh-mneme/diary/compose?project=" + encodeURIComponent(project) + "&session=sess-1", "POST", {}),
+    res
+  );
+  assert.equal(res.statusCode, 200);
+  assert.equal(calls[0].agentId, "attune", "会话身份必须从账本里查出来，不能落 default");
+});
+
+test("POST /diary/compose 两个身份参数都没有时传 null，不假装自己是 default", async () => {
+  const { calls, diary } = composeSpy();
+  const { routes } = setupDiary({ diaryEnabled: true }, diary);
+  const route = findHandler(routes, "/api/dsh-mneme/diary/compose");
+  const project = portableProjectRoot();
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/diary/compose?project=" + encodeURIComponent(project), "POST", {}), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(calls[0].agentId, null, "不知道是谁 ≠ 以为是 default");
 });

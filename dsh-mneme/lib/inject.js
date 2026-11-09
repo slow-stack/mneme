@@ -337,9 +337,23 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
     }
   }
 
-  // 一次取全两个寻址键。分开取值、各自兜错：一个失败不该让另一个也丢。
+  // 父会话 id 解析（子 agent 继承人格卡用）：子代理会话的 header 里有 `parentSession`
+  // （实测 518 个子代理头恒带此字段，主会话没有）。⚠️ 与 `session-gate.js` 的口径不同：
+  // 那里刻意不用它判「是不是子代理」（宿主 fork 出的主会话分支同样带 parentSession），
+  // 这里只把它当「自己没建卡时该继承谁」的线索，fork 出的分支继承父卡同样是正确语义。
+  function parentSessionIdOf(ctx) {
+    try {
+      const session = ctx?.agent?.session;
+      const parent = session?.header?.parentSession;
+      return typeof parent === "string" && parent.trim() ? parent.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // 一次取全三个寻址键。分开取值、各自兜错：一个失败不该让另一个也丢。
   function sessionIdentity(ctx) {
-    return { agentId: sessionAgentId(ctx), sessionId: sessionIdOf(ctx) };
+    return { agentId: sessionAgentId(ctx), sessionId: sessionIdOf(ctx), parentSessionId: parentSessionIdOf(ctx) };
   }
 
   // User profile + rules: injected ahead of the memory block because they are
@@ -352,8 +366,9 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
   function renderUserSettings(ctx) {
     // factsInject 是 profile-facts 域的读口（index.js 接线，面板预览路由传同一份）：
     // 开关与事实有无的判定都在 renderUserSettingsBlock 内部，「关」等于零读数。
-    const { agentId, sessionId } = sessionIdentity(ctx);
-    return renderUserSettingsBlock({ settings, config, agentId, sessionId, factsProvider: factsInject }).text;
+    const { agentId, sessionId, parentSessionId } = sessionIdentity(ctx);
+    return renderUserSettingsBlock({ settings, config, agentId, sessionId, parentSessionId, factsProvider: factsInject })
+      .text;
   }
 
   // #249 能力说明的系统提示段。order 150 = 插件指引段的既有惯例
