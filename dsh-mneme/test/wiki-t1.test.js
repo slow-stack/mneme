@@ -10,9 +10,10 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { runChoroT0 } from "../src/wiki/t0.js";
 import { createStore } from "../src/store.js";
-import { createT1, T1Refusal, T1_SECTION_START, T1_SECTION_END } from "../src/wiki/t1.js";
+import { createT1, T1Refusal, T1_SECTION_START, T1_SECTION_END, makeHeadlessRunner, locateDshExe, resolveCliJs } from "../src/wiki/t1.js";
 
 const FIXED_NOW = () => "2026-11-05T12:00:00.000Z";
 
@@ -230,6 +231,193 @@ test("未登记仓库整轮拒绝（先跑 T0）", async () => {
     );
     store.close();
   } finally {
+    rmTempBestEffort(root);
+  }
+});
+
+/* ------------------------- 定位层（issue #578） ------------------------- */
+//
+// 这一组锁的是「按安装布局写死路径」那类回归：exe 名、cli.js 位置、失败诊断三件事
+// 以前都只有一种答案，换一种安装布局（DSH NEXT）整档 T1 就起不来，而报错是
+// 「(无输出)」。全部用临时目录造假结构，不碰真 asar、不真开进程。
+
+/** 造一棵假的安装树：<root>/<exeName> + <root>/resources/app.asar/<rel> */
+function fakeInstall(exeName, cliRels) {
+  const root = mkdtempSync(join(tmpdir(), "choro-install-"));
+  const exe = join(root, exeName);
+  writeFileSync(exe, "", "utf8");
+  for (const rel of cliRels) {
+    const abs = join(root, "resources", "app.asar", ...rel.split("/"));
+    mkdirSync(join(abs, ".."), { recursive: true });
+    writeFileSync(abs, "// cli\n", "utf8");
+  }
+  return { root, exe };
+}
+
+test("resolveCliJs：DSH NEXT 布局优先于旧布局，且 DSH_CLI_JS 压过一切", () => {
+  // 两种布局同时在（老机器升级后可能留下旧目录），新布局必须赢——否则又一次
+  // 「升级了但还是按旧位置找」。
+  const both = fakeInstall("DSH NEXT.exe", [
+    "lib/desktop-cli.js",
+    "dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js",
+  ]);
+  try {
+    const picked = resolveCliJs(both.exe, {});
+    assert.equal(picked.verified, true);
+    assert.equal(picked.path, join(both.root, "resources", "app.asar", "lib", "desktop-cli.js"));
+  } finally {
+    rmTempBestEffort(both.root);
+  }
+
+  // 只有旧布局：仍要认（不能为了修新布局把老安装打坏）。
+  const legacy = fakeInstall("DeepSeek Harness.exe", ["dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js"]);
+  try {
+    const picked = resolveCliJs(legacy.exe, {});
+    assert.equal(picked.verified, true);
+    assert.ok(picked.path.includes("dsh-desktop-host"));
+  } finally {
+    rmTempBestEffort(legacy.root);
+  }
+
+  // DSH_CLI_JS：探测不进 asar 的进程（裸 node、远程布局）唯一的人工出口。
+  const manual = fakeInstall("DSH NEXT.exe", []);
+  try {
+    const custom = join(manual.root, "custom-cli.js");
+    writeFileSync(custom, "// cli\n", "utf8");
+    const picked = resolveCliJs(manual.exe, { DSH_CLI_JS: custom });
+    assert.equal(picked.path, custom);
+    assert.equal(picked.verified, true);
+  } finally {
+    rmTempBestEffort(manual.root);
+  }
+});
+
+test("resolveCliJs：全都不在时交回旧布局路径但标 verified:false，候选清单完整", () => {
+  // verified:false 是失败信息里那句「这次没探测」的依据：宁可说清楚「我没看到」
+  // 也不假装自己确认过路径存在。
+  const empty = fakeInstall("DSH NEXT.exe", []);
+  try {
+    const picked = resolveCliJs(empty.exe, {});
+    assert.equal(picked.verified, false);
+    assert.ok(picked.path.endsWith(join("dsh-desktop-host", "lib", "cli.js")));
+    assert.equal(picked.candidates.length, 3); // DSH_CLI_JS 未设 → 不占位
+    assert.ok(picked.candidates.some((c) => c.endsWith(join("lib", "desktop-cli.js"))));
+  } finally {
+    rmTempBestEffort(empty.root);
+  }
+});
+
+test("locateDshExe：认 DSH NEXT.exe，也认标准安装位与 DSH_EXE", () => {
+  // 旧实现只认 basename === "deepseek harness.exe"：DSH NEXT 的 exe 名不匹配、
+  // 装在别处也不匹配 → 两个条件同时不满足，直接 environment 失败。
+  assert.equal(locateDshExe({}, "D:\\Apps\\DSH NEXT.exe"), "D:\\Apps\\DSH NEXT.exe");
+  assert.equal(locateDshExe({}, "D:\\Apps\\DeepSeek Harness.exe"), "D:\\Apps\\DeepSeek Harness.exe");
+  // 不认识的 exe 名不许瞎猜：装了两套宿主时按「同目录任意 exe」挑会挑错。
+  assert.equal(locateDshExe({ ProgramFiles: "Z:\\nope", "ProgramFiles(x86)": "Z:\\nope2" }, "D:\\Apps\\other.exe"), null);
+
+  const install = fakeInstall("DSH NEXT.exe", []);
+  try {
+    // 标准安装位探测：<root>/DSH NEXT/DSH NEXT.exe
+    const pf = join(install.root, "pf");
+    const dir = join(pf, "DSH NEXT");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "DSH NEXT.exe"), "", "utf8");
+    assert.equal(locateDshExe({ ProgramFiles: pf }, "D:\\Apps\\other.exe"), join(dir, "DSH NEXT.exe"));
+    // DSH_EXE 最高优先（显式指定永远赢过探测）。
+    assert.equal(locateDshExe({ DSH_EXE: install.exe, ProgramFiles: pf }, "D:\\Apps\\other.exe"), install.exe);
+  } finally {
+    rmTempBestEffort(install.root);
+  }
+});
+
+/** 假子进程：只实现 consumeHeadlessStream 用到的那几个面。 */
+function fakeProc({ stdout = [], stderr = [], code = 0 } = {}) {
+  const proc = new EventEmitter();
+  proc.stdout = new EventEmitter();
+  proc.stderr = new EventEmitter();
+  proc.killed = false;
+  proc.exitCode = null;
+  proc.signalCode = null;
+  proc.kill = () => { proc.killed = true; };
+  queueMicrotask(() => {
+    for (const chunk of stdout) proc.stdout.emit("data", Buffer.from(chunk));
+    for (const chunk of stderr) proc.stderr.emit("data", Buffer.from(chunk));
+    proc.emit("close", code);
+  });
+  return proc;
+}
+
+test("headless 起不来时，stderr 尾巴进 reason（不再是「(无输出)」）", async () => {
+  // issue #578 的直接症状：退出码 1 + stdout 空 → reason 只有「(无输出)」，用户
+  // 连是缺 credential 还是路径错都不知道。原因一直在 stderr 里。
+  const runner = makeHeadlessRunner({
+    locateExe: () => "D:\\fake\\DSH NEXT.exe",
+    resolveCli: () => ({ path: "D:\\fake\\cli.js", candidates: [], verified: true }),
+    spawn: () => fakeProc({ stderr: ["Error: Cannot find module 'D:\\fake\\cli.js'\n"], code: 1 }),
+  });
+  const result = await runner({ cwd: ".", task: "t", model: "p/m", timeoutMs: 5000, maxToolCalls: 3, maxOutputBytes: 4096 });
+  assert.equal(result.ok, false);
+  assert.equal(result.kind, "environment"); // "Cannot find" → 环境级
+  assert.ok(result.reason.includes("Cannot find module"));
+  assert.ok(!result.reason.includes("(无输出)"));
+});
+
+test("成功路径不追加「未经探测」的提示；探测失败且环境错时才追加", async () => {
+  // 成功时多说一句会让人以为哪里没配好；失败时这句是唯一的自查线索。
+  const okRunner = makeHeadlessRunner({
+    locateExe: () => "D:\\fake\\app.exe",
+    resolveCli: () => ({ path: "D:\\fake\\cli.js", candidates: [], verified: false }),
+    spawn: () => fakeProc({ stdout: ['{"type":"final","text":"ok"}\n'] }),
+  });
+  const ok = await okRunner({ cwd: ".", task: "t", model: "p/m", timeoutMs: 5000, maxToolCalls: 3, maxOutputBytes: 4096 });
+  assert.equal(ok.ok, true);
+  assert.ok(!ok.reason);
+
+  const badRunner = makeHeadlessRunner({
+    locateExe: () => "D:\\fake\\app.exe",
+    resolveCli: () => ({ path: "D:\\fake\\cli.js", candidates: [], verified: false }),
+    spawn: () => fakeProc({ stderr: ["MISSING_CREDENTIAL\n"], code: 1 }),
+  });
+  const bad = await badRunner({ cwd: ".", task: "t", model: "p/m", timeoutMs: 5000, maxToolCalls: 3, maxOutputBytes: 4096 });
+  assert.equal(bad.kind, "environment");
+  assert.ok(bad.reason.includes("DSH_CLI_JS")); // 提示指向唯一的人工出口
+});
+
+test("找不到 CLI 时 reason 列出全部候选路径", async () => {
+  const runner = makeHeadlessRunner({
+    locateExe: () => "D:\\fake\\DSH NEXT.exe",
+    resolveCli: () => ({ path: null, candidates: ["a/lib/desktop-cli.js", "b/dsh/lib/cli.js"], verified: false }),
+    spawn: () => { throw new Error("不该 spawn"); },
+  });
+  const result = await runner({ cwd: ".", task: "t", model: "p/m", timeoutMs: 5000, maxToolCalls: 3, maxOutputBytes: 4096 });
+  assert.equal(result.ok, false);
+  assert.equal(result.kind, "environment");
+  assert.ok(result.reason.includes("a/lib/desktop-cli.js"));
+  assert.ok(result.reason.includes("b/dsh/lib/cli.js"));
+});
+
+test("--dsh-exe 只影响这一轮：跑完 env 还原", async () => {
+  // 原来写进 process.env 就不还：同一进程里后续每次定位都继承旧值（面板切仓库
+  // 还是那个 exe），属于会记很久的脏状态。
+  const { root, store } = setup();
+  const saved = process.env.DSH_EXE;
+  try {
+    delete process.env.DSH_EXE;
+    let seen = null;
+    const t1 = createT1({
+      store,
+      runSession: async () => {
+        seen = process.env.DSH_EXE;
+        return { ok: true, text: GOOD_OUTPUT };
+      },
+      now: FIXED_NOW,
+    });
+    await t1.runT1({ repoRoot: root, moduleSlug: "src", dshExe: "D:\\Harness.exe" });
+    assert.equal(seen, "D:\\Harness.exe"); // 轮内可见
+    assert.equal(process.env.DSH_EXE, undefined); // 轮后还原
+  } finally {
+    if (saved !== undefined) process.env.DSH_EXE = saved;
+    store.close();
     rmTempBestEffort(root);
   }
 });

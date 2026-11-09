@@ -300,7 +300,8 @@ test("guardT1Loss：自动刷新遇到已富化的页就整轮拒绝，不写字
 test("CLI 解析：--t1 相关旗标取到值，--timeout 只收正数秒", () => {
   const { flags } = parseArgv([
     "D:/repo", "--t1", "--apply", "--module", "src", "--model", "xdpool/m",
-    "--timeout", "60", "--retry-failed", "--dsh-exe", "D:/Harness.exe", "--json",
+    "--timeout", "60", "--retry-failed", "--dsh-exe", "D:/Harness.exe",
+    "--dsh-cli", "D:/cli.js", "--json",
   ]);
   assert.equal(flags.t1, true);
   assert.equal(flags.apply, true);
@@ -309,6 +310,8 @@ test("CLI 解析：--t1 相关旗标取到值，--timeout 只收正数秒", () =
   assert.equal(flags.timeout, 60, "解析出来就是数字，接线处不再二次转换");
   assert.equal(flags.retryFailed, true);
   assert.equal(flags["dsh-exe"], "D:/Harness.exe");
+  // --dsh-cli 是 issue #578 的人工出口（探测不进 asar 时的唯一办法），必须能取到值
+  assert.equal(flags["dsh-cli"], "D:/cli.js");
   assert.throws(() => parseArgv(["--t1", "--timeout", "abc"]), /正数秒/);
   assert.throws(() => parseArgv(["--t1", "--timeout", "0"]), /正数秒/);
   assert.throws(() => parseArgv(["--t1", "--timeout"]), /需要一个秒数/);

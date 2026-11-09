@@ -38,6 +38,7 @@ const USAGE = `${BIN_NAME} — 仓库地志（chorography）：T0 确定性骨�
   --timeout <秒>       T1 单模块墙钟上限（缺省 240s）
   --retry-failed       把 failed 页拉进来重试（T1；成功后计数清零）
   --dsh-exe <路径>     DeepSeek Harness 主程序定位（缺省走 DSH_EXE / 标准安装位）
+  --dsh-cli <路径>     直接指定 headless CLI（缺省自动探测两种安装布局）
   --db <path>    memory.db 路径（缺省 ~/.dsh/memory/memory.db，前导 ~ 会展开）
   --json         receipt 用机器可读 JSON 输出
   -h, --help     本帮助
@@ -58,7 +59,7 @@ function parseArgv(argv) {
     else if (arg === "--json") flags.json = true;
     else if (arg === "--t1") flags.t1 = true;
     else if (arg === "--retry-failed") flags.retryFailed = true;
-    else if (arg === "--module" || arg === "--model" || arg === "--dsh-exe") {
+    else if (arg === "--module" || arg === "--model" || arg === "--dsh-exe" || arg === "--dsh-cli") {
       const next = argv[i + 1];
       if (next === undefined || next.startsWith("--")) {
         throw new Error(`${arg} 需要一个参数`);
@@ -143,6 +144,9 @@ async function main() {
     if (flags.t1) {
       // T1 档（M2）：缺省 dry-run 只列候选模块与章程预览（零会话零写入）；
       // --apply 才真开会话花钱。三重上限与降级表在 createT1 里。
+      // --dsh-cli 走环境变量而不是新参数：探测层（resolveCliJs）本来就认 DSH_CLI_JS，
+      // 再加一条平行的传参链只会让「两种说法哪个赢」变成新的坑。
+      if (flags["dsh-cli"]) process.env.DSH_CLI_JS = flags["dsh-cli"];
       const t1 = createT1({ store });
       const receipt = await t1.runT1({
         repoRoot: repoPath,
