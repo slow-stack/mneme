@@ -4,6 +4,8 @@
 
 ## 🆕 新增
 
+- **目录归属文档（#278 第 3 子项）**：新增 [docs/DIRECTORIES.md](docs/DIRECTORIES.md)，把散在注释里的「哪个目录是什么」收成一处总账。开篇钉死三个相似名：`~/.dsh/memory` 是记忆库（SQLite 正本 + 镜像 md + 候选 / 提议 / 观察 / 日记 / 文档目录），`~/.dsh/mneme` 是模型与运行时缓存（**不是记忆库**，可整目录删掉重来），`~/.dsh-mneme` 是 CLI 连接配置——把模型缓存当成记忆库是这个项目真实踩过的坑。每个落点标了拥有者（人改 / 机器写 / 外部只读）与出处文件，另附「删了会怎样」速查、七张路径配置键的展开规则差异（`memoryDir` 一族做 `~` 展开、模型 / 运行时一族不做）、与已知坑（`documents.md` ≠ `documents/`、镜像手改窗口、profiles/ 里丢库）。README 中英文档表与 AGENTS.md 模块地图同步加了索引行。#278 的另两个子项（`~/.dsh` 迁出、统一导出）是大活，按 issue 建议拆批另行落地。
+
 - **会话头顶那个日记入口撤了；「写今天 / 存到这个项目」补进面板**。两处入口同时存在时，用户点哪一个都像「又开了一本」，而右栏那套是旧版遗留下来的：会话头一个按钮 → 右栏页签 → 里面才是写与导出。现在只留一个入口：记忆面板的「日记」标签页。
 
   - **删的是什么（`lib/client.js`）**：`registerDiarySeats` 里原本注册三件事——① 右栏页签类型 ② `conversation.session.header.actions` 会话头入口（`id: "dsh-mneme:diary"`、`order: 31`）③ `sidebar.right.pane.tab` 右栏正文。删的是 ②，连同 `DiaryEntryButton` 组件、`.mneme-diary-trigger*` 五条 CSS、`memory.diary.openFailed` 文案。**为什么不是「看着多余」就删**：`openTab` 全仓库只有两处调用（M.O. 一处、日记 ② 一处），所以删掉 ② 之后本插件自己再也打不开右栏那一页。但宿主把页签类型目录 `tabTypes.getSnapshot() => tabs.entries()` 交给了右栏的「新建页签」选择器，用户从宿主自己的列表里仍能打开它——那套正文因此**留着**，不是死代码。
