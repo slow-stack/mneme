@@ -39,6 +39,8 @@ dsh-mneme reclaim --json                        # 原始 JSON，给脚本用
 
 `distill_records` 只在 `distillRecords.enabled=true` 时才会有行（默认关，连收集都不做），所以对大多数库这一项恒为 0。**曾经开过再关的库有行**：关掉开关只是不再写、也不再经 HTTP 读出去，已留的行一直躺在库里，直到 `dsh-mneme reclaim`（不读这个键）或重新开启后的启动裁剪（见 [蒸馏原文留存](DISTILL.md)）。
 
+`dream_runs.input` 另有一个**写入期**瘦身口（#557）：`dreamInputSummaryEnabled`（opt-in 默认关）让新 auto 轮的快照只落骨架（id/type/title/importance/updated_at，不含 content）。它与本入口共享同一条边界——organize 轮的重放载荷无论哪个口都不碰；receipt 的 `snapshot_hash` 照常在内存里对含 content 的快照计算，但瘦身轮的原文不在库里、离线重算不出 hash，#512 的「每一行都能回放一次巩固」对瘦身轮降级为骨架级。删行依旧不在任何口子里（拍板 3：裁列同意、删行不同意）。
+
 取消归档时（`memory_archive` 还原）服务端会重新排队嵌入，所以被回收的向量能拿回来。
 
 ## 代价与实测

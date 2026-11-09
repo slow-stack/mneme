@@ -180,6 +180,18 @@ export const Config = z.object({
   // dreamMinIntervalMinutes 再开本键）。与 dreamPeakHours / dreamMinIntervalMinutes
   // 同族（节流阀，不新增任何 LLM 调用），故不进 LIGHT_MODE_OFF。
   autoDreamFailureBackoff: z.boolean().default(false),
+  // Issue #557（建议 2，opt-in 默认关 = 审计行逐字节一致）：dream 审计行的输入
+  // 快照瘦身。dream_runs.input 单行体积随记忆量涨（#557 实测平均 40-79 KB/轮，
+  // 绝大部分是 content），轮数又随天数涨，两者相乘超线性（报告库占 43% 的页）。
+  // 开启后 auto 轮的快照只留骨架（id/type/title/importance/updated_at，不含
+  // content）。巩固判定不回读审计行：LLM 输入由记忆库现算（prompt 不变），
+  // snapshot_hash 在内存里对含 content 的快照计算（receipt 完整性不变）；变的
+  // 只是离线回放——原文不在库里就重算不出 hash，#512「每一行都能回放一次巩固」
+  // 对瘦身轮降级为骨架级（#275 reclaim 清过 input 的库本就丢过这层，本键把同一
+  // 权衡前移到写入期）。organize 轮不经过这里（重放载荷走 organize.js 自己的
+  // saveDreamRun），写入期与 reclaim（run_type != 'organize'）同一条边界。
+  // storage-only、不新增任何 LLM 调用，不进 LIGHT_MODE_OFF（同上定性）。
+  dreamInputSummaryEnabled: z.boolean().default(false),
   // Issue #239（第 4 项，错峰队列）镜像到巩固：高峰期不做梦。与
   // summarizePeakHours 同一份时段语法（复用 src/summarize.js 的 parsePeakSpec /
   // isInPeakWindow / nextOffPeakAt，不另写解析器）：逗号分隔、可带星期前缀、支持

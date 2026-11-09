@@ -4,6 +4,13 @@
 
 ## 🆕 新增
 
+- **dream 审计行输入快照瘦身（#557 建议 2，opt-in 默认关）**。`dream_runs.input` 的单行体积随记忆量涨（#557 实测平均 40-79 KB/轮，绝大部分是 content），轮数又随天数涨，两者相乘超线性增长（报告库占 43% 的页；`recall_runs` / `llm_audit_logs` 都有保留期与回收口，这张表只有手动 reclaim 一个口）。新增 `dreamInputSummaryEnabled`（默认 false = 审计行逐字节一致）：开启后 auto 轮的快照只落骨架（id/type/title/importance/updated_at，不含 content）。
+
+  - **判定与回执不受影响**：巩固的 LLM 输入由记忆库现算、`snapshot_hash` 在内存里对含 content 的快照计算，两者都不经过落库副本——prompt 与 receipt 完整性不变；变的只是离线回放（原文不在库里就重算不出 hash，#512「每一行都能回放一次巩固」对瘦身轮降级为骨架级）。
+  - **organize 轮结构性豁免**：整理轮的重放载荷走 `organize.js` 自己的 `saveDreamRun`，不经过 dream.js 的快照构造——与 #275 reclaim 清 input 的 `run_type != 'organize'` 谓词同一条边界，apply 重放永远不会被瘦身破坏。
+  - **不删行**：拍板 3（裁列同意、删行不同意）不动，`receipt_chain` / `memory_mints` 的 `run_id` 指针不涉及悬空问题；存量库的大行仍走 `dsh-mneme reclaim` 回收（#275）。
+  - **验证**：`test/dream.test.js` 新增 2 例（默认关 content 原样落库 / 开启后骨架 + 判定回执不变）；`test/api.test.js` 计数锁 121 → 122 并钉默认值；`docs/CONFIGURATION.md` 补键说明、`docs/STORAGE.md` 补写入期瘦身与拍板边界。
+
 - **会话头顶那个日记入口撤了；「写今天 / 存到这个项目」补进面板**。两处入口同时存在时，用户点哪一个都像「又开了一本」，而右栏那套是旧版遗留下来的：会话头一个按钮 → 右栏页签 → 里面才是写与导出。现在只留一个入口：记忆面板的「日记」标签页。
 
   - **删的是什么（`lib/client.js`）**：`registerDiarySeats` 里原本注册三件事——① 右栏页签类型 ② `conversation.session.header.actions` 会话头入口（`id: "dsh-mneme:diary"`、`order: 31`）③ `sidebar.right.pane.tab` 右栏正文。删的是 ②，连同 `DiaryEntryButton` 组件、`.mneme-diary-trigger*` 五条 CSS、`memory.diary.openFailed` 文案。**为什么不是「看着多余」就删**：`openTab` 全仓库只有两处调用（M.O. 一处、日记 ② 一处），所以删掉 ② 之后本插件自己再也打不开右栏那一页。但宿主把页签类型目录 `tabTypes.getSnapshot() => tabs.entries()` 交给了右栏的「新建页签」选择器，用户从宿主自己的列表里仍能打开它——那套正文因此**留着**，不是死代码。

@@ -807,7 +807,9 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // v0.13 再新增 diaryEnabled（QQ 日记本：跨天判定 + 手写入口 + 面板页的总闸；
   // 顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 120。
   // v0.13 diaryWriteEveryMinutes（日记定时写间隔，走 INT_RANGES 表）= 121。
-  assert.equal(Object.keys(data.effective).length, 121);
+  // issue #557 新增 dreamInputSummaryEnabled（dream 审计行输入快照瘦身；顶层布尔键，
+  // 不需要 NESTED_FLAG_PATHS 条目）= 122。
+  assert.equal(Object.keys(data.effective).length, 122);
   // 三个 kb 新键的默认值单独钉一遍：计数锁只钉数量，钉不住值（缺省值翻转时
   // 面板会静默换上一套授权语义），这里补上值这一层。
   assert.equal(data.effective.chorographyAutoRefresh, false);
@@ -819,6 +821,8 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, true);
   assert.equal(data.effective.injectHeatEnabled, false);
+  // issue #557：审计行快照瘦身默认关（默认审计行逐字节一致）
+  assert.equal(data.effective.dreamInputSummaryEnabled, false);
   // issue #380：注入前判定两级开关，默认全关（默认路径零行为变化）
   assert.equal(data.effective["preInjectGate.enabled"], false);
   assert.equal(data.effective["preInjectGate.enforce"], false);

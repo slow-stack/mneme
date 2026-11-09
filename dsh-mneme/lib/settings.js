@@ -168,6 +168,9 @@ const FEATURE_FLAG_BOOLEANS = [
   // Issue #292：autoDream 连续失败退避（默认关）。基数是 dreamMinIntervalMinutes，
   // 有效间隔 = 基数 × 2^连续失败数（成功清零），封顶 30 分钟；面板可启停。
   "autoDreamFailureBackoff",
+  // Issue #557：dream 审计行输入快照瘦身（默认关）。开启后 auto 轮只落骨架
+  // （不含 content），organize 轮的重放载荷不受影响；面板可启停。
+  "dreamInputSummaryEnabled",
   "sleepModeEnabled",
   // Issue #529：sleep 连续失败退避（默认关）。基数是 sleepMinIntervalHours，
   // 有效间隔 = 基数 × 2^连续失败数（成功清零），封顶 max(基数, 24h)；面板可启停。
