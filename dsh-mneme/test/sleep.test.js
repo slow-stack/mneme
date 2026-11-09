@@ -950,9 +950,11 @@ test("sleep: the affective phase never adds a related_to edge", async () => {
   store.close();
 });
 
-test("sleep: replaying the same segment does not stack duplicate edges", async () => {
+test("sleep: replaying the same segment merges into the existing edge instead of stacking", async () => {
   // #619 / Ephor 第 2 条：entity_relations 没有 UNIQUE，saveRelation 每次新插。
   // 探针拿同一批段反复回放时，重复边会把 sessionCount 抬高、主指标失真。
+  // 而判重不能只「丢弃」：同一场合后来又看到更多证据时，那条边上的
+  // sessionCount 会永远停在第一次，将来读归因覆盖率会一直读到 1。
   const { service, store } = setup();
   service.createEntity({ name: "桉桉", type: "person" });
   service.createEntity({ name: "答辩", type: "concept" });
@@ -964,11 +966,67 @@ test("sleep: replaying the same segment does not stack duplicate edges", async (
   const first = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
   assert.equal(first.phases.affective.relations, 1, "第一轮写了一条");
   const second = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
-  assert.equal(second.phases.affective.relations, 0, "第二轮不再重复写");
-  assert.ok(second.phases.affective.dropped.some((d) => d.reason === "duplicate edge"), "重复被记账，不是静默跳过");
+  assert.equal(second.phases.affective.relations, 0, "第二轮不再新插边");
+  assert.ok(second.phases.affective.merged >= 1, "第二轮认出了同一场合，走合并而不是丢弃");
   const person = service.findEntityByName("桉桉");
   const edges = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
   assert.equal(edges.length, 1, "库里仍只有一条边");
+  assert.equal(edges[0].metadata.sessionCount, 1, "同一会话不会把场合数吹大");
+  assert.deepEqual(edges[0].metadata.evidence, [mem.id], "证据不变");
+  store.close();
+});
+
+test("sleep: two memories from one session merge into one edge, not two", async () => {
+  // 同一会话里的两条记忆各说一句「他很焦虑」，证据天然不相交，但它们是
+  // 同一个场合。按 evidence 交集判会各写一条，把边数与场合数一起吹大。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const m1 = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  const m2 = makeMemory(service, "答辩前一晚", "越想越慌，睡不着");
+  linkSession(service, m1.id, "session-A");
+  linkSession(service, m2.id, "session-A");
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [m1.id] },
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [m2.id] }
+  ]);
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(result.phases.affective.relations, 1, "同一会话只该有一条边");
+  assert.ok(result.phases.affective.merged >= 1, "第二条按同场合合并进来");
+  const person = service.findEntityByName("桉桉");
+  const edges = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  assert.equal(edges.length, 1);
+  assert.equal(edges[0].metadata.sessionCount, 1, "两条记忆都在同一会话，场合数仍是 1");
+  assert.deepEqual([...edges[0].metadata.evidence].sort(), [m1.id, m2.id].sort(), "证据取并集");
+  store.close();
+});
+
+test("sleep: a later occasion extends the existing edge instead of being dropped", async () => {
+  // 第一轮 1 个会话写边，第二轮攒到 2 个会话（含新会话）。如果判成重复丢掉，
+  // 边上的 sessionCount 会冻结在 1；将来用它算归因覆盖率就一直读到 1。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const m1 = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  const m2 = makeMemory(service, "第二次答辩前", "又要答辩了，还是焦虑");
+  linkSession(service, m1.id, "session-A");
+  linkSession(service, m2.id, "session-B");
+  const first = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [m1.id] }
+  ]);
+  const r1 = await runSleep(first, service, affectiveConfig(), first.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(r1.phases.affective.relations, 1);
+  const second = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [m1.id, m2.id] }
+  ]);
+  const r2 = await runSleep(second, service, affectiveConfig(), second.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(r2.phases.affective.relations, 0, "不是新边");
+  assert.ok(r2.phases.affective.merged >= 1, "是合并");
+  const person = service.findEntityByName("桉桉");
+  const edges = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  assert.equal(edges.length, 1);
+  assert.equal(edges[0].metadata.sessionCount, 2, "场合数跟着证据涨到 2");
+  assert.deepEqual([...edges[0].metadata.evidence].sort(), [m1.id, m2.id].sort());
   store.close();
 });
 
@@ -993,10 +1051,12 @@ test("sleep: reordering the evidence list does not smuggle in a second edge", as
   ]);
   const second = await runSleep(reversed, service, affectiveConfig(), reversed.logger, { embedder, vectorIndex: null }, null);
   assert.equal(second.phases.affective.relations, 0, "只换了证据顺序，不能再写一条");
-  assert.ok(second.phases.affective.dropped.some((d) => d.reason === "duplicate edge"), "被记账为重复");
+  assert.ok(second.phases.affective.merged >= 1, "认成同一场合，走合并");
   const person = service.findEntityByName("桉桉");
   const edges = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
   assert.equal(edges.length, 1, "库里仍只有一条边");
+  assert.equal(edges[0].metadata.sessionCount, 1, "同一会话，场合数仍是 1");
+  assert.deepEqual([...edges[0].metadata.evidence].sort(), [m1.id, m2.id].sort(), "并集后证据不多不少");
   store.close();
 });
 

@@ -1169,6 +1169,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
   const items = parseJsonArray(text) ?? [];
   if (items.length === 0) return { status: "skipped", reason: "no attributions found" };
   const relations = [];
+  const merges = [];
   const traits = [];
   const dropped = [];
   let downgradedCount = 0;
@@ -1230,34 +1231,76 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       traits.push(record);
       continue;
     }
-    if (relations.length >= maxRelations) {
-      dropped.push({ reason: "relation cap", person: person.name, target: target.name });
-      continue;
-    }
     // #619 / Ephor: entity_relations 没有 UNIQUE 约束，saveRelation 每次
     // randomUUID() 新插一条。同一个 (person, target, 场合) 跑第二轮就会得到
     // 第二条一模一样的边——而探针会拿同一批段反复回放，重复边会让 sessionCount
-    // 看起来比真实场合数多，主指标直接失真。所以写之前先看这条边是否已存在；
-    // 存在就跳过并计入 dropped，而不是再插一条。这一步在 cap 之后、写之前，
-    // 免得重复边先吃掉一个名额。
+    // 看起来比真实场合数多，主指标直接失真。
     //
-    // 判重键是 (person, target, emotion) + evidence 有交集，不能只看 evidence[0]：
-    // 模型给 evidence 的顺序不稳定（parseJsonArray 也不排序），同一场合同一条边
-    // 换个顺序就会以 [m2,m1] 再写一遍。反过来，只看 evidence[0] 还会把「同一天
-    // 又焦虑又期待」里的第二种情绪当成重复丢掉——那是丢了一条真信息，而本相位
-    // 的承诺是「降级不丢弃」。所以情绪必须进键：换序同情绪算重复，同一条记忆
-    // 的不同情绪各算一条。
-    const evidenceSet = new Set(evidence);
-    const alreadyLinked = (service.getRelations(person.id) ?? []).some((r) => {
-      if (r.relation_type !== "affective_context" || r.to_entity !== target.id) return false;
-      const meta = r.metadata && typeof r.metadata === "object" ? r.metadata : null;
-      if (!meta) return Boolean(r.memory_id) && evidenceSet.has(r.memory_id);
-      if (String(meta.emotion ?? "").trim() !== emotion) return false;
-      const prior = Array.isArray(meta.evidence) ? meta.evidence : (r.memory_id ? [r.memory_id] : []);
-      return prior.some((id) => evidenceSet.has(id));
-    });
-    if (alreadyLinked) {
-      dropped.push({ reason: "duplicate edge", person: person.name, target: target.name, emotion });
+    // 「同一场合」不能拿 evidence 有没有交集来判。两次判据都基于证据列表，
+    // 而证据列表既不是场合本身、也不稳定：
+    //   ① 模型给 evidence 的顺序不定（parseJsonArray 也不排序），[m1,m2] 与
+    //      [m2,m1] 是同一场合的两种写法；
+    //   ② 同一会话里的两条不同记忆各说一句「他很焦虑」，证据天然不相交，可
+    //      它们是同一个场合——那时该合并成一条边，而不是各写一条把边数抬高；
+    //   ③ 反过来，第一轮看到 1 条证据、第二轮攒到 2 条（含新会话），若判成重复
+    //      就整条丢掉，边上 sessionCount 永远停在第一次那个数，将来读归因覆盖率
+    //      会一直读到 1。
+    // 所以键落在会话层：同一 (person, target, emotion) 且两边的会话集有交集，
+    // 就是同一场合。命中时把 evidence 并集写回、按并集重算 sessionCount，而不是
+    // 丢弃——被扩充的边记进 merged，让「这一轮其实补了证据」在返回值里看得见。
+    // 这一步在 cap 之前：合并既有边不新增行，不该占名额。
+    const currentSessions = sessions;
+    const priorEdges = (service.getRelations(person.id) ?? []).filter((r) =>
+      r.relation_type === "affective_context" && r.to_entity === target.id
+    );
+    let mergedInto = null;
+    for (const edge of priorEdges) {
+      const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : null;
+      const priorEmotion = String(meta?.emotion ?? "").trim();
+      if (priorEmotion !== emotion) continue;
+      const priorEvidence = Array.isArray(meta?.evidence)
+        ? meta.evidence
+        : (edge.memory_id ? [edge.memory_id] : []);
+      const priorSessions = sessionsFor(priorEvidence);
+      const sameOccasion = [...priorSessions].some((s) => currentSessions.has(s));
+      if (!sameOccasion) continue;
+      mergedInto = { edge, priorEvidence, priorSessions };
+      break;
+    }
+    if (mergedInto) {
+      const { edge, priorEvidence, priorSessions } = mergedInto;
+      const unionEvidence = [...new Set([...priorEvidence, ...evidence])];
+      const unionSessions = new Set([...priorSessions, ...currentSessions]);
+      const mergedMetadata = {
+        ...(edge.metadata && typeof edge.metadata === "object" ? edge.metadata : {}),
+        emotion,
+        // 保留首个 attribution，但降级痕迹一旦有就留着——合并不能把
+        // 「它曾被判成 trait 又被降级」这段历史抹掉。
+        attribution: (edge.metadata && edge.metadata.attribution) || attribution,
+        evidence: unionEvidence,
+        sessionCount: unionSessions.size,
+        lastMergedRunId: runId
+      };
+      if (record.downgradedFrom && !mergedMetadata.downgradedFrom) {
+        mergedMetadata.downgradedFrom = record.downgradedFrom;
+      }
+      try {
+        service.updateRelationMetadata?.(edge.id, mergedMetadata);
+        merges.push({
+          id: edge.id,
+          from: person.name,
+          to: target.name,
+          emotion,
+          evidence: unionEvidence.length,
+          sessionCount: unionSessions.size
+        });
+      } catch (error) {
+        logger?.warn?.(`dsh-mneme sleep: affective relation merge ${person.name}/${target.name} failed: ${String(error)}`);
+      }
+      continue;
+    }
+    if (relations.length >= maxRelations) {
+      dropped.push({ reason: "relation cap", person: person.name, target: target.name });
       continue;
     }
     try {
@@ -1319,6 +1362,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       scanned: memories.length,
       relations: relations.length,
       edgeWrites: relations.length,
+      merged: merges.length,
       applied,
       traits: traits.length,
       downgraded: downgradedCount,
@@ -1332,6 +1376,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       scanned: memories.length,
       relations: relations.length,
       edgeWrites: relations.length,
+      merged: merges.length,
       applied: 0,
       traits: traits.length,
       downgraded: downgradedCount,
@@ -1339,14 +1384,16 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
     };
   }
   return {
-    status: relations.length + applied > 0 ? "ok" : "noop",
+    status: relations.length + merges.length + applied > 0 ? "ok" : "noop",
     scanned: memories.length,
     relations: relations.length,
+    merged: merges.length,
     // #619: edges are real writes but not "applied decisions", so the receipt
     // would read `:0` for a run that did write. Count them separately instead
     // of folding them into `applied` (that would make the two numbers mean
     // different things depending on which phase produced them).
     edgeWrites: relations.length,
+    mergedList: merges,
     applied,
     failures,
     conflicts,

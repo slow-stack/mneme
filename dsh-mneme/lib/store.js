@@ -4410,6 +4410,26 @@ export function createStore(path) {
   }
 
   /**
+   * 覆盖一条关系行的 metadata（#619）。关系本身仍按 saveRelation 追加，
+   * 这条只给「同一条边被后续观察补充证据」用——情感相位判重命中时要把
+   * evidence 并集与 sessionCount 写回既有边，否则边上的场合数会永远停在
+   * 第一次写入那一刻。只改 metadata，不动 weight/source/created_at：这条边的
+   * 来源与权重反映的是它第一次被建立时的事实。
+   * 幂等（缺行 changes=0 → false）。
+   */
+  function updateRelationMetadata(id, metadata) {
+    const metaStr = metadata === undefined
+      ? null
+      : typeof metadata === "string"
+        ? metadata
+        : JSON.stringify(metadata);
+    const result = db.prepare(
+      "UPDATE entity_relations SET metadata = ? WHERE id = ?"
+    ).run(metaStr, id);
+    return result.changes > 0;
+  }
+
+  /**
    * Re-point every attr row whose memory_id is fromMemoryId to toMemoryId
    * (autoDream merge migration, v0.3.0 Phase 4 / 4.3.2). When the keeper
    * already carries a live attr for the same entity+key, the source row is
@@ -5575,6 +5595,7 @@ export function createStore(path) {
     listBoostedRelations,
     getLinkedMemoryIds,
     saveRelation,
+    updateRelationMetadata,
     bumpRelationWeight,
     migrateAttrsToMemory,
     getRelations,

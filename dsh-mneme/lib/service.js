@@ -3160,6 +3160,8 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // migrates entity_attrs on merge. Bookkeeping writes like the audit
     // passthroughs above — never write-hook-triggering memory mutations.
     saveRelation: (r) => store.saveRelation(r),
+    // #619：同一条边被后续观察补充证据时回写 metadata（情感相位判重命中）。
+    updateRelationMetadata: (id, metadata) => store.updateRelationMetadata(id, metadata),
     listEntities: (o) => store.listEntities(o),
     countEntities: () => store.countEntities(),
     getRelations: (id) => store.getRelations(id),
