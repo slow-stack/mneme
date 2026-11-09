@@ -972,6 +972,56 @@ test("sleep: replaying the same segment does not stack duplicate edges", async (
   store.close();
 });
 
+test("sleep: reordering the evidence list does not smuggle in a second edge", async () => {
+  // 判重键如果只看 evidence[0]，模型把 [m1, m2] 写成 [m2, m1] 就会再插一条。
+  // LLM 给 evidence 的顺序本来就不稳定，parseJsonArray 也不排序——同一条边
+  // 换个顺序就重复写，sessionCount 会被抬得比真实场合数高，正好毁掉主指标。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const m1 = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  const m2 = makeMemory(service, "答辩前一晚", "越想越慌，睡不着");
+  linkSession(service, m1.id, "session-A");
+  linkSession(service, m2.id, "session-A");
+  const forward = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [m1.id, m2.id] }
+  ]);
+  const first = await runSleep(forward, service, affectiveConfig(), forward.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(first.phases.affective.relations, 1, "第一轮写了一条");
+  const reversed = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [m2.id, m1.id] }
+  ]);
+  const second = await runSleep(reversed, service, affectiveConfig(), reversed.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(second.phases.affective.relations, 0, "只换了证据顺序，不能再写一条");
+  assert.ok(second.phases.affective.dropped.some((d) => d.reason === "duplicate edge"), "被记账为重复");
+  const person = service.findEntityByName("桉桉");
+  const edges = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  assert.equal(edges.length, 1, "库里仍只有一条边");
+  store.close();
+});
+
+test("sleep: two emotions in the same memory are two edges, not a duplicate", async () => {
+  // 判重键如果不带情绪，「答辩前又焦虑又期待」里的第二条会被当成重复丢掉，
+  // dropped 里还写着 duplicate edge——读起来像「本来就重复」，实际是丢了一条
+  // 真信息。本相位的承诺是降级不丢弃，重复和丢弃不能混成一个理由。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前一天", "明天答辩，他又焦虑又有点期待");
+  linkSession(service, mem.id, "session-A");
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [mem.id] },
+    { person: "桉桉", target: "答辩", emotion: "期待", attribution: "occasion", evidence: [mem.id] }
+  ]);
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(result.phases.affective.relations, 2, "两种情绪各写一条");
+  assert.equal(result.phases.affective.dropped.filter((d) => d.reason === "duplicate edge").length, 0, "不许把第二种情绪当重复");
+  const person = service.findEntityByName("桉桉");
+  const edges = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  assert.deepEqual(edges.map((r) => r.metadata.emotion).sort(), ["期待", "焦虑"], "两条边各带自己的情绪词");
+  store.close();
+});
+
 test("sleep: an edge write shows up in the receipt instead of reading as zero", async () => {
   // #619 / Ephor: receipt 的倒数第二位是 applied，而 affective 相位写边走
   // saveRelation、不进 applied。不改的话，一轮明明写了边，审计行却是 `:0`——

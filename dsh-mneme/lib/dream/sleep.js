@@ -1235,16 +1235,29 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       continue;
     }
     // #619 / Ephor: entity_relations 没有 UNIQUE 约束，saveRelation 每次
-    // randomUUID() 新插一条。同一个 (person, target, 场合记忆) 跑第二轮就会得到
+    // randomUUID() 新插一条。同一个 (person, target, 场合) 跑第二轮就会得到
     // 第二条一模一样的边——而探针会拿同一批段反复回放，重复边会让 sessionCount
     // 看起来比真实场合数多，主指标直接失真。所以写之前先看这条边是否已存在；
     // 存在就跳过并计入 dropped，而不是再插一条。这一步在 cap 之后、写之前，
     // 免得重复边先吃掉一个名额。
-    const alreadyLinked = (service.getRelations(person.id) ?? []).some(
-      (r) => r.relation_type === "affective_context" && r.to_entity === target.id && r.memory_id === evidence[0]
-    );
+    //
+    // 判重键是 (person, target, emotion) + evidence 有交集，不能只看 evidence[0]：
+    // 模型给 evidence 的顺序不稳定（parseJsonArray 也不排序），同一场合同一条边
+    // 换个顺序就会以 [m2,m1] 再写一遍。反过来，只看 evidence[0] 还会把「同一天
+    // 又焦虑又期待」里的第二种情绪当成重复丢掉——那是丢了一条真信息，而本相位
+    // 的承诺是「降级不丢弃」。所以情绪必须进键：换序同情绪算重复，同一条记忆
+    // 的不同情绪各算一条。
+    const evidenceSet = new Set(evidence);
+    const alreadyLinked = (service.getRelations(person.id) ?? []).some((r) => {
+      if (r.relation_type !== "affective_context" || r.to_entity !== target.id) return false;
+      const meta = r.metadata && typeof r.metadata === "object" ? r.metadata : null;
+      if (!meta) return Boolean(r.memory_id) && evidenceSet.has(r.memory_id);
+      if (String(meta.emotion ?? "").trim() !== emotion) return false;
+      const prior = Array.isArray(meta.evidence) ? meta.evidence : (r.memory_id ? [r.memory_id] : []);
+      return prior.some((id) => evidenceSet.has(id));
+    });
     if (alreadyLinked) {
-      dropped.push({ reason: "duplicate edge", person: person.name, target: target.name });
+      dropped.push({ reason: "duplicate edge", person: person.name, target: target.name, emotion });
       continue;
     }
     try {
