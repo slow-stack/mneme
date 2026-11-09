@@ -395,6 +395,22 @@ window.__ModuleLoader__.load({
         "kb.repo.none": "还没有登记的仓库：先去「仓库地志」页生成一次，再回来导入。",
         "kb.repo.noPath": "这个仓库的根路径拿不到（后端没回 rootPath），拼不出地志页的绝对路径。",
         "kb.repo.noRelPath": "这个模块还没生成骨架页（后端没回 relPath），先回「仓库地志」页生成一次再来导入。",
+        // 仓库卡片：Qoder 那种「在这里选择整理知识」的入口（#607 反馈）。
+        "kb.repos.title": "仓库：点一下把它的地志页整批整理进当前集合",
+        "kb.repos.empty": "还没有登记的仓库：先去「仓库地志」页生成一次，再回来整理。",
+        "kb.repos.modules": "个模块",
+        "kb.repos.pages": "页",
+        "kb.repos.organized": "已整理",
+        "kb.repos.run": "整理进本集合",
+        "kb.repos.running": "整理中…",
+        "kb.repos.needCollection": "先在左边建一个集合，再整理；入库要有个去处。",
+        "kb.repos.done": "整理完成",
+        "kb.repos.new": "新增",
+        "kb.repos.same": "未变",
+        "kb.repos.failedN": "失败",
+        "kb.repos.nopages": "这个仓库还没有地志页：先回「仓库地志」页生成骨架，再回来整理。",
+        // 手动填路径降级成高级选项：卡片才是主路径，但单页导入与 URL 入库仍要留。
+        "kb.advanced": "高级：手动入库 / 单页导入",
         "kb.load.failed": "加载失败",
         "memory.tab.all": "全部",
         "memory.tab.preference": "偏好",
@@ -1369,6 +1385,20 @@ window.__ModuleLoader__.load({
         "kb.repo.none": "No repository registered yet: generate one on the Repo Atlas page first, then come back to import.",
         "kb.repo.noPath": "This repository's root path is unavailable (the backend did not return rootPath), so the atlas page's absolute path cannot be composed.",
         "kb.repo.noRelPath": "This module has no skeleton page yet (the backend did not return relPath). Generate it on the Repo Atlas page first, then import.",
+        "kb.repos.title": "Repositories: click one to organize its Atlas pages into the current collection",
+        "kb.repos.empty": "No repository registered yet: generate one on the Repo Atlas page first, then come back to organize.",
+        "kb.repos.modules": "modules",
+        "kb.repos.pages": "pages",
+        "kb.repos.organized": "organized",
+        "kb.repos.run": "Organize into this collection",
+        "kb.repos.running": "Organizing…",
+        "kb.repos.needCollection": "Create a collection on the left first — ingesting needs somewhere to land.",
+        "kb.repos.done": "Organize finished",
+        "kb.repos.new": "new",
+        "kb.repos.same": "unchanged",
+        "kb.repos.failedN": "failed",
+        "kb.repos.nopages": "This repository has no Atlas pages yet: generate its skeleton on the Repo Atlas page first, then come back to organize.",
+        "kb.advanced": "Advanced: manual ingest / single page",
         "kb.load.failed": "Failed to load",
         "memory.tab.all": "All",
         "memory.tab.preference": "Preferences",
@@ -2597,6 +2627,20 @@ window.__ModuleLoader__.load({
       ".mneme-kbdocrow{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;padding:6px 0;border-top:1px solid var(--dsw-alias-border-l1)}",
       ".mneme-kbdoctitle{font-size:12.5px;color:var(--dsw-alias-label-primary)}",
       ".mneme-kbdocmeta{font-size:11.5px;line-height:17px;color:var(--mneme-fg-dim)}",
+      // 仓库卡片（照 Qoder 的 Repo Wiki 卡片做的）：自适应列，卡片只承载「是哪个仓库、
+      // 有几页、整理了几页」和一颗按钮，不塞正文——点进去才是内容。
+      // auto-fit 而不是 auto-fill：只有一个仓库时卡片要铺满整行，
+      // auto-fill 会把空轨道留着，单张卡片只占 1/3 宽，看着像被裁了。
+      ".mneme-kbrepolist{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px;margin-top:8px}",
+      ".mneme-kbrepo{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px dashed var(--dsw-alias-border-l2);border-radius:10px}",
+      ".mneme-kbrepohead{display:flex;align-items:center;gap:6px;min-width:0}",
+      ".mneme-kbreponame{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".mneme-kbrepometa{display:flex;flex-wrap:wrap;gap:8px;font-size:11.5px;line-height:17px;color:var(--mneme-fg-dim)}",
+      ".mneme-kbrepopath{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".mneme-kbreporun{align-self:flex-start}",
+      // 批量整理的失败明细：toast 只有 2.5 秒，失败页名字一多就读不完，留在页面上。
+      ".mneme-kbfails{margin-top:10px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px}",
+      ".mneme-kbadvtoggle{margin-top:14px;align-self:flex-start}",
       // --- 记忆库页面：居中 sheet，非全屏 ---
       // 从对话直接打开一页记忆库：背板压暗 + 居中圆角卡片（上限 1180×880），
       // 对话仍留在背板之后，任何状态下（含新会话 hero、无 tab 环）都可用。
@@ -11398,7 +11442,11 @@ window.__ModuleLoader__.load({
         newKey: "", newTitle: "", confirming: null,
         kind: "file", source: "", title: "",
         ingesting: false, toast: "",
-        repos: [], repoId: null, modules: [], moduleSlug: "",
+        // reposPhase 单开一格：/choro/repos 也会 409/503（地志开关没开、queries 没装配），
+        // 那两种情况若混进 repos=[] 就会显示成「还没有仓库，先去生成一次」——把环境问题
+        // 说成用户没做操作，正是 #607 那类假成功。
+        repos: [], reposPhase: "loading", repoId: null, modules: [], moduleSlug: "",
+        organizing: null, organizeErrors: [], advOpen: false,
         search: "", searching: false, hits: []
       });
       // 选中集合同时存一份 ref：load() 是异步的，等它回来时 state.active 可能
@@ -11459,19 +11507,23 @@ window.__ModuleLoader__.load({
 
       // 地志页导入要的是磁盘上的绝对路径，根路径只有 /choro/repos 有（契约 §3.2），
       // 所以这里单取一份仓库列表，不去改 /choro/page 的回执形状（那是两处真源）。
+      // #607 教训：409（地志开关没开）/ 503（宿主没装配 queries）不是「你还没有仓库」，
+      // 必须单列一格 reposPhase，否则环境问题会被显示成用户什么都没做。
       const loadRepos = useCallback(async () => {
         try {
           const res = await apiFetch("/api/dsh-mneme/choro/repos");
           const json = await readJson(res);
-          if (json.status !== 200) { patch({ repos: [] }); return; }
+          if (json.status === 409) { patch({ repos: [], reposPhase: "disabled" }); return; }
+          if (json.status === 503) { patch({ repos: [], reposPhase: "unavailable" }); return; }
+          if (json.status !== 200) { patch({ repos: [], reposPhase: "error" }); return; }
           const repos = json.data.repos || [];
-          patch({ repos });
+          patch({ repos, reposPhase: repos.length > 0 ? "ready" : "empty" });
           if (repos.length > 0 && repos[0].id !== undefined) {
             patch({ repoId: repos[0].id });
             await loadModules(repos[0].id);
           }
         } catch (e) {
-          patch({ repos: [] });
+          patch({ repos: [], reposPhase: "error" });
         }
       }, [patch, loadModules]);
 
@@ -11516,6 +11568,25 @@ window.__ModuleLoader__.load({
         }
       }, [state.confirming, patch, load, t]);
 
+      // 单条入库的公共落点：手动表单与「一键整理」都走它，免得两条路各写一份
+      // 回执解析（#607 那类「两条路说法不一致」就是从复制粘贴开始的）。
+      const postIngest = useCallback(async ({ collection, kind, source, title }) => {
+        const body = { collection, kind, source };
+        const trimmed = String(title || "").trim();
+        if (trimmed) body.title = trimmed;
+        const res = await apiFetch("/api/dsh-mneme/kb/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const json = await readJson(res);
+        if (json.status !== 200 || json.data.ok !== true) {
+          return { ok: false, error: String(json.data.detail || json.data.error || json.status) };
+        }
+        // skipped 是幂等命中（同 relKey + 同 sha256），不是失败，别混成一种回声。
+        return { ok: true, skipped: json.data.skipped === true, chunks: json.data.chunks || 0 };
+      }, []);
+
       const ingest = useCallback(async () => {
         const collection = state.active;
         if (!collection) { patch({ toast: t("kb.empty.collections") }); return; }
@@ -11536,29 +11607,68 @@ window.__ModuleLoader__.load({
         if (!source) { patch({ toast: t("kb.doc.source") }); return; }
         patch({ ingesting: true });
         try {
-          const body = { collection, kind, source };
-          const title = String(state.title || "").trim();
-          if (title) body.title = title;
-          const res = await apiFetch("/api/dsh-mneme/kb/ingest", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body)
-          });
-          const json = await readJson(res);
-          if (json.status !== 200 || json.data.ok !== true) {
-            patch({ ingesting: false, toast: t("kb.doc.failed") + ": " + (json.data.detail || json.data.error || json.status) });
-            return;
-          }
+          const out = await postIngest({ collection, kind, source, title: state.title });
+          if (!out.ok) { patch({ ingesting: false, toast: t("kb.doc.failed") + ": " + out.error }); return; }
           // skipped 是幂等命中（同 relKey + 同 sha256），不是失败，别混成一种回声。
-          const note = json.data.skipped === true
+          const note = out.skipped
             ? t("kb.doc.skipped")
-            : t("kb.doc.done") + ": " + (json.data.chunks || 0) + " " + t("kb.col.chunks");
+            : t("kb.doc.done") + ": " + out.chunks + " " + t("kb.col.chunks");
           patch({ ingesting: false, source: "", title: "", toast: note });
           await load();
         } catch (e) {
           patch({ ingesting: false, toast: t("kb.doc.failed") + ": " + String((e && e.message) || e) });
         }
-      }, [state, patch, load, t]);
+      }, [state, patch, load, t, postIngest]);
+
+      // 一键整理：把某个仓库的全部地志页依次灌进当前集合。
+      // 之所以在前端循环而不是在后端加一个批量路由：kb 侧只认「一条来源一条 doc」，
+      // 批量路由会引入第二套部分失败语义（哪几页进了、哪几页没进、能不能续跑），
+      // 那属于要另做设计的东西；这边循环 + 一条汇总回执足够，且失败页能逐条报名字。
+      const organizeRepo = useCallback(async (repo) => {
+        const collection = state.active;
+        if (!collection) { patch({ toast: t("kb.repos.needCollection") }); return; }
+        const rootPath = repo && repo.rootPath ? String(repo.rootPath) : "";
+        if (!rootPath) { patch({ toast: t("kb.repo.noPath") }); return; }
+        patch({ organizing: repo.id });
+        try {
+          const res = await apiFetch("/api/dsh-mneme/choro/modules?repo=" + encodeURIComponent(repo.id));
+          const json = await readJson(res);
+          if (json.status !== 200) {
+            patch({ organizing: null, toast: t("kb.load.failed") + ": " + String(json.status) });
+            return;
+          }
+          // 只取真有地志页的模块：没 relPath 就是 choro_pages 里没这行（还没生成过骨架），
+          // 硬灌进去只会得到一串 file-not-found，把「还没生成」说成「整理失败」。
+          // 有 relPath 的页文件在磁盘上是存在的（T0 写骨架时一并落盘），status 只影响
+          // 内容是骨架还是富化过，跟能不能读无关，所以不按 status 过滤。
+          const pages = (json.data.modules || []).filter((m) => m.relPath);
+          if (pages.length === 0) { patch({ organizing: null, toast: t("kb.repos.nopages") }); return; }
+          let added = 0;
+          let same = 0;
+          const failed = [];
+          for (const m of pages) {
+            const src = rootPath.replace(/[\\/]+$/, "") + "/" + String(m.relPath).replace(/^[\\/]+/, "");
+            const out = await postIngest({ collection, kind: "choro_page", source: src, title: m.title || "" });
+            if (!out.ok) failed.push((m.title || m.slug || src) + " (" + out.error + ")");
+            else if (out.skipped) same += 1;
+            else added += 1;
+          }
+          // 回执把三档分开说：新增 / 未变 / 失败。合并成一句「整理完成」
+          // 会让「一次都没进」也显示成功，正是 #607 那类假回声。
+          const parts = [t("kb.repos.new") + " " + added, t("kb.repos.same") + " " + same];
+          if (failed.length > 0) parts.push(t("kb.repos.failedN") + " " + failed.length);
+          patch({ organizing: null, toast: parts.join(" · ") });
+          await load();
+          if (failed.length > 0) {
+            // 失败明细留在页面上（toast 2.5 秒就没了，名字一多根本读不完）。
+            patch({ organizeErrors: failed });
+          } else {
+            patch({ organizeErrors: [] });
+          }
+        } catch (e) {
+          patch({ organizing: null, toast: t("kb.load.failed") + ": " + String((e && e.message) || e) });
+        }
+      }, [state.active, patch, load, t, postIngest]);
 
       const runSearch = useCallback(async () => {
         const query = String(state.search || "").trim();
@@ -11583,6 +11693,9 @@ window.__ModuleLoader__.load({
       }, [state.search, state.active, patch, t]);
 
       useEffect(() => { load(); }, [load]);
+      // 仓库卡片是首屏内容，跟「手动入库选了哪种来源」无关，所以进页面就拉一次；
+      // 底下高级表单切到 choro 时那次 loadRepos() 保留——那时可能已经换过集合。
+      useEffect(() => { loadRepos(); }, [loadRepos]);
       // toast 自带计时器：它是回声，不该一直挂在页脚上占位置。
       useEffect(() => {
         if (!state.toast) return undefined;
@@ -11624,6 +11737,42 @@ window.__ModuleLoader__.load({
           loadDocs(c.key);
         }
       }, (c.title || c.key) + " · " + (c.docs || 0) + t("kb.col.docs") + " / " + (c.chunks || 0) + t("kb.col.chunks")));
+
+      // 「已整理」按当前集合里已有的 relKey 前缀数：kb 侧 rel_key 存的就是磁盘绝对路径
+      // （src/kb/index.js readSource），所以拿 rootPath 当前缀比就够了，不用为每张卡片
+      // 再拉一次模块表——那会让打开知识库变成 N 次请求。
+      const norm = (p) => String(p || "").replace(/\\/g, "/").replace(/\/+$/, "");
+      const organizedCount = (repo) => {
+        const root = norm(repo && repo.rootPath);
+        if (!root) return 0;
+        const prefix = root + "/";
+        return (state.docs || []).filter((d) => {
+          const rel = norm(d.relKey);
+          return d.kind === "choro_page" && rel.startsWith(prefix);
+        }).length;
+      };
+
+      const repoCards = (state.repos || []).map((repo) => {
+        const rootPath = repo.rootPath ? String(repo.rootPath) : "";
+        const done = organizedCount(repo);
+        const total = Number(repo.pages || 0);
+        const busy = state.organizing !== null && state.organizing === repo.id;
+        return h("div", { key: String(repo.id), className: "mneme-kbrepo" },
+          h("div", { className: "mneme-kbrepohead" },
+            h("span", { className: "mneme-kbreponame" }, repo.name || rootPath || String(repo.id)),
+            repo.stale === true && h("span", { className: "mneme-badge mneme-badge--pending mneme-wikistale" }, t("wiki.stale"))),
+          h("div", { className: "mneme-kbrepometa" },
+            h("span", null, String(Number(repo.modules || 0)) + " " + t("kb.repos.modules")),
+            h("span", null, total + " " + t("kb.repos.pages")),
+            h("span", null, t("kb.repos.organized") + " " + done + "/" + total),
+            h("span", { className: "mneme-kbrepopath", title: rootPath }, rootPath)),
+          h("button", {
+            type: "button",
+            className: "mneme-btn mneme-kbreporun",
+            disabled: state.organizing !== null || total === 0 || !state.active,
+            onClick: () => organizeRepo(repo)
+          }, busy ? t("kb.repos.running") : t("kb.repos.run")));
+      });
 
       const docRows = state.docs.map((d) => h("div", { key: d.relKey || d.title, className: "mneme-kbdocrow" },
         h("span", { className: "mneme-kbdoctitle" }, d.title || d.relKey),
@@ -11672,7 +11821,32 @@ window.__ModuleLoader__.load({
                 [hit.collection, hit.relKey, hit.heading, hit.line ? "L" + hit.line : ""].filter(Boolean).join(" · ") + ": " + (hit.excerpt || ""))),
               h("button", { type: "button", className: "mneme-wikihitsclose", onClick: () => patch({ hits: [] }) }, "×")),
             h("p", { className: "mneme-kbcolhead" }, t("kb.col.intro")),
-            h("div", { className: "mneme-kbform" },
+
+            // 仓库卡片区：Qoder 那种「在这儿选一个仓库，一键整理」的入口。
+            // 三种非 ready 状态必须分开说（#607 教训）：地志没开 ≠ 宿主没装配 ≠
+            // 你还没生成过仓库，混成一句「还没有仓库」等于让用户去修不存在的问题。
+            h("div", { className: "mneme-kbsechead" }, t("kb.repos.title")),
+            state.reposPhase === "loading" && h("p", { className: "mneme-kbdocmeta" }, t("wiki.state.loading")),
+            state.reposPhase === "disabled" && h("p", { className: "mneme-kbdocmeta" }, t("kb.empty.disabled")),
+            state.reposPhase === "unavailable" && h("p", { className: "mneme-kbdocmeta" }, t("kb.empty.unavailable")),
+            state.reposPhase === "error" && h("p", { className: "mneme-kbdocmeta" }, t("kb.load.failed")),
+            state.reposPhase === "empty" && h("p", { className: "mneme-kbdocmeta" }, t("kb.repos.empty")),
+            repoCards.length > 0 && h("div", { className: "mneme-kbrepolist" }, repoCards),
+            (state.organizeErrors || []).length > 0 && h("div", { className: "mneme-kbfails" },
+              h("div", { className: "mneme-kbcolhead" }, t("kb.repos.failedN") + ": " + state.organizeErrors.length),
+              state.organizeErrors.map((msg, i) => h("div", { key: i, className: "mneme-kbdocmeta" }, msg)),
+              h("button", { type: "button", className: "mneme-btn", onClick: () => patch({ organizeErrors: [] }) }, "×")),
+
+            // 手动入库降级成高级选项：保留能力，但不再占据首屏——它是「文件/网址/单页」
+            // 这类少数场景的入口，日常路径是上面的卡片。用按钮而不是 <details>：
+            // details 的展开态归浏览器管，React 再写 open 属性会两边打架。
+            h("button", {
+              type: "button",
+              className: "mneme-btn mneme-kbadvtoggle",
+              "aria-expanded": state.advOpen ? "true" : "false",
+              onClick: () => patch({ advOpen: !state.advOpen })
+            }, (state.advOpen ? "▾ " : "▸ ") + t("kb.advanced")),
+            state.advOpen && h("div", { className: "mneme-kbform" },
               h("select", {
                 className: "mneme-select", value: state.kind, "aria-label": t("kb.doc.kind"),
                 onChange: (e) => {
