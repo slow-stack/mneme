@@ -44,13 +44,17 @@ function visibleSeqsOf(session) {
 // 候选问的是同一件事——「当时到底想干什么」；这条取原话的路只该有一份实现。
 // 复制一份的代价本仓库付过几次（src/lib 平价、snapshotEvents 兼容层），所以
 // 这里只加 export，不改行为。
-export function lastUserQuery(ctx) {
+//
+// #617：多带一个 seq——注入器要拿它判断「待认领票据是否比事件流更新」（见
+// createInjector 的 pendingQueries）。seq 是宿主事件序号，取不到时为 null
+// （老版本宿主 / 测试夹具），调用方按 null 参与相等比较，不做真假推断。
+export function lastUserMessageInfo(ctx) {
   try {
     const session = ctx?.agent?.session;
     // DSH ≥0.1.2-rc only exposes events via snapshotEvents(); older builds
     // still have the .events property, so fall back to it.
     const events = session?.snapshotEvents?.() ?? session?.events;
-    if (!Array.isArray(events) || events.length === 0) return "";
+    if (!Array.isArray(events) || events.length === 0) return { text: "", seq: null };
     const visibleSeqs = visibleSeqsOf(session);
     for (let i = events.length - 1; i >= 0; i--) {
       const event = events[i];
@@ -61,16 +65,44 @@ export function lastUserQuery(ctx) {
       if (kind !== undefined && kind !== "user") continue;
       const parts = event.data?.content;
       if (!Array.isArray(parts) || parts.length === 0) continue;
-      return safeSlice(
-        parts
-          .map((p) => (typeof p === "string" ? p : p?.text ?? ""))
-          .filter(Boolean)
-          .join("\n"),
-        500
-      );
+      return {
+        text: safeSlice(
+          parts
+            .map((p) => (typeof p === "string" ? p : p?.text ?? ""))
+            .filter(Boolean)
+            .join("\n"),
+          500
+        ),
+        seq: event?.seq ?? null
+      };
     }
   } catch { /* session internals unavailable: degrade to no query */ }
-  return "";
+  return { text: "", seq: null };
+}
+
+export function lastUserQuery(ctx) {
+  return lastUserMessageInfo(ctx).text;
+}
+
+// 认领消息 → 查询文本。#617 的补位票据就是这里算出来的字符串：判定口径与
+// user/message 事件同源（content parts + source.kind），于是「插件注入的上下文」
+// 这类非人类消息照样被跳过，票据不会拿插件自己的话当用户问题。
+function inboxMessageQuery(message) {
+  try {
+    const parts = message?.content ?? message?.data?.content;
+    if (!Array.isArray(parts) || parts.length === 0) return "";
+    const kind = message?.source?.kind ?? message?.data?.source?.kind;
+    if (kind !== undefined && kind !== "user") return "";
+    return safeSlice(
+      parts
+        .map((p) => (typeof p === "string" ? p : p?.text ?? ""))
+        .filter(Boolean)
+        .join("\n"),
+      500
+    );
+  } catch {
+    return "";
+  }
 }
 
 // Hot-memory round extraction (v0.5.0 1.3): pairs each user/message with the
@@ -291,21 +323,112 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
   // first render after a new user message may still fall back to the rule-based
   // pick; later assemblies in the same session reuse the cached vector. Bounded
   // cache (cap 8, drop oldest) so a long session never grows it unbounded.
+  //
+  // #617 根因 B：旧实现用一个 lastPrefetched 字符串做去重，且它在 await 之前
+  // 就置位——同一条查询第一次失败（模型没下好、超时）之后**永不重试**，而那
+  // 恰好是最需要重试的一次。这里换成三件套：inflight Map 去重（渲染同一步会
+  // 被求值两次：assemble 一次、refreshContext 一次，同一条查询只该嵌一次）、
+  // 失败冷却 15s（失败可重试，但不许每次渲染都拿一次失败去撞模型）、返回
+  // Promise（调用方/测试能等到它，而不是靠魔法延时）。
   const QUERY_VECTOR_CACHE_MAX = 8;
+  const PREFETCH_FAIL_COOLDOWN_MS = 15000;
   const queryVectorCache = new Map();
-  let lastPrefetched = "";
+  const inflightPrefetches = new Map(); // query -> Promise<vector|null>
+  const prefetchFailedAt = new Map(); // query -> ms
 
   function prefetchQueryVector(query) {
-    if (!query || query === lastPrefetched || queryVectorCache.has(query)) return;
-    lastPrefetched = query;
-    service.embedQuery(query).then((vec) => {
+    if (!query) return null;
+    const cached = queryVectorCache.get(query);
+    if (cached) return Promise.resolve(cached);
+    const inflight = inflightPrefetches.get(query);
+    if (inflight) return inflight;
+    const failedAt = prefetchFailedAt.get(query);
+    if (failedAt !== undefined && Date.now() - failedAt < PREFETCH_FAIL_COOLDOWN_MS) return null;
+    const pending = service.embedQuery(query).then((vec) => {
       if (Array.isArray(vec) && vec.length) {
         queryVectorCache.set(query, vec);
         if (queryVectorCache.size > QUERY_VECTOR_CACHE_MAX) {
           queryVectorCache.delete(queryVectorCache.keys().next().value);
         }
+        prefetchFailedAt.delete(query);
+        return vec;
       }
-    }).catch(() => { /* prefetch is best-effort */ });
+      prefetchFailedAt.set(query, Date.now());
+      return null;
+    }).catch(() => {
+      prefetchFailedAt.set(query, Date.now());
+      return null; /* prefetch is best-effort */
+    }).finally(() => {
+      inflightPrefetches.delete(query);
+    });
+    inflightPrefetches.set(query, pending);
+    return pending;
+  }
+
+  // #617 根因 A 的补位票据：宿主（agent-loop 0.2.x）在每个 step 的 pre-step 里
+  // 先 inbox.claim()（同步 emit agent/inbox/claimed），再 assemble()，而
+  // user/message 要到 step() 末尾（:865）才 append——注入的 text 回调在
+  // assemble / refreshContext 里求值，**永远比当轮用户输入早一拍**：Step 1 拿到
+  // ""，第 N 轮的 Step 1 只能拿到第 N-1 轮的旧文本（实测 46 个渲染点错 3 次）。
+  // 票据在 claim 那一刻记下原文；渲染时若事件流里最后一条用户消息还不是它，
+  // 说明本轮 user/message 尚未落盘，用票据；一旦落盘，事件流才是权威（它对
+  // rewind / compact 的可见面判定更准，票据不看 surface）。
+  //
+  // 为什么只在 claimed 上记、不从 agent/inbox/spliced 推：claim 自己的两次
+  // mutate 都落 outcome:"canceled" 的 spliced（inserted 为空），拿 removedCount
+  // 当撤回信号会把每次正常认领误判成取消；claimed 只在真有消息被认领时触发，
+  // 是唯一无歧义的信号源。Cancel/Rewind 穿透因此也不存在——它们不产生 claimed。
+  const PENDING_QUERY_MAX = 32;
+  // 票据超过这个岁数就不再采信：一个 step 的 assemble 不可能跑这么久，更久说明
+  // 那条消息压根没落盘（认领后整轮被取消），票据已是过期证据。
+  const PENDING_QUERY_TTL_MS = 60000;
+  const pendingQueries = new Map(); // sessionId -> { text, at }
+  const offClaimed = typeof ctx?.on === "function"
+    ? ctx.on("agent/inbox/claimed", (payload) => {
+      try {
+        const message = payload?.message;
+        const text = inboxMessageQuery(message);
+        if (!text) return;
+        const session = payload?.agent?.session;
+        const sessionId = session?.id;
+        if (typeof sessionId !== "string" || !sessionId) return;
+        pendingQueries.delete(sessionId); // 重新插入 = 移到队尾
+        pendingQueries.set(sessionId, { text, at: Date.now() });
+        if (pendingQueries.size > PENDING_QUERY_MAX) {
+          pendingQueries.delete(pendingQueries.keys().next().value);
+        }
+        // 认领即预取：embed 在 assemble→step 之间就已经在跑，Step 1 的第二次
+        // 求值（refreshContext）有机会拿到向量。拿不到也无妨——查询文本已经在
+        // 手上，BM25 词法路（#198）能顶上。
+        prefetchQueryVector(text);
+      } catch { /* the ticket is best-effort; injection must never break */ }
+    })
+    : null;
+
+  // 当轮查询：票据优先于事件流（见上）。判据是**文本比对**而不是事件条数——
+  // 从 claim 到 assemble 之间还夹着 await tools.resolve(...)，这期间任何插件
+  // 追加一个事件都会让条数增长，按条数判会把「消息还没落盘」误判成「已落盘」，
+  // 票据提前退休、Step 1 又退回空串（正是本 issue 要修的那一拍）。文本相等才是
+  // 「这条消息真的进事件流了」的直接证据；连续两轮同一句话时两者相等，取哪个都对。
+  function liveStepQuery(ctx) {
+    const info = lastUserMessageInfo(ctx);
+    let sessionId = null;
+    try {
+      const id = ctx?.agent?.session?.id;
+      if (typeof id === "string" && id) sessionId = id;
+    } catch { /* session internals unavailable */ }
+    if (!sessionId) return info.text;
+    const ticket = pendingQueries.get(sessionId);
+    if (!ticket) return info.text;
+    if (info.text === ticket.text) {
+      pendingQueries.delete(sessionId); // 已落盘，票据退休（顺带保证 Map 不被历史会话撑大）
+      return info.text;
+    }
+    if (Date.now() - ticket.at > PENDING_QUERY_TTL_MS) {
+      pendingQueries.delete(sessionId); // 过期证据，不采信
+      return info.text;
+    }
+    return ticket.text;
   }
 
   // 会话身份解析（v1.2 人格寻址用）：读 session.header.agentPreset——冻结的
@@ -395,10 +518,12 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
       text: (ctx) => {
         if (sessionGate?.isOff(sessionOf(ctx))) return "";
         // Bug4: pass the latest user query so injection prefers semantically
-        // relevant memories; lastUserQuery is best-effort (empty → legacy).
+        // relevant memories; liveStepQuery is best-effort (empty → legacy).
         // The query vector is prefetched asynchronously (cached) because the
         // render itself must stay synchronous.
-        const query = lastUserQuery(ctx);
+        // #617：liveStepQuery 而不是 lastUserQuery——宿主在 step 末尾才 append
+        // user/message，而注入在这之前求值，只看事件流会拿到上一轮的输入。
+        const query = liveStepQuery(ctx);
         if (query) prefetchQueryVector(query);
         const queryVector = queryVectorCache.get(query);
         // v0.8.0 A3：scope 随请求解析（解析器恒返回对象，身份取不到时两维为
@@ -493,6 +618,12 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
   ];
 
   return () => {
+    // #617：认领票据是监听宿主事件的活句柄，卸载时必须成对摘掉，否则注入器重装
+    // （面板开关、宿主热重载）会留下一个继续写 Map 的孤儿监听。
+    offClaimed?.();
+    pendingQueries.clear();
+    inflightPrefetches.clear();
+    prefetchFailedAt.clear();
     queryVectorCache.clear();
     rotationHistory.clear();
     injectionSnapshot = null; // 注入器卸载即失效：快照不得跨生命周期存留
