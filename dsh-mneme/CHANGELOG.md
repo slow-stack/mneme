@@ -4,6 +4,14 @@
 
 ## 🆕 新增
 
+- **引导请求不再被 tab 关闭吞掉：任务态搬到模块级，重开标签页回放结果（#558）**。面板「⋯ → 从目录引导」的请求在飞时关掉整个 better-sidebar 标签页，MemoryExplorer 与引导弹层随标签页体一起卸载——keepMounted 覆盖隐藏与切视图、**不含关闭**（它自己的设计文档写明「记录的寿命只由原生 tab 关闭与会话消失回收」）。请求照样跑完、行照样落库（三元组去重 + _overwrite 刷新，重复执行不写坏数据），但成功/失败提示没地方显示、忙碌态也丢了，重开还能再提交一次。
+
+  - **状态住模块级（`lib/client.js`）**：新增 `bootstrapJob` store（phase: idle/running/done/failed + dir/result/error）与 `useBootstrapJob` 订阅钩子——就是 `overlayListeners`/`setOverlayOpen` 的现成形状。busy/msg/err 全部从 store 派生，弹层只是任务态的视图；prop 钻孔链（弹层 → explorer → overlay 的 `onBusyChange` 三段）整条拆掉，MemoryOverlay 的 Esc/背板/✕ 三条关闭守卫改为直接订阅——**顺带修掉 tab 注册路径守卫为空的老缺口**（那条路径没有 onBusyChange，busy 从来报不上去）。
+  - **存活规则一条：「只存活用户没来得及看的那一份」**。卸载发生在 running 时（tab 关闭 / 切视图），结果还没人看过——terminal 化发生在卸载之后，这份留给重开回放；卸载时已是 done/failed（用户见过），explorer 的卸载兜底把它回 idle，保持「重开是干净弹层」的既有行为。人看得见的关闭（取消 / 自动收口 / ⋯ 菜单收起）都显式回 idle 并保留目录（重试同目录是最常见的下一步，输入框从上次的 dir 播种）。
+  - **弹层的两处跟随调整**：① terminal 化只写 store——tab 关闭后结果落地时组件已卸载，写 store 才有人接（这正是要修的路径）；② fresh done 的 900ms 阅读窗锁提交钮但**不锁取消**——旧实现靠 busy 连 cancel 一起锁，那时 busy 是本地 state 必然随组件解锁；现在 done 是 store 态、可能被重开回放，取消若也锁死，旧结果会把弹层永久焊住。
+  - **同步性顺带变强**：旧链的「同步报 busy」靠回调在渲染提交前追那一拍（#4452539705）；现在 `setBootstrapJob(running)` 一落，三处订阅者同步被唤醒，那一拍不存在了。
+  - **验证**：`test/client.test.js` 更新两条旧锁到新形状（⋯ 收起连带回 idle、overlay 从 store 派生 busy）+ 新增 #558 专项锁（模块级 store、弹层为视图、存活规则、fresh-done 与回放的按钮差异、terminal 只写 store）；全量 3155 用例 / 3154 通过 / 0 失败 / 1 跳过；check-sync 通过（client.js 是 lib-only 手写件，无 src 对应物）。
+
 - **会话头顶那个日记入口撤了；「写今天 / 存到这个项目」补进面板**。两处入口同时存在时，用户点哪一个都像「又开了一本」，而右栏那套是旧版遗留下来的：会话头一个按钮 → 右栏页签 → 里面才是写与导出。现在只留一个入口：记忆面板的「日记」标签页。
 
   - **删的是什么（`lib/client.js`）**：`registerDiarySeats` 里原本注册三件事——① 右栏页签类型 ② `conversation.session.header.actions` 会话头入口（`id: "dsh-mneme:diary"`、`order: 31`）③ `sidebar.right.pane.tab` 右栏正文。删的是 ②，连同 `DiaryEntryButton` 组件、`.mneme-diary-trigger*` 五条 CSS、`memory.diary.openFailed` 文案。**为什么不是「看着多余」就删**：`openTab` 全仓库只有两处调用（M.O. 一处、日记 ② 一处），所以删掉 ② 之后本插件自己再也打不开右栏那一页。但宿主把页签类型目录 `tabTypes.getSnapshot() => tabs.entries()` 交给了右栏的「新建页签」选择器，用户从宿主自己的列表里仍能打开它——那套正文因此**留着**，不是死代码。
