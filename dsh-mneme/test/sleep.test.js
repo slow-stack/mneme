@@ -1104,6 +1104,31 @@ test("sleep: an edge write shows up in the receipt instead of reading as zero", 
   store.close();
 });
 
+test("sleep: a merge-only run also shows up in the receipt", async () => {
+  // #619 / Ephor 第 4 轮：只合并的那一轮 relations 与 edgeWrites 都是 0，
+  // 但它确实改了库（证据并集、sessionCount 重算）。receipt 若读成 `:0`，
+  // 就是上一处修过的同一个谎——只是换了个形状。合并也算写。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  linkSession(service, mem.id, "session-A");
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [mem.id] }
+  ]);
+  const first = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(first.receipt.split(":")[6], "1", "第一轮新写边，计数 1");
+  const second = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(second.phases.affective.relations, 0, "第二轮没有新边");
+  assert.equal(second.phases.affective.edgeWrites, 0, "第二轮没有新写");
+  assert.equal(second.phases.affective.merged, 1, "第二轮走的是合并");
+  assert.equal(second.phases.affective.status, "ok", "合并过就是 ok，不是 noop");
+  const parts = second.receipt.split(":");
+  assert.equal(parts.length, 8, "receipt 仍是八段");
+  assert.equal(parts[6], "1", "只合并的一轮同样改了库，必须非零");
+  store.close();
+});
+
 test("sleep: an aborted affective phase reports aborted, not ok", async () => {
   // 中途被打断且已经写了边，既不能报 ok（没跑完），也不能报 noop（确实写了）。
   const { service, store } = setup();
@@ -1126,6 +1151,9 @@ test("sleep: an aborted affective phase reports aborted, not ok", async () => {
   assert.equal(phase.status, "aborted", "打断不是 ok");
   assert.equal(phase.reason, "user activity");
   assert.ok(phase.edgeWrites >= 0, "打断也把已写的条数报出来");
+  // 明细字段在每条返回路径上都得在。只有正常的返回带 mergedList 的话，
+  // 消费方在 aborted/failed 两条路径上读明细会静默拿到 undefined，不报错。
+  assert.ok(Array.isArray(phase.mergedList), "aborted 分支也要带 mergedList，缺了是静默失明");
   store.close();
 });
 

@@ -1363,6 +1363,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       relations: relations.length,
       edgeWrites: relations.length,
       merged: merges.length,
+      mergedList: merges,
       applied,
       traits: traits.length,
       downgraded: downgradedCount,
@@ -1377,6 +1378,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       relations: relations.length,
       edgeWrites: relations.length,
       merged: merges.length,
+      mergedList: merges,
       applied: 0,
       traits: traits.length,
       downgraded: downgradedCount,
@@ -1512,11 +1514,23 @@ export async function runSleep(ctx, service, config, logger, semantic = null, si
   const status = deriveStatus(phases);
   const route = resolveSleepRoute(ctx, config, logger);
   // #619: a phase may write rows that are not "applied decisions" — the
-  // affective phase inserts relation edges directly. Counting only `applied`
-  // made a run that wrote an edge report `:0`, which reads as "did nothing" in
-  // the audit row and would be read as zero writes by the probe.
+  // affective phase inserts relation edges directly — and it may also extend an
+  // existing edge instead of inserting one. Both are store writes, and the
+  // receipt has to answer "did this run change anything", so both count. A run
+  // whose only effect was extending an edge would otherwise read `:0`, i.e.
+  // "ran and did nothing", which is exactly what a probe must never see.
+  //
+  // The per-kind numbers stay apart in `phases` (`applied` / `edgeWrites` /
+  // `merged`); the receipt is a single write count on purpose, because
+  // buildReceipt/parseReceipt are an eight-field contract shared with
+  // organize.js and four test files. Detail lives in dream_runs.phases JSON,
+  // not in the receipt.
   const totalApplied = Object.values(phases).reduce(
-    (n, p) => n + (Number.isInteger(p?.applied) ? p.applied : 0) + (Number.isInteger(p?.edgeWrites) ? p.edgeWrites : 0),
+    (n, p) =>
+      n +
+      (Number.isInteger(p?.applied) ? p.applied : 0) +
+      (Number.isInteger(p?.edgeWrites) ? p.edgeWrites : 0) +
+      (Number.isInteger(p?.merged) ? p.merged : 0),
     0
   );
   // Issue #126（与 #104 同向）：把各 phase 的跳过明细汇总成一行审计数据，带 phase

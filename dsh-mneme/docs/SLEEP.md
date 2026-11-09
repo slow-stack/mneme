@@ -129,9 +129,10 @@ flowchart TD
      - 命中 ⇒ **合并而不是丢弃**：把 evidence 并集、按并集重算的 `sessionCount` 写回既有边（`updateRelationMetadata`），`lastMergedRunId` 记下是哪一轮补的，并计入返回值 `merged`。只丢弃会让边上的场合数冻结在第一次写入那一刻，将来拿它算归因覆盖率会一直读到 1。
      - 未命中且未超 `sleepAffectiveMaxRelationsPerRun` ⇒ `saveRelation({relation_type: "affective_context", source: "llm", memory_id: evidence[0], metadata: {emotion, attribution, why, evidence, sessionCount, model, runId}})`；超出的进 `dropped: relation cap`。合并发生在 cap 之前——合并既有边不新增行，不该占名额。
   6. `trait` 走**标准决策通道**——铸成 `type=pattern` 记忆，经 `validateDecisions`（`allowedActions: ["create"]`、`maxCreatePerRun` 取 `sleepMaxPatternPerRun`）与 `applyDecisions`（`mintSource: "sleep"`，带 #512 铸造台账）。不新增写路径，因此继承所有既有上限与审计。
-- **输出**：`{status, scanned, relations, merged, mergedList, edgeWrites, applied, failures, conflicts, traits, downgraded, dropped}`。`downgraded` 与 `dropped` 必须都是可见数字；`edgeWrites` 单独报，因为写边不是 `applied` 决策，混在一起会让 receipt 上「写了一轮」读成 `:0`；`merged` 单独报同理——它既不是新边也不是丢弃，是一种「认出了同一场合、补了证据」的第三态。
+- **输出**：`{status, scanned, relations, merged, mergedList, edgeWrites, applied, failures, conflicts, traits, downgraded, dropped}`。`downgraded` 与 `dropped` 必须都是可见数字。`edgeWrites` 与 `merged` 各自单独报，因为它们都不是 `applied` 决策：前者是「新写了一条边」，后者是「认出了同一场合、把证据补进既有边」，混进 `applied` 会让两个数字的含义随相位漂移。但 **receipt 里三者都算**——`buildReceipt` 只回答「这一轮到底改动过库没有」，只累加 `applied` 会让「写了边的一轮」和「只做了合并的一轮」都读成 `:0`，也就是「跑了但什么都没做」，那正是探针绝不能看到的状态。receipt 保持八段不变（`parseReceipt` 与 `organize.js` 共用这条契约），明细在各相位的 `phases` JSON 里，不在 receipt 里。
+- **每条返回路径都带全字段**：`aborted` 与 `failed` 两个分支同样有 `merged` 与 `mergedList`。少一个不会报错，消费方读到 `undefined` 会静默当作「没有合并」——审计面上最难查的就是这种。
 - **中断与失败**：中途 `signal.aborted` ⇒ `status: "aborted"`（**即使一条都没写**——循环断在任意下标，没扫完就不能报 `noop` 说「池子是空的」）；`validateDecisions` 拒绝 trait 决策 ⇒ `status: "failed"`，不是静默的 `noop`。
-- **验收**：一次场合的情绪只能落 `affective_context` 边、不能铸 pattern；同一类型跨 N 个独立会话才允许铸 pattern；判为 `related_to` 的关系计数在本相位后不增长；同一批段重放不产生第二条相同边（而是合并进既有边）；重放时把 evidence 数组换个顺序也不产生第二条边；同一会话里两条不同记忆说的是同一种情绪时合并成一条边、`sessionCount` 仍是 1；后面又攒到新会话时既有边被扩充、`sessionCount` 跟着涨而不是冻结；同一条记忆里的两种不同情绪必须是两条边。
+- **验收**：一次场合的情绪只能落 `affective_context` 边、不能铸 pattern；同一类型跨 N 个独立会话才允许铸 pattern；判为 `related_to` 的关系计数在本相位后不增长；同一批段重放不产生第二条相同边（而是合并进既有边）；重放时把 evidence 数组换个顺序也不产生第二条边；同一会话里两条不同记忆说的是同一种情绪时合并成一条边、`sessionCount` 仍是 1；后面又攒到新会话时既有边被扩充、`sessionCount` 跟着涨而不是冻结；同一条记忆里的两种不同情绪必须是两条边；只做了合并的一轮，receipt 的写入计数不为 0。
 - **为什么不能接在 `relation_completion` 里**：那一相只扫**孤立**实体（`getRelations(e.id).length === 0`），且 `inferRelationType` 三种类型硬编码、末行 `return "related_to"` 兜底——把情感塞进去只会得到一批 `related_to`，图上看不出情感轴。
 
 ## 分层压缩策略表
