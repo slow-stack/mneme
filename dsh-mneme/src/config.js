@@ -546,12 +546,30 @@ export const Config = z.object({
   // Maximum number of frozen conflicts to keep pending for manual review.
   conflictFreezeMaxPending: z.natural().min(1).max(1000).default(100),
   // Issue #603 第 4 层（自动裁决档）：freeze 模式里相似度极高的同 scope 对直接
-  // 裁决（保留新条、归档旧条），不进人工队列——人只看模糊地带。默认关：这是
-  // 会归档记忆的自动动作，必须显式打开。
-  //   实测口径（live 库 345 条有相似度的历史行）：>=0.95 只有 20 条（5.8%），
-  //   >=0.94 是 28 条（8.1%）。所以这一档减量约一半的峰值，减不到个位数；
-  //   阈值留在配置里就是为了让人按自己队列的分布调，而不是信一个拍脑袋的数。
-  //   跨 scope 对永不自动裁决：归属是用户的决定（v0.8.1 #170 的既有约束）。
+  // 裁决（保留信息量更大的那条、归档另一条），不进人工队列——人只看模糊地带。
+  // 默认关：这是会归档记忆的自动动作，必须显式打开。
+  //
+  // ⚠️ Issue #616：这一档有三个已知边界，打开前先读，别当成「开了就清净」。
+  //
+  //  1) 阈值论证用的是早期快照，当前库上 0.95 等于不生效。
+  //     注释此前写「345 条有相似度、>=0.95 有 20 条（5.8%）」——2026-11-09 在
+  //     live 库重跑同口径：conflict_pending 全表 748 行，similarity 非 NULL 只有
+  //     11 行，其中 >=0.95 是 0 行，最高一对 0.914。这不是说阈值错了，是说
+  //     按 0.95 打开今晚一对都不会被判，用户会以为功能坏了。真要开，先按当前
+  //     分布重定阈值（配置下限 0.85），别沿用这两个数。
+  //
+  //  2) 它不是独立开关，是 freeze 分支的子节点。整段自动裁决都在
+  //     sleep.js 的 `if (config.conflictFreezeEnabled === true)` 里；关掉 freeze
+  //     会连它一起静默消失。面板上两个键看着平行，实际是父子。
+  //
+  //  3) 未标注 scope 会被判成同 scope。isCrossScopePair 走 scopeKeyOf，NULL 归一
+  //     成 null，null !== null 为 false，于是「归属未知」被当成「归属相同」。
+  //     live 库活跃 8259 行里 2710 行（32.8%）两个 scope 全 NULL，这批因此绕过了
+  //     「归属是用户的决定、永不自动」（v0.8.1 #170）这条守卫。改判据前不要打开。
+  //
+  // 另外 autoResolved/autoFailed 目前没有任何消费者（dream.js 只取 frozen），
+  // conflict_reviewed 台账也不记赢家、无 API 暴露——自动裁决了什么是看不见的。
+  // 可见性补齐之前，这一档只适合在能盯日志的前提下短时打开。
   conflictAutoResolveEnabled: z.boolean().default(false),
   conflictAutoResolveMinSimilarity: z.number().min(0.85).max(1).default(0.95),
 
