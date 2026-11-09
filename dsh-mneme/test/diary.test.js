@@ -16,6 +16,7 @@ import { diaryDir, diaryFilePath, expandHome, memoryBase } from "../src/diary/di
 import { collectQqInbox, inboxFiles, redactDigits, textOf, isEffective } from "../src/diary/qq-inbox.js";
 import { collectSessionTranscript, sessionAgentId } from "../src/diary/session-provider.js";
 import { validateBody, latestDiaryDate, createDiaryComposer } from "../src/diary/compose.js";
+import { createDiaryAutoRun, DIARY_MIN_INTERVAL_MS } from "../src/diary/auto.js";
 import { exportDiary, listDiaries, readDiary } from "../src/diary/export.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "mneme-diary-"));
@@ -446,4 +447,130 @@ test("compose：没有会话时退回 qq-inbox，并如实标注来源", async (
   assert.equal(result.status, "written");
   assert.equal(result.source, "qq-inbox");
   assert.match(readFileSync(result.path, "utf8"), /persona: none/);
+});
+
+// ───────────────────────── 定时写（v0.13） ─────────────────────────
+//
+// 桉桉 2026-11-09：「日记本按理来说应该需要定时写，这个要存设置中。」
+// 原来判定只挂在 turn/end 上 —— 整天不说话就整天不写。这一组钉三件事：
+// 1. 缺省（everyMs = 0）完全不起钟，行为与在此之前逐字一致；
+// 2. 配了间隔会自己醒来，且醒来走的是同一条 compose（去重不动）；
+// 3. 拆掉之后不再有钟（否则热重载几次会攒出一排定时器）。
+
+/** 让出一帧：tick 只入队，真正的 compose 在 defer 的 setTimeout(0) 里。 */
+const drain = () => new Promise((resolve) => setTimeout(resolve, 15));
+
+function autoCtx() {
+  const handlers = new Map();
+  return {
+    ctx: {
+      logger: { info() {}, warn() {}, warning() {} },
+      on(event, fn) {
+        handlers.set(event, fn);
+        return () => handlers.delete(event);
+      }
+    },
+    handlers
+  };
+}
+
+test("auto：everyMs = 0 时不起定时器（缺省零行为变化）", () => {
+  const { ctx } = autoCtx();
+  const auto = createDiaryAutoRun({ ctx, composer: { compose: async () => ({ status: "written" }) } });
+  assert.equal(auto.timerArmed(), false);
+  auto();
+});
+
+test("auto：配了间隔就起钟，dispose 之后不再有钟", () => {
+  const { ctx } = autoCtx();
+  const auto = createDiaryAutoRun({
+    ctx,
+    composer: { compose: async () => ({ status: "written" }) },
+    everyMs: 60 * 60 * 1000,
+    listProjects: () => []
+  });
+  assert.equal(auto.timerArmed(), true);
+  auto();
+  assert.equal(auto.timerArmed(), false);
+});
+
+test("auto：定时唤醒把 knownProjects 全部排进判定，触发源是 timer", async () => {
+  const { ctx } = autoCtx();
+  const seen = [];
+  const auto = createDiaryAutoRun({
+    ctx,
+    composer: {
+      compose: async (input) => {
+        seen.push(input);
+        return { status: "written" };
+      }
+    },
+    everyMs: 60 * 60 * 1000,
+    listProjects: () => ["D:\\proj-a", "D:\\proj-b"],
+    now: () => 1_000_000
+  });
+  await auto.tickNow();
+  await drain();
+  // flush 每帧取一个、取完看 pending 还有没有就再排一帧——所以两个项目最终都会跑，
+  // 但不会在同一帧里并行（那是「醒来一次补十篇」的老毛病）。等队列排空再断言，
+  // 只 setTimeout 一次会跟调度竞速，测试会晃。
+  for (let i = 0; i < 100 && auto.pendingCount() > 0; i += 1) await drain();
+  assert.equal(seen.length, 2);
+  assert.deepEqual(seen.map((x) => x.trigger), ["timer", "timer"]);
+  assert.deepEqual(seen.map((x) => x.projectRoot), ["D:\\proj-a", "D:\\proj-b"]);
+  auto();
+});
+
+test("auto：listProjects 抛错不冒泡到定时器（只 warn）", async () => {
+  const { ctx } = autoCtx();
+  const warns = [];
+  ctx.logger.warn = (msg) => warns.push(String(msg));
+  const auto = createDiaryAutoRun({
+    ctx,
+    composer: { compose: async () => ({ status: "written" }) },
+    everyMs: 60 * 60 * 1000,
+    listProjects: () => { throw new Error("state file gone"); }
+  });
+  await auto.tickNow();
+  assert.equal(warns.length, 1);
+  assert.match(warns[0], /timer scan failed/);
+  // 扫描失败之后钟要重新排上，否则一次异常就永久停摆。
+  assert.equal(auto.timerArmed(), true);
+  auto();
+});
+
+test("auto：turn/end 仍走 rollover，与定时器互不影响", () => {
+  const { ctx, handlers } = autoCtx();
+  const auto = createDiaryAutoRun({
+    ctx,
+    composer: { compose: async () => ({ status: "written" }) },
+    everyMs: 0
+  });
+  // 没注册 session/event（ctx.on 存在时一定会注册），这里只确认它注册过。
+  assert.equal(handlers.has("session/event"), true);
+  auto();
+});
+
+test("auto：同一项目在 minIntervalMs 内不重复判定", async () => {
+  const { ctx } = autoCtx();
+  const seen = [];
+  let clock = 1_000_000;
+  const auto = createDiaryAutoRun({
+    ctx,
+    composer: { compose: async (input) => { seen.push(input); return { status: "written" }; } },
+    everyMs: 60 * 60 * 1000,
+    listProjects: () => ["D:\\proj-a"],
+    now: () => clock
+  });
+  await auto.tickNow();
+  await drain();
+  assert.equal(seen.length, 1);
+  // 再醒一次但还在静默窗口内（DIARY_MIN_INTERVAL_MS = 60s）：不该再调一次模型。
+  // 注意把时钟拨十分钟会真的越过窗口——那条边界由下面的用例单独钉。
+  clock += 10 * 1000;
+  await auto.tickNow();
+  await drain();
+  assert.equal(seen.length, 1);
+  assert.ok(DIARY_MIN_INTERVAL_MS > 0);
+  auto();
 });

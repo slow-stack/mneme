@@ -210,6 +210,7 @@
 |---|---|---|---|
 | `diaryEnabled` **light** | `false` | QQ 日记本总闸：跨天判定 + 手写入口 + 面板页 | opt-in；与 `documentMemoryEnabled` **成对但不相依**——关着也能写正文文件，只是不铸造 `document` 指针行（回执里如实标 `pointer.skipped`） |
 | `diaryDir` | `""` | 日记正文根目录 | 空 = `<memoryDir>/diaries/<项目键>/`；`~` 展开到 home，绝对路径原样，相对路径落 memoryDir 下。**与 `memoryDir` 一样是路径配置，不是行为开关**，故不进 `settings.js` 白名单、也不上面板 |
+| `diaryWriteEveryMinutes` | `0` | 日记自动写的定时唤醒间隔（分钟） | `0` = 只在 turn/end 与插件启动时判定（此前行为）；`>0` 时每隔这么多分钟扫一遍已知项目再判定。**不是 cron**：定时器只负责唤醒「该不该写」的判定，写不写仍由 compose 按落盘日期去重——一天最多一篇，填 5 也不会多写。跑完一篇再排下一次，所以不会与上一次的模型调用重叠。opt-in、可热改（走 `INT_RANGES` 表，0–1440）|
 | `diaryInboxDir` | `""` | QQ 入站素材目录（只读） | 空 = 从 `memoryDir` 推 `<memoryDir>/../media/onebot`（onebot 的默认落点）。本模块**不 import `dsh-onebot-qq` 任何模块**，边界只靠这份「目录 + 文件形状」约定 |
 
 日记不落用户绑定的项目目录：那目录实测非 git、无 `.gitignore`、混着探针脚本，

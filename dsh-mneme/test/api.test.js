@@ -806,7 +806,8 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 与 conflictAutoResolveMinSimilarity（阈值，走 NUMBER_RANGES 表）= 119。
   // v0.13 再新增 diaryEnabled（QQ 日记本：跨天判定 + 手写入口 + 面板页的总闸；
   // 顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 120。
-  assert.equal(Object.keys(data.effective).length, 120);
+  // v0.13 diaryWriteEveryMinutes（日记定时写间隔，走 INT_RANGES 表）= 121。
+  assert.equal(Object.keys(data.effective).length, 121);
   // 三个 kb 新键的默认值单独钉一遍：计数锁只钉数量，钉不住值（缺省值翻转时
   // 面板会静默换上一套授权语义），这里补上值这一层。
   assert.equal(data.effective.chorographyAutoRefresh, false);

@@ -318,6 +318,9 @@ const FEATURE_FLAG_INT_RANGES = {
   summarizePeakMaxDeferMinutes: [0, 1440],
   // Issue #239 第 4 项镜像到巩固：同一口径（分钟，0 = 不设上限）。
   dreamPeakMaxDeferMinutes: [0, 1440],
+  // v0.13 日记定时写：每隔 N 分钟唤醒一次跨天判定（0 = 关，只在 turn/end 与
+  // 启动时判）。上限一天——判定单位是天，更长的间隔没有意义。
+  diaryWriteEveryMinutes: [0, 1440],
   // Issue #125：hybrid 候选量上限（0 = 复用 dreamMaxSnapshotSize）。
   dreamCandidateMax: [0, 5000],
   // #135 成本审计派生：单轮 merge 决策上限（merge 是唯一回吐正文的动作，默认 40

@@ -863,6 +863,8 @@ window.__ModuleLoader__.load({
         "memory.features.actionNudgeEnabled.hint": "开：每轮结束后看一眼这个项目自己的会话日志，把反复走通的动作挖成记忆库里的一条「提议」，等你确认才可能变成工作流。只产草稿、不自动启用、不往仓库里塞文件。挂热路径且要解压日志，轻量档会强制关掉。重启 DSH 后生效",
         "memory.features.diaryEnabled": "日记本（beta）",
         "memory.features.diaryEnabled.hint": "开：右栏多一个「日记本」，拥有人格的 agent 每天用这个项目真实发生过的对话写一篇日记——今天没聊就不写，不编。日记正文落在记忆目录，点「存到这个项目」才复制一份到项目里。轻量档会强制关掉。重启 DSH 后生效",
+        "memory.features.diaryWriteEveryMinutes": "每隔多少分钟自动写（0 = 关）",
+        "memory.features.diaryWriteEveryMinutes.hint": "关着时只有「聊完天」和「重启 DSH」两个时刻会判断今天该不该写——你整天不说话，它就整天不写。填个分钟数（如 60）它会到点自己醒来看一眼。仍然一天最多一篇，写不写由磁盘上有没有当天的文件决定",
         "memory.diary.title": "日记本",
         "memory.diary.note": "写的是这个项目里真实发生过的事：没聊过就不写，不编。",
         "memory.diary.write": "写今天",
@@ -1867,6 +1869,8 @@ window.__ModuleLoader__.load({
         "memory.features.actionNudgeEnabled.hint": "On: after each turn, look at this project's own session logs and mine the actions it keeps repeating into a proposal in the memory store — it still needs your sign-off before becoming a workflow. Drafts only; never auto-activates; never writes files into the repo. Hooks a hot path and decompresses logs, so light mode forces it off. Takes effect after restarting DSH",
         "memory.features.diaryEnabled": "Diary (beta)",
         "memory.features.diaryEnabled.hint": "On: a Diary tab appears in the right sidebar, and the agent that carries a persona writes one entry a day from what actually happened in this project — no conversation that day, no entry, and nothing made up. Entries live in the memory directory; only the “Save into this project” button copies one into the repo. Light mode forces it off. Takes effect after restarting DSH",
+        "memory.features.diaryWriteEveryMinutes": "Auto-write every N minutes (0 = off)",
+        "memory.features.diaryWriteEveryMinutes.hint": "When off, DSH only checks whether today needs an entry at turn end and at startup — stay quiet all day and nothing gets written. Put a number here (e.g. 60) and it wakes up on its own. Still at most one entry a day: whether to write is decided by whether today's file exists on disk",
         "memory.diary.title": "Diary",
         "memory.diary.note": "Written from what actually happened in this project: no conversation, no entry, nothing invented.",
         "memory.diary.write": "Write today",
@@ -3314,7 +3318,18 @@ window.__ModuleLoader__.load({
       ".mneme-diary-paper{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.18deg);background:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
       // 日记正文用衬线：本子上写字不该像聊天记录。四套纸共用一套字，行高 26px
       // 与 --ruled/--grid 的格线对齐；行高一改必须同步上面两条 background-size。
-      ".mneme-diary-text{margin:0;white-space:pre-wrap;word-break:break-word;font-family:Georgia,\"Times New Roman\",\"Songti SC\",\"Noto Serif SC\",serif;font-size:14px;line-height:26px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-diary-text{margin:0;word-break:break-word;font-family:Georgia,\"Times New Roman\",\"Songti SC\",\"Noto Serif SC\",serif;font-size:14px;line-height:26px;color:var(--dsw-alias-label-primary)}",
+      // 正文是渲染过的排版（renderDiaryBody），不再是 <pre> 原文：段落、小标题、
+      // 列表各归各位。行高 26px 必须贯穿所有块级元素，否则格线会和字错开。
+      ".mneme-diary-text p{margin:0 0 13px}",
+      ".mneme-diary-text p:last-child{margin-bottom:0}",
+      ".mneme-diary-text h2,.mneme-diary-text h3,.mneme-diary-text h4,.mneme-diary-text h5{margin:13px 0 6px;font-family:inherit;font-weight:600;line-height:26px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-diary-text h2{font-size:16px}",
+      ".mneme-diary-text h3{font-size:15px}",
+      ".mneme-diary-text ul,.mneme-diary-text ol{margin:0 0 13px;padding-left:22px}",
+      ".mneme-diary-text li{margin:0;line-height:26px}",
+      ".mneme-diary-text blockquote{margin:0 0 13px;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2);color:var(--mneme-fg-dim)}",
+      ".mneme-diary-text code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;background:var(--dsw-alias-interactive-bg-active);border-radius:4px;padding:1px 4px}",
       ".mneme-diary-sheet{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
       ".mneme-diary-empty{padding:14px 0;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
       ".mneme-diary-warn{font-size:12px;line-height:17px;color:var(--mneme-danger)}",
@@ -4109,7 +4124,7 @@ window.__ModuleLoader__.load({
     // 后端白名单、面板够不着——而 CONFIGURATION.md 明写「面板可启停」。
     // 其余整数键（429 调速器参数、distillMaxChars、codingBoostFactor）是有意
     // 不上 UI 的调优噪音，见上方注释，别顺手搬进来。
-    const FEATURE_NUMBERS = ["distillRecords.retentionDays", "dreamMaxTokens", "sleepMaxTokens"];
+    const FEATURE_NUMBERS = ["distillRecords.retentionDays", "dreamMaxTokens", "sleepMaxTokens", "diaryWriteEveryMinutes"];
     const EMBED_PROVIDERS = ["openai", "local", "ollama"];
     // 实体抽取思考强度（issue #109）：与后端 FEATURE_FLAG_ENUMS 枚举对齐。
     const ENTITY_REASONING = ["none", "low", "medium", "high"];
@@ -4544,6 +4559,14 @@ window.__ModuleLoader__.load({
       // 不展开——没启用子系统就没有「注入多少」可谈）。枚举键没有通用渲染器，
       // 与上面几个子块同款手写下拉。轻量档（lightMode）在消费侧压成 off，
       // 面板不因此灰掉：那是运行时预设，不是用户选择。
+      // 日记定时写（v0.13）：只有日记开着才展开——关掉的日记没有「多久写一次」的问题。
+      // 0 = 只在 turn/end 与启动时判（此前行为），文案把这个差别说清楚，否则用户
+      // 填了 60 却以为一天能写 24 篇。
+      const diarySub = eff.diaryEnabled && h("div", { className: "mneme-featsub" },
+        numRow("diaryWriteEveryMinutes"),
+        h("div", { className: "mneme-featsubhint" }, t("memory.features.diaryWriteEveryMinutes.hint"))
+      );
+
       const choroSub = eff.chorographyEnabled && h("div", { className: "mneme-featsub" },
         h("div", { className: "mneme-featnum" },
           h("span", { className: "mneme-featnumlabel" }, t("memory.features.chorographyInject")),
@@ -4598,7 +4621,7 @@ window.__ModuleLoader__.load({
                 // 子块按组尾追加。distillSub 紧跟在 core 组最后一行
                 // （distillRecords.enabled）之后，天数行才贴着它的总闸。
                 g.key === "group.core" && h(react.Fragment, null, distillSub, summarizeSub),
-                g.key === "group.enhance" && h(react.Fragment, null, embedSub, entitySub, choroSub),
+                g.key === "group.enhance" && h(react.Fragment, null, embedSub, entitySub, diarySub, choroSub),
                 g.key === "group.dream" && h(react.Fragment, null, dreamSub, sleepSub)
               );
               const firstScreen = FEATURE_GROUPS.filter((g) => FEATURE_FIRST_SCREEN.includes(g.key));
@@ -10388,6 +10411,125 @@ window.__ModuleLoader__.load({
 
     // 右栏 tab 的正文。为什么单独包一层具名组件（而不是把 hook 塞进
     // slots.register 的回调里）——同 PipelinePane 那条注释。
+    // 只读 MD 渲染（P13）：React 文本节点天然转义，不经过 innerHTML，无原始
+    // HTML 通道。frontmatter 折叠不显示；表格按等宽行渲染（知识库页的表都是
+    // 两三列的清单，保真优先于交互）；`code` 拆成等宽 span。
+    function renderWikiMarkdown(content) {
+      const lines = String(content ?? "").split("\n");
+      let i = 0;
+      // frontmatter：首行是 --- 时吃到下一行 ---
+      if (lines[0] && lines[0].trim() === "---") {
+        i = 1;
+        while (i < lines.length && lines[i].trim() !== "---") i++;
+        i++;
+      }
+      const out = [];
+      const inline = (text) => String(text).split(/`([^`]+)`/).map((part, idx) =>
+        idx % 2 === 1 ? h("code", { key: idx, className: "mneme-wikicode" }, part) : part
+      );
+      let list = null; // "ul" | "ol" | null
+      const flushList = () => {
+        if (list) { out.push(h(list, { key: out.length }, listItems)); listItems = []; list = null; }
+      };
+      let listItems = [];
+      let inCode = false;
+      let codeLines = [];
+      // --- 表格（v0.11.1 美化）：连续 `|` 行解析成真 table，不再按等宽行画竖线 ---
+      const splitRow = (line) => String(line).trim().replace(/^\|/, "").replace(/\|$/, "")
+        .split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+      const isSepRow = (cells) => cells.length > 0 && cells.every((c) => /^:?-{3,}:?$/.test(c));
+      // 路径形单元格（含 / 且以扩展名结尾）渲染成等宽 code——文件清单的第一列
+      // 是相对路径，等宽 + 深一点的底色让路径在表里一眼可辨。
+      const pathLike = (text) => /^(?!https?:)(?:[\w.-]+\/)*[\w.-]+\.[A-Za-z]{1,5}$/.test(String(text).trim());
+      const cellNodes = (text, key) => {
+        const trimmed = String(text).trim();
+        if (pathLike(trimmed)) return h("code", { key, className: "mneme-wikicode" }, trimmed);
+        return inline(trimmed);
+      };
+      let tableRows = null;
+      const flushTable = () => {
+        if (!tableRows) return;
+        const rows = tableRows;
+        tableRows = null;
+        if (rows.length === 0) return;
+        const headerCells = splitRow(rows[0]);
+        const sepIndex = rows.length > 1 && isSepRow(splitRow(rows[1])) ? 1 : -1;
+        const aligns = sepIndex >= 0
+          ? splitRow(rows[sepIndex]).map((c) => (c.endsWith(":") ? "right" : c.startsWith(":") ? "center" : null))
+          : headerCells.map(() => null);
+        const bodyStart = sepIndex >= 0 ? sepIndex + 1 : 0;
+        const head = h("thead", { key: "h" }, h("tr", null,
+          headerCells.map((c, idx) => h("th", {
+            key: idx, style: aligns[idx] ? { textAlign: aligns[idx] } : undefined,
+          }, cellNodes(c, idx)))));
+        const body = h("tbody", { key: "b" }, rows.slice(bodyStart).map((row, rIdx) => {
+          const cells = splitRow(row);
+          return h("tr", { key: rIdx }, headerCells.map((_, idx) => h("td", {
+            key: idx,
+            className: aligns[idx] === "right" ? "mneme-wikinum" : undefined,
+            style: aligns[idx] && aligns[idx] !== "right" ? { textAlign: aligns[idx] } : undefined,
+          }, cellNodes(cells[idx] ?? "", idx))));
+        }));
+        out.push(h("table", { key: out.length, className: "mneme-wikitable" }, head, body));
+      };
+      for (; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.trim().startsWith("```")) {
+          if (inCode) {
+            out.push(h("pre", { key: out.length, className: "mneme-wikipre" }, codeLines.join("\n")));
+            codeLines = []; inCode = false;
+          } else { flushList(); flushTable(); inCode = true; }
+          continue;
+        }
+        if (inCode) { codeLines.push(line); continue; }
+        const heading = line.match(/^(#{1,6})\s+(.*)$/);
+        if (heading) {
+          flushList(); flushTable();
+          const level = Math.min(heading[1].length + 1, 5);
+          out.push(h(`h${level}`, { key: out.length }, inline(heading[2])));
+          continue;
+        }
+        const ul = line.match(/^\s*[-*]\s+(.*)$/);
+        const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+        if (ul || ol) {
+          flushTable();
+          const want = ul ? "ul" : "ol";
+          if (list !== want) flushList();
+          list = want;
+          listItems.push(h("li", { key: listItems.length }, inline(ul ? ul[1] : ol[1])));
+          continue;
+        }
+        if (/^\s*\|/.test(line)) { flushList(); tableRows = tableRows ?? []; tableRows.push(line); continue; }
+        flushList(); flushTable();
+        if (/^>\s?/.test(line)) { out.push(h("blockquote", { key: out.length, className: "mneme-wikiquote" }, inline(line.replace(/^>\s?/, "")))); continue; }
+        if (line.trim() === "") continue;
+        out.push(h("p", { key: out.length }, inline(line)));
+      }
+      flushList(); flushTable();
+      if (inCode && codeLines.length > 0) out.push(h("pre", { key: out.length, className: "mneme-wikipre" }, codeLines.join("\n")));
+      return out;
+    }
+
+    // 日记正文的排版入口：日记文件是「frontmatter + `# 日期` + 散文」这种固定形状，
+    // 纸头已经单独显示了人格名与日期，所以这里要把这两样**去掉**再排版，
+    // 否则纸上会先出现一遍 `--- date: ...` 再出现一遍日期标题。
+    // 复用上面的 renderWikiMarkdown：它已经会吃 frontmatter、把 `#` 变标题、
+    // 段落变 <p>、列表变真 <ul>、表格变真 <table>——日记偶尔也会长列表。
+    function renderDiaryBody(text) {
+      const lines = String(text ?? "").split("\n");
+      let i = 0;
+      if (lines[0] && lines[0].trim() === "---") {
+        i = 1;
+        while (i < lines.length && lines[i].trim() !== "---") i++;
+        i++;
+      }
+      // 只吃掉紧随 frontmatter 的那个日期标题（`# 2026-11-08`），正文中间的
+      // 小标题照常渲染——那是作者自己写的小标题，不是文件头。
+      while (i < lines.length && lines[i].trim() === "") i++;
+      if (i < lines.length && /^#\s+\d{4}-\d{2}-\d{2}\s*$/.test(lines[i].trim())) i++;
+      return renderWikiMarkdown(lines.slice(i).join("\n"));
+    }
+
     function DiaryPane(props) {
       const { t, project, agent, session } = props;
       const [doc, setDoc] = useState(undefined); // undefined=读中 null=读不出 对象=拿到
@@ -10550,7 +10692,7 @@ window.__ModuleLoader__.load({
             ? h("div", { className: "mneme-diary-empty" }, t("memory.diary.loading"))
             : text === null
               ? h("span", { className: "mneme-diary-warn" }, t("memory.diary.readFailed"))
-              : h("pre", { className: "mneme-diary-text" }, text));
+              : h("div", { className: "mneme-diary-text" }, renderDiaryBody(text)));
         body = h("div", { className: "mneme-diary-body" }, list, paper);
       }
 
@@ -10834,7 +10976,7 @@ window.__ModuleLoader__.load({
             ? h("div", { className: "mneme-diary-empty" }, t("memory.diary.loading"))
             : text === null
               ? h("span", { className: "mneme-diary-warn" }, t("memory.diary.readFailed"))
-              : h("pre", { className: "mneme-diary-text" }, text));
+              : h("div", { className: "mneme-diary-text" }, renderDiaryBody(text)));
 
         const meta = h("div", { className: "mneme-diary-meta" },
           t("memory.diary.count").replace("{n}", String((activePerson && activePerson.count) || 0)),
@@ -11871,104 +12013,6 @@ window.__ModuleLoader__.load({
         );
       }
 
-      // 只读 MD 渲染（P13）：React 文本节点天然转义，不经过 innerHTML，无原始
-      // HTML 通道。frontmatter 折叠不显示；表格按等宽行渲染（知识库页的表都是
-      // 两三列的清单，保真优先于交互）；`code` 拆成等宽 span。
-      function renderWikiMarkdown(content) {
-        const lines = String(content ?? "").split("\n");
-        let i = 0;
-        // frontmatter：首行是 --- 时吃到下一行 ---
-        if (lines[0] && lines[0].trim() === "---") {
-          i = 1;
-          while (i < lines.length && lines[i].trim() !== "---") i++;
-          i++;
-        }
-        const out = [];
-        const inline = (text) => String(text).split(/`([^`]+)`/).map((part, idx) =>
-          idx % 2 === 1 ? h("code", { key: idx, className: "mneme-wikicode" }, part) : part
-        );
-        let list = null; // "ul" | "ol" | null
-        const flushList = () => {
-          if (list) { out.push(h(list, { key: out.length }, listItems)); listItems = []; list = null; }
-        };
-        let listItems = [];
-        let inCode = false;
-        let codeLines = [];
-        // --- 表格（v0.11.1 美化）：连续 `|` 行解析成真 table，不再按等宽行画竖线 ---
-        const splitRow = (line) => String(line).trim().replace(/^\|/, "").replace(/\|$/, "")
-          .split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
-        const isSepRow = (cells) => cells.length > 0 && cells.every((c) => /^:?-{3,}:?$/.test(c));
-        // 路径形单元格（含 / 且以扩展名结尾）渲染成等宽 code——文件清单的第一列
-        // 是相对路径，等宽 + 深一点的底色让路径在表里一眼可辨。
-        const pathLike = (text) => /^(?!https?:)(?:[\w.-]+\/)*[\w.-]+\.[A-Za-z]{1,5}$/.test(String(text).trim());
-        const cellNodes = (text, key) => {
-          const trimmed = String(text).trim();
-          if (pathLike(trimmed)) return h("code", { key, className: "mneme-wikicode" }, trimmed);
-          return inline(trimmed);
-        };
-        let tableRows = null;
-        const flushTable = () => {
-          if (!tableRows) return;
-          const rows = tableRows;
-          tableRows = null;
-          if (rows.length === 0) return;
-          const headerCells = splitRow(rows[0]);
-          const sepIndex = rows.length > 1 && isSepRow(splitRow(rows[1])) ? 1 : -1;
-          const aligns = sepIndex >= 0
-            ? splitRow(rows[sepIndex]).map((c) => (c.endsWith(":") ? "right" : c.startsWith(":") ? "center" : null))
-            : headerCells.map(() => null);
-          const bodyStart = sepIndex >= 0 ? sepIndex + 1 : 0;
-          const head = h("thead", { key: "h" }, h("tr", null,
-            headerCells.map((c, idx) => h("th", {
-              key: idx, style: aligns[idx] ? { textAlign: aligns[idx] } : undefined,
-            }, cellNodes(c, idx)))));
-          const body = h("tbody", { key: "b" }, rows.slice(bodyStart).map((row, rIdx) => {
-            const cells = splitRow(row);
-            return h("tr", { key: rIdx }, headerCells.map((_, idx) => h("td", {
-              key: idx,
-              className: aligns[idx] === "right" ? "mneme-wikinum" : undefined,
-              style: aligns[idx] && aligns[idx] !== "right" ? { textAlign: aligns[idx] } : undefined,
-            }, cellNodes(cells[idx] ?? "", idx))));
-          }));
-          out.push(h("table", { key: out.length, className: "mneme-wikitable" }, head, body));
-        };
-        for (; i < lines.length; i++) {
-          const line = lines[i];
-          if (line.trim().startsWith("```")) {
-            if (inCode) {
-              out.push(h("pre", { key: out.length, className: "mneme-wikipre" }, codeLines.join("\n")));
-              codeLines = []; inCode = false;
-            } else { flushList(); flushTable(); inCode = true; }
-            continue;
-          }
-          if (inCode) { codeLines.push(line); continue; }
-          const heading = line.match(/^(#{1,6})\s+(.*)$/);
-          if (heading) {
-            flushList(); flushTable();
-            const level = Math.min(heading[1].length + 1, 5);
-            out.push(h(`h${level}`, { key: out.length }, inline(heading[2])));
-            continue;
-          }
-          const ul = line.match(/^\s*[-*]\s+(.*)$/);
-          const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
-          if (ul || ol) {
-            flushTable();
-            const want = ul ? "ul" : "ol";
-            if (list !== want) flushList();
-            list = want;
-            listItems.push(h("li", { key: listItems.length }, inline(ul ? ul[1] : ol[1])));
-            continue;
-          }
-          if (/^\s*\|/.test(line)) { flushList(); tableRows = tableRows ?? []; tableRows.push(line); continue; }
-          flushList(); flushTable();
-          if (/^>\s?/.test(line)) { out.push(h("blockquote", { key: out.length, className: "mneme-wikiquote" }, inline(line.replace(/^>\s?/, "")))); continue; }
-          if (line.trim() === "") continue;
-          out.push(h("p", { key: out.length }, inline(line)));
-        }
-        flushList(); flushTable();
-        if (inCode && codeLines.length > 0) out.push(h("pre", { key: out.length, className: "mneme-wikipre" }, codeLines.join("\n")));
-        return out;
-      }
 
       function WikiMainPanel({ t }) {
         // #607：这个面板以前只有一条「去看 CLI」的空态，一个可点的东西都没有。

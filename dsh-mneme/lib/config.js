@@ -348,6 +348,13 @@ export const Config = z.object({
   // QQ 收件箱目录：空串 = 从 memoryDir 推（`<memoryDir>/../media/onebot`，本机即
   // `D:\DSH\.dsh\media\onebot`）。推出不来就报 no-inbox-dir，绝不猜别的盘。
   diaryInboxDir: z.string().default(""),
+  // 定时写（v0.13，桉桉 2026-11-09「日记本按理来说应该需要定时写，这个要存设置中」）：
+  // 每隔 N 分钟主动检查一次「今天是否还没写」，0 = 关（只在 turn/end 与启动时判，
+  // 即此前行为）。为什么要这一项：auto.js 原来只在回合结束时判跨天，用户整天不说话
+  // 就整天不写——日记不该取决于谁先开口。它仍然**不是 cron**：定时器只负责唤醒判定，
+  // 写不写在 compose 里按落盘日期去重，所以一天最多一篇，失败也只是 warn。
+  // 上限 1440（一天）：比一天更长的间隔没有意义，因为判定单位就是「天」。
+  diaryWriteEveryMinutes: z.natural().min(0).max(1440).default(0),
   // 隐式 keep（v0.4.4）：LLM 未提及的 snapshot 记忆自动补 {action:"keep"}，
   // 避免"未覆盖即全拒"白白浪费整轮 run。设为 false 时保留旧的严格校验
   // （未覆盖即拒绝整单）。

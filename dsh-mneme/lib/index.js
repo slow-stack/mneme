@@ -748,7 +748,18 @@ export const apply = (ctx, config) => {
   // 而「上次是哪个项目、哪天写的」就在那儿。补写不 await：启动路径上吊住一次
   // 模型调用，等于让整个插件加载等模型回来（本机 p90 五十秒级）。
   if (diary) {
-    const diaryAuto = createDiaryAutoRun({ ctx, composer: diary, logger: ctx.logger, sessionGate });
+    // diaryWriteEveryMinutes > 0 时额外起一根定时器（见 auto.js 的 tick）：日记不该
+    // 取决于「谁先开口」，整天不说话也要有一篇。listProjects 用 knownProjects ——
+    // 定时器唤醒时没有会话，只能靠状态文件里记过的项目根。
+    const everyMinutes = Number(cfg.diaryWriteEveryMinutes) || 0;
+    const diaryAuto = createDiaryAutoRun({
+      ctx,
+      composer: diary,
+      logger: ctx.logger,
+      sessionGate,
+      everyMs: everyMinutes > 0 ? everyMinutes * 60 * 1000 : 0,
+      listProjects: () => diary.knownProjects()
+    });
     disposers.push(diaryAuto);
     const projects = diary.knownProjects();
     if (projects.length) {

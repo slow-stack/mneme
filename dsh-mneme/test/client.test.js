@@ -2219,10 +2219,17 @@ test("distill retention switches are reachable from the panel (#399)", () => {
     coreGroup[1].includes('"distillRecords.enabled"'),
     "distillRecords.enabled must be an item of the core group, not merely referenced elsewhere"
   );
-  assert.ok(
-    /const FEATURE_NUMBERS = \["distillRecords\.retentionDays", "dreamMaxTokens", "sleepMaxTokens"\]/.test(clientSource),
-    "retentionDays must be in the numeric key list (dreamMaxTokens/sleepMaxTokens joined by #478)"
+  // 数值清单会随新键增长（v0.13 加了 diaryWriteEveryMinutes），所以钉「这三个都在、
+  // 且顺序不变」，不钉整行字面量——否则每加一个数值键这条锁就假红一次。
+  const numList = clientSource.match(/const FEATURE_NUMBERS = \[([\s\S]*?)\];/);
+  assert.ok(numList, "the numeric key list must be declared");
+  const numKeys = (numList[1].match(/"[^"]+"/g) || []).map((k) => k.slice(1, -1));
+  assert.deepEqual(
+    numKeys.slice(0, 3),
+    ["distillRecords.retentionDays", "dreamMaxTokens", "sleepMaxTokens"],
+    "retentionDays must stay in the numeric key list, after dreamMaxTokens/sleepMaxTokens (#478)"
   );
+  assert.ok(numKeys.includes("distillRecords.retentionDays"), "retentionDays must be in the numeric key list");
   assert.ok(
     /for \(const key of FEATURE_NUMBERS\) numDraft\[key\] = String\(e\[key\] \?\? ""\);/.test(clientSource)
       && /setNums\(numDraft\);/.test(clientSource),

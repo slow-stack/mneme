@@ -4,6 +4,16 @@
 
 ## 🆕 新增
 
+- **日记正文终于排版了，并且可以「到点自己醒」**。上一版把 `readLibraryEntry` 的返回值直接塞进 `<pre>`：磁盘上写的是 `--- date: … persona: default (ptc) ---` 加 `# 2026-11-08`，界面上也就是这堆字符原样铺开——所谓「本子样」只剩背景纸纹，正文还是一坨 markdown 源码。同时日记只会在「聊完一轮」和「重启 DSH」两个时刻判该不该写，安静一天就一天不写，没有别的唤醒方式。
+
+  - **正文渲染（`lib/client.js`）**：`renderWikiMarkdown` 原本在 `apply(ctx)` 作用域内（缩进 6 空格），日记面板在模块级，够不着。整块 98 行去 2 格缩进提到模块级，`DiaryPane` / `WikiMainPanel` 两边共用一份。新增模块级 `renderDiaryBody(text)`：先吃 frontmatter（首行 `---` 到下一条 `---`）、跳过空行、**只吃掉紧随其后的那一个日期标题**（`/^#\s+\d{4}-\d{2}-\d{2}\s*$/`）——正文中间的小标题是作者自己写的，必须保留。两处 `h("pre", { className: "mneme-diary-text" }, text)` 改成 `h("div", …, renderDiaryBody(text))`。
+  - **CSS 跟着改布局**：`.mneme-diary-text` 去掉 `white-space:pre-wrap`（改块级排版），补一组子选择器：段落 13px 段距、`h2/h3` 16/15px、列表缩进 22px、引用左边框、行内 `code` 等宽。**所有块级行高统一 26px**——横线与方格纸的 `background-size:100% 26px` 就是按这个周期画的，有一处不是 26px 格线立刻错开。
+  - **定时唤醒（`diaryWriteEveryMinutes`）**：`src/config.js` 新增 `z.natural().min(0).max(1440).default(0)`，`settings.js` 的 `FEATURE_FLAG_INT_RANGES` 加 `[0, 1440]`，默认 `0` = 只在 turn/end 与启动时判，行为与此前完全一致。`src/diary/auto.js` 的 `createDiaryAutoRun` 新增 `everyMs` / `listProjects`；`tick()` 扫一遍已知项目把每个都 `schedule(p, null, "timer")`，跑完再 `arm()` 下一次。**刻意不用 `setInterval`**：写一篇要等模型（p90 五十秒级），固定节拍会在慢的那次之后立刻叠一次，改成「跑完再排」天然不重叠也不会并发两篇。`dispose()` 里清 `ticker`，并暴露 `timerArmed` / `tickNow` 供测试与面板观测。
+  - **「一天最多一篇」的边界没被定时器破坏**：定时器只负责唤醒「该不该写」的判定，写不写仍由 `compose` 按磁盘上有没有当天的文件去重。填 5 也不会一天写十篇——这是把定时器做成「判定触发器」而不是「写入触发器」的原因。
+  - **面板**：设置页「记忆增强」组里日记开关展开一个数值行（`diaryWriteEveryMinutes`，i18n 明写「0 = 关」「仍然一天最多一篇，写不写由磁盘上有没有当天的文件决定」），文案直说关着时只有哪两个时刻会判。
+  - **踩到的坑**：① 定时器的测试得等队列排空，只 `await` 一次 `setTimeout(15)` 会和调度竞速（`flush` 每帧取一个、取完看队列还有没有就再排一帧），改成轮询 `pendingCount()` 才稳；② `minIntervalMs` 是 60 秒，测「同一项目不重复判定」要把时钟拨 10 秒而不是 10 分钟，否则真的越过窗口。
+  - **验证**：`test/diary.test.js` 新增 6 条（everyMs=0 不起钟、配了间隔起钟且 dispose 后无钟、定时唤醒排进判定且 trigger 为 timer、`listProjects` 抛错只 warn 且钟重新排上、turn/end 钩子仍在、同项目在窗口内不重复判定）→ 32/32；`test/api.test.js` 的 effective 键数 120 → 121 并补钉默认值 `0`；`test/client.test.js` 的数值清单锁从「整行字面量精确匹配」改成「前三个键顺序不变、允许追加」——原来那种写法每加一个数值键就假红一次；`docs/CONFIGURATION.md` 补该键说明（有「schema 每个键都要有说明」的锁）。全量 3152 用例 / 3151 通过 / 0 失败 / 1 跳过。
+
 - **日记本进面板、长成本子样、导航只写人格名；设置页「个性化」里的画像与自动事实搬到人格页**。上一版日记本的问题全是「看着有、点了不对」：侧边栏还留着旧版第四对座位（面板里同时也有入口，两处各开一个）；风格是一张白纸；导航列的是项目桶键（`QQ---4f061790`、`amarre-c836db6a`），而且写的是 `ptc` 这种 agent 名；用户画像与「自动事实」两张卡躺在设置页的「个性化」分组里，改了一半得翻两个页面。这一档把四件事一起收掉。
 
   - **侧边栏第四对座位撤掉（`lib/client.js`）**：`disposeDiaryGlyph` / `disposeDiaryMain` 整块与 `return` 里的两行 dispose 全删，`sidebar.panellist` 回到三对（`dsh-mneme` 60 / `dsh-mneme-wiki` 61 / `dsh-mneme-kb` 62）。日记本变成记忆面板内的标签页（`{ key: "diary", label: t("memory.diary.title") }`，`view === "diary"` 渲染 `DiaryLibraryPanel`）；右栏 `registerDiarySeats` 那个入口**保留**——用户要在看对话时顺手记一笔。
