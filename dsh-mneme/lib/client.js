@@ -873,8 +873,8 @@ window.__ModuleLoader__.load({
         "memory.diary.exporting": "正在存…",
         "memory.diary.loading": "正在读…",
         "memory.diary.noProject": "不知道这个会话属于哪个项目",
-        "memory.diary.openFailed": "右栏打不开",
         "memory.diary.noProjectHint": "会话还没有工作目录，日记不知道该写到哪里。换一个有工作目录的会话再打开。",
+        "memory.diary.noProjectRoot": "不知道这本书属于哪个项目，写不了",
         "memory.diary.disabled": "日记本没有开",
         "memory.diary.disabledHint": "到「设置 › 增强」里打开「日记本」，重启 DSH 之后这个入口才可用。",
         "memory.diary.unavailable": "日记服务没有装配起来",
@@ -1879,8 +1879,8 @@ window.__ModuleLoader__.load({
         "memory.diary.exporting": "Saving…",
         "memory.diary.loading": "Loading…",
         "memory.diary.noProject": "This session has no project directory",
-        "memory.diary.openFailed": "Cannot open the panel",
         "memory.diary.noProjectHint": "The session has no working directory yet, so there is nowhere to write a diary to. Open this in a session that has one.",
+        "memory.diary.noProjectRoot": "This notebook has no known project folder, so it cannot be written",
         "memory.diary.disabled": "The diary is off",
         "memory.diary.disabledHint": "Turn on Diary under Settings › Enhance, then restart DSH — the entry becomes available after that.",
         "memory.diary.unavailable": "The diary service is not wired up",
@@ -3306,6 +3306,10 @@ window.__ModuleLoader__.load({
       ".mneme-diary-book:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
       ".mneme-diary-book--on{border-color:var(--mneme-accent);color:var(--mneme-accent);font-weight:600}",
       ".mneme-diary-meta{flex:none;font-size:11px;line-height:16px;color:var(--mneme-fg-dim);display:flex;gap:6px;align-items:baseline;padding:0 2px}",
+      // 写/存两个动作的回执：成功和失败用同一块位置，靠左侧描边与配色区分，
+      // 不另起弹层——面板里已经有纸张在动，再多一层浮层会盖住正文。
+      ".mneme-diary-notice{flex:none;font-size:12px;line-height:18px;padding:5px 9px;border-radius:6px;border-left:3px solid var(--mneme-accent);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);word-break:break-word}",
+      ".mneme-diary-notice--bad{border-left-color:var(--mneme-danger);color:var(--mneme-danger)}",
       ".mneme-diary-paperhead{display:flex;align-items:baseline;gap:8px;padding-bottom:6px;margin-bottom:6px;border-bottom:1px solid var(--dsw-alias-border-l1)}",
       ".mneme-diary-papername{font-size:13px;line-height:19px;font-weight:600;color:var(--mneme-accent);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".mneme-diary-paperdate{font-size:11px;line-height:16px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums;flex:none}",
@@ -3339,11 +3343,6 @@ window.__ModuleLoader__.load({
       ".mneme-diary-auditrow{font-size:11px;line-height:16px;color:var(--mneme-fg-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
       // 会话头入口按钮：尺寸与 M.O. 的 .mneme-pipe-trigger 对齐（28px 行高 / 12px 字号），
       // 手绘感只靠不对称圆角 + 1.5px 描边，颜色仍走宿主语义 token（不新增色值）。
-      ".mneme-diary-trigger{min-height:28px;color:var(--dsw-alias-label-secondary);cursor:pointer;background:0 0;border:1.5px solid var(--dsw-alias-border-l2);border-radius:10px 7px 11px 6px;align-items:center;gap:5px;padding:2px 9px;font-family:inherit;font-size:12px;display:inline-flex}",
-      ".mneme-diary-trigger:hover{background:var(--dsw-alias-interactive-bg-hover)}",
-      ".mneme-diary-trigger:focus-visible{color:var(--dsw-alias-label-primary);outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
-      ".mneme-diary-triggerLabel{white-space:nowrap}",
-      "@container (width<=480px){.mneme-diary-triggerLabel{display:none}}",
       // --- 人格设计整页（第五个座位）---------------------------------------
       // 刻意**不新开一份 --mneme-* 语义色层**：contrast.test.js 按首次出现的
       // 「--mneme-fg-dim」定义解析色值（:118），再来一份就得保证顺序，收益却为零。
@@ -10720,27 +10719,6 @@ window.__ModuleLoader__.load({
     // 没有能调 openTab 的按钮，页签就永远打不开，界面上等于不存在。v0.13.0 就是这么发的：
     // 类型、正文、旗标闸全绿，用户重启后却「侧边栏没有入口」。入口与页签是一对，缺一不可。
     // 这里只做「点一下开页签」，不复刻 M.O. 那套 hover 浮层——日记本身就是那个 pane。
-    function DiaryEntryButton(props) {
-      const { t, openPane } = props;
-      const [failed, setFailed] = useState(false);
-      const onClick = () => {
-        const ok = openPane();
-        setFailed(!ok);
-        // 按钮空间只够一个短标签，但点不开必须**说出来**，不能静默。
-        announce(ok ? t("memory.diary.title") : t("memory.diary.openFailed"));
-      };
-      return h("button", {
-        type: "button",
-        className: "mneme-diary-trigger",
-        title: failed ? t("memory.diary.openFailed") : t("memory.diary.title"),
-        onClick
-      },
-        h(DiaryMark, { size: 14 }),
-        h("span", { className: "mneme-diary-triggerLabel" },
-          failed ? t("memory.diary.openFailed") : t("memory.diary.title"))
-      );
-    }
-
     // 左侧面板（`sidebar.panellist` + `main` 成对座位）的图标：一本翻开的册子，
     // 与右栏 tab 的 DiaryMark 同一形状，但这里画成 24 网格的粗描边——侧栏图标
     // 统一走 1.8px，细描边在 18px 下会糊。
@@ -10834,6 +10812,10 @@ window.__ModuleLoader__.load({
       const [day, setDay] = useState(null);      // 选中的那天（`桶键@日期` 复合键）
       const [entry, setEntry] = useState(undefined);
       const [book, setBook] = useState(readDiaryBook);
+      // 写侧两个动作（写今天 / 存到项目）。右栏那份 DiaryPane 被撤掉之后，
+      // 这里是唯一还能手动写的地方——不给它写按钮，等于把「手动补写」整条路删了。
+      const [busy, setBusy] = useState("");
+      const [notice, setNotice] = useState(null); // {kind:"ok"|"bad", text}
       // 导航要显示人格名，而人格名只在人格卡里；日记正文只写了 agent 名。
       // 读不到卡时导航退回项目名——不拿 agent 名顶上（见 diaryBucketName）。
       const [store, setStore] = useState(null);
@@ -10918,6 +10900,61 @@ window.__ModuleLoader__.load({
         return () => { dead = true; };
       }, [activeItem && activeItem.key]);
 
+      // 当前这一篇属于哪个项目：桶是 projectKey(projectRoot) 的产物，反推不回路径，
+      // 所以只能读 diaries/state.json 里 compose 自己记的账（library.js 已并进桶上）。
+      const activeBucket = activeItem
+        ? buckets.find((b) => b.key === activeItem.bucket) || null
+        : null;
+      const writableRoot = (activeBucket && typeof activeBucket.projectRoot === "string"
+        && activeBucket.projectRoot) || "";
+      const writerAgent = (activeBucket && typeof activeBucket.agentId === "string"
+        && activeBucket.agentId) || "";
+
+      const say = (kind, text) => setNotice({ kind, text });
+
+      const composeToday = () => {
+        if (!writableRoot || busy) return;
+        setBusy("compose");
+        setNotice(null);
+        apiFetch(diaryUrl("/compose", writableRoot, { agent: writerAgent }), DIARY_WRITE_OPTS({}))
+          .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+          .then((r) => {
+            const b = r.body || {};
+            if (!r.ok) { say("bad", t("memory.diary.composeFailed") + (b.error ? " (" + b.error + ")" : "")); return; }
+            // skip 不是错：already-written / no-material 都是关于这本书的答案，
+            // 说清楚比笼统报「没写成」有用。
+            if (b.status === "written") say("ok", t("memory.diary.writtenOk").replace("{path}", String(b.path || "")));
+            else if (b.reason === "already-written") say("ok", t("memory.diary.skip.already"));
+            else if (b.reason === "no-material") say("ok", t("memory.diary.skip.noMaterial"));
+            else say("ok", t("memory.diary.skip.other"));
+            setTick((n) => n + 1);
+          })
+          .catch((err) => {
+            console.warn("[dsh-mneme] diary compose failed:", err);
+            say("bad", t("memory.diary.composeFailed"));
+          })
+          .then(() => setBusy(""));
+      };
+
+      const exportDay = () => {
+        if (!writableRoot || !activeItem || busy) return;
+        setBusy("export");
+        setNotice(null);
+        apiFetch(diaryUrl("/export", writableRoot), DIARY_WRITE_OPTS({ date: activeItem.date }))
+          .then((res) => res.json().then((body) => ({ status: res.status, ok: res.ok, body })))
+          .then((r) => {
+            const b = r.body || {};
+            if (r.ok) say("ok", t("memory.diary.exportOk").replace("{path}", String(b.path || "")));
+            else if (r.status === 409) say("bad", t("memory.diary.exportExists"));
+            else say("bad", t("memory.diary.exportFailed") + (b.error ? " (" + b.error + ")" : ""));
+          })
+          .catch((err) => {
+            console.warn("[dsh-mneme] diary export failed:", err);
+            say("bad", t("memory.diary.exportFailed"));
+          })
+          .then(() => setBusy(""));
+      };
+
       const paperButtons = h("div", { className: "mneme-diary-books", role: "group", "aria-label": t("memory.diary.bookLabel") },
         DIARY_BOOKS.map((b) => h("button", {
           key: b.key, type: "button",
@@ -10931,6 +10968,19 @@ window.__ModuleLoader__.load({
         h("span", { className: "mneme-diary-title" }, t("memory.diary.title")),
         h("span", { className: "mneme-diary-spacer" }),
         paperButtons,
+        h("button", {
+          type: "button", className: "mneme-diary-btn",
+          // 账本里没有这个桶的路径 = 不知道写到哪，不给按钮（点了必然 400）。
+          // 不用 title 藏原因，disabled + 下面那行说明更直接。
+          disabled: !!gate || !writableRoot || !!busy,
+          title: writableRoot ? undefined : t("memory.diary.noProjectRoot"),
+          onClick: composeToday
+        }, busy === "compose" ? t("memory.diary.writing") : t("memory.diary.write")),
+        h("button", {
+          type: "button", className: "mneme-diary-btn",
+          disabled: !!gate || !writableRoot || !activeItem || !!busy,
+          onClick: exportDay
+        }, busy === "export" ? t("memory.diary.exporting") : t("memory.diary.export")),
         h("button", {
           type: "button", className: "mneme-diary-btn",
           disabled: !!gate, onClick: () => setTick((n) => n + 1)
@@ -10985,7 +11035,14 @@ window.__ModuleLoader__.load({
         body = h(react.Fragment, null, nav, meta, h("div", { className: "mneme-diary-body" }, list, paper));
       }
 
-      return h("div", { className: "mneme-diary" }, head, body);
+      const noticeRow = notice
+        ? h("div", {
+            className: "mneme-diary-notice" + (notice.kind === "bad" ? " mneme-diary-notice--bad" : ""),
+            role: notice.kind === "bad" ? "alert" : "status"
+          }, notice.text)
+        : null;
+
+      return h("div", { className: "mneme-diary" }, head, noticeRow, body);
     }
 
 
@@ -11893,68 +11950,8 @@ window.__ModuleLoader__.load({
     // ① 类型注册与正文座位各自兜自己的异常；② 类型注册要幂等（宿主对重复的
     // 类型 id 会抛）；③ **必须同时给一个能 openTab 的入口**，否则页签不可达。
     function registerDiarySeats(ctx, t) {
-      let hasPane = false;
-      try {
-        const sb = typeof ctx.get === "function" ? ctx.get("sidebarRight") : null;
-        hasPane = !!(sb && typeof sb.openTab === "function");
-      } catch { hasPane = false; }
       // 与 M.O. 同一个判据：右栏页面类型按 kind 打开（openTab(kind)）。
       // 服务半可用 / kind 未注册时抛错 → 返回 false，入口按钮如实报「打不开」。
-      const openPane = () => {
-        try {
-          const sb = typeof ctx.get === "function" ? ctx.get("sidebarRight") : null;
-          if (sb && typeof sb.openTab === "function") {
-            sb.openTab(DIARY_TAB_KIND);
-            return true;
-          }
-        } catch (err) {
-          console.warn("[dsh-mneme] sidebarRight.openTab failed for diary:", err);
-        }
-        return false;
-      };
-      try {
-        const tabs = typeof ctx.get === "function" ? ctx.get("sidebarRightTabs") : null;
-        if (tabs && typeof tabs.register === "function") {
-          const already = typeof tabs.get === "function" ? tabs.get(DIARY_TAB_ID) : null;
-          if (!already) {
-            tabs.register({
-              id: DIARY_TAB_ID,
-              kind: DIARY_TAB_KIND,
-              title: () => t("memory.diary.title"),
-              guide: [{
-                id: "dsh-mneme:diary:guide",
-                order: 10,
-                title: () => t("memory.diary.title"),
-                description: () => t("memory.diary.note"),
-                icon: (size) => h(DiaryMark, { size })
-              }]
-            });
-          }
-        }
-      } catch (err) {
-        console.warn("[dsh-mneme] diary tab type registration failed:", err);
-      }
-
-      // 会话头入口（.actions 座位；.corner 被原生侧栏展开键占用，别用）。
-      // 只在宿主真有右栏服务时注册：没有 sidebarRight 的宿主上放一个点不出东西的按钮，
-      // 正是用户最讨厌的「点了没反应」，不如不放——console.info 留一条线索给排查。
-      // 每个座位都要 inject: (sessionId) => ({ sessionId })，否则读到的永远是全局层。
-      if (hasPane) {
-        try {
-          ctx.slots.inject("conversation.session.header.actions", () => {
-            return ctx.slots.register({
-              name: "conversation.session.header.actions",
-              id: "dsh-mneme:diary",
-              order: 31,
-              inject: (sessionId) => ({ sessionId })
-            }, () => h(DiaryEntryButton, { t, openPane }));
-          });
-        } catch (err) {
-          console.warn("[dsh-mneme] diary header entry registration failed:", err);
-        }
-      } else {
-        console.info("[dsh-mneme] diary: host has no sidebarRight service, header entry skipped");
-      }
       try {
         const tabs = typeof ctx.get === "function" ? ctx.get("sidebarRightTabs") : null;
         if (tabs && typeof tabs.register === "function") {

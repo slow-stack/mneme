@@ -153,3 +153,35 @@ test("历史桶名带中文也要能读（#613 的双桶就有一个是那样）
   assert.match(readLibraryEntry({ memoryDir, bucket: "QQ对话-4f061790", date: "2026-11-07" }), /旧的那篇/,
     "清单里列得出来就必须读得到，不能只做一半");
 });
+
+test("清单带上桶的 projectRoot / agentId，面板靠它决定能不能写", (t) => {
+  // 桶名（目录名 + 8 位哈希）反推不回绝对路径，而「写今天」必须给 project。
+  // 所以 listDiaryLibrary 从 diaries/state.json 里取账本；账本里没有就留空，
+  // 面板据此禁用按钮——绝不猜路径，猜错就把日记写到别的项目去了。
+  const { memoryDir, root } = fixture({
+    "amarre-c836db6a": { "2026-11-08": entry({ persona: "default (ptc)" }) },
+    "lone-11111111": { "2026-11-08": entry({ persona: "default (ptc)" }) }
+  });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+  writeFileSync(join(root, "state.json"), JSON.stringify({
+    "amarre-c836db6a": { projectRoot: "D:\\amarre", lastDate: "2026-11-08", chatId: "c1", agentId: "ptc" }
+  }), "utf8");
+
+  const byKey = Object.fromEntries(listDiaryLibrary({ memoryDir }).buckets.map((b) => [b.key, b]));
+  assert.equal(byKey["amarre-c836db6a"].projectRoot, "D:\\amarre", "有账本的桶要带出绝对路径");
+  assert.equal(byKey["amarre-c836db6a"].agentId, "ptc");
+  assert.equal(byKey["lone-11111111"].projectRoot, "", "没账本就留空，绝不猜");
+  assert.equal(byKey["lone-11111111"].agentId, "");
+});
+
+test("state.json 坏掉时清单照常出，不因账本读不出就整页空白", (t) => {
+  // 账本只是附加信息。它坏了最坏是「不知道该写哪」，不该连日记都看不到。
+  const { memoryDir, root } = fixture({ "amarre-c836db6a": { "2026-11-08": entry({ persona: "default (ptc)" }) } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+  writeFileSync(join(root, "state.json"), "{ not json", "utf8");
+
+  const { buckets } = listDiaryLibrary({ memoryDir });
+  assert.equal(buckets.length, 1);
+  assert.equal(buckets[0].projectRoot, "");
+  assert.equal(buckets[0].persona, "default (ptc)");
+});

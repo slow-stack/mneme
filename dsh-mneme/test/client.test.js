@@ -2566,44 +2566,36 @@ test("diary is a panel tab now, not a sidebar seat", () => {
     "the right-sidebar entry must stay");
 });
 
-// v0.13.0 发出去之后用户重启完说「侧边栏没有入口」：类型注册了、正文座位注册了、
-// 旗标闸也是绿的，但没有任何一个座位能调 openTab——页签永远打不开，界面上等于
-// 不存在。这条锁的就是「注册了页签类型，就必须同时给一个能打开它的入口」：
-// 光有 sidebarRightTabs.register 而没有 conversation.session.header.actions 座位，
-// 就是一次静默的功能失踪，用户只能靠翻源码才知道东西其实写好了。
-test("diary tab ships an entry that can actually open it", () => {
+// v0.13.0 第一次发出去时右栏页签类型注册了、正文座位也注册了，却没有任何一个
+// 能调 openTab 的按钮——页签永远打不开。当时的修法是往会话头塞一个入口按钮；
+// 2026-11-09 桉桉又要求把它撤掉：日记已经进了记忆面板当标签页，会话头顶再挂一个
+// 指向右栏的按钮，就是同一件事有两个入口。所以现在锁的是「没有第二个入口」。
+test("diary has exactly one entry: the panel tab, not a session header button", () => {
   const start = clientSource.indexOf("function registerDiarySeats(ctx, t) {");
   const end = clientSource.indexOf("function apply(ctx) {", start);
   assert.ok(start > -1 && end > start, "registerDiarySeats must sit before apply()");
   const body = clientSource.slice(start, end);
 
-  // ① 入口座位：会话头 .actions，且 inject 会话 id（不 inject 读到的是全局层）
+  // ① 会话头入口必须彻底消失：座位、按钮组件、打开动作、失败文案一个都不留。
   assert.ok(
-    body.includes('ctx.slots.inject("conversation.session.header.actions"'),
-    "the diary must register a clickable header entry, not just a tab type"
+    !body.includes("conversation.session.header.actions"),
+    "the diary must not register a second entry in the session header"
+  );
+  assert.ok(!body.includes("openPane"), "the openPane helper only existed for the header button");
+  assert.ok(!body.includes("hasPane"), "hasPane only gated the header button");
+  assert.ok(
+    !/function DiaryEntryButton\s*\(/.test(clientSource),
+    "the header entry component must be gone, not just unregistered"
   );
   assert.ok(
-    body.includes('id: "dsh-mneme:diary"'),
-    "the header entry needs its own stable seat id"
-  );
-  assert.ok(
-    body.includes("inject: (sessionId) => ({ sessionId })"),
-    "the header entry must inject the session id"
-  );
-
-  // ② 入口必须真的能把页签打开：openPane -> openTab(kind)，且按 hasPane 判定
-  assert.match(body, /sb\.openTab\(DIARY_TAB_KIND\)/, "openPane must open the diary tab kind");
-  assert.ok(
-    body.includes('ctx.get("sidebarRight")') && body.includes("hasPane"),
-    "the entry must be gated on the host actually having a right sidebar"
+    !clientSource.includes("memory.diary.openFailed"),
+    "the \"cannot open\" copy is dead once nothing can fail to open it"
   );
 
-  // ③ 按钮是具名组件，且点不开时要说出来（不许静默无反应）
-  assert.match(clientSource, /function DiaryEntryButton\(/, "the entry must be a named component");
-  assert.ok(
-    clientSource.includes('t("memory.diary.openFailed")'),
-    "a failed open must be announced, not silently swallowed"
-  );
+  // ② 右栏那套照旧：页签类型 + 正文 + 标题都还在（宿主若有自己的页签选择器仍可达）。
+  assert.ok(body.includes('ctx.get("sidebarRightTabs")'), "tab type registration stays");
+  assert.ok(body.includes('name: "sidebar.right.pane.tab"'), "pane body stays registered");
+  assert.ok(body.includes('name: "sidebar.right.pane.tab.title"'), "pane title stays registered");
 });
 
 test("M.O. empty-state, list and scope copy exist in both languages", () => {

@@ -17,6 +17,24 @@ import { DIARY_FILE_RE, diaryRoot } from "./dir.js";
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---/;
 
 /**
+ * 桶键 → 项目根与写日记的 agent。来源是 diaries/state.json（compose 自己写的账本）。
+ *
+ * 为什么面板要这个：一个桶就是一份 `projectKey(projectRoot)` 的产物，桶名里只有
+ * 目录名和 8 位哈希，**反推不回绝对路径**。而「现在再写一篇」必须给 `project`。
+ * 读不到就返回空表——那是「这个桶是别人手工放的」或「账本丢了」，面板那时候
+ * 就不该长出一个点了必然 400 的按钮。
+ */
+function readBucketState(root) {
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync(join(root, "state.json"), "utf8"));
+  } catch {
+    return {};
+  }
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+}
+
+/**
  * 桶名合法性：**不按字符集白名单**，按「它是个单层目录名」判。
  *
  * 一开始写的是 `^[A-Za-z0-9._-]+$`，理由是路径成分越严越好——但现场就有一个
@@ -110,6 +128,7 @@ export function listDiaryLibrary({ memoryDir, configured = "" } = {}) {
     return { root, buckets: [] };
   }
   const buckets = [];
+  const state = readBucketState(root);
   for (const name of names) {
     // `.deleted` 一类是回收站，不是日记。
     if (name.startsWith(".")) continue;
@@ -138,9 +157,14 @@ export function listDiaryLibrary({ memoryDir, configured = "" } = {}) {
         break;
       }
     }
+    const meta = state[name] && typeof state[name] === "object" ? state[name] : {};
     buckets.push({
       key: name,
       project,
+      // 「现在再写一篇」需要的两样：绝对路径与写作者身份。账本里没有就留空，
+      // 面板据此把按钮禁掉——不猜路径，猜错会写在别的项目里。
+      projectRoot: typeof meta.projectRoot === "string" ? meta.projectRoot : "",
+      agentId: typeof meta.agentId === "string" ? meta.agentId : "",
       persona,
       latest: files[0].date,
       count: files.length,
