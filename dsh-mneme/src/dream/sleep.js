@@ -1157,7 +1157,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       messages: [
         {
           role: "system",
-          content: [{ type: "text", text: STR.prompts.affective[language].replace("N", String(traitMinSessions)) }],
+          content: [{ type: "text", text: STR.prompts.affective[language].replaceAll("N", String(traitMinSessions)) }],
           source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" }
         },
         { role: "user", content: [{ type: "text", text: fenceListBody(language, `${entityNames}\n---\n${listText}`) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
@@ -1234,6 +1234,19 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       dropped.push({ reason: "relation cap", person: person.name, target: target.name });
       continue;
     }
+    // #619 / Ephor: entity_relations 没有 UNIQUE 约束，saveRelation 每次
+    // randomUUID() 新插一条。同一个 (person, target, 场合记忆) 跑第二轮就会得到
+    // 第二条一模一样的边——而探针会拿同一批段反复回放，重复边会让 sessionCount
+    // 看起来比真实场合数多，主指标直接失真。所以写之前先看这条边是否已存在；
+    // 存在就跳过并计入 dropped，而不是再插一条。这一步在 cap 之后、写之前，
+    // 免得重复边先吃掉一个名额。
+    const alreadyLinked = (service.getRelations(person.id) ?? []).some(
+      (r) => r.relation_type === "affective_context" && r.to_entity === target.id && r.memory_id === evidence[0]
+    );
+    if (alreadyLinked) {
+      dropped.push({ reason: "duplicate edge", person: person.name, target: target.name });
+      continue;
+    }
     try {
       const saved = service.saveRelation({
         from_entity: person.id,
@@ -1262,17 +1275,19 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
   let applied = 0;
   let failures = [];
   let conflicts = [];
+  let ok = true;
   if (traits.length > 0) {
     const decisions = traits.slice(0, maxTraits).map((t) => ({
       action: "create",
       type: "pattern",
-      title: `稳定倾向：${t.person} 在多次独立场合 ${t.emotion}`,
-      content: `${t.person} 在 ${t.sessionCount} 个相互独立的场合（${t.evidence.length} 条记忆）中反复表现出「${t.emotion}」，对象是 ${t.target}。${t.why}`,
+      title: STR.affectiveTrait.title[language](t),
+      content: STR.affectiveTrait.content[language](t),
       importance: 3,
       evidence: t.evidence
     }));
     const snapshot = new Map();
-    const { ok } = validateDecisions(decisions, snapshot, { maxCreatePerRun: maxTraits, allowedActions: ["create"] });
+    const validated = validateDecisions(decisions, snapshot, { maxCreatePerRun: maxTraits, allowedActions: ["create"] });
+    ok = validated.ok;
     if (ok) {
       const result = applyDecisions(decisions, service, logger, snapshot, { ...config, mintSource: "sleep", runId });
       applied = result.applied;
@@ -1280,10 +1295,45 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       conflicts = result.conflicts;
     }
   }
+  // Aborting mid-pass is not "did nothing" and not "all done". Even when nothing
+  // was written yet, "noop" would claim the whole pool was examined and found
+  // empty — the loop broke at an arbitrary index, so it examined an unknown
+  // prefix. Report it as aborted either way.
+  if (signal?.aborted) {
+    return {
+      status: "aborted",
+      reason: "user activity",
+      scanned: memories.length,
+      relations: relations.length,
+      edgeWrites: relations.length,
+      applied,
+      traits: traits.length,
+      downgraded: downgradedCount,
+      dropped
+    };
+  }
+  if (!ok) {
+    return {
+      status: "failed",
+      error: "trait decisions rejected by validation",
+      scanned: memories.length,
+      relations: relations.length,
+      edgeWrites: relations.length,
+      applied: 0,
+      traits: traits.length,
+      downgraded: downgradedCount,
+      dropped
+    };
+  }
   return {
     status: relations.length + applied > 0 ? "ok" : "noop",
     scanned: memories.length,
     relations: relations.length,
+    // #619: edges are real writes but not "applied decisions", so the receipt
+    // would read `:0` for a run that did write. Count them separately instead
+    // of folding them into `applied` (that would make the two numbers mean
+    // different things depending on which phase produced them).
+    edgeWrites: relations.length,
     applied,
     failures,
     conflicts,
@@ -1401,7 +1451,14 @@ export async function runSleep(ctx, service, config, logger, semantic = null, si
 
   const status = deriveStatus(phases);
   const route = resolveSleepRoute(ctx, config, logger);
-  const totalApplied = Object.values(phases).reduce((n, p) => n + (Number.isInteger(p?.applied) ? p.applied : 0), 0);
+  // #619: a phase may write rows that are not "applied decisions" — the
+  // affective phase inserts relation edges directly. Counting only `applied`
+  // made a run that wrote an edge report `:0`, which reads as "did nothing" in
+  // the audit row and would be read as zero writes by the probe.
+  const totalApplied = Object.values(phases).reduce(
+    (n, p) => n + (Number.isInteger(p?.applied) ? p.applied : 0) + (Number.isInteger(p?.edgeWrites) ? p.edgeWrites : 0),
+    0
+  );
   // Issue #126（与 #104 同向）：把各 phase 的跳过明细汇总成一行审计数据，带 phase
   // 名（同一次 run 里 conflicts 与 patterns 都可能产出 skipped）。全空时写 NULL，
   // 不落空数组——审计行只记真实发生过的跳过。

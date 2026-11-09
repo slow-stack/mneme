@@ -949,3 +949,96 @@ test("sleep: the affective phase never adds a related_to edge", async () => {
   assert.equal(service.all().length, before, "no memory minted for a single-occasion emotion");
   store.close();
 });
+
+test("sleep: replaying the same segment does not stack duplicate edges", async () => {
+  // #619 / Ephor 第 2 条：entity_relations 没有 UNIQUE，saveRelation 每次新插。
+  // 探针拿同一批段反复回放时，重复边会把 sessionCount 抬高、主指标失真。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  linkSession(service, mem.id, "session-A");
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [mem.id] }
+  ]);
+  const first = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(first.phases.affective.relations, 1, "第一轮写了一条");
+  const second = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(second.phases.affective.relations, 0, "第二轮不再重复写");
+  assert.ok(second.phases.affective.dropped.some((d) => d.reason === "duplicate edge"), "重复被记账，不是静默跳过");
+  const person = service.findEntityByName("桉桉");
+  const edges = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  assert.equal(edges.length, 1, "库里仍只有一条边");
+  store.close();
+});
+
+test("sleep: an edge write shows up in the receipt instead of reading as zero", async () => {
+  // #619 / Ephor: receipt 的倒数第二位是 applied，而 affective 相位写边走
+  // saveRelation、不进 applied。不改的话，一轮明明写了边，审计行却是 `:0`——
+  // 「跑了但什么都没做」，探针会把有写入的轮次记成空轮。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  linkSession(service, mem.id, "session-A");
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [mem.id] }
+  ]);
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(result.phases.affective.relations, 1, "恰好一条边落地，否则这条用例没在验东西");
+  assert.equal(result.phases.affective.applied, 0, "边不是 decision，applied 仍是 0");
+  const parts = result.receipt.split(":");
+  assert.equal(parts.length, 8, "receipt 仍是八段");
+  // 段序：dsh-mneme / run / runId / status / snapshotHash / inputCount / applied / summaryFlag
+  assert.equal(parts[6], "1", "写入计数必须非零，读成 0 等于谎报本轮没做过事");
+  store.close();
+});
+
+test("sleep: an aborted affective phase reports aborted, not ok", async () => {
+  // 中途被打断且已经写了边，既不能报 ok（没跑完），也不能报 noop（确实写了）。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  linkSession(service, mem.id, "session-A");
+  const controller = new AbortController();
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [mem.id] }
+  ]);
+  const realStream = ctx.llm.stream;
+  ctx.llm.stream = async function* (options) {
+    yield* realStream.call(this, options);
+    // 模型答完、写边之前用户回到电脑前
+    if (options.purpose === "sleep-affective") controller.abort();
+  };
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, controller.signal);
+  const phase = result.phases.affective;
+  assert.equal(phase.status, "aborted", "打断不是 ok");
+  assert.equal(phase.reason, "user activity");
+  assert.ok(phase.edgeWrites >= 0, "打断也把已写的条数报出来");
+  store.close();
+});
+
+test("sleep: a trait that clears the threshold mints exactly one pattern and counts it", async () => {
+  // 这条与上一条配对：同样的三会话证据，上一条说「够格就铸」，这条看「铸了几个、
+  // 计数是否如实」。Ephor 第 4 条的 `if (ok)` 缺 else 已补成 failed 分支，但那条
+  // 分支在合法决策下不可达（决策是我们按合法形状拼的），不写假用例假装测过它。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const ids = [];
+  for (const session of ["s1", "s2", "s3"]) {
+    const mem = makeMemory(service, `答辩-${session}`, `第 ${session} 次答辩前都失眠`);
+    linkSession(service, mem.id, session);
+    ids.push(mem.id);
+  }
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "trait", evidence: ids, why: "三次都一样" }
+  ]);
+  const result = await runSleep(ctx, service, affectiveConfig({ sleepMaxPatternPerRun: 1 }), ctx.logger, { embedder, vectorIndex: null }, null);
+  const phase = result.phases.affective;
+  assert.equal(phase.status, "ok");
+  assert.equal(phase.traits, 1, "识别出一个 trait");
+  assert.equal(phase.applied, 1, "它真的被铸出来了");
+  store.close();
+});

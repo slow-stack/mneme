@@ -305,6 +305,19 @@ export const STR = {
     zh: (content, evidence) => `${content}\n\n[证据: ${evidence.join(", ")}]`,
     en: (content, evidence) => `${content}\n\n[Evidence: ${evidence.join(", ")}]`
   },
+  // #619：sleep 情感归因相位铸 trait pattern 时的标题与正文。放在这里而不是
+  // 写在 sleep.js 里，因为 en prompt 明确要求 why 用英文，标题正文却是中文
+  // 会让同一条记忆两种语言混排。
+  affectiveTrait: {
+    title: {
+      zh: (p) => `稳定倾向：${p.person} 在多次独立场合 ${p.emotion}`,
+      en: (p) => `Stable disposition: ${p.person} is ${p.emotion} across several independent occasions`
+    },
+    content: {
+      zh: (t) => `${t.person} 在 ${t.sessionCount} 个相互独立的场合（${t.evidence.length} 条记忆）中反复表现出「${t.emotion}」，对象是 ${t.target}。${t.why}`,
+      en: (t) => `${t.person} repeatedly showed "${t.emotion}" toward ${t.target} across ${t.sessionCount} independent occasions (${t.evidence.length} memories). ${t.why}`
+    }
+  },
   supersededSuffix: {
     zh: (content, oldInfo) => `${content}\n\n（已否决旧信息：${oldInfo}）`,
     en: (content, oldInfo) => `${content}\n\n(superseded outdated info: ${oldInfo})`

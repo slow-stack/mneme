@@ -296,11 +296,15 @@ test("extractor writes entities, attrs and relations from mock LLM output", asyn
   store.close();
 });
 
-test("extractor accepts affective_context as a first-class relation type", async () => {
-  // #619：情感边必须能真的落库。白名单里没有它时，模型抽出来的 affective_context
-  // 会被静默改写，图上看不出任何情感轴，而写入侧一切正常——最难排查的那种坏。
+test("extractor refuses to write affective_context, which belongs to the sleep phase", async () => {
+  // #619：affective_context 只有一个写入者——sleep 的 affective 相位。实体抽取发生
+  // 在写入当下，手里没有会话边界，判不了「一次场合」和「反复出现的特质」，写进去的
+  // 只会是一条没有 emotion/attribution/sessionCount 的半成品边，同一张表两种 schema。
+  // 所以抽取器把它当未知类型拒收，而不是当一等公民放行。
   const store = openStore();
   const memory = store.save({ type: "history", title: "答辩前一晚", content: "答辩前一晚他很焦虑", importance: 3 });
+  const warnings = [];
+  const logger = { warn: (msg) => warnings.push(String(msg)), info: () => {} };
   const callLLM = jsonLLM({
     entities: [
       { name: "他", type: "person", attrs: [] },
@@ -308,13 +312,13 @@ test("extractor accepts affective_context as a first-class relation type", async
     ],
     relations: [{ from: "他", to: "答辩", type: "affective_context" }]
   });
-  const result = await extractEntities(memory, { store, config: {}, callLLM });
+  const result = await extractEntities(memory, { store, config: {}, callLLM, logger });
   assert.equal(result.ok, true);
-  assert.equal(result.relations.length, 1);
-  assert.deepEqual(result.rejectedRelationTypes, []);
-  const rels = store.getRelations(store.findEntityByName("他").id);
-  assert.equal(rels.length, 1);
-  assert.equal(rels[0].relation_type, "affective_context");
+  assert.equal(result.relations.length, 0);
+  assert.deepEqual(result.rejectedRelationTypes, ["affective_context"]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /affective_context/);
+  assert.equal(store.getRelations(store.findEntityByName("他").id).length, 0);
   store.close();
 });
 

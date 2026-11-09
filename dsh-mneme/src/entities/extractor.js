@@ -1,9 +1,10 @@
 const VALID_TYPES = new Set(["person", "project", "concept", "technology", "organization"]);
-// #619：affective_context 是「人 ↔ 当时那件事」的情绪关联，与其余四种
-// 结构关系（uses / depends_on / part_of / related_to）不同轴。加进白名单不是
-// 装饰：白名单外的类型会被 sanitizeRelationType 拒收，模型抽出来的情感边会
-// 一条都落不了库，而库面上看不出任何异常。
-const VALID_RELATIONS = new Set(["uses", "depends_on", "part_of", "related_to", "affective_context"]);
+// #619：affective_context **刻意不在**这张白名单里。它不是结构关系，是「某人
+// 在某一次场合对某事的情绪」——判它需要 provenance（这条记忆来自哪个会话），
+// 而实体抽取发生在写入当下、手里没有会话边界，判不了「一次场合」与「反复出现
+// 的特质」。让它在这里也能写，就等于给 entity_relations 开第二个只带 {model}
+// 的写入口，同一张表两种 schema。唯一的写入者是 sleep 的 affective 相位。
+const VALID_RELATIONS = new Set(["uses", "depends_on", "part_of", "related_to"]);
 const MAX_MEMORY_CHARS = 4000;
 
 function buildSystemPrompt(config) {
@@ -23,14 +24,14 @@ RULES:
     {"name": "string", "type": "person|project|concept|technology|organization", "attrs": [{"key": "string", "value": "string", "confidence": 0.9}]}
   ],
   "relations": [
-    {"from": "entityName", "to": "entityName", "type": "uses|depends_on|part_of|related_to|affective_context"}
+    {"from": "entityName", "to": "entityName", "type": "uses|depends_on|part_of|related_to"}
   ]
 }
 
 CONSTRAINTS:
 - "type" must be one of: person, project, concept, technology, organization. If unsure, use "concept".
-- Relation "type" must be one of: uses, depends_on, part_of, related_to, affective_context. If unsure, use related_to.
-- affective_context is for an emotional state tied to a specific occasion (a person felt X on that day, about that thing). Never use it to declare a lasting trait of a person.
+- Relation "type" must be one of: uses, depends_on, part_of, related_to. If unsure, use related_to.
+- Do NOT emit emotional or affective relations. An emotion belongs to one occasion and needs session provenance to judge it; that is recorded separately, not here.
 - "relations" from/to must reference entity names from the "entities" list.
 - Maximum ${maxEntities} entities. Maximum ${maxAttrs} attributes per entity. Truncate if exceeded.
 - Only include entity-related attributes. Ignore irrelevant miscellaneous details.

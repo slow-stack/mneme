@@ -125,10 +125,11 @@ flowchart TD
   2. LLM 读实体名清单 + 记忆列表，每条候选输出 `person` / `target` / `emotion` / `attribution`（`occasion` 或 `trait`）/ `evidence`（记忆 id）/ `why`。
   3. **护栏在代码里，不在 prompt 里**：`person`/`target` 必须解析到已存在的实体（否则丢进 `dropped: unknown entity`）；`evidence` 必须是本轮扫描池里的真实 id（否则 `no real evidence`）；`emotion` 非空。
   4. **升特质要过 provenance**：模型说 `trait`，就用 `service.provenanceFor(memoryId)` 收集这批 evidence 覆盖的 `session_id`，去重后数量 `< sleepAffectiveTraitMinSessions` 的一律**降级为 `occasion`**（记 `downgradedFrom: "trait"`，不丢弃）。被降级的条数就是这张探针要抓的误归因数——静默丢掉它就等于把测到的东西藏起来。
-  5. `occasion` 直接落边：`saveRelation({relation_type: "affective_context", source: "llm", memory_id: evidence[0], metadata: {emotion, attribution, why, evidence, sessionCount, model, runId}})`，单轮最多 `sleepAffectiveMaxRelationsPerRun` 条（超出的进 `dropped: relation cap`）。
+  5. `occasion` 直接落边：`saveRelation({relation_type: "affective_context", source: "llm", memory_id: evidence[0], metadata: {emotion, attribution, why, evidence, sessionCount, model, runId}})`，单轮最多 `sleepAffectiveMaxRelationsPerRun` 条（超出的进 `dropped: relation cap`）。写之前先查同一个 `(person, target, evidence[0])` 是否已有边——`entity_relations` 没有 UNIQUE 约束，探针会拿同一批段反复回放，重复边会把 `sessionCount` 抬高（重复的进 `dropped: duplicate edge`，不静默跳过）。
   6. `trait` 走**标准决策通道**——铸成 `type=pattern` 记忆，经 `validateDecisions`（`allowedActions: ["create"]`、`maxCreatePerRun` 取 `sleepMaxPatternPerRun`）与 `applyDecisions`（`mintSource: "sleep"`，带 #512 铸造台账）。不新增写路径，因此继承所有既有上限与审计。
-- **输出**：`{status, scanned, relations, applied, failures, conflicts, traits, downgraded, dropped}`。`downgraded` 与 `dropped` 必须都是可见数字。
-- **验收**：一次场合的情绪只能落 `affective_context` 边、不能铸 pattern；同一类型跨 N 个独立会话才允许铸 pattern；判为 `related_to` 的关系计数在本相位后不增长。
+- **输出**：`{status, scanned, relations, edgeWrites, applied, failures, conflicts, traits, downgraded, dropped}`。`downgraded` 与 `dropped` 必须都是可见数字；`edgeWrites` 单独报，因为写边不是 `applied` 决策，混在一起会让 receipt 上「写了一轮」读成 `:0`。
+- **中断与失败**：中途 `signal.aborted` ⇒ `status: "aborted"`（**即使一条都没写**——循环断在任意下标，没扫完就不能报 `noop` 说「池子是空的」）；`validateDecisions` 拒绝 trait 决策 ⇒ `status: "failed"`，不是静默的 `noop`。
+- **验收**：一次场合的情绪只能落 `affective_context` 边、不能铸 pattern；同一类型跨 N 个独立会话才允许铸 pattern；判为 `related_to` 的关系计数在本相位后不增长；同一批段重放不产生第二条相同边。
 - **为什么不能接在 `relation_completion` 里**：那一相只扫**孤立**实体（`getRelations(e.id).length === 0`），且 `inferRelationType` 三种类型硬编码、末行 `return "related_to"` 兜底——把情感塞进去只会得到一批 `related_to`，图上看不出情感轴。
 
 ## 分层压缩策略表
