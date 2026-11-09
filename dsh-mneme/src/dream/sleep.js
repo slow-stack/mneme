@@ -596,6 +596,12 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // actionSet 已在候选构造前解析（跨类型候选需要它），这里只按档位选 prompt：
   // 默认档保持只有 conflict/keep 的窄 prompt，"full" 才开放六分支。
   const conflictPrompt = actionSet === "full" ? STR.prompts.conflictFull[language] : STR.prompts.conflict[language];
+  // reflectionUpdateEnabled=false：两份 conflict prompt 都教了模型怎么用 update
+  // （「信息部分过时 → update」那一支），只靠校验器拒会把每轮这份输出白付掉。
+  // 后缀与 dream 主链路共用同一条文案，两个入口对用户是同一个开关、同一种说法。
+  const conflictPromptGated = config.reflectionUpdateEnabled !== false
+    ? conflictPrompt
+    : conflictPrompt + STR.prompts.noUpdateSuffix[language];
   const runConflict = (batch, withEffort, tokens) => {
     conflictStreamFailure = "";
     const listText = batch.map((p) => STR.candidateConflicts[language](p)).join("\n\n");
@@ -623,7 +629,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     maxTokens: tokens,
     ...(withEffort && sleepEffort ? { reasoningEffort: sleepEffort } : {}),
     messages: [
-      { role: "system", content: [{ type: "text", text: conflictPrompt }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
+      { role: "system", content: [{ type: "text", text: conflictPromptGated }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
       { role: "user", content: [{ type: "text", text: fenceListBody(language, listText) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
     ]
   }, reportUsage, (reason) => { conflictStreamFailure = describeStreamFailure(reason); }));
@@ -687,6 +693,8 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       // Issue #536 review（CodeRabbit ②）：reflectionUpdateMaxPerRun 是**整轮**上限，
       // 分批后不能每批都拿整份额度——那样 N 批就是 N 倍上限。这里用的是本轮的剩余额度。
       maxUpdatePerRun: updateBudget,
+      // reflectionUpdateEnabled=false：update 单条跳过（同 dream 主链路口径）。
+      allowUpdate: config.reflectionUpdateEnabled !== false,
       minAgeHours: config.reflectionUpdateMinAgeHours,
       skipInvalid: config.dreamSkipInvalid !== false,
       allowCrossTypeMerge: config.allowCrossTypeMerge === true,

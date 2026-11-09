@@ -4,6 +4,15 @@
 
 ## 🆕 新增
 
+- **`reflectionUpdateEnabled` 终于接上了：一个从 v0.7.1 起就拨了没反应的开关**。`src/config.js:523` 声明它、`src/settings.js:184` 把它列进白名单、`docs/CONFIGURATION.md:244` 与 `docs/SEMANTIC.md:252` 写着「检索后的反思更新既有记忆 / update 决策总开关」——但全仓库没有任何运行时代码读它（`git log -S` 追到 `5b5a2aa chore: release v0.7.1 (#33)`，从引入那天起就是死开关）。同族的 `reflectionFailureTracking` 有真实消费者（`src/service.js:2684`、`:2945`），`reflectionUpdateMaxPerRun` / `reflectionUpdateMinAgeHours` 也分别被 `src/dream.js:1380/1385` 与 `src/dream/sleep.js:690/796` 用着，只有 Enabled 这个总闸空着。
+
+  - **双侧都接，不只加一行判断**：只在校验侧拦（`validateDecisions` 拒掉 update），模型每轮仍会按 prompt 教的那样输出一批必然被拒的 update——`skipInvalid` 下被丢弃，但 token 照付；只改 prompt，模型仍可能自己写。所以 prompt 与校验各一道。
+  - **prompt 侧**：`src/lang.js` 新增 `noUpdateSuffix`（zh/en 各一句短后缀，中文含「不要输出 update」、英文含「do not output update」），明确是附加说明而不是完整 prompt，不与 `freezeSuffix` 或任务清单互相覆盖。`src/dream.js` 与 `src/dream/sleep.js` 各自拼成 `promptWithUpdateGate` / `conflictPromptGated` 供 system message 使用——**冲突链路也要接**，因为那两处 prompt 都教了「信息部分过时 → update」。
+  - **校验侧**：`validateDecisions` 新增 `allowUpdate`（默认 `!== false`，即不传时行为不变）。关闭时 update 进 `skipped` 并带 `policyDisabled: true`（条件展开，默认不外泄），错误文案点名 `reflectionUpdateEnabled=false`。
+  - **顺带修掉一条会打死调度器的护栏**：原来「全部跳过 = 模型坏了」的整单拒绝（`all N decision(s) invalid`）把策略性跳过也算进去了。用户自己关掉的动作不是模型故障——混在一起会让「这一轮只输出了 update」被判 `failed`，调度器于是拿同一批输入重跑同一条必然被拒的输出，无限循环。现在改成 `modelSkipped = skipped.length - policySkipped`，只把非策略性跳过算进去。这条**是测试逼出来的**：第一次跑 9 条用例挂了 3 条，修法是把产品逻辑改对，不是把测试改松。
+  - **验证**：新增 `test/reflection-update-gate.test.js` 9 例（默认零变化、`allowUpdate=true` 与不传逐字相同、关闭时 update 被拒且原因点名开关、同批 merge/archive 照常应用、strict 模式如实报错不静默、策略跳过优先于字段级错误、关闭后 updateCount 上限不再误触发、两种语言的后缀都存在且含 update、后缀保持短小不重述 schema）。全量 3143 用例 / 3142 通过 / 0 失败 / 1 跳过；check-sync 118 一致。
+  - **同轮撤回一条误判**：`actionPipelineEnabled` 我先前报成「无消费者」，那是因为只在 `src/` 里 grep——它其实在 `lib/client.js` 决定要不要注册 M.O. 座位，有真实消费者。真死开关只有 `reflectionUpdateEnabled` 这一个。
+
 - **子 agent 继承父会话的人格卡：派生出去的手脚不该变成「不知道自己是谁」**。人格寻址原本两维（`bySession[自身]` → `byAgent` → `default`），而子 agent 是一个新会话 id——用户不可能给每个派生会话都建一张卡。strict（`personaStrictAddressing`）一开，「有身份、没这一张的卡」就直接不注入人格，于是子 agent 从「自称父会话的人格」掉到「完全没有身份」。这比串味更糟：串味至少还有个稳定的「我」，掉到 none 是每派一次活换一次人。
 
   - **加第三维 `parentSession`（`src/user-settings.js` 的 `resolvePersonaCard`）**：顺序改成 `bySession[自身]` → `bySession[父会话]` → `byAgent` → strict `none` → `default`。父卡排在 `byAgent` 之前——「属于哪段对话」比「属于哪个预设」更能说明该用谁的人格（DS Bot 里 `agentPreset` 恒为 `standard`，这一维本来就分不开人）。`source` 新增读数 `"parentSession"`，面板据此能说清卡是从父会话继承来的。`strict` 的身份判据也把父会话 id 算进来：子 agent 只解析到父会话 id 时同样是「有身份」，不许被 default 兜底。

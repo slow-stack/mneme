@@ -44,6 +44,15 @@ const PROMPTS = {
     "zh": "\n\n当前为「冲突冻结」模式：检测到内容矛盾的条目时，仍请输出 conflict，并以 winner/loser 作为候选、reason 说明理由；冲突不会被自动裁决，而会冻结待人工确认。",
     "en": "\n\nConflict-freeze mode is active: when you detect entries with contradictory content, still output conflict — winner/loser are treated as candidates and reason explains the rationale; conflicts are not auto-adjudicated but frozen for human confirmation."
   },
+  // reflectionUpdateEnabled=false（「整理时允许改已有记忆」关掉）时的 prompt 后缀。
+  // 与上面 freezeSuffix 同一形状：只往既有 prompt 追加一句，不另写一份完整 prompt
+  // ——两份 prompt 会随规则改动漂开。这里明确要求「不要输出 update」，因为下面
+  // 任务清单里第 4 条仍在教模型怎么用 update；只加校验不改 prompt 等于让模型白写
+  // 一批被拒的决策（skipInvalid 下会被跳过，但仍是每轮实打实的输出 token）。
+  "noUpdateSuffix": {
+    "zh": "\n\n当前已关闭「改写已有记忆」：不要输出 update 决策（上面任务清单第 4 条不适用）。发现单条记忆信息过时时，请改用 keep 并在 reason 里说明，或输出 conflict / merge / archive / create；任何 update 都会被拒绝。",
+    "en": "\n\nRewriting existing memories is disabled: do not output update decisions (task item 4 above does not apply). When a single entry looks outdated, prefer keep with a reason in mind, or use conflict / merge / archive / create; any update decision will be rejected."
+  },
   // 叙述条（#164 对齐）：按主题聚类合成叙述，evidence 只能用簇内真实 id。
   "narrative": {
     zh: "你是记忆库叙述助手。下面按主题聚类给出记忆条目（id=... | title=... | 内容）。\n对每个聚类写一段 80-150 字的叙述条：该主题下的事实聚合——当前状态、关键事实、值得注意的走向。只依据给出的条目，不要发明细节。\n输出严格 JSON 数组：\n[{ \"tag\": \"聚类标签（原样照抄）\", \"content\": \"叙述文本\", \"evidence\": [\"支撑本叙述的记忆 id\"] }]\n规则：\n- evidence 只能使用该聚类内真实存在的 id，不要编造\n- 不是每个聚类都必须输出；没有可说的就跳过\n- 只输出 JSON 数组，不要其他文字",
