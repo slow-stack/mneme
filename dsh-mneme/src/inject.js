@@ -392,6 +392,11 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
         const session = payload?.agent?.session;
         const sessionId = session?.id;
         if (typeof sessionId !== "string" || !sessionId) return;
+        // #539 无痕闸门必须挡在这里，不能只挡渲染侧：claim 在 pre-step 里同步触发，
+        // 早于 assemble；这条路径既写票据（票据会变成注入查询文本）又预取向量
+        // （embedQuery 直接 POST 外部 /embeddings），闸门命中时两者都是该会话数据的
+        // 外流。嵌入层自身没有任何会话维度判断，这里是唯一的拦截点。
+        if (sessionGate?.isOff(session)) return;
         pendingQueries.delete(sessionId); // 重新插入 = 移到队尾
         pendingQueries.set(sessionId, { text, at: Date.now() });
         if (pendingQueries.size > PENDING_QUERY_MAX) {

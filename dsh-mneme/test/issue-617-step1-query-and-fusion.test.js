@@ -5,6 +5,7 @@ import { createService } from "../src/service.js";
 import { createInjector } from "../src/inject.js";
 import { createSettings } from "../src/settings.js";
 import { createVectorIndex } from "../src/vector-index.js";
+import { createSessionGate } from "../src/session-gate.js";
 
 // #617 回归。三条缺陷各自独立成组，组内都用「一正一反」两把尺子：正向锁
 // 「改对了」，反向（关掉对应开关 / 换成对照配方）锁「这条断言真的是在测那条
@@ -275,4 +276,86 @@ test("#617-C: blend 的 auto 关键词领位契约保持不变（反向对照）
   assert.equal(rows[0].id, kwTitle.id, "blend 下 keyword 领位是既有契约，本次改动不该碰它");
   assert.equal(rows[1].id, both.id);
   store.close();
+});
+
+// --- 组 5：无痕会话的认领路径不得外发（#539 × #617）-----------------------
+//
+// claim 在宿主 pre-step 里同步触发，早于 assemble，因此也早于渲染侧的闸门判断。
+// 这条路径既写票据（票据会成为注入查询文本）又预取向量（embedQuery 直接 POST
+// 外部 /embeddings），闸门命中时两者都是该会话数据的外流；嵌入层自身没有任何
+// 会话维度判断（embedding.js / service.js 里 sessionGate 零命中），这里是唯一
+// 拦截点。两条反向对照（未命中名单 / 总开关关闭）保证断言不是退化成「嵌入器
+// 恰好没跑」。
+function setupGated(over = {}) {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  const settings = createSettings(store.db);
+  const contexts = [];
+  const handlers = new Map();
+  const ctx = {
+    on(event, fn) {
+      handlers.set(event, fn);
+      return () => handlers.delete(event);
+    },
+    systemPrompt: { context(def) { contexts.push(def); return () => {}; } }
+  };
+  const calls = [];
+  service.setEmbedder({
+    embedSingle: async (text) => {
+      calls.push(text);
+      return [1, 0, 0];
+    }
+  });
+  const queries = [];
+  const orig = service.injectCandidates.bind(service);
+  service.injectCandidates = (args) => {
+    queries.push(args.query);
+    return orig(args);
+  };
+  const sessionGate = createSessionGate({
+    sessionGateEnabled: true,
+    sessionGateSessions: ["s-gated"],
+    sessionGateSubagents: true,
+    ...over
+  });
+  const injector = createInjector(
+    ctx, service, settings, { maxInjectedItems: 3, importanceThreshold: 3 }, null, sessionGate
+  );
+  const fireClaim = (message, session) => handlers.get("agent/inbox/claimed")?.({ message, agent: { session } });
+  return { store, service, contexts, injector, calls, queries, fireClaim, sessionGate };
+}
+
+test("#617-D: 无痕会话的认领消息既不预取向量，也不留票据", async () => {
+  const { contexts, calls, queries, fireClaim, sessionGate } = setupGated();
+  const session = { id: "s-gated", events: [], snapshotEvents() { return this.events; } };
+  assert.equal(sessionGate.isOff(session), true, "夹具前提：闸门认得出这个会话");
+  fireClaim(claimed("桉桉的私人日记：我今天去了协和医院复查"), session);
+  await tick();
+  assert.equal(calls.length, 0, "闸门命中时不得把原文发往嵌入端点");
+  // 票据若被写下，渲染时事件流还没长，Step 1 就会拿到这段原文
+  contexts[0].text({ agent: { session } });
+  assert.deepEqual(queries, [], "闸门命中时连 injectCandidates 都不该被调到");
+});
+
+test("#617-D: 未命中名单的会话照常预取（反向对照）", async () => {
+  const { contexts, calls, queries, fireClaim, sessionGate } = setupGated();
+  const session = { id: "s-normal", events: [], snapshotEvents() { return this.events; } };
+  assert.equal(sessionGate.isOff(session), false);
+  fireClaim(claimed("夜航App令牌桶限流方案怎么设计"), session);
+  await tick();
+  assert.equal(calls.length, 1, "普通会话的预取行为不变");
+  assert.equal(calls[0], "夜航App令牌桶限流方案怎么设计");
+  // 票据确实写下了：渲染拿到的就是认领的原文
+  contexts[0].text({ agent: { session } });
+  assert.deepEqual(queries, ["夜航App令牌桶限流方案怎么设计"]);
+});
+
+test("#617-D: 总开关关闭时闸门不生效（反向对照）", async () => {
+  const { calls, fireClaim, sessionGate } = setupGated({ sessionGateEnabled: false });
+  const session = { id: "s-gated", events: [], snapshotEvents() { return this.events; } };
+  assert.equal(sessionGate.isEnabled(), false);
+  assert.equal(sessionGate.isOff(session), false, "总开关关时名单不得生效");
+  fireClaim(claimed("夜航App令牌桶限流方案怎么设计"), session);
+  await tick();
+  assert.equal(calls.length, 1, "未开启 #539 时不得凭空拦截（默认行为须与基线一致）");
 });
