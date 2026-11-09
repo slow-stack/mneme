@@ -379,10 +379,17 @@ export function createChoroQueries({ store }) {
    * 三列证据），不需要模型，一次 diff 几十毫秒——面板打开时现算，永远比任何落库的
    * 缓存新鲜。写路径一条不加，红线不动。
    *
-   * 三种「算不出」要分开说，别混成一个空数组：
-   *   - repo 不存在            → null（调用方 404）
-   *   - 基线认不出（浅克隆等） → anchorStale + 空清单（提示重建，不说「都还准」）
-   *   - 基线 == HEAD           → clean: true（真的没变，可以放心说没事）
+   * **比对起点是每页自己的 verified_baseline，不是全仓 git_baseline。** claims 的行号
+   * 是那页被富化的那一刻记下的；全仓基线是 T0 的时点。若 T1 晚于 T0（常态），用全仓
+   * 基线起算就会把「T1 之前就发生、claim 早已算进去」的改动也算进 diff，误报 touched。
+   * 所以按 verified_baseline 分组、每组各跑一次 git diff（同一起点只跑一次）。
+   *
+   * 五种「说不清」要分开说，别混成一个空清单：
+   *   - repo 不存在                      → null（调用方 404）
+   *   - git 读不到 HEAD                  → 全仓 anchorStale + reason "git-unreadable"
+   *   - 某页基线认不出（浅克隆/force-push）→ 该页 anchorStale，**其余页照常判**
+   *   - 某页没记过验证基线（老数据/拿不到 HEAD）→ 该页 baselineUnknown，一条不判
+   *   - 起点 == HEAD                     → 那组真没变，clean
    */
   function claimDrift(repoId) {
     const repo = db.prepare("SELECT id, root_path, name, git_baseline FROM choro_repos WHERE id = ?").get(repoId);
@@ -396,20 +403,53 @@ export function createChoroQueries({ store }) {
          JOIN choro_modules m ON p.module_id = m.id
         WHERE m.repo_id = ? ORDER BY m.slug, c.id`
     ).all(repoId);
-    // 页面清单单算：hasT1 只能读盘（标记写在正文里，库里没有这一列）。
+    // 页面清单单算：hasT1 只能读盘（标记写在正文里，库里没有这一列）；验证基线在库里。
     const pageRows = db.prepare(
-      `SELECT m.slug, m.title, p.rel_path FROM choro_pages p
+      `SELECT m.slug, m.title, p.rel_path, p.verified_baseline, p.verified_at
+         FROM choro_pages p
          JOIN choro_modules m ON p.module_id = m.id WHERE m.repo_id = ? ORDER BY m.slug`
     ).all(repoId);
+    const head = rootPath === "" ? null : gitHead(rootPath);
+    const baseline = String(repo.git_baseline ?? "").trim();
+    // 每组验证基线只跑一次 diff：富化往往成批完成，同一基线的页占多数。
+    const diffCache = new Map();
+    const diffFor = (verified) => {
+      if (head === null) return null;
+      const key = String(verified ?? "").trim();
+      if (key === "") return null; // 没记过起点 → 判不了，别拿别的页的起点凑
+      if (diffCache.has(key)) return diffCache.get(key);
+      let value = null;
+      if (key === head) value = { ok: true, files: new Map(), deleted: [] };
+      else {
+        const diff = diffSince(rootPath, key, head);
+        value = diff.ok ? diff : { ok: false, reason: diff.reason };
+      }
+      diffCache.set(key, value);
+      return value;
+    };
     const pages = pageRows.map((p) => {
       let hasT1 = false;
       try {
         hasT1 = readFileSync(join(rootPath, p.rel_path), "utf8").includes(T1_SECTION_START);
       } catch { hasT1 = false; }
-      return { slug: p.slug, title: p.title, hasT1 };
+      const verifiedBaseline = String(p.verified_baseline ?? "").trim() || null;
+      // 老数据（本功能之前富化的页）只有全仓基线可依。退到它是**保守**方向：它早于
+      // 那页被富化的时刻，diff 会把「T1 之前就发生」的改动也算进来，只会多报不会漏报。
+      // 记 baselineApprox 是为了面板能说清「这是退而求其次的起点」，不是当真的验证点。
+      const effective = verifiedBaseline ?? (baseline || null);
+      const computed = diffFor(effective);
+      return {
+        slug: p.slug,
+        title: p.title,
+        hasT1,
+        verifiedBaseline,
+        verifiedAt: p.verified_at ?? null,
+        diffBaseline: effective,
+        baselineApprox: verifiedBaseline === null && effective !== null,
+        baselineUnknown: effective === null,
+        anchorStale: computed !== null && computed.ok === false,
+      };
     });
-    const baseline = String(repo.git_baseline ?? "").trim();
-    const head = rootPath === "" ? null : gitHead(rootPath);
     const claims = rows.map((r) => ({
       id: r.id,
       statement: r.statement,
@@ -428,18 +468,41 @@ export function createChoroQueries({ store }) {
     if (head === null) {
       return { ...base, clean: false, anchorStale: true, reason: "git-unreadable", ...summarizeClaims(claims, null, { pages }) };
     }
-    if (baseline !== "" && baseline === head) {
-      // 基线就是 HEAD：确实没变。清单仍要出（inconsistent 页与「claims 从未生成」
-      // 跟代码变没变无关），但至少不能把它说成一次失败。
-      return { ...base, clean: true, anchorStale: false, reason: null, ...summarizeClaims(claims, null, { pages }) };
+    // 仓库级 anchorStale 保留原来的语义：**骨架**（T0 页的文件清单、模块划分）记下的
+    // 那次基线还认不认得出。它和逐页 claims 的起点是两件事，面板上也是两句话——
+    // 「骨架要重建」不等于「结论都过时」。两条都算，谁也不掩盖谁。
+    let repoStale = false;
+    let repoStaleReason = null;
+    if (baseline !== "" && baseline !== head) {
+      const repoDiff = diffSince(rootPath, baseline, head);
+      if (!repoDiff.ok) { repoStale = true; repoStaleReason = repoDiff.reason; }
     }
-    const diff = diffSince(rootPath, baseline, head);
-    if (!diff.ok) {
-      // 基线认不出（force-push / 浅克隆 / 换机重拉）。这时说「都还准」是假成功；
-      // 说「全都失效」又是假警报——照实报「算不出来，建议重建」。
-      return { ...base, clean: false, anchorStale: true, reason: diff.reason, ...summarizeClaims(claims, null, { pages }) };
-    }
-    return { ...base, clean: false, anchorStale: false, reason: null, ...summarizeClaims(claims, diff, { pages }) };
+    const diffByPage = (slug) => {
+      const page = pages.find((p) => p.slug === slug);
+      if (!page) return null;
+      const computed = diffFor(page.diffBaseline);
+      return computed !== null && computed.ok ? { files: computed.files, deleted: computed.deleted } : null;
+    };
+    const summary = summarizeClaims(claims, null, { pages, diffByPage });
+    // clean 的判据：每条结论都真判过、且一条都没被碰到。
+    // 「有结论但起点认不出 / 没记过」不算 clean——那是不知道，不是没事（#607 的病根）；
+    // 一条结论都没有时也没有「没事」可说（那是「还没富化」，不是「全部干净」）。
+    // 仓库基线 == HEAD → 整仓一条提交都没发生，任何 claims 都不可能被碰过。这一条既短路
+    // 「逐页基线没记」的老数据（缺列不是判不了），也覆盖「刚跑完 T0、还没有 conclusion」
+    // 的情形：没变就是没变，不必等富化完才敢说。
+    // 不是这个情形时才逐页看：有哪页判不了就不说 clean，一条结论都没有也不说 clean
+    // （那是「还没富化」，不是「全部干净」——面板上这两句不一样）。
+    const repoAtHead = baseline !== "" && baseline === head;
+    const undecidable = summary.totals.baselineUnknownPages + summary.totals.anchorStalePages > 0;
+    const clean = summary.totals.atRiskClaims === 0
+      && (repoAtHead || (summary.totals.claims > 0 && !undecidable && !repoStale));
+    return {
+      ...base,
+      clean,
+      anchorStale: repoStale,
+      reason: repoStale ? repoStaleReason : null,
+      ...summary,
+    };
   }
 
   // --- chorography 向量（收尾档 P37–P39）---------------------------------

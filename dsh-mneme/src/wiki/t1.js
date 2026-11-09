@@ -23,7 +23,11 @@ import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync, mkdirSync
 import { join, dirname, sep, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { realpathSync } from "node:fs";
-import { extractHumanBlocks, injectHumanBlocks, T1_SECTION_START, T1_SECTION_END } from "./render.js";
+import {
+  extractHumanBlocks, injectHumanBlocks, T1_SECTION_START, T1_SECTION_END,
+  FM_VERIFIED_AT, FM_VERIFIED_BASELINE, setFrontmatterKeys,
+} from "./render.js";
+import { gitHead } from "./t0.js";
 // issue #607：拒绝文案里的 CLI 命令要给绝对路径入口（profile 装的插件没有全局
 // shim，光写 `dsh-mneme-choro` 用户照抄只会 command not found）。
 import { choroCliCommandFrom } from "./cli-hint.js";
@@ -345,12 +349,18 @@ export function createT1({ store, runSession = null, limits = DEFAULT_LIMITS, no
 
       // 富化 + 双落（P19/P20）。写路径断言复用 t0 的机械面语义：只许动
       // .chorography/** 下的页面与 evidence。
+      //
+      // verifiedBaseline 必须是**这一刻**的 HEAD：claims 的行号是从这棵代码树上读出来
+      // 的，之后判失效只能从它起算。拿不到 HEAD（不是 git 仓库 / git 不在）就记 null，
+      // 面板据此说「这一页哪次验证的，不知道」——不退回全仓 git_baseline，那会把
+      // 「T1 之前就发生、claim 早已算进去」的改动误报成 touched。
       const generatedAt = now();
-      enrichPageFile(pageFile, parsed.sections);
-      writeEvidenceFile(rootPath, slug, parsed.claims, generatedAt);
+      const verifiedBaseline = gitHead(rootPath);
+      enrichPageFile(pageFile, parsed.sections, { verifiedBaseline, verifiedAt: generatedAt });
+      writeEvidenceFile(rootPath, slug, parsed.claims, generatedAt, verifiedBaseline);
       store.saveChoroPageClaims(pageRow.id, parsed.claims.map((c) => ({ ...c, createdAt: generatedAt })));
-      store.markChoroPageEnriched(pageRow.id, generatedAt);
-      receipt.enriched.push({ slug, sections: Object.keys(parsed.sections), claims: parsed.claims.length });
+      store.markChoroPageEnriched(pageRow.id, generatedAt, verifiedBaseline);
+      receipt.enriched.push({ slug, sections: Object.keys(parsed.sections), claims: parsed.claims.length, verifiedBaseline });
     }
     return receipt;
   }
@@ -430,7 +440,11 @@ function parseT1Output(text) {
 }
 
 // 富化（P19）：剥掉旧 T1 段 → 新段插在「## 生成说明」之前 → 保留区照旧页尾回填。
-function enrichPageFile(pageFile, sections) {
+//
+// 顺带把「对着哪个提交验证的」写进 frontmatter（① provenance）：这两个键**只有 T1
+// 写**，T0 渲染一个字节都不产出。因此 T0 重跑整页重建时它们随语义段一起消失，
+// 与「T0 丢弃 T1 正文」是同一件事，不新增语义，也不碰 T0 的逐字节确定性。
+function enrichPageFile(pageFile, sections, { verifiedBaseline = null, verifiedAt = null } = {}) {
   let content = readFileSync(pageFile, "utf8");
   // 剥旧 T1 段（含标记本身）
   const wrap = new RegExp(`${escapeRe(T1_SECTION_START)}[\\s\\S]*?${escapeRe(T1_SECTION_END)}\\n?`, "g");
@@ -462,7 +476,13 @@ function enrichPageFile(pageFile, sections) {
     ? `${content.replace(/\n*$/, "\n")}\n${block}`
     : content.slice(0, anchor) + block.replace(/^\n/, "") + content.slice(anchor);
   const { blocks } = extractHumanBlocks(base);
-  const finalContent = blocks.length > 0 ? injectHumanBlocks(stripHumanBlocks(base), blocks) : base;
+  const withHuman = blocks.length > 0 ? injectHumanBlocks(stripHumanBlocks(base), blocks) : base;
+  // HUMAN 块是页尾整块，frontmatter 在页首，两者互不干扰；顺序仍按「先回填保留区、
+  // 再收尾 frontmatter」，避免 fronts 里的键名与保留区正文同名时被误改。
+  const finalContent = setFrontmatterKeys(withHuman, [
+    [FM_VERIFIED_BASELINE, verifiedBaseline],
+    [FM_VERIFIED_AT, verifiedAt],
+  ]);
   writeFileSync(pageFile, finalContent, "utf8");
 }
 
@@ -472,11 +492,14 @@ function stripHumanBlocks(text) {
   return text.replace(re, "");
 }
 
-function writeEvidenceFile(repoRoot, slug, claims, generatedAt) {
+function writeEvidenceFile(repoRoot, slug, claims, generatedAt, verifiedBaseline = null) {
   const rel = `${".chorography"}/evidence/${slug}.json`;
   const abs = insideChoro(repoRoot, rel);
   mkdirp(dirname(abs));
-  writeFileSync(abs, `${JSON.stringify({ slug, generatedAt, claims }, null, 2)}\n`, "utf8");
+  // verifiedBaseline 与页面 frontmatter 同源同写：evidence 是给人核的旁证，光有 claims
+  // 没有「对着哪个提交」的，事后同样无从复核。
+  const body = { slug, generatedAt, verifiedBaseline, claims };
+  writeFileSync(abs, `${JSON.stringify(body, null, 2)}\n`, "utf8");
 }
 
 function insideChoro(rootPath, relPath) {

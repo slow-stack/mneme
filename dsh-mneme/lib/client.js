@@ -369,6 +369,13 @@ window.__ModuleLoader__.load({
         "wiki.drift.deleted": "文件已删",
         "wiki.drift.unverifiable": "这条没记行号，无法定位",
         "wiki.drift.inconsistent": "正文有语义段、库里却没有结论记录（上次 T1 没写完），这页证据无法核对。",
+        // 语义段 provenance（①）：每页的结论是「对着哪个提交」读出来的。不说清这一点，
+        // 「证据复核」就只是在和某个不明时点比——页越晚富化，误报越多。
+        "wiki.drift.verified": "对着 {sha} 验证",
+        "wiki.drift.verifiedUnknown": "这页没记下是哪个提交验证的（早期富化没有记录），所以判不出它有没有过时。重跑一次 T1 就会记上。",
+        "wiki.drift.verifiedApprox": "这页是早期富化的，没记下自己的验证点；下面按全仓基线 {sha} 比对（起点比实际更早，只会多报不会漏报）。",
+        "wiki.drift.anchorStalePage": "这页记下的验证提交在 git 里已经找不到了（force-push 或浅克隆截断），这页没法比对。",
+        "wiki.drift.undecidable": "{n} 页的验证基线不可用，没有参与比对",
         "wiki.run.pathRequired": "先填仓库目录的绝对路径",
         "wiki.run.failed": "生成失败",
         "wiki.run.notAbsolute": "要给绝对路径（例如 D:\\code\\my-repo）：相对路径会按服务端进程的当前目录解析，同一个请求换个启动位置就落到别的目录。",
@@ -1486,6 +1493,13 @@ window.__ModuleLoader__.load({
         "wiki.drift.deleted": "File deleted",
         "wiki.drift.unverifiable": "No line number recorded — cannot locate",
         "wiki.drift.inconsistent": "This page has prose in the file but no claims on record (the last T1 run did not finish), so its evidence cannot be checked.",
+        // Claim provenance: each page's claims were read from one specific commit. Without
+        // saying which, "evidence check" compares against an unknown point in time.
+        "wiki.drift.verified": "Verified at {sha}",
+        "wiki.drift.verifiedUnknown": "This page did not record which commit its claims were verified against (earlier enrichment did not store one), so staleness cannot be decided. Re-running T1 will record it.",
+        "wiki.drift.verifiedApprox": "This page was enriched before provenance was recorded; the comparison below starts from the repository baseline {sha} (earlier than the real one, so it can over-report but never miss).",
+        "wiki.drift.anchorStalePage": "The commit this page was verified against no longer exists in git (force-push or a shallow clone cut it off), so this page cannot be compared.",
+        "wiki.drift.undecidable": "{n} page(s) have no usable verification baseline and were left out of the comparison",
         "wiki.run.pathRequired": "Enter the repository's absolute path first",
         "wiki.run.failed": "Generate failed",
         "wiki.run.notAbsolute": "Give an absolute path (for example /home/me/code/my-repo): relative paths resolve against the server process's working directory, so the same request can land somewhere else depending on how the host was started.",
@@ -2899,6 +2913,9 @@ window.__ModuleLoader__.load({
       // 树里的条数徽章：复用 pending 徽章的视觉，只压窄一点，避免挤掉模块名。
       ".mneme-wikidriftn{margin-inline-start:6px;font-size:10.5px;line-height:14px}",
       ".mneme-wikidriftn--flat{margin-inline-start:6px;color:var(--mneme-fg-dim)}",
+      // 「这页比不了」和「这页没事」必须是两种视觉：前者是空心问号，后者什么都不挂。
+      ".mneme-wikidriftn--unknown{margin-inline-start:6px;color:var(--mneme-fg-dim);font-size:11px}",
+      ".mneme-wikidriftverified{font-size:11px;line-height:16px;color:var(--mneme-fg-dim);margin-bottom:10px}",
       // 当前这页的明细：读之前先给出「哪条、在哪、为什么」，不给判断（判断是人的）。
       ".mneme-wikidriftpage{margin:0 0 14px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}",
       ".mneme-wikidriftpagehead{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary);margin-bottom:6px}",
@@ -12965,6 +12982,13 @@ window.__ModuleLoader__.load({
         const driftAnchorStale = driftDone && drift.anchorStale === true;
         const driftTotals = (driftDone && drift.totals) || null;
         const driftRisk = driftTotals ? driftTotals.atRiskClaims : 0;
+        // 「比不了」的页数（验证基线认不出 + 从来没记过）单独计数：它们一条都不判，
+        // 不能混进「0 条需要复核」里当成没事。
+        const driftUndecidable = driftTotals
+          ? (driftTotals.baselineUnknownPages || 0) + (driftTotals.anchorStalePages || 0)
+          : 0;
+        // 提交号显示前 7 位就够认，长 sha 会把这一行挤爆（完整值仍在 title 里）。
+        const shortSha = (sha) => String(sha ?? "").slice(0, 7);
         // 四种命中原因各自一句：混成「失效」会让只是行号挪了的结论也被喊去重写，
         // 喊几次就没人信这个标记了。
         const driftReasonText = (c) => {
@@ -12989,7 +13013,13 @@ window.__ModuleLoader__.load({
             onClick: () => openPage(mod.slug)
           }, mod.slug,
             riskN > 0 && h("span", { className: "mneme-badge mneme-badge--pending mneme-wikidriftn" }, String(riskN)),
-            !riskN && dp && dp.inconsistent && h("span", { className: "mneme-wikidriftn mneme-wikidriftn--flat" }, "!")));
+            !riskN && dp && dp.inconsistent && h("span", { className: "mneme-wikidriftn mneme-wikidriftn--flat" }, "!"),
+            // 这页比不了时挂个问号：什么都不挂会让它和「比过、干净」长得一样。
+            !riskN && dp && !dp.inconsistent && (dp.baselineUnknown || dp.anchorStale) &&
+              h("span", {
+                className: "mneme-wikidriftn mneme-wikidriftn--unknown",
+                title: dp.baselineUnknown ? t("wiki.drift.verifiedUnknown") : t("wiki.drift.anchorStalePage")
+              }, "?")));
         }
         const pageBody = state.page
           ? (state.page.error
@@ -12999,6 +13029,21 @@ window.__ModuleLoader__.load({
         // 当前这页的证据复核结果：放在正文上方而不是塞进正文，因为它是「关于
         // 正文的事实」，不是正文本身——混进 MD 渲染里会被下次重建覆盖掉。
         const selectedDrift = state.selected ? driftBySlug.get(state.selected) : null;
+        // 「这页对着哪个提交验证的」是常驻信息（不论有没有风险都该看到），所以它是
+        // 正文上方单独一行，而不是塞进下面那张「有风险才出现」的卡里。
+        const pageProvenance = driftDone && selectedDrift
+          ? (selectedDrift.verifiedBaseline
+            ? h("div", { className: "mneme-wikidriftverified", title: selectedDrift.verifiedBaseline },
+              t("wiki.drift.verified").replace("{sha}", shortSha(selectedDrift.verifiedBaseline)))
+            // 老数据：没有逐页验证点，退到全仓基线比对。必须说清这是**保底起点**，
+            // 不能长成「对着 xxxx 验证」——那是把近似值冒充成真值。
+            : (selectedDrift.baselineApprox && selectedDrift.diffBaseline
+              ? h("div", { className: "mneme-wikidriftverified", title: selectedDrift.diffBaseline },
+                t("wiki.drift.verifiedApprox").replace("{sha}", shortSha(selectedDrift.diffBaseline)))
+              : (selectedDrift.claims > 0
+                ? h("div", { className: "mneme-wikidriftverified" }, t("wiki.drift.verifiedUnknown"))
+                : null)))
+          : null;
         const pageDrift = selectedDrift && selectedDrift.atRisk && selectedDrift.atRisk.length > 0
           ? h("div", { className: "mneme-wikidriftpage", role: "note" },
             h("div", { className: "mneme-wikidriftpagehead" },
@@ -13085,7 +13130,10 @@ window.__ModuleLoader__.load({
               .replace("{pages}", String(driftTotals.pages))
               .replace("{claims}", String(driftTotals.claims))
               .replace("{risk}", String(driftRisk)),
-            driftRisk === 0 && h("span", { className: "mneme-wikidriftnone" }, ` · ${t("wiki.drift.none")}`)),
+            driftRisk === 0 && driftUndecidable === 0 && h("span", { className: "mneme-wikidriftnone" }, ` · ${t("wiki.drift.none")}`),
+            // 有页比不了时，回执条必须自己说出来：否则「0 条需要复核」会被读成没事。
+            driftUndecidable > 0 && h("span", { className: "mneme-wikidriftnone" },
+              ` · ${t("wiki.drift.undecidable").replace("{n}", String(driftUndecidable))}`)),
           h("div", { className: "mneme-wikibody" },
             h("nav", { className: "mneme-wikitree", "aria-label": t("wiki.tree.title") }, tree),
             h("div", { className: "mneme-wikipage" },
@@ -13097,6 +13145,7 @@ window.__ModuleLoader__.load({
                   onClick: () => { setState((s) => ({ ...s, hits: [] })); openPage(hit.slug); }
                 }, `${hit.slug} · ${hit.section} · L${hit.line}: ${hit.excerpt}`)),
                 h("button", { type: "button", className: "mneme-wikihitsclose", onClick: () => setState((s) => ({ ...s, hits: [] })) }, "×")),
+              pageProvenance,
               pageDrift,
               // 正文有语义段、库里零条结论：这页的证据根本无从核对，必须自己说
               // 出来，否则它会永远显示成「干净」——那是最坏的一种假成功。

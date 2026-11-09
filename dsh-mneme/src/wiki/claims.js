@@ -135,19 +135,39 @@ export function assessClaims(claims, diff) {
 /**
  * 仓库级汇总：逐条判定 → 「哪几页、几条、因为什么」。
  *
- * claims 每项需带 pageSlug；pages 每项 { slug, title, hasT1 }。hasT1 是页面正文里
- * 有 T1 段标记的页——这类页「正文有语义段、库里零条 claims」是 t1.js 落盘非原子
- * 留下的残局（文件先落盘、DB 后写，中途崩了就成这样）。单独记进 inconsistent：
- * 不修它的话这页永远「看起来没有可校验的证据」，一次都不会被标成需要复核。
+ * claims 每项需带 pageSlug；pages 每项 { slug, title, hasT1, verifiedBaseline,
+ * verifiedAt, diffBaseline, baselineApprox, baselineUnknown, anchorStale }。
+ *
+ * 为什么 pages 要带验证基线、为什么还要 diffByPage：claims 的行号是**各自那页被
+ * 富化的那一刻**记下的。全仓只有一个 git_baseline（T0 的时点），拿它当所有 claims
+ * 的比对起点，会把「T1 之前就发生、claim 早已算进去」的改动误报成 touched——页越晚
+ * 富化越容易误报。所以每页按自己的 verifiedBaseline 分组各算一次 diff。
+ *
+ * hasT1 是页面正文里有 T1 段标记的页——这类页「正文有语义段、库里零条 claims」是
+ * t1.js 落盘非原子留下的残局（文件先落盘、DB 后写，中途崩了就成这样）。单独记进
+ * inconsistent：不修它的话这页永远「看起来没有可校验的证据」，一次都不会被标成需要复核。
+ *
+ * diffByPage(slug) 三态：diff 对象 = 算过了；null = 这一页没有可用的起点（判不了）。
+ * 「判不了」的结论一条都不标，页面用 baselineUnknown / anchorStale 两种不同的说法交代。
  */
-export function summarizeClaims(claims, diff, { pages = [] } = {}) {
-  const assessed = assessClaims(claims, diff);
+export function summarizeClaims(claims, diff, { pages = [], diffByPage = null } = {}) {
+  const assessed = diffByPage
+    ? (claims ?? []).flatMap((claim) => assessClaims([claim], diffByPage(claim.pageSlug)))
+    : assessClaims(claims, diff);
   const bySlug = new Map();
   for (const page of pages) {
     bySlug.set(page.slug, {
       slug: page.slug,
       title: page.title ?? page.slug,
       hasT1: Boolean(page.hasT1),
+      verifiedBaseline: page.verifiedBaseline ?? null,
+      verifiedAt: page.verifiedAt ?? null,
+      // 实际拿来跑 diff 的起点：新数据就是 verifiedBaseline；老数据（本功能之前富化）
+      // 退到全仓基线，baselineApprox 标记「这不是当真的验证点，是保底起点」。
+      diffBaseline: page.diffBaseline ?? page.verifiedBaseline ?? null,
+      baselineApprox: Boolean(page.baselineApprox),
+      baselineUnknown: Boolean(page.baselineUnknown),
+      anchorStale: Boolean(page.anchorStale),
       claims: 0,
       atRisk: [],
       inconsistent: false,
@@ -174,10 +194,18 @@ export function summarizeClaims(claims, diff, { pages = [] } = {}) {
   }
   for (const bucket of bySlug.values()) {
     bucket.inconsistent = bucket.hasT1 && bucket.claims === 0;
+    // 零条结论的页谈不上「哪次验证的」——骨架页不该因为没富化过就被标成「判不了」。
+    if (bucket.claims === 0) bucket.baselineUnknown = false;
   }
   const list = [...bySlug.values()].sort((a, b) => {
-    // 有风险的排前面，其次锚点对不上账的，最后才是干净的页。
-    const rank = (p) => (p.atRisk.length > 0 ? 0 : p.inconsistent ? 1 : 2);
+    // 有风险的排前面，然后依次是：锚点对不上账的、起点认不出的、本来就是空的、
+    // 干净的。依次递减的严重度，是为了让「要动手」的永远在第一屏。
+    const rank = (p) =>
+      p.atRisk.length > 0 ? 0
+        : p.inconsistent ? 1
+          : p.anchorStale ? 2
+            : p.baselineUnknown ? 3
+              : 4;
     return rank(a) - rank(b) || a.slug.localeCompare(b.slug);
   });
   const flat = list.flatMap((p) => p.atRisk);
@@ -194,6 +222,8 @@ export function summarizeClaims(claims, diff, { pages = [] } = {}) {
       deleted: count("deleted"),
       unverifiable: count("unverifiable"),
       inconsistentPages: list.filter((p) => p.inconsistent).length,
+      baselineUnknownPages: list.filter((p) => p.baselineUnknown).length,
+      anchorStalePages: list.filter((p) => p.anchorStale).length,
     },
   };
 }
