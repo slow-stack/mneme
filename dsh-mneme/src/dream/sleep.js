@@ -1567,16 +1567,24 @@ export async function runSleep(ctx, service, config, logger, semantic = null, si
   // "ran and did nothing", which is exactly what a probe must never see.
   //
   // The per-kind numbers stay apart in `phases` (`applied` / `edgeWrites` /
-  // `merged`); the receipt is a single write count on purpose, because
-  // buildReceipt/parseReceipt are an eight-field contract shared with
-  // organize.js and four test files. Detail lives in dream_runs.phases JSON,
-  // not in the receipt.
+  // `merged` / `refreshedTraits`); the receipt is a single write count on
+  // purpose, because buildReceipt/parseReceipt are an eight-field contract
+  // shared with organize.js and four test files. Detail lives in
+  // dream_runs.phases JSON, not in the receipt.
+  //
+  // #619 / Ephor 第七轮 ①：`refreshedTraits` 必须计入。它是「同一标题的 pattern
+  // 被原地重写」的条数——库确实变了，但没有铸新条目，所以它既不在 `applied` 里
+  // （那会把刷新谎报成铸造），也不在 `merged` 里（affective 相位的 `merged` 是
+  // **边**合并数 `merges.length`，同名不同义）。漏掉它的后果实测过：第二轮
+  // `phase.status=refreshed`、`refreshedTraits=1`，整轮 receipt 第 7 段仍是 0，
+  // 于是「相位说改了、整轮说没改」，正是上一轮刚修掉的「改了库读成 0」形态。
   const totalApplied = Object.values(phases).reduce(
     (n, p) =>
       n +
       (Number.isInteger(p?.applied) ? p.applied : 0) +
       (Number.isInteger(p?.edgeWrites) ? p.edgeWrites : 0) +
-      (Number.isInteger(p?.merged) ? p.merged : 0),
+      (Number.isInteger(p?.merged) ? p.merged : 0) +
+      (Number.isInteger(p?.refreshedTraits) ? p.refreshedTraits : 0),
     0
   );
   // Issue #126（与 #104 同向）：把各 phase 的跳过明细汇总成一行审计数据，带 phase

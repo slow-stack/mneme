@@ -652,9 +652,16 @@ function applyCreate(d, service, config = {}, logger = null) {
   const refreshed = created?.action !== "created";
   // #512：这条记忆出生自哪一轮。只记 create——merge/conflict/update/supersede 对
   // 既有行的改动已由 receipt_chain 按 (run_id, record_id) 记账，再造一份就是第二套账。
+  //
+  // #619 / Ephor 第七轮 ③：`refreshed` 也在这条规矩里。原地刷新没有铸新条目，
+  // 它改的是既有行——同一条记忆不该有两份「出生记录」。此前 create_merged 这条
+  // 新路没被上面那句规矩覆盖，于是一个 pattern 跑两轮，`memory_mints` 就有两行、
+  // run_id 各不相同，面板上显示成「这条记忆出生过两次」（`mintsFor` 由
+  // provenance-http.js 读取）。live 库当时还没显形，是因为同题刷新刚上线。
+  //
   // 记账失败不许拖垮这次铸造：归因是审计，记忆已经落盘了。
   try {
-    if (typeof service?.saveMemoryMint === "function" && config?.runId) {
+    if (!refreshed && typeof service?.saveMemoryMint === "function" && config?.runId) {
       service.saveMemoryMint({
         memoryId: memory.id,
         runId: config.runId,

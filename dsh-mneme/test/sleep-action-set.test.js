@@ -373,6 +373,20 @@ test("issue#126r: buildOutcome records a disposition for the new actions", () =>
   assert.equal(outcome.byId.d2, "differentiated");
 });
 
+// #619 / Ephor 第七轮 ②：dream 那条路上，一个「只刷新不铸造」的轮此前 outcome.byId
+// 是空对象——审计行看不出任何目标被处置过。#126 review 在 supersede 上踩过同一个
+// 坑（注释就写在 buildOutcome 里），这次 create_merged 又漏了。刷新要有自己的名字，
+// 不能冒充 created：一个是「新生了这条」，一个是「把既有那条重写了」。
+test("issue#619r: buildOutcome names the create dispositions, refresh is not a birth", () => {
+  const outcome = buildOutcome([
+    { action: "create", id: "fresh-1", type: "pattern" },
+    { action: "create_merged", id: "42b75761", type: "pattern" }
+  ]);
+  assert.equal(outcome.byId["fresh-1"], "created");
+  assert.equal(outcome.byId["42b75761"], "created-refreshed", "刷新不是 created");
+  assert.deepEqual(outcome.byId, { "fresh-1": "created", "42b75761": "created-refreshed" });
+});
+
 test("issue#533r: differentiate leaves the cached vectors alone (nothing changed to re-embed)", async () => {
   const { service, store, vectorIndex } = setup();
   const { a, b } = seedPair(service, vectorIndex, "向量甲", "向量乙");

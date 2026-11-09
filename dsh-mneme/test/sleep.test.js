@@ -5,6 +5,7 @@ import { Config } from "../src/config.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
+import { parseReceipt } from "../src/dream.js";
 
 // Mock embedder: every query maps to [1,0,0] so vectors are identical unless a
 // test pre-seeds a custom vector via vectorIndex.saveEmbedding.
@@ -1317,5 +1318,14 @@ test("sleep: a refresh-only trait run reports refreshed, not ok with zero mints"
   assert.equal(phase.refreshedTraits, 1, "刷新了一条");
   assert.equal(phase.status, "refreshed", "刷新不是 noop，也不是一次新铸");
   assert.equal(second.status, "ok", "整轮仍算有产出");
+  // #619 / Ephor 第七轮 ①：相位说「改了」，整轮 receipt 也必须说「改了」。此前
+  // totalApplied 只加 applied + edgeWrites + merged，refreshedTraits 不在表里，
+  // 于是这一轮 receipt 第 7 段是 0——「改了库读成 0」，正是上一轮刚修掉的形态。
+  const parsed = parseReceipt(second.receipt);
+  assert.ok(parsed, `receipt 必须可解析（实测 ${second.receipt}）`);
+  assert.equal(parsed.applied, 1, "刷新一条要算一次真实写入，不能被读成 0");
+  // ③ 同一个场景：刷新不是出生，不该再往 memory_mints 添一行。
+  const pattern = service.all().find((m) => m.type === "pattern");
+  assert.equal(store.mintsFor(pattern.id).length, 1, "两轮下来只有一条出生记录");
   store.close();
 });

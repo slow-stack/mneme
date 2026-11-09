@@ -260,6 +260,32 @@ test("issue#512: only creation is recorded — edits to existing rows stay in re
   store.close();
 });
 
+// #619 / Ephor 第七轮 ③：原地刷新不是出生。同一个 pattern 跑两轮，第一轮真铸了、
+// 第二轮只是把同一行重写；memory_mints 的语义是「这条记忆出生自哪一轮」，第二行
+// 就是「同一条记忆出生过两次」——面板上会显示两条出生记录（mintsFor 由
+// provenance-http.js 读）。live 库当时还没显形，因为同题刷新刚上线。
+test("issue#619r: a refreshed pattern does not record a second birth", () => {
+  const { store, service } = setup();
+  const decision = [{ action: "create", type: "pattern", title: "同题规律", content: "第一轮", importance: 3 }];
+  const first = applyDecisions(decision, service, null, null, { mintSource: "sleep", runId: "run-a" });
+  assert.equal(first.applied, 1, "第一轮真铸了");
+  const row = service.all().find((m) => m.type === "pattern");
+  assert.equal(store.mintsFor(row.id).length, 1);
+
+  const second = applyDecisions(
+    [{ action: "create", type: "pattern", title: "同题规律", content: "第二轮", importance: 3 }],
+    service,
+    null,
+    null,
+    { mintSource: "sleep", runId: "run-b" }
+  );
+  assert.equal(second.applied, 0, "第二轮没有新铸");
+  assert.equal(second.merged, 1, "它刷新了一条");
+  assert.equal(second.committed[0].action, "create_merged");
+  assert.equal(store.mintsFor(row.id).length, 1, "刷新不算再一次出生");
+  store.close();
+});
+
 // 端到端：sleep 真的跑一轮，铸造出来的行要指回那一轮的 runId（不是随便一个 id）。
 test("issue#512: sleep mints point back at the run that produced them", async () => {
   const { store, service } = setup();

@@ -432,7 +432,10 @@ CREATE INDEX IF NOT EXISTS idx_distill_runs_created ON distill_runs(created_at);
 --   · 本表 = 行级，「这条记忆出生自哪一轮」，覆盖没有窗口的铸造路径。
 -- 只填 **create** 一种动作：merge/conflict/update/supersede 对既有行的改动，receipt_chain
 -- 已经按 (run_id, record_id) 记过了——再造一份就是第二套账。create 是那边唯一的洞
--- （buildOutcome 刻意不给 create 派 disposition，receipt_chain 也就不产行）。
+-- （buildRecordReceipts 不给 create/create_merged 产行：新行没有「改动前后的账」可记，
+-- 只有「出生自哪一轮」，那正是本表的事）。#619 起 buildOutcome 会给 create 派
+-- disposition（created / created-refreshed），那是审计面读的结果，与 receipt_chain
+-- 产不产行是两件事；created-refreshed 是原地刷新，没有出生，本表也不记。
 -- run_type / trigger_source 就地冗余：run_id 在 dream_runs 与 distill_runs 两张表里
 -- 各有自己的主键域，读侧不该为了显示一个类型去 union 两张审计表。
 -- ON DELETE CASCADE：记忆行没了，归因没有指代对象；remove() 仍显式清（与
