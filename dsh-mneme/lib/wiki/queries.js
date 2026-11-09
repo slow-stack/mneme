@@ -13,7 +13,10 @@ import { join, resolve, sep } from "node:path";
 // 面板侧不另造一套判据——两套判据迟早会对同一仓库给出两个答案。
 import { gitHead } from "./t0.js";
 import { loadPlanFromRepo } from "./plan.js";
-import { TEMPLATE_VERSION } from "./render.js";
+import { TEMPLATE_VERSION, T1_SECTION_START } from "./render.js";
+// claim 失效判定的纯函数（借 openwiki 的 Grounded Claims）：解析 diff + 逐条比对
+// 三列证据。放独立模块是因为它零 DB、零 IO（除 diffSince 那一次 git），可单测。
+import { diffSince, summarizeClaims } from "./claims.js";
 
 // 页正文去 frontmatter / CHORO 标记行后作为嵌入文本（P40：嵌页级全文）。
 function pageEmbedText(content) {
@@ -368,6 +371,77 @@ export function createChoroQueries({ store }) {
     };
   }
 
+  /**
+   * Claim 粒度的失效清单（借 openwiki 的 Grounded Claims）：把「仓库代码变过就整仓过期」
+   * 降成「这 2 页里的 5 条结论被改动碰过」。
+   *
+   * 为什么放读侧而不写成后台任务：判据是纯机械的（git diff 的 hunk 区间 × claims 的
+   * 三列证据），不需要模型，一次 diff 几十毫秒——面板打开时现算，永远比任何落库的
+   * 缓存新鲜。写路径一条不加，红线不动。
+   *
+   * 三种「算不出」要分开说，别混成一个空数组：
+   *   - repo 不存在            → null（调用方 404）
+   *   - 基线认不出（浅克隆等） → anchorStale + 空清单（提示重建，不说「都还准」）
+   *   - 基线 == HEAD           → clean: true（真的没变，可以放心说没事）
+   */
+  function claimDrift(repoId) {
+    const repo = db.prepare("SELECT id, root_path, name, git_baseline FROM choro_repos WHERE id = ?").get(repoId);
+    if (!repo) return null;
+    const rootPath = String(repo.root_path ?? "");
+    const rows = db.prepare(
+      `SELECT c.id, c.statement, c.kind, c.source_path, c.start_line, c.end_line,
+              m.slug AS page_slug, m.title AS page_title, p.rel_path
+         FROM choro_claims c
+         JOIN choro_pages p ON c.page_id = p.id
+         JOIN choro_modules m ON p.module_id = m.id
+        WHERE m.repo_id = ? ORDER BY m.slug, c.id`
+    ).all(repoId);
+    // 页面清单单算：hasT1 只能读盘（标记写在正文里，库里没有这一列）。
+    const pageRows = db.prepare(
+      `SELECT m.slug, m.title, p.rel_path FROM choro_pages p
+         JOIN choro_modules m ON p.module_id = m.id WHERE m.repo_id = ? ORDER BY m.slug`
+    ).all(repoId);
+    const pages = pageRows.map((p) => {
+      let hasT1 = false;
+      try {
+        hasT1 = readFileSync(join(rootPath, p.rel_path), "utf8").includes(T1_SECTION_START);
+      } catch { hasT1 = false; }
+      return { slug: p.slug, title: p.title, hasT1 };
+    });
+    const baseline = String(repo.git_baseline ?? "").trim();
+    const head = rootPath === "" ? null : gitHead(rootPath);
+    const claims = rows.map((r) => ({
+      id: r.id,
+      statement: r.statement,
+      kind: r.kind,
+      sourcePath: r.source_path,
+      startLine: r.start_line,
+      endLine: r.end_line,
+      pageSlug: r.page_slug,
+      pageTitle: r.page_title,
+    }));
+    const base = {
+      repo: { id: repo.id, name: repo.name, rootPath, gitBaseline: baseline || null },
+      head: head ?? null,
+      baseline: baseline || null,
+    };
+    if (head === null) {
+      return { ...base, clean: false, anchorStale: true, reason: "git-unreadable", ...summarizeClaims(claims, null, { pages }) };
+    }
+    if (baseline !== "" && baseline === head) {
+      // 基线就是 HEAD：确实没变。清单仍要出（inconsistent 页与「claims 从未生成」
+      // 跟代码变没变无关），但至少不能把它说成一次失败。
+      return { ...base, clean: true, anchorStale: false, reason: null, ...summarizeClaims(claims, null, { pages }) };
+    }
+    const diff = diffSince(rootPath, baseline, head);
+    if (!diff.ok) {
+      // 基线认不出（force-push / 浅克隆 / 换机重拉）。这时说「都还准」是假成功；
+      // 说「全都失效」又是假警报——照实报「算不出来，建议重建」。
+      return { ...base, clean: false, anchorStale: true, reason: diff.reason, ...summarizeClaims(claims, null, { pages }) };
+    }
+    return { ...base, clean: false, anchorStale: false, reason: null, ...summarizeClaims(claims, diff, { pages }) };
+  }
+
   // --- chorography 向量（收尾档 P37–P39）---------------------------------
   // 惰性物化（P37）：只在 host 侧检索路径调用（embedder 由 index.js 注入）；
   // CLI 环境没有 embedder → 向量永不物化，检索退关键词。staleness 两维：
@@ -468,7 +542,7 @@ export function createChoroQueries({ store }) {
 
   return {
     listRepos, listRepoFacts, repoFacts, repoFactsById, repoFromRow, listRepoRow, repoByRoot,
-    resolveRepo, moduleMap, readPage, search, repoByCwd, outline,
+    resolveRepo, moduleMap, readPage, search, repoByCwd, outline, claimDrift,
     embedPageVectors, searchSemantic, embedQueryText, semanticTopN,
   };
 }

@@ -3296,6 +3296,47 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     }
   });
 
+  // Claim 粒度失效清单（借 openwiki 的 Grounded Claims）。只读、policy open，
+  // 与其余 choro 读路由同级。
+  //
+  // 为什么不落库：判据是 git diff × claims 三列证据的纯机械比对，一次几十毫秒。
+  // 落库就多一份要失效的缓存，而它唯一的消费者（面板）本来就是打开时现读。
+  // 写路径一条不加，spec §4 的红线（生成只走 CLI）不动。
+  //
+  // 响应三态刻意分开，别让面板把「算不出来」说成「没事」：
+  //   200 clean:true             基线 == HEAD，确实没变
+  //   200 anchorStale:true       基线认不出 / git 不可读（附 reason）
+  //   200 clean:false 且有 pages  正常算出来了，逐页看 atRisk
+  // 仓库不存在 → 404；chorography 关闭 → 409；queries 未装配 → 503（由 choroGate 给）。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/choro/claims",
+    policy: "open",
+    handler(req, res) {
+      if (!choroGate(req, res)) return;
+      const repo = choroResolveOr4xx(req, res);
+      if (!repo) return;
+      if (typeof choro.claimDrift !== "function") {
+        sendJson(res, 503, { error: "unavailable", reason: "choro-claims-unavailable" });
+        return;
+      }
+      let drift;
+      try {
+        drift = choro.claimDrift(repo.id);
+      } catch (err) {
+        // 读盘（页面正文判 hasT1）可能撞上权限/占用：说清是哪一步炸的，
+        // 不要假装「没有 claim」。
+        sendJson(res, 500, { error: "claims-failed", detail: String(err?.message ?? err) });
+        return;
+      }
+      if (!drift) {
+        sendJson(res, 404, { error: "repo-not-found" });
+        return;
+      }
+      sendJson(res, 200, drift);
+    }
+  });
+
   // 面板重建入口（收尾档 P34）：T0 apply 秒级同步回执。
   // policy token-write：写的是仓库磁盘的 .chorography/**，属数据面写。
   //

@@ -275,3 +275,68 @@ test("outline：模块名 + 文件数 + 页状态 + 页相对路径，不读正�
     rmTempBestEffort(root);
   }
 });
+// --- claim 粒度失效（Grounded Claims）:DB 索引 × git diff 的对账 --------------
+
+test("claimDrift：基线 == HEAD 说 clean:true，改了锚点所在行 → 只有那页那条进 atRisk", () => {
+  const { root, store, q } = setup();
+  try {
+    const repo = q.resolveRepo(undefined);
+    const page = store.choroPageBySlug(repo.id, "src");
+    store.saveChoroPageClaims(page.id, [
+      { statement: "a 依赖 b", kind: "architecture", sourcePath: "src/a.js", startLine: 3, endLine: 3, createdAt: FIXED_NOW() },
+      { statement: "b2 只是常量", kind: "architecture", sourcePath: "src/b2.js", startLine: 1, endLine: 1, createdAt: FIXED_NOW() },
+    ]);
+
+    const same = q.claimDrift(repo.id);
+    assert.equal(same.clean, true, "基线就是 HEAD：确实没变，可以说没事");
+    assert.equal(same.anchorStale, false);
+    assert.equal(same.totals.claims, 2);
+    assert.equal(same.totals.atRiskClaims, 0);
+
+    // 改掉 a.js 第 3 行（claim 的锚点）并提交 → 基线落后 HEAD。
+    writeFileSync(join(root, "src", "a.js"), 'import { b } from "./b.js";\nimport h from "left-pad";\nexport const a = () => b() + 1;\n', "utf8");
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-am", "change a", "--no-gpg-sign"], { cwd: root, stdio: "pipe" });
+
+    const drift = q.claimDrift(repo.id);
+    assert.equal(drift.clean, false);
+    assert.notEqual(drift.baseline, drift.head, "基线落后了");
+    assert.equal(drift.totals.claims, 2);
+    assert.equal(drift.totals.atRiskClaims, 1, "只有锚在 a.js 第 3 行那条受影响");
+    const pageRisk = drift.pages.find((p) => p.slug === "src");
+    assert.equal(pageRisk.atRisk.length, 1);
+    assert.equal(pageRisk.atRisk[0].reason, "touched");
+    assert.equal(pageRisk.atRisk[0].sourcePath, "src/a.js");
+    // 排序契约：有风险的页排最前（面板直接顺着读，不再排一遍）。
+    assert.equal(drift.pages[0].slug, "src");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
+test("claimDrift：基线认不出时说 anchorStale，不说「都还准」也不说「全失效」", () => {
+  const { root, store, q } = setup();
+  try {
+    const repo = q.resolveRepo(undefined);
+    // force-push / 浅克隆的形态：基线 sha 合法但对象不在库里的任何一棵树上。
+    store.db.prepare("UPDATE choro_repos SET git_baseline = ? WHERE id = ?").run("0123456789abcdef0123456789abcdef01234567", repo.id);
+    const drift = q.claimDrift(repo.id);
+    assert.equal(drift.clean, false);
+    assert.equal(drift.anchorStale, true);
+    assert.equal(drift.reason, "diff-failed");
+    assert.equal(drift.totals.atRiskClaims, 0, "算不出来不等于有风险——一条都不许判");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
+test("claimDrift：未知仓库返回 null（调用方据此 404，不是空清单）", () => {
+  const { root, store, q } = setup();
+  try {
+    assert.equal(q.claimDrift(999999), null);
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});

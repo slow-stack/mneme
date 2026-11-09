@@ -626,3 +626,43 @@ test("/choro/page 回执带 repo.stale/staleReason，并在这条读路径上自
     rmTempBestEffort(root);
   }
 });
+// --- /choro/claims（claim 粒度失效，Grounded Claims）-----------------------
+// 锁的是一条态度：算不出来 ≠ 没事。基线认不出时必须 anchorStale，不许回一张空清单
+// 让面板显示「全部结论都还准」——那是 #607 同类的假成功。
+
+test("/choro/claims 在册且 policy open，四层闸与其余读路由一致", async () => {
+  const off = setup({});
+  const route = handler(off.routes, "/api/dsh-mneme/choro/claims");
+  assert.ok(route, "/choro/claims 在册");
+  assert.equal(route.policy, "open");
+  const a = await invoke(route, "/api/dsh-mneme/choro/claims");
+  assert.equal(a.status, 503, "queries 缺装配 → 503");
+
+  const disabled = setup({ config: { chorographyEnabled: false }, choro: createChoroQueries({ store: createStore(":memory:") }) });
+  const b = await invoke(handler(disabled.routes, "/api/dsh-mneme/choro/claims"), "/api/dsh-mneme/choro/claims");
+  assert.equal(b.status, 409, "开关关 → 409");
+  assert.equal(b.body.error, "disabled");
+});
+
+test("/choro/claims：快乐路径带页清单与 totals；未知 repo 404", async () => {
+  const store = createStore(":memory:");
+  const root = makeRepo(store);
+  try {
+    const { routes } = setup({ config: { chorographyEnabled: true }, choro: createChoroQueries({ store }) });
+    const route = handler(routes, "/api/dsh-mneme/choro/claims");
+    const repoId = store.db.prepare("SELECT id FROM choro_repos LIMIT 1").get().id;
+    const r = await invoke(route, `/api/dsh-mneme/choro/claims?repo=${repoId}`);
+    assert.equal(r.status, 200);
+    assert.ok(r.body.repo && r.body.repo.id === repoId);
+    assert.equal(typeof r.body.head, "string");
+    assert.ok(Array.isArray(r.body.pages), "页清单要在——面板靠它说「这页没问题」");
+    assert.ok(r.body.totals && Number.isInteger(r.body.totals.claims));
+    assert.equal(r.body.clean, true, "刚跑完 T0，基线就是 HEAD");
+
+    const missing = await invoke(route, "/api/dsh-mneme/choro/claims?repo=999999");
+    assert.equal(missing.status, 404);
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
