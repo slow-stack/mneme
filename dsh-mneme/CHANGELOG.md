@@ -4,6 +4,13 @@
 
 ## 🆕 新增
 
+- **仓库地志侧栏入口改旗标门控：`chorographyEnabled` 关着（默认）时侧栏不再常驻那一格（#598）**。此前侧栏座位无条件注册（P11），从没用过地志的用户侧栏永久多一个图标、点进去只有一句「未启用」。
+
+  - **成对规则拆成两半**：`main`（key `"dsh-mneme-wiki"`）**无条件保留**——#562 那堵墙（布局存着 `activePanelId="dsh-mneme-wiki"` 时少注册 main，宿主 selectPanel 直接抛）；侧栏 glyph 的登记挪进座位闸，与 M.O.（v0.9.0）/日记（v0.13）同一形态——读一次 `/features`、fail-closed（读不到就不注册，不猜）、开关改动重启生效。
+  - **提示文案跟着说准**：两语言 hint 的「关着时它们全部不存在」现在包括侧栏入口（此前这句与实现不符，正是 #598 的另一半）。
+  - **kb 座位刻意不动**：契约 §3.6 选的是「入口常驻 + 空态自解释」（#607 的另一种写法），两种形态并存是 #598 评论区 §四的拍板；独立开关（issue 建议②）是已排期的 D2 形态，不在本 PR。
+  - **验证**：`test/client.test.js` 座位闸断言重写（main 无条件 / glyph 在闸内 / fail-closed / panellist 清理扫帚少了 wiki glyph）；panellist 结构测试更新（无条件集合只剩记忆 + kb 两对 glyph，main 仍三份）。
+
 - **会话头顶那个日记入口撤了；「写今天 / 存到这个项目」补进面板**。两处入口同时存在时，用户点哪一个都像「又开了一本」，而右栏那套是旧版遗留下来的：会话头一个按钮 → 右栏页签 → 里面才是写与导出。现在只留一个入口：记忆面板的「日记」标签页。
 
   - **删的是什么（`lib/client.js`）**：`registerDiarySeats` 里原本注册三件事——① 右栏页签类型 ② `conversation.session.header.actions` 会话头入口（`id: "dsh-mneme:diary"`、`order: 31`）③ `sidebar.right.pane.tab` 右栏正文。删的是 ②，连同 `DiaryEntryButton` 组件、`.mneme-diary-trigger*` 五条 CSS、`memory.diary.openFailed` 文案。**为什么不是「看着多余」就删**：`openTab` 全仓库只有两处调用（M.O. 一处、日记 ② 一处），所以删掉 ② 之后本插件自己再也打不开右栏那一页。但宿主把页签类型目录 `tabTypes.getSnapshot() => tabs.entries()` 交给了右栏的「新建页签」选择器，用户从宿主自己的列表里仍能打开它——那套正文因此**留着**，不是死代码。

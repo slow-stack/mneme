@@ -515,7 +515,7 @@ window.__ModuleLoader__.load({
         "memory.features.profileFactsEnabled": "自动事实",
         "memory.features.profileFactsEnabled.hint": "每次 dream（巩固）轮后，把这一窗口里沉淀的新记忆再读一遍，按会话身份卡维护一份「Agent 眼中的你」事实清单（设置 → 个性化 → 自动事实），注入在手填画像之后。事实住独立的表，不会覆盖你自己填的「用户画像」；面板上可逐条修正或删除（删除=归档，可恢复）。轻量档预设关（用户显式勾选仍然赢）。",
         "memory.features.chorographyEnabled": "仓库地志（chorography）",
-        "memory.features.chorographyEnabled.hint": "读一遍仓库写成一份带页码的志书：确定性骨架零模型、可以随时重建；语义段由 CLI 的 headless 会话逐模块补。打开后有四个入口——模型侧三个只读工具、面板「仓库地志」浏览页、每轮的开局提纲注入、/choro 命令。关着时它们全部不存在（模型工具列表里根本没有，注入块不渲染，/choro 不注册）。默认关。",
+        "memory.features.chorographyEnabled.hint": "读一遍仓库写成一份带页码的志书：确定性骨架零模型、可以随时重建；语义段由 CLI 的 headless 会话逐模块补。打开后有四个入口——模型侧三个只读工具、面板「仓库地志」浏览页、每轮的开局提纲注入、/choro 命令。关着时它们全部不存在（模型工具列表里根本没有，注入块不渲染，/choro 与侧栏入口都不注册）。默认关。",
         "memory.features.chorographyInject": "开局注入档位",
         "memory.features.chorographyInject.hint": "每轮往上下文里塞地志提纲的份量：light 只列文件数最多的 6 个模块（约 8 行）、full 列全部模块、off 不注入（工具与面板页仍可用）。只注模块名 / 文件数 / 页状态 / 页相对路径，不含正文；正文要模型自己用 choro_read_page 取。轻量档预设压成 off。",
         "memory.features.chorographyInject.off": "off（不注入）",
@@ -1540,7 +1540,7 @@ window.__ModuleLoader__.load({
         "memory.features.profileFactsEnabled": "Auto facts",
         "memory.features.profileFactsEnabled.hint": "After each dream (consolidation) run, the memories settled in that window are read once more to maintain a per-identity-card list of facts the agent holds about you (Settings → Personalization → Auto facts), injected after the handwritten profile. Facts live in their own tables and never overwrite the User Profile you wrote yourself; any fact can be fixed or removed in the panel (removing = archiving, restorable). Off in the lightweight preset (an explicit choice still wins).",
         "memory.features.chorographyEnabled": "Repo atlas (chorography)",
-        "memory.features.chorographyEnabled.hint": "Reads a repository once and writes it up as a paginated atlas: the deterministic skeleton costs no model and can be rebuilt any time; the semantic sections are added per module by a headless session in the CLI. Turning it on enables four entry points — three read-only tools for the model, the atlas panel page, the per-turn outline injection, and the /choro command. With it off none of them exist (the tools are absent from the model's tool list, the injection block is not rendered, /choro is not registered). Off by default.",
+        "memory.features.chorographyEnabled.hint": "Reads a repository once and writes it up as a paginated atlas: the deterministic skeleton costs no model and can be rebuilt any time; the semantic sections are added per module by a headless session in the CLI. Turning it on enables four entry points — three read-only tools for the model, the atlas panel page, the per-turn outline injection, and the /choro command. With it off none of them exist (the tools are absent from the model's tool list, the injection block is not rendered, neither /choro nor the sidebar entry is registered). Off by default.",
         "memory.features.chorographyInject": "Opening injection tier",
         "memory.features.chorographyInject.hint": "How much of the atlas outline goes into context every turn: light lists the six modules with the most files (about 8 lines), full lists every module, off injects nothing (tools and the panel page still work). Only module name / file count / page status / page path are injected, never page bodies — the model fetches those with choro_read_page. The lightweight preset forces off.",
         "memory.features.chorographyInject.off": "off (no injection)",
@@ -12795,15 +12795,14 @@ window.__ModuleLoader__.load({
           name: "main",
           key: "dsh-mneme"
         }, () => h(MnemeMainPanel, { t }));
-        // chorography 第二个座位（M1）：成对规则同上——id 与 key 逐字同为
-        // "dsh-mneme-wiki"。座位无条件注册（P11），内容层自己渲染空态；
-        // D2 拆双 Cordis 条目后这里自然变成可独立禁用的形态。
-        const disposeWikiGlyph = ctx.slots.register({
-          name: "sidebar.panellist",
-          id: "dsh-mneme-wiki",
-          order: 61,
-          label: () => t("wiki.panel.open")
-        }, (props) => h(WikiGlyph, { size: props && props.size }));
+        // chorography 第二个座位（M1）。成对规则只剩一半在这里：main 的 key
+        // 仍是 "dsh-mneme-wiki" 且**无条件注册**——#562 那堵墙（布局里存着
+        // activePanelId="dsh-mneme-wiki" 时少注册 main，宿主 selectPanel 直接
+        // 抛 "main panel … is not registered"）。侧栏那一格不再无条件（#598）：
+        // 默认关的功能不该常驻一个点进去只有「未启用」的入口，glyph 的登记挪进
+        // 下面的座位闸，读 features 按 chorographyEnabled 决定。kb 座位（契约
+        // §3.6）刻意保持无条件——「未启用」空态自己解释去哪儿开，是 #607 的
+        // 另一种写法；两种形态并存是 #598 评论区 §四的拍板。
         const disposeWikiMain = ctx.slots.register({
           name: "main",
           key: "dsh-mneme-wiki"
@@ -12825,7 +12824,8 @@ window.__ModuleLoader__.load({
         return () => {
           disposeGlyph();
           disposeMain();
-          disposeWikiGlyph();
+          // wiki glyph 不在这把扫帚里了：它的登记随座位闸走（#598），
+          // 生命周期归 cordis 上下文，与本回调的成对座位不同源。
           disposeWikiMain();
           disposeKbGlyph();
           disposeKbMain();
@@ -12930,6 +12930,32 @@ window.__ModuleLoader__.load({
           });
         return () => { dead = true; };
       }, "dsh-mneme: diary gate");
+
+      // --- chorography 侧栏座位闸（#598）：与 M.O.（v0.9.0）/日记（v0.13）
+      // 同一形态——features 拉一次、fail-closed（读不到就不注册，不猜）、开关
+      // 改动重启生效。glyph 延迟注册走 diary 右栏页签同一条 inject→register
+      // 路径：宿主每次渲染枚举 entriesOfSlot，晚到的登记下一帧出现。
+      // main 不在这里——它无条件（#562）；kb 座位也不在这里——契约 §3.6
+      // 刻意选了「入口常驻 + 空态自解释」的另一半（见上面 panellist 块注释）。
+      ctx.effect(() => {
+        let dead = false;
+        apiFetch("/api/dsh-mneme/features")
+          .then((res) => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
+          .then((j) => {
+            if (dead) return;
+            if (!((j && j.effective) || {}).chorographyEnabled) return;
+            ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({
+              name: "sidebar.panellist",
+              id: "dsh-mneme-wiki",
+              order: 61,
+              label: () => t("wiki.panel.open")
+            }, (props) => h(WikiGlyph, { size: props && props.size })));
+          })
+          .catch((err) => {
+            console.warn("[dsh-mneme] features fetch failed, chorography seat stays off:", err);
+          });
+        return () => { dead = true; };
+      }, "dsh-mneme: chorography seat gate");
     }
 
     exports.apply = apply;
