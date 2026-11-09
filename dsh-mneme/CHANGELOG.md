@@ -4,6 +4,14 @@
 
 ## 🆕 新增
 
+- **容量预警（#275 空间维度）：库体积 / 归档区规模过线时，`/health` 与面板都看得见**。维护者 2026-10-21 对照 `main` 的现状盘点里，这是「还缺什么」第 2 条：保留期（`retentionDays`）给了时间维度，空间维度一直缺着——库在涨、归档区在涨，但没有任何地方会说过线。接手口径点得很直白：「`/health` 已经有镜像健康卡，加一个库体积卡是同一条路径」。
+
+  - **三道阈值，全是观察口（`src/config.js`）**：`capacityWarning.dbSizeWarnMb`（256 MB）、`capacityWarning.archivedRowsWarn`（5000 行）、`capacityWarning.archivedRatioWarn`（0.95）。默认值全部锚定 #275 议题自己的实测，不拍脑袋——55 MB 库 VACUUM 0.8s，256 MB 起代价才值得先看数字（议题「现在便宜、以后贵」）；归档 5,000 是「数千条这个量级」的上沿（议题实测 2,400 时还没坏）；占比健康区就在 0.8~0.9（活跃数百 / 归档数千，议题实测 0.90），预警线刻意放 0.95，不然对着健康库天天报警。**没有 enabled 总开关**：预警没有周期性消费者（`/health` 被读到才算一次），也不自动归档 / 删除任何东西（#275 拍板：真删由人显式确认）——数字恒在，某条检查不要就把阈值设 0（0 = 显式关）。
+  - **判级一层、答复一处（`src/service.js` + `src/api.js`）**：`service.getCapacityHealth` 与镜像健康的 fail-safe 同款——读失败显式 `status:"unknown"`，绝不伪装 ok；store 关掉不抛。`GET /api/dsh-mneme/health` 的四个答复分支全带上 `capacity` 块（镜像读失败不该把容量数字一起藏掉，两个半张互相独立）。每条检查回 `value / threshold`，报警要能对上数字；`:memory:` 库的体积检查**缺席**而不是 ok（「量不到」≠「零体积」）；答复只带数字、**不带库文件路径**（storageStats 里有 path，`/health` 是半张对外面）。
+  - **面板「库体积」卡（`lib/client.js`）**：进「库内一览」组，大数字是磁盘足迹，行给活跃 / 归档（含占比）/ 可回收空闲页；过线的检查逐条列出并走 `--mneme-warn` 预警色（新增 `.mneme-statrow--warn` / `.mneme-statusnum--warn` 两层，`StatusCard` 加了 `numWarn` 与逐行 `warn` 两个可选参数，不传的卡渲染逐字节不变）。三种拿不到数据的情况（fetch 失败 / 老宿主没这个块 / 后端 unknown）全部 fail-closed 渲染「未知」。增速刻意不算：归档净增速率是 recall-stats `archive` 块的第五指标，同一个数字长两处就会分叉。
+  - **键的三件套成对登记**：`settings.js` 白名单（两个 int 走 `FEATURE_FLAG_INT_RANGES`、占比浮点走 `FEATURE_FLAG_NUMBER_RANGES`）+ `api.js` 的 `NESTED_FLAG_PATHS` 三个点号键 + 计数锁 121 → 124。阈值改动是启动快照（与 `panel_mode` 同节奏），面板显示「待重启」。
+  - **文档与验证**：`docs/CONFIGURATION.md` 新增「容量预警」一节、`docs/STORAGE.md` 补「容量预警（#275 空间维度）」节（含三道阈值的过线含义与读法边界）、README 键表补 `capacityWarning` 行（docs-config-keys 的全键闸与键名断言都要过）。`test/capacity-warning.test.js` 新增 9 条（行数口径、schema 边界、三道检查各自的过线与关闭、fail-safe、`/health` 挂载与不泄露路径、没接线时显式 null）；`test/client.test.js` 新增面板卡形状锁（fail-closed 表达式、warn class、i18n 双语键各出现两次）；`test/api.test.js` 往返测试补三个点号键。全量 3164 用例 / 3163 通过 / 0 失败 / 1 跳过；check-sync 通过。
+
 - **会话头顶那个日记入口撤了；「写今天 / 存到这个项目」补进面板**。两处入口同时存在时，用户点哪一个都像「又开了一本」，而右栏那套是旧版遗留下来的：会话头一个按钮 → 右栏页签 → 里面才是写与导出。现在只留一个入口：记忆面板的「日记」标签页。
 
   - **删的是什么（`lib/client.js`）**：`registerDiarySeats` 里原本注册三件事——① 右栏页签类型 ② `conversation.session.header.actions` 会话头入口（`id: "dsh-mneme:diary"`、`order: 31`）③ `sidebar.right.pane.tab` 右栏正文。删的是 ②，连同 `DiaryEntryButton` 组件、`.mneme-diary-trigger*` 五条 CSS、`memory.diary.openFailed` 文案。**为什么不是「看着多余」就删**：`openTab` 全仓库只有两处调用（M.O. 一处、日记 ② 一处），所以删掉 ② 之后本插件自己再也打不开右栏那一页。但宿主把页签类型目录 `tabTypes.getSnapshot() => tabs.entries()` 交给了右栏的「新建页签」选择器，用户从宿主自己的列表里仍能打开它——那套正文因此**留着**，不是死代码。

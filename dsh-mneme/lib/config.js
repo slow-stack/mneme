@@ -1,6 +1,16 @@
 import z from "@deepseek-ai/schemastery";
 import { TYPE_DECAY_DEFAULTS } from "./heat.js";
 
+// #275 容量预警的阈值默认值，单独导出：service.getCapacityHealth 在 config 缺席
+// （直连调用方 / 测试传裸对象）时也要用同一套数字判级，不能另立一份——schema 的
+// .default({}) 只在「Config() 解析过」的路径上补值，裸 config 走不到。
+// 数字锚定 #275 议题里写的形态区间（活跃数百条、归档数千条），依据见 schema 处注释。
+export const CAPACITY_WARNING_DEFAULTS = Object.freeze({
+  dbSizeWarnMb: 256,
+  archivedRowsWarn: 5000,
+  archivedRatioWarn: 0.95
+});
+
 export const Config = z.object({
   // 记忆语言：生成记忆、注入标题与后台 LLM 提示词所用语言；'zh'（默认，
   // 行为不变）/ 'en'。启动时读入，切换后重启生效。
@@ -805,6 +815,33 @@ export const Config = z.object({
   distillRecords: z.object({
     enabled: z.boolean().default(false),
     retentionDays: z.natural().min(1).max(3650).default(90)
+  }).default({}),
+
+  // --- capacity warning (#275: 空间维度) ---------------------------------------
+  // 容量预警：库体积 / 归档区规模过线时在 /health 与面板上报（维护者 2026-10-21
+  // 接手口径：有 retentionDays 的时间维度，缺空间维度）。三个阈值都是**观察口**，
+  // 不是动作触发：没有任何周期性消费者（/health 被读到才算一次），预警也永不
+  // 自动归档 / 删除（#275 拍板：真删由人显式确认）——所以不设 enabled 总开关，
+  // 数字恒在 /health，阈值 0 = 显式关掉那一条检查。
+  //
+  // 默认值锚定议题里的形态区间，不是拍脑袋：
+  //   dbSizeWarnMb 256 —— 议题实测 55 MB 库 VACUUM 0.8s；按同议题的归档增速
+  //     （+143 行/天 ≈ 2.8 MB/天）留约 70 天余量，正落在「现在便宜、以后贵」
+  //     该开始看数字的量级；
+  //   archivedRowsWarn 5000 —— 「归档是数千条这个量级」的上沿（议题实测 2,400
+  //     时还没坏）；
+  //   archivedRatioWarn 0.95 —— 健康形态本身就落在 0.8~0.9（活跃数百 / 归档
+  //     数千，议题实测 0.90），0.9 会对着健康库天天报警；0.95 起才是「归档区
+  //     把活跃区吞掉」的形态。
+  // 判级实现在 service.getCapacityHealth，答复挂 /health 的 capacity 块；出口是
+  // 维护卡的无损回收（dsh-mneme reclaim，见 docs/STORAGE.md）与后续批次的归档区
+  // 周期处理。增速指标（归档净增速率）在 recall-stats 的 archive 块，不在这里重复。
+  capacityWarning: z.object({
+    dbSizeWarnMb: z.natural().min(0).max(1048576).default(CAPACITY_WARNING_DEFAULTS.dbSizeWarnMb),
+    archivedRowsWarn: z.natural().min(0).max(10000000).default(CAPACITY_WARNING_DEFAULTS.archivedRowsWarn),
+    // 浮点：与 conflictAutoResolveMinSimilarity 同款（面板整数控件吃不下小数，
+    // 走 FEATURE_FLAG_NUMBER_RANGES）。
+    archivedRatioWarn: z.number().min(0).max(1).default(CAPACITY_WARNING_DEFAULTS.archivedRatioWarn)
   }).default({}),
 
   // --- write admission (#254) ------------------------------------------------

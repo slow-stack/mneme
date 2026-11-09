@@ -1275,6 +1275,16 @@ window.__ModuleLoader__.load({
         "memory.status.mirror.lastAttempt": "上次尝试",
         "memory.status.mirror.successAt": "上次成功",
         "memory.status.mirror.foot": "记忆条目在磁盘上的 Markdown 副本同步状态",
+        "memory.status.capacity": "库体积",
+        "memory.status.capacity.unknown": "未知",
+        "memory.status.capacity.unknownFoot": "容量读数拿不到（面板请求失败，或宿主版本还没有这块）",
+        "memory.status.capacity.active": "活跃条目",
+        "memory.status.capacity.archived": "归档条目",
+        "memory.status.capacity.reclaimable": "可回收（空闲页）",
+        "memory.status.capacity.check.dbSize": "库体积过线",
+        "memory.status.capacity.check.archivedRows": "归档条数过线",
+        "memory.status.capacity.check.archivedRatio": "归档占比过线",
+        "memory.status.capacity.foot": "三道预警线（体积 / 归档条数 / 归档占比）都可在设置里调；超限先跑维护卡的无损回收，真删由人确认",
         "memory.status.sec.overview": "库内一览",
         "memory.status.sec.engine": "后台运转",
         "memory.status.sec.maintenance": "维护",
@@ -2275,6 +2285,16 @@ window.__ModuleLoader__.load({
         "memory.status.mirror.lastAttempt": "Last attempt",
         "memory.status.mirror.successAt": "Last success",
         "memory.status.mirror.foot": "Sync state of the on-disk Markdown mirror of memory entries",
+        "memory.status.capacity": "Storage size",
+        "memory.status.capacity.unknown": "Unknown",
+        "memory.status.capacity.unknownFoot": "Capacity readout unavailable (panel request failed, or the host predates this block)",
+        "memory.status.capacity.active": "Active entries",
+        "memory.status.capacity.archived": "Archived entries",
+        "memory.status.capacity.reclaimable": "Reclaimable (freelist)",
+        "memory.status.capacity.check.dbSize": "DB size over threshold",
+        "memory.status.capacity.check.archivedRows": "Archived count over threshold",
+        "memory.status.capacity.check.archivedRatio": "Archive share over threshold",
+        "memory.status.capacity.foot": "The three thresholds (size / archived count / archive share) are adjustable in settings; when tripped, start with lossless reclaim in the maintenance card — real deletion stays human-confirmed",
         "memory.status.sec.overview": "Library",
         "memory.status.sec.engine": "Background activity",
         "memory.status.sec.maintenance": "Maintenance",
@@ -2927,6 +2947,10 @@ window.__ModuleLoader__.load({
       ".mneme-statrow{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
       ".mneme-statrow>span:first-child{flex:none;white-space:nowrap}",
       ".mneme-statrow .mneme-heatdot{align-self:center}",
+      // 预警行（#275 库体积卡）：行与值都要落预警色——.mneme-statrowval 自带
+      // color 声明，只染行不染值的话，过线的数字仍是次级文本色。
+      ".mneme-statrow--warn{color:var(--mneme-warn)}",
+      ".mneme-statrow--warn .mneme-statrowval{color:var(--mneme-warn)}",
       ".mneme-statrowval{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}",
       ".mneme-statfoot{margin-top:8px;font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
       // 热度分布条：三档占比一图看清，行标只补数字（类名带双横线，与 heatdot 同款）
@@ -3035,6 +3059,9 @@ window.__ModuleLoader__.load({
       ".mneme-wbmemo .mneme-xdot{flex:none}",
       ".mneme-wbmemo-main{min-width:0;flex:1}",
       ".mneme-statusnum{font-size:24px;font-weight:600;line-height:32px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}",
+      // 大数字预警色（#275 库体积卡）：状态卡都走 StatusCard，只有传 numWarn 的
+      // 卡会挂这个类。
+      ".mneme-statusnum--warn{color:var(--mneme-warn)}",
       ".mneme-statuscap{margin-top:4px;font-size:13px;line-height:19px;color:var(--mneme-fg-dim);word-break:break-word}",
       // --- destructive actions: red outline = delete, solid red = confirm ---
       ".mneme-btndanger{color:var(--mneme-danger);border-color:var(--mneme-danger)}",
@@ -5477,7 +5504,7 @@ window.__ModuleLoader__.load({
     // never blanks or blocks the others.
     // 卡片解剖：标题（h3）→ 大数字 → 指标行（rows，一行一指标）→ 脚注
     // （foot，采样口径这类背景信息）。cap 仍保留给单句说明型卡片。
-    function StatusCard({ t, title, loading, error, num, cap, rows, foot, className }) {
+    function StatusCard({ t, title, loading, error, num, numWarn, cap, rows, foot, className }) {
       return h("div", { className: className ? `mneme-statuscard ${className}` : "mneme-statuscard" },
         h("h3", { className: "mneme-xcolhead" }, title),
         loading
@@ -5485,10 +5512,12 @@ window.__ModuleLoader__.load({
           : error
             ? h("div", { className: "mneme-statuscap", style: { color: "var(--mneme-danger)" } }, t("memory.status.error"))
             : h(react.Fragment, null,
-                h("div", { className: "mneme-statusnum" }, num),
+                // numWarn：大数字走预警色（--mneme-warn）。只有需要报警的卡传它，
+                // 其余卡不传、渲染与之前逐字节一致。
+                h("div", { className: numWarn ? "mneme-statusnum mneme-statusnum--warn" : "mneme-statusnum" }, num),
                 rows && rows.length
                   ? h("div", { className: "mneme-statrows" },
-                      rows.map((r, i) => h("div", { className: "mneme-statrow", key: r.key ?? i },
+                      rows.map((r, i) => h("div", { className: r.warn ? "mneme-statrow mneme-statrow--warn" : "mneme-statrow", key: r.key ?? i },
                         h("span", null, r.label),
                         h("span", { className: "mneme-statrowval", title: String(r.value) }, String(r.value))))
                     )
@@ -6033,6 +6062,70 @@ window.__ModuleLoader__.load({
         num,
         rows,
         foot: t("memory.status.mirror.foot")
+      });
+    }
+
+    // 库体积卡（#275 容量预警，空间维度）。数据与镜像健康卡同一条 /health 路径，
+    // 读它的 capacity 块——维护者的接手口径就是「加一个库体积卡是同一条路径」。
+    // 三种拿不到数据的情况全部 fail-closed 渲染成「未知」，绝不显示「正常」：
+    // fetch 失败、老宿主没有 capacity 块、后端读失败（status:"unknown"）。
+    // 预警只是观察口：卡片给的是「过线了，先跑无损回收」，不自动做任何事
+    // （#275 拍板：真删由人显式确认）。
+    function CapacityCard({ t }) {
+      const [state, setState] = useState({ loading: true, capacity: null });
+      useEffect(() => {
+        let cancelled = false;
+        apiFetch("/api/dsh-mneme/health")
+          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+          .then((j) => { if (!cancelled) setState({ loading: false, capacity: (j && j.capacity) || null }); })
+          .catch(() => { if (!cancelled) setState({ loading: false, capacity: null }); });
+        return () => { cancelled = true; };
+      }, []);
+      const c = state.capacity;
+      const unknown = !c || c.status === "unknown";
+      const pct = (x) => `${Math.round(x * 1000) / 10}%`;
+      const rows = [];
+      if (!unknown && typeof c.active_rows === "number") {
+        rows.push({ key: "active", label: t("memory.status.capacity.active"), value: c.active_rows.toLocaleString() });
+      }
+      if (!unknown && typeof c.archived_rows === "number") {
+        const share = typeof c.archived_ratio === "number" ? ` (${pct(c.archived_ratio)})` : "";
+        rows.push({ key: "archived", label: t("memory.status.capacity.archived"), value: c.archived_rows.toLocaleString() + share });
+      }
+      if (!unknown && typeof c.freelist_bytes === "number") {
+        rows.push({ key: "freelist", label: t("memory.status.capacity.reclaimable"), value: formatBytes(c.freelist_bytes) });
+      }
+      // 过线的检查逐条列出，值/阈值都给全——「报警」要是能对上数字的，不然只是
+      // 一句让人去翻配置的空话。键集合有界（服务端只发那三种），但标签仍显式
+      // 映射：不按键名拼 i18n key，老字典缺键时会直接把键名漏给用户。
+      const checkLabel = (key) =>
+        key === "db_size" ? t("memory.status.capacity.check.dbSize")
+          : key === "archived_rows" ? t("memory.status.capacity.check.archivedRows")
+          : t("memory.status.capacity.check.archivedRatio");
+      const checkValue = (chk) =>
+        chk.key === "db_size" ? `${formatBytes(chk.value_bytes)} / ${formatBytes(chk.threshold_bytes)}`
+          : chk.key === "archived_rows" ? `${chk.value.toLocaleString()} / ${chk.threshold.toLocaleString()}`
+          : `${pct(chk.value)} / ${pct(chk.threshold)}`;
+      const checks = !unknown && Array.isArray(c.checks) ? c.checks : [];
+      let warn = false;
+      for (const chk of checks) {
+        if (chk.status === "warn") {
+          warn = true;
+          rows.push({ key: `warn-${chk.key}`, warn: true, label: checkLabel(chk.key), value: checkValue(chk) });
+        }
+      }
+      // :memory: 库没有磁盘足迹（file_bytes 为 null）——大数字给「—」而不是 0，
+      // 「量不到」和「零体积」是两回事。
+      const num = unknown ? t("memory.status.capacity.unknown") : (typeof c.file_bytes === "number" ? formatBytes(c.file_bytes) : "—");
+      return h(StatusCard, {
+        t,
+        title: t("memory.status.capacity"),
+        loading: state.loading,
+        error: false,
+        num,
+        numWarn: warn,
+        rows,
+        foot: unknown ? t("memory.status.capacity.unknownFoot") : t("memory.status.capacity.foot")
       });
     }
 
@@ -7202,7 +7295,8 @@ window.__ModuleLoader__.load({
               h(MemoriesStatusCard, { t }),
               h(EntitiesStatusCard, { t }),
               h(VectorStatusCard, { t }),
-              h(MirrorHealthCard, { t })
+              h(MirrorHealthCard, { t }),
+              h(CapacityCard, { t })
             ),
             h("div", { className: "mneme-statushead" }, t("memory.status.sec.engine")),
             h("div", { className: "mneme-statusgrid" },

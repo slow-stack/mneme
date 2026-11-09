@@ -1845,6 +1845,43 @@ test("mirror health: card wired with fail-closed unknown rendering", () => {
   }
 });
 
+// --- issue #275：库体积卡（容量预警，空间维度）---
+// 预警卡的关健不变量同样是 fail-closed：fetch 失败、老宿主没有 capacity 块、后端
+// status:"unknown" 三种情况都渲染「未知」，绝不显示「正常」；过线的检查逐条列出
+// 且值/阈值都给全（报警要能对上数字）。这里锁死派生表达式与 i18n 双语键，
+// 防止未来被「简化」成把未知当正常、或把过线行折成一句空话。
+test("capacity warning: card wired with fail-closed unknown rendering", () => {
+  assert.ok(clientSource.includes("function CapacityCard"), "库体积卡必须存在");
+  assert.ok(clientSource.includes("h(CapacityCard, { t })"), "overview grid must render the capacity card");
+  // 与镜像卡同一条 /health 路径读 capacity 块（「加一个库体积卡是同一条路径」）
+  const fetches = clientSource.split('"/api/dsh-mneme/health"').length - 1;
+  assert.ok(fetches >= 2, "capacity card must fetch the health endpoint (mirror card + capacity card)");
+  const unknown = clientSource.match(/const unknown = !c \|\| c\.status === "unknown";/);
+  assert.ok(unknown, "missing block / backend unknown must collapse to unknown, never ok");
+  // 过线行必须带 warn 标记走预警色，大数字同样（class 由 StatusCard 拼接）
+  assert.ok(clientSource.includes('"mneme-statrow mneme-statrow--warn"'), "tripped check rows must carry the warn class");
+  assert.ok(clientSource.includes('"mneme-statusnum mneme-statusnum--warn"'), "warned big number must carry the warn class");
+  // 三种检查的标签显式映射（不按键名拼 i18n key，缺键时会把键名漏给用户）
+  assert.ok(clientSource.includes('"memory.status.capacity.check.dbSize"'));
+  assert.ok(clientSource.includes('"memory.status.capacity.check.archivedRows"'));
+  assert.ok(clientSource.includes('"memory.status.capacity.check.archivedRatio"'));
+  for (const key of [
+    "memory.status.capacity",
+    "memory.status.capacity.unknown",
+    "memory.status.capacity.unknownFoot",
+    "memory.status.capacity.active",
+    "memory.status.capacity.archived",
+    "memory.status.capacity.reclaimable",
+    "memory.status.capacity.check.dbSize",
+    "memory.status.capacity.check.archivedRows",
+    "memory.status.capacity.check.archivedRatio",
+    "memory.status.capacity.foot"
+  ]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+});
+
 // --- issue #386 第 1 条：独立服务只读卡片 ---
 // 卡片展示 dsh-mneme-serve 示例命令并支持复制。关键锁：命令不能写成
 // `npx dsh-mneme-serve …` —— bin 名与包名不同，裸 npx 会尝试安装一个不存在

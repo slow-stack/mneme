@@ -82,6 +82,27 @@ VACUUM 是 O(库大小)，且需要排他写锁：库越大越慢，期间的写
 - 想保留活跃面：工具带 `keep_evidence_active: true`（注册器参数是 `archiveEvidence: false`）；
 - 重注册同一份文档（出新版）时，那些已归档的 evidence 行仍可为**它所属的那份文档**背书；换个文档拿归档 id 当证据，照旧按捏造拒绝。
 
+## 容量预警（#275 空间维度）
+
+回收入口是「人主动按」的；容量预警补的是另一半：**让人知道该按了**。库体积 / 归档区规模过线时，`GET /api/dsh-mneme/health` 的 `capacity` 块与面板「库体积」卡（库内一览组）同时上报——维护者 2026-10-21 的接手口径：保留期（`retentionDays`）给了时间维度，这块补空间维度。
+
+三道阈值，全部**观察口**：没有周期性消费者（`/health` 被读到才算一次），预警永不自动归档 / 删除（#275 拍板：真删由人显式确认）。
+
+| 检查 | 键 | 默认 | 过线含义 |
+|---|---|---|---|
+| `db_size` | `capacityWarning.dbSizeWarnMb` | `256` | 磁盘足迹（主文件 + WAL + SHM）到线：VACUUM 的 O(库大小) 代价开始值得先看数字再动手 |
+| `archived_rows` | `capacityWarning.archivedRowsWarn` | `5000` | 归档区行数到「数千条这个量级」的上沿 |
+| `archived_ratio` | `capacityWarning.archivedRatioWarn` | `0.95` | 归档占比（归档 / 全部）到「归档区吞掉活跃区」——健康形态本身在 0.8~0.9，预警线刻意不放那里 |
+
+读法与边界：
+
+- 判级在 `service.getCapacityHealth`，与镜像健康同款 fail-safe：读失败显式 `status:"unknown"`，绝不伪装 ok。每条检查回 `value / threshold`，报警要能对上数字；**阈值 0 = 显式关掉那条检查**（判级前先看启用条件，不靠比较碰巧不成立）。
+- `:memory:` 库没有磁盘足迹：`file_bytes` 为 `null`，`db_size` 检查**缺席**而不是 ok——「量不到」和「零体积」是两回事。
+- 答复只带数字，**不带库文件路径**（storageStats 里有 path，`/health` 是半张对外面，不外带本机布局）。
+- 默认值锚定 #275 议题的形态区间，依据写在 config.js 的键注释里；三个键都走 feature_flags 白名单（面板可改，启动快照生效）。
+- 增速指标（归档净增速率 + 可压掉行数）是 recall-stats `archive` 块的第五指标，见下一节——预警卡刻意不算速率，同一个数字长两处就会分叉。
+- 过线之后先跑本入口（`dsh-mneme reclaim` / 维护卡）；归档区同主题堆积是出口问题，归 #254 的写入准入与整理动作面，预警不碰内容。
+
 ## 第五指标：归档净增速率 + 可压掉行数
 
 面板「记忆复用」卡与 `GET /api/dsh-mneme/recall-stats` 的返回里多了一个 `archive` 块（#275 拍板：与既有指标同位）：
