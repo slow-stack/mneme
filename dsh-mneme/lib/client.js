@@ -376,6 +376,10 @@ window.__ModuleLoader__.load({
         "wiki.drift.verifiedApprox": "这页是早期富化的，没记下自己的验证点；下面按全仓基线 {sha} 比对（起点比实际更早，只会多报不会漏报）。",
         "wiki.drift.anchorStalePage": "这页记下的验证提交在 git 里已经找不到了（force-push 或浅克隆截断），这页没法比对。",
         "wiki.drift.undecidable": "{n} 页的验证基线不可用，没有参与比对",
+        // 自动刷新被主动跳过（仓库里有已富化的页）。这句话必须说的是「我没做，因为
+        // 做了会丢东西」，而不是「刷新失败」——失败是另一种情况，另一种文案。
+        "wiki.autoRefresh.skipped": "自动刷新这次没有做：这仓库有 {n} 页已经富化过，重跑骨架会把语义段和结论一起清掉。要新快照请手动点「重建骨架」（会先告诉你丢哪几页）。",
+        "wiki.autoRefresh.skippedGeneric": "自动刷新这次没有做：这仓库已有富化过的页，重跑骨架会把语义段和结论一起清掉。要新快照请手动点「重建骨架」。",
         "wiki.run.pathRequired": "先填仓库目录的绝对路径",
         "wiki.run.failed": "生成失败",
         "wiki.run.notAbsolute": "要给绝对路径（例如 D:\\code\\my-repo）：相对路径会按服务端进程的当前目录解析，同一个请求换个启动位置就落到别的目录。",
@@ -1500,6 +1504,10 @@ window.__ModuleLoader__.load({
         "wiki.drift.verifiedApprox": "This page was enriched before provenance was recorded; the comparison below starts from the repository baseline {sha} (earlier than the real one, so it can over-report but never miss).",
         "wiki.drift.anchorStalePage": "The commit this page was verified against no longer exists in git (force-push or a shallow clone cut it off), so this page cannot be compared.",
         "wiki.drift.undecidable": "{n} page(s) have no usable verification baseline and were left out of the comparison",
+        // Auto-refresh was deliberately skipped. This must read as "I did not do it,
+        // because doing it would lose something", never as "refresh failed".
+        "wiki.autoRefresh.skipped": "Auto-refresh was skipped: {n} page(s) in this repository are already enriched, and rebuilding the skeleton would wipe their prose and claims. Click Rebuild skeleton yourself if you want a new snapshot (it tells you which pages it drops).",
+        "wiki.autoRefresh.skippedGeneric": "Auto-refresh was skipped: this repository already has enriched pages, and rebuilding the skeleton would wipe their prose and claims. Click Rebuild skeleton yourself if you want a new snapshot.",
         "wiki.run.pathRequired": "Enter the repository's absolute path first",
         "wiki.run.failed": "Generate failed",
         "wiki.run.notAbsolute": "Give an absolute path (for example /home/me/code/my-repo): relative paths resolve against the server process's working directory, so the same request can land somewhere else depending on how the host was started.",
@@ -12642,6 +12650,9 @@ window.__ModuleLoader__.load({
           hits: [], q: "", selected: null, disabled: false, error: null,
           rebuilding: false, rebuildNote: null, path: "", flags: null, t1: null, toast: "",
           cliCommand: null, copied: false,
+          // autoRefreshNote：读页时服务端说「这次自动刷新我主动没做」。它不是错误，
+          // 所以不塞进 error、也不进 toast（toast 2.5s 就没了，用户看不到原因）。
+          autoRefreshNote: null,
           // 证据复核（Grounded Claims）的两样状态：drift 是 /choro/claims 的
           // 回体，driftPhase 区分「还没查」「查着」「查出三种结局」。
           drift: null, driftPhase: "idle"
@@ -12697,7 +12708,7 @@ window.__ModuleLoader__.load({
             repoIdRef.current = loaded && loaded.id != null ? loaded.id : ref;
             // 切仓库时证据复核的旧结果必须清掉：它是按上一个仓库的 diff 算的，
             // 留着就会把甲仓库的「需要复核」挂在乙仓库的页签下。
-            setState((s) => ({ ...s, phase: "ready", repos, repo: loaded, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null, drift: null, driftPhase: "idle" }));
+            setState((s) => ({ ...s, phase: "ready", repos, repo: loaded, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null, drift: null, driftPhase: "idle", autoRefreshNote: null }));
           } catch (err) {
             setState((s) => ({ ...s, phase: "error", error: String(err?.message ?? err) }));
           }
@@ -12729,7 +12740,16 @@ window.__ModuleLoader__.load({
           try {
             const { status, data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/page?repo=${encodeURIComponent(repo.id)}&slug=${encodeURIComponent(slug)}`));
             if (status !== 200 || data.error) { setState((s) => ({ ...s, page: { error: data.error ?? `page ${status}` } })); return; }
-            setState((s) => ({ ...s, page: data.page }));
+            // 自动刷新被主动跳过：这条要说出来。不说的话，用户看到的是「代码已变」
+            // 徽章一直亮着、页面还是旧的，只会以为刷新坏了（#607 那类假成功的反面）。
+            // 文案自己拼而不直接用服务端那句：那句话是中文的，进不了英文界面；
+            // 页数用服务端算出的 enrichedPages，只有它缺的时候才退回服务端原话。
+            const skipped = data.autoRefreshSkipped === "t1-loss"
+              ? (Number(data.repo?.enrichedPages ?? 0) > 0
+                ? t("wiki.autoRefresh.skipped").replace("{n}", String(data.repo.enrichedPages))
+                : (data.autoRefreshSkipNote || t("wiki.autoRefresh.skippedGeneric")))
+              : null;
+            setState((s) => ({ ...s, page: data.page, autoRefreshNote: skipped }));
           } catch (err) {
             setState((s) => ({ ...s, page: { error: String(err?.message ?? err) } }));
           }
@@ -12765,6 +12785,8 @@ window.__ModuleLoader__.load({
             setState((s) => ({
               ...s,
               rebuilding: false,
+              // 重建已经真的发生了，那条「自动刷新没做」的提示就该退场。
+              autoRefreshNote: null,
               rebuildNote: `${t("wiki.rebuild.done")}: ${r.moduleCount ?? "?"} ${t("wiki.rebuild.modules")} / ${r.pageCount ?? "?"} ${t("wiki.rebuild.pages")}${loss ? ` — ${loss}` : ""}`
             }));
             await load(repo.id);
@@ -13117,6 +13139,10 @@ window.__ModuleLoader__.load({
               onClick: checkDrift
             }, state.driftPhase === "loading" ? t("wiki.drift.loading") : t("wiki.drift")),
             state.rebuildNote && h("span", { className: "mneme-wikirebuildnote" }, state.rebuildNote)),
+          // 「自动刷新我主动没做」的提示条。放在顶栏下面而不是 toast 里：它描述的
+          // 是一个仍然成立的状态（库里还有富化页），不是一次性的动作回执。
+          state.autoRefreshNote && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            state.autoRefreshNote),
           // 证据复核回执条：三种结局三种说法，「比对失败」单独一条 --
           // 它既不是「没事」也不是「有风险」，混进任何一边都是撒谎。
           state.driftPhase === "failed" && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },

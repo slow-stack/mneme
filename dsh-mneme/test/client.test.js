@@ -301,6 +301,30 @@ test("claim evidence check reports three distinct outcomes instead of one reassu
   assert.notEqual(clean[0], blocked[0], "the two outcomes must not share copy");
 });
 
+// 自动刷新被主动跳过（仓库里有富化页）。这条锁的是「拒绝不许长得像失败」：
+// 服务端已经把 autoRefreshSkipped 与 autoRefreshError 分成两个字段，面板必须
+// 跟着分——合成一句「刷新失败」就是在报一个没发生过的故障，而真正的后果
+// （语义段还在、快照还是旧的）反而没人说。
+test("auto-refresh skip is shown as a standing reason, not as a failure toast", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(fn.includes("autoRefreshSkipped"), "the panel must read the skip signal");
+  assert.ok(fn.includes("autoRefreshNote"), "the skip reason needs a visible home");
+  assert.ok(
+    !/autoRefreshError[^\n]*autoRefreshSkipped|autoRefreshSkipped[^\n]*autoRefreshError/.test(fn),
+    "skipped and error must not be merged into one branch"
+  );
+  // 提示条不能只在 toast 里：toast 2.5 秒就没了，而「为什么没刷」是一个
+  // 仍然成立的状态（库里还有富化页），用户回头还要能看到。
+  assert.ok(fn.includes("mneme-wikidriftbar") && fn.includes("state.autoRefreshNote"),
+    "the skip note must render as a bar, not a self-clearing toast");
+  const zh = [...clientSource.matchAll(/"wiki\.autoRefresh\.skipped":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  const en = zh.length;
+  assert.equal(en, 2, "wiki.autoRefresh.skipped must exist in both dictionaries");
+  assert.ok(/没.*做|没有做/.test(zh[0]), "the Chinese copy must say it did not happen");
+  assert.ok(!/失败/.test(zh[0]), "the skip copy must not claim a failure");
+  assert.ok(/skipped/i.test(zh[1]), "the English copy must say skipped");
+});
+
 // 知识库页（契约 §3.6）。这条锁的是「路由与就近文案都在」，不是布局：
 //  · 409/503 各有自己的空态，不把裸状态码丢屏幕上；
 //  · disabled 那句必须说清去哪儿开（#607 的教训：只说「未启用」等于没说）；

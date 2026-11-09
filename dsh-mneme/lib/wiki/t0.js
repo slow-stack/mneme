@@ -39,9 +39,10 @@ export class ChoroRefusal extends Error {
  * @param {string} opts.repoRoot 仓库路径（内部 realpath）
  * @param {object|null} opts.store createStore 产物（apply 时必传；dry-run 可为 null）
  * @param {boolean} [opts.apply=false] false = dry-run（零写入）
+ * @param {boolean} [opts.guardT1Loss=false] 会丢掉已有语义段时整轮拒绝（自动刷新用）
  * @param {() => string} [opts.now] ISO 时刻（测试注入假时钟）
  */
-export function runChoroT0({ repoRoot, store = null, apply = false, now = () => new Date().toISOString() }) {
+export function runChoroT0({ repoRoot, store = null, apply = false, guardT1Loss = false, now = () => new Date().toISOString() }) {
   let rootPath;
   try {
     rootPath = realpathSync(resolve(repoRoot));
@@ -175,6 +176,21 @@ export function runChoroT0({ repoRoot, store = null, apply = false, now = () => 
       + `本次会退回骨架、清空 choro_claims`
       + `${t1Loss.orphanEvidence > 0 ? `，${t1Loss.orphanEvidence} 份 evidence 文件会变成孤儿（不删）` : ""}。`
       + "要留住语义段就别在这里重跑 T0；需要时再用 --t1 重新富化。"
+    );
+  }
+  // guardT1Loss（自动刷新专用）：读路径上「顺手」重跑 T0 会把用户花模型调用换来的
+  // 语义段和 claims 一起清掉——那不是顺手，那是在用户只点开一页的时候替他做了一次
+  // 破坏性写盘。手动重建不受此限：用户点了按钮，回执里的 warnings 会如实列出丢了什么。
+  //
+  // 拒绝而不是「跳过有语义段的那几页」：T0 的整仓 replaceChoroGraph 是一次事务，
+  // 只保几页会留下「页面有 T1 正文、库里 claims 已被清空」的半截状态，比整体不写更糟。
+  if (guardT1Loss && t1Loss.pages.length > 0) {
+    const names = t1Loss.pages.slice(0, 3).join("、");
+    throw new ChoroRefusal(
+      "would-drop-t1",
+      `这个仓库有 ${t1Loss.pages.length} 页已经富化过（${names}${t1Loss.pages.length > 3 ? " 等" : ""}）。`
+      + "自动刷新会退回骨架、清空 claims，所以这次没有动："
+      + "要保留语义段就先别刷新，确实要重建骨架请在面板里手动点「重建骨架」（回执会列出丢了哪几页）。"
     );
   }
 

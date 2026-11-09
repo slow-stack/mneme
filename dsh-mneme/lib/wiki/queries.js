@@ -97,8 +97,25 @@ export function createChoroQueries({ store }) {
       // legacy = 这个仓库里有页面是用旧模板（或 M0 的 NULL）渲染的：重跑一次 T0 就
       // 会把它们升级成当前模板，面板据此提示「建议重建」而不是让用户自己比对版本。
       legacy: legacyPages(row.id) > 0,
+      // enrichedPages：已经富化过（页面里有 T1 语义段、库里有 claims）的页数。
+      // 自动刷新要看它：这类页重跑 T0 会退回骨架，所以那条路必须先问一句。
+      enrichedPages: enrichedPageCount(row.id),
       lastRunAt: row.updated_at ?? null
     };
+  }
+
+  /**
+   * 已富化的页数。判据取库里的 status（T1 成功后会写 enriched），而不是读盘找
+   * T1 标记——这是条给面板列表用的轻查询，几百页也不该逐文件 readFileSync。
+   * 两边可能短暂不一致（例如有人手改了 MD），但「要不要提醒」这种提示用途，
+   * 库里的账本就是最合适的真源；真正判断「会丢什么」的仍是 T0 的 collectT1Loss（读盘）。
+   */
+  function enrichedPageCount(repoId) {
+    const hit = db.prepare(
+      `SELECT COUNT(*) AS n FROM choro_pages p JOIN choro_modules m ON p.module_id = m.id
+        WHERE m.repo_id = ? AND p.status = 'enriched'`
+    ).get(repoId);
+    return Number(hit?.n ?? 0);
   }
 
   function legacyPages(repoId) {

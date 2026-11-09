@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -493,10 +493,12 @@ function countingChoro(store, { throwOnRun = false } = {}) {
     calls,
     choro: {
       ...base,
-      runT0Apply: ({ repoRoot }) => {
+      // guardT1Loss 必须原样透给真 T0：这条守卫的意义就在于「自动刷新那条路会拒绝」，
+      // 外壳把它吞掉就等于测了一个不存在的实现。
+      runT0Apply: ({ repoRoot, guardT1Loss = false }) => {
         calls.push(repoRoot);
         if (throwOnRun) throw new Error("磁盘只读（模拟）");
-        return runChoroT0({ repoRoot, store, apply: true });
+        return runChoroT0({ repoRoot, store, apply: true, guardT1Loss });
       }
     }
   };
@@ -593,6 +595,71 @@ test("/choro/repos 自动重跑失败：读照常 200、数据在、错误进 au
     assert.equal(res.body.repos.length, 1, "数据必须还在");
     assert.equal(res.body.repos[0].staleReason, "git", "没刷成功就照实说过期");
   } finally {
+    rmTempBestEffort(root);
+  }
+});
+
+// 自动刷新碰上已富化的仓库：不许动手。这条是「静默降级」的正对面——读页本来
+// 只是个浏览动作，却会替用户把语义段和 claims 一起清掉，而屏幕上没有任何提示。
+// 现在它变成一次主动拒绝，且拒绝与失败分开报（autoRefreshSkipped vs autoRefreshError）。
+test("/choro/repos 自动重跑：仓库里有富化页时主动跳过，不动字节、不说成失败", async () => {
+  const store = createStore(":memory:");
+  const root = driftRepo(store);
+  try {
+    const repo = store.choroRepoByRoot(root);
+    const page = store.choroPageBySlug(repo.id, "src");
+    store.markChoroPageEnriched(page.id, "2026-11-01T00:00:00.000Z", null);
+    const pagePath = join(root, page.rel_path);
+    writeFileSync(pagePath, `${readFileSync(pagePath, "utf8")}\n<!-- CHORO:T1:START -->\n## 架构\n\na.js 是入口。\n<!-- CHORO:T1:END -->\n`, "utf8");
+    const before = readFileSync(pagePath, "utf8");
+
+    const { calls, choro } = countingChoro(store);
+    const { routes } = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
+    const REPOS_PATH = "/api/dsh-mneme/choro/repos";
+    const res = await invoke(handler(routes, REPOS_PATH), `${REPOS_PATH}?repo=1`);
+
+    assert.equal(res.status, 200);
+    assert.equal(calls.length, 0, "有富化页时连 T0 都不该被叫起来");
+    assert.equal(res.body.autoRefreshed, false);
+    assert.equal(res.body.autoRefreshSkipped, "t1-loss", "跳过要和失败分开报");
+    assert.equal(res.body.autoRefreshError, undefined, "主动拒绝不是错误");
+    assert.match(res.body.autoRefreshSkipNote, /1 页/, "说清为什么没做");
+    assert.equal(readFileSync(pagePath, "utf8"), before, "页一字节未动");
+    assert.equal(res.body.repos[0].staleReason, "git", "没刷就照实说过期");
+    assert.equal(res.body.repos[0].enrichedPages, 1, "面板要靠这个数解释原因");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
+// 库里的账和磁盘对不上时（status 还是 skeleton、页里却有 T1 段），T0 的读盘判断
+// 会抛 would-drop-t1。到这一层仍按「主动跳过」回，绝不报成刷新失败。
+test("/choro/page 自动重跑：T0 拒绝（would-drop-t1）时回 skipped 而非 error", async () => {
+  const store = createStore(":memory:");
+  const root = driftRepo(store);
+  try {
+    const repo = store.choroRepoByRoot(root);
+    const page = store.choroPageBySlug(repo.id, "src");
+    const pagePath = join(root, page.rel_path);
+    // 故意不改库里的 status：模拟「有人手改了 MD」这类账实不符。
+    writeFileSync(pagePath, `${readFileSync(pagePath, "utf8")}\n<!-- CHORO:T1:START -->\n## 架构\n\na.js 是入口。\n<!-- CHORO:T1:END -->\n`, "utf8");
+    const before = readFileSync(pagePath, "utf8");
+
+    const { choro } = countingChoro(store);
+    const { routes } = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
+    const PAGE_PATH = "/api/dsh-mneme/choro/page";
+    const res = await invoke(handler(routes, PAGE_PATH), `${PAGE_PATH}?repo=1&slug=src`);
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.autoRefreshed, false);
+    assert.equal(res.body.autoRefreshSkipped, "t1-loss");
+    assert.equal(res.body.autoRefreshError, undefined);
+    assert.match(res.body.autoRefreshSkipNote, /富化/, "T0 那句人话原样透出去");
+    assert.equal(readFileSync(pagePath, "utf8"), before, "拒绝发生在写盘之前");
+    assert.ok(res.body.page.content.includes("CHORO:T1:START"), "页正文照常回，别把读也带坏");
+  } finally {
+    store.close();
     rmTempBestEffort(root);
   }
 });

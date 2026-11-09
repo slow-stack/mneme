@@ -3142,18 +3142,47 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   // 为什么要 caller 指定 repo：一次面板加载若把 5 个 stale 仓库全扫一遍，用户只是
   // 打开一个页面却付了 5 次全仓扫描；列表路径只在 ?repo= 明确点名时才刷。
   function autoRefreshOne(repoId, facts) {
-    const result = { autoRefreshed: false, autoRefreshError: undefined, repo: facts };
+    const result = {
+      autoRefreshed: false,
+      autoRefreshError: undefined,
+      // autoRefreshSkipped 与 autoRefreshError 是两件事：前者是「我们主动没做」，
+      // 后者是「试了但失败了」。混成一个字段会让面板把一次正确的拒绝说成故障。
+      autoRefreshSkipped: undefined,
+      autoRefreshSkipNote: undefined,
+      repo: facts
+    };
     if (!config || config.chorographyAutoRefresh !== true) return result;
     if (!facts || facts.staleReason !== "git") return result;
     if (typeof choro.runT0Apply !== "function") return result;
+    // 有富化页时先别动手：读侧刷新只该刷新「确定性骨架」，不该在用户点开一页时
+    // 顺手把语义段（花模型调用换来的）连同 claims 一起清掉。T0 自己也会拒绝
+    // （guardT1Loss），这里提前拦一道是为了给面板一句能直接显示的人话，
+    // 并且不进 warn 日志——这不是异常。
+    if (Number(facts.enrichedPages ?? 0) > 0) {
+      result.autoRefreshSkipped = "t1-loss";
+      result.autoRefreshSkipNote =
+        `这个仓库有 ${facts.enrichedPages} 页已经富化过：自动刷新会退回骨架、清空语义段与结论，`
+        + "所以这次没有动。代码已变这件事仍然有效，需要新快照请在面板里手动点「重建骨架」。";
+      return result;
+    }
     try {
-      choro.runT0Apply({ repoRoot: facts.rootPath });
+      // guardT1Loss 必须显式传：库里的 enrichedPages 只是第一道提示（快、能生成人话），
+      // 真正读盘判断「会丢哪几页」的是 T0 自己。不传给 T0 等于把唯一的硬守卫关掉。
+      choro.runT0Apply({ repoRoot: facts.rootPath, guardT1Loss: true });
       result.autoRefreshed = true;
       // 重跑之后基线推进了，回执里的 stale 必须按新基线说话：沿用旧行的判定会让
       // 面板刚刷完就显示「代码已变」，也就是谎报一次失败。
       const fresh = typeof choro.repoFactsById === "function" ? choro.repoFactsById(repoId) : null;
       if (fresh) result.repo = fresh;
     } catch (err) {
+      // would-drop-t1 是 T0 侧的同一条判断（它读盘，比这里的库计数更准）：
+      // 到这一层说明库里的 enrichedPages 和磁盘上的实际情况对不上，仍按「主动跳过」
+      // 处理并把人话透出去，绝不报成刷新失败。
+      if (err?.code === "would-drop-t1") {
+        result.autoRefreshSkipped = "t1-loss";
+        result.autoRefreshSkipNote = String(err?.message ?? err);
+        return result;
+      }
       result.autoRefreshError = String(err?.message ?? err);
       ctx.logger?.warn?.(`dsh-mneme: choro auto refresh failed for repo ${repoId}: ${result.autoRefreshError}`);
     }
@@ -3173,6 +3202,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
       const repoParam = new URL(req.url, "http://localhost").searchParams.get("repo");
       let autoRefreshed = false;
       let autoRefreshError;
+      let autoRefreshSkipped;
+      let autoRefreshSkipNote;
       if (repoParam !== null && repoParam !== "") {
         const target = choro.resolveRepo(repoParam);
         if (target && !target.ambiguous) {
@@ -3181,13 +3212,15 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             const refreshed = autoRefreshOne(target.id, repos[idx]);
             autoRefreshed = refreshed.autoRefreshed;
             autoRefreshError = refreshed.autoRefreshError;
+            autoRefreshSkipped = refreshed.autoRefreshSkipped;
+            autoRefreshSkipNote = refreshed.autoRefreshSkipNote;
             if (refreshed.repo) repos[idx] = refreshed.repo;
           }
         }
       }
       // cliCommand（#607）：面板空态直接把它贴出来，用户复制即用。推导不出
       // 入口时为 null，面板据此退回通用说法（不硬编一个假路径）。
-      sendJson(res, 200, { repos, autoRefreshed, autoRefreshError, cliCommand: CHORO_CLI });
+      sendJson(res, 200, { repos, autoRefreshed, autoRefreshError, autoRefreshSkipped, autoRefreshSkipNote, cliCommand: CHORO_CLI });
     }
   });
 
@@ -3256,10 +3289,15 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           stale: repoNow.stale,
           staleReason: repoNow.staleReason,
           legacy: repoNow.legacy,
+          // 面板要靠它解释「为什么这次自动刷新没动」——它是主动拒绝的依据，
+          // 不是内部账本，所以随读页一起回。
+          enrichedPages: repoNow.enrichedPages ?? 0,
           lastRunAt: repoNow.lastRunAt
         } : { id: repo.id, name: repo.name },
         autoRefreshed: refreshed.autoRefreshed,
-        autoRefreshError: refreshed.autoRefreshError
+        autoRefreshError: refreshed.autoRefreshError,
+        autoRefreshSkipped: refreshed.autoRefreshSkipped,
+        autoRefreshSkipNote: refreshed.autoRefreshSkipNote
       });
     }
   });
