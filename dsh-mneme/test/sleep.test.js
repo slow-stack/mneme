@@ -1251,3 +1251,71 @@ test("sleep: a trait that clears the threshold mints exactly one pattern and cou
   assert.equal(phase.applied, 1, "它真的被铸出来了");
   store.close();
 });
+
+test("sleep: replaying the same trait rewrites the pattern instead of growing it", async () => {
+  // #619 / Ephor 第 6 轮：trait 标题由模板拼成，同一 (人, 对象, 情绪) 天然同题。
+  // applyCreate 走 saveWithDedupe，命中同题活跃行时默认 appendContent——把同一段
+  // 结论再粘一遍。pattern 是注入面消费的东西，重放三轮正文就从 161 字涨到 549 字，
+  // 还带一串重复的 [证据: …] 尾巴。修法：pattern 走 `_overwrite`，原地刷新。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const ids = [];
+  for (const session of ["s1", "s2", "s3"]) {
+    const mem = makeMemory(service, `答辩-${session}`, `第 ${session} 次答辩前都失眠`);
+    linkSession(service, mem.id, session);
+    ids.push(mem.id);
+  }
+  const payload = (ctx) => ctx;
+  const lengths = [];
+  for (let round = 0; round < 3; round += 1) {
+    const ctx = affectiveCtx([
+      { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "trait", evidence: ids, why: "三次都一样" }
+    ]);
+    void payload(ctx);
+    await runSleep(ctx, service, affectiveConfig({ sleepMaxPatternPerRun: 1 }), ctx.logger, { embedder, vectorIndex: null }, null);
+    const patterns = service.all().filter((m) => m.type === "pattern");
+    assert.equal(patterns.length, 1, `round ${round}: 仍然只有一行 pattern`);
+    lengths.push(patterns[0].content.length);
+  }
+  assert.equal(lengths[1], lengths[0], "第二轮不许把正文再粘一遍");
+  assert.equal(lengths[2], lengths[0], "第三轮同样");
+  const pattern = service.all().find((m) => m.type === "pattern");
+  assert.ok(!pattern.content.includes("---"), "没有 appendContent 的分隔符");
+  assert.equal((pattern.content.match(/\[证据/g) ?? []).length, 1, "证据尾巴只有一条");
+  store.close();
+});
+
+test("sleep: a refresh-only trait run reports refreshed, not ok with zero mints", async () => {
+  // 同一批证据重放：第二轮没铸新行，只是把既有 pattern 原地刷新。这时若报
+  // status:"ok" + applied:0，读审计的人会以为「说明这一轮没东西」，而实际上是
+  // 一次真实写入；若报 noop，又等于说整池看过了什么都没有。给它自己的名字。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const ids = [];
+  for (const session of ["s1", "s2", "s3"]) {
+    const mem = makeMemory(service, `答辩-${session}`, `第 ${session} 次答辩前都失眠`);
+    linkSession(service, mem.id, session);
+    ids.push(mem.id);
+  }
+  const payload = [
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "trait", evidence: ids, why: "三次都一样" }
+  ];
+  const first = await (async () => {
+    const ctx = affectiveCtx(payload);
+    return runSleep(ctx, service, affectiveConfig({ sleepMaxPatternPerRun: 1 }), ctx.logger, { embedder, vectorIndex: null }, null);
+  })();
+  assert.equal(first.phases.affective.status, "ok", "第一轮真的铸了");
+  assert.equal(first.phases.affective.applied, 1);
+  const second = await (async () => {
+    const ctx = affectiveCtx(payload);
+    return runSleep(ctx, service, affectiveConfig({ sleepMaxPatternPerRun: 1 }), ctx.logger, { embedder, vectorIndex: null }, null);
+  })();
+  const phase = second.phases.affective;
+  assert.equal(phase.applied, 0, "第二轮没有新铸");
+  assert.equal(phase.refreshedTraits, 1, "刷新了一条");
+  assert.equal(phase.status, "refreshed", "刷新不是 noop，也不是一次新铸");
+  assert.equal(second.status, "ok", "整轮仍算有产出");
+  store.close();
+});

@@ -537,6 +537,7 @@ function casGuard(service, snapshot, ids) {
  */
 export function applyDecisions(decisions, service, logger = null, snapshot = null, config = {}) {
   let applied = 0;
+  let merged = 0;
   const conflicts = [];
   const failures = [];
   const committed = [];
@@ -551,6 +552,12 @@ export function applyDecisions(decisions, service, logger = null, snapshot = nul
       const outcome = applyOne(d, service, snapshot, config, logger);
       if (outcome === "skipped") continue;
       applied += outcome.applied;
+      // `merged` counts creates that hit a same-title row instead of minting a
+      // new one. Kept apart from `applied` on purpose: a create that vanished
+      // into an existing row is not a new conclusion, and folding it in is how
+      // two different dispositions ended up looking like two minted patterns
+      // (#619 audit round 5).
+      if (outcome.merged) merged += outcome.merged;
       committed.push(outcome.committed);
     } catch (error) {
       if (error instanceof CasConflictError) {
@@ -562,7 +569,7 @@ export function applyDecisions(decisions, service, logger = null, snapshot = nul
       }
     }
   }
-  return { applied, conflicts, failures, committed };
+  return { applied, merged, conflicts, failures, committed };
 }
 
 function applyOne(d, service, snapshot, config = {}, logger = null) {
@@ -620,15 +627,29 @@ function applyCreate(d, service, config = {}, logger = null) {
   // 信它就等于让模型给自造条目盖「人写的」戳（见 applyDecisions 的 @param config）。
   // 取不到就一个字段都不传，落回 saveWithDedupe 原有的兜底，行为与改前一致。
   const mintSource = typeof config?.mintSource === "string" ? config.mintSource.trim() : "";
+  // pattern 是「整句重写」而不是「增量补充」：同一 (人, 对象, 情绪) 的标题天然
+  // 相同，saveWithDedupe 命中后若走 appendContent，重放一轮就把同一段结论再粘
+  // 一遍（实测 161 → 355 → 549 字，外加一串重复的 [证据: …] 尾巴），而 pattern
+  // 正是注入面消费的东西。`_overwrite` 是既有逃生口（bootstrap / dream summary /
+  // narrative 三处先例）：命中同题行时原地刷新而不是追加，旧文进 content_history。
+  // 只对 pattern 放开——其他类型被 create 撞上同题行时仍按合并语义走，那多半是
+  // 模型自造了不该出现的类型，把既有行整段覆盖掉比追加更危险。
+  const overwrite = type === "pattern";
   const created = service.saveWithDedupe({
     type,
     title,
     content: body,
     importance,
-    ...(mintSource ? { source: mintSource } : {})
+    ...(mintSource ? { source: mintSource } : {}),
+    ...(overwrite ? { _overwrite: true } : {})
   });
   const memory = created?.memory;
   if (!memory) return "skipped"; // deduped/subsumed: nothing minted, clean no-op
+  // 命中同题活跃行 ⇒ saveWithDedupe 返回 action:"merged"。它确实动过库（刷新了
+  // 那一行），但**没有铸出新条目**：把它算进 applied 会让「一条真实结论被同题行
+  // 吃掉了」这种情况看起来像成功（#619 审计第五轮：两个不同对象铸出同一条
+  // pattern，applied 照样报 2）。两类结局分开报：applied 只数新铸，merged 数刷新。
+  const refreshed = created?.action !== "created";
   // #512：这条记忆出生自哪一轮。只记 create——merge/conflict/update/supersede 对
   // 既有行的改动已由 receipt_chain 按 (run_id, record_id) 记账，再造一份就是第二套账。
   // 记账失败不许拖垮这次铸造：归因是审计，记忆已经落盘了。
@@ -645,7 +666,7 @@ function applyCreate(d, service, config = {}, logger = null) {
   } catch (mintError) {
     logger?.warn?.(`dsh-mneme dream: failed to record memory mint: ${String(mintError?.message ?? mintError)}`);
   }
-  return { applied: 1, committed: { action: "create", id: memory.id, type } };
+  return { applied: refreshed ? 0 : 1, merged: refreshed ? 1 : 0, committed: { action: refreshed ? "create_merged" : "create", id: memory.id, type } };
 }
 
 function applyArchive(d, service, snapshot) {

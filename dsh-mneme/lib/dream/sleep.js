@@ -1079,13 +1079,17 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
   // applyDecisions 的 @param config。
   // #512：runId 也必须给——这是 sleep 唯一的真实铸造路径，漏了它，铸造出来的
   // pattern 就只能追到「sleep 这条管道」，追不到「哪一轮 sleep」（正是 #512 要补的口子）。
-  const { applied, failures, conflicts } = applyDecisions(
+  const { applied, merged, failures, conflicts } = applyDecisions(
     decisions, service, logger, snapshot, { ...config, mintSource: "sleep", runId }
   );
   return {
-    status: applied > 0 ? "ok" : "noop",
+    // A pattern that hit an existing same-title row is refreshed in place, not
+    // minted. Counting it as `ok` with `applied: 0` claims a mint that did not
+    // happen; report the refresh separately (#619 audit round 6).
+    status: applied > 0 ? "ok" : (merged > 0 ? "refreshed" : "noop"),
     scanned: memories.length,
     applied,
+    merged,
     failures,
     conflicts
   };
@@ -1329,6 +1333,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
   // Traits ride the standard decision channel so they inherit every existing cap
   // and the #512 mint ledger. No new write path is introduced for them.
   let applied = 0;
+  let refreshedTraits = 0;
   let failures = [];
   let conflicts = [];
   let ok = true;
@@ -1349,6 +1354,11 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       applied = result.applied;
       failures = result.failures;
       conflicts = result.conflicts;
+      // A trait whose pattern was refreshed in place (same title, same row) is
+      // not a new conclusion. Keep it out of `applied` and report it as a
+      // refresh, otherwise two different targets would read as two minted
+      // patterns while only one row exists (#619 audit round 6).
+      refreshedTraits = result.merged ?? 0;
       // Ocasion edges observed before a disposition was confirmed do not get
       // rewritten — an edge records "this occasion was observed", which stays
       // true. But the edge and the pattern would then answer "how many
@@ -1393,6 +1403,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       merged: merges.length,
       mergedList: merges,
       applied,
+      refreshedTraits,
       traits: traits.length,
       downgraded: downgradedCount,
       dropped
@@ -1408,13 +1419,17 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       merged: merges.length,
       mergedList: merges,
       applied: 0,
+      refreshedTraits,
       traits: traits.length,
       downgraded: downgradedCount,
       dropped
     };
   }
   return {
-    status: relations.length + merges.length + applied > 0 ? "ok" : "noop",
+    // "refreshed" is a real write that minted nothing: the trait pattern already
+    // existed under the same title and was rewritten in place. Calling that
+    // "noop" would say the phase examined the pool and found nothing to do.
+    status: relations.length + merges.length + applied > 0 ? "ok" : (refreshedTraits > 0 ? "refreshed" : "noop"),
     scanned: memories.length,
     relations: relations.length,
     merged: merges.length,
@@ -1425,6 +1440,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
     edgeWrites: relations.length,
     mergedList: merges,
     applied,
+    refreshedTraits,
     failures,
     conflicts,
     traits: traits.length,
@@ -1496,7 +1512,9 @@ function deriveStatus(phases) {
   const anyError = list.some((p) => p.status === "failed" || p.status === "error");
   // Issue #126 review（Copilot）：phase 自身可以是 degraded（合法子集已应用但有条目被
   // 跳过），它同样算"有产出"——否则整轮会被误判成 noop，把真实变更报成空轮。
-  const anyWork = list.some((p) => p.status === "ok" || p.status === "degraded");
+  // #619：`refreshed` 也是一次真实写入（同题行原地刷新），只是没铸出新条目。把它
+  // 排除在 anyWork 之外，整轮会被记成 noop，审计行又变回「跑了、什么都没干」。
+  const anyWork = list.some((p) => p.status === "ok" || p.status === "degraded" || p.status === "refreshed");
   const anyDegraded = list.some((p) => p.status === "degraded");
   // Issue #529：被打断（用户恢复活动）既不是失败也不是"没活干"。相位层已经用
   // aborted 区分了这两种，整轮层若回落到 noop，审计行就又把"没跑完"记成"跑过、
