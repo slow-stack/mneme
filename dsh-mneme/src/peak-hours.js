@@ -12,7 +12,8 @@
 //   "mon-fri 08:00-12:00,14:00-18:00"    工作日两段（ISO 1=周一…7=周日，也认 mon..sun）
 //   "sat,sun 23:00-06:00"                周末跨零点段
 // 时间取宿主本地时区。任一写法非法 → 整串视为未配置（返回 null）：排程是省钱手段，
-// 绝不该因为写错格式把蒸馏/巩固停掉。
+// 绝不该因为写错格式把蒸馏/巩固停掉。全角等价符号在解析前归一成半角（#424），
+// 见 parsePeakSpec 上方的 normalizeFullwidth。
 const DAY_NAMES = { mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 7 };
 
 function parseDayToken(token) {
@@ -39,9 +40,35 @@ function isoDay(date) {
   return day === 0 ? 7 : day;
 }
 
+// #424：全角等价符号归一。中文输入法下写时段串，逗号/冒号/数字跟着输入法走成全角
+// 是常态（#424 实测的失败写法里全角类占四种）；而解析失败的语义是「未配置 =
+// 不限制」（见文件头），错一个字符整串静默失效 = 错峰闸门悄悄关掉、巩固回到
+// 全天候——这正是 #424 报的现象。这里只做**等价映射**，不做救错：
+//   * U+FF01–FF5D（全角！到全角－）与 ASCII 0x21–0x7D 恒差 0xFEE0，整段一起折，
+//     覆盖 ，：０-９－与全角字母（星期前缀一起受益）；
+//   * 全角～（U+FF5E）**不**走区间折叠——折回半角是 `~`，而 `~` 是既有契约里
+//     故意非法的连接号写法；波浪号无论全半形都当范围连接号，映成 '-'。
+//     〜（U+301C，波浪号的另一半）同理。
+// 合法写法只含 ASCII，归一前合法的串归一后逐字节不变，语义零漂移；
+// `24:00` 这类**值本身写错**的串仍按非法处理（跨零点的正写是 `04:00-00:00`），
+// 归一化不背救错的锅。
+const FULLWIDTH_EQUIVALENTS = /[\uFF01-\uFF5E]/g;
+const FULLWIDTH_TILDE = 0xff5e;
+const WAVE_DASH = /\u301C/g;
+
+function normalizeFullwidth(spec) {
+  return spec
+    .replace(FULLWIDTH_EQUIVALENTS, (ch) => {
+      const code = ch.charCodeAt(0);
+      if (code === FULLWIDTH_TILDE) return "-";
+      return String.fromCharCode(code - 0xfee0);
+    })
+    .replace(WAVE_DASH, "-");
+}
+
 export function parsePeakSpec(spec) {
   if (typeof spec !== "string" || spec.trim() === "") return null;
-  let rest = spec.trim();
+  let rest = normalizeFullwidth(spec).trim();
   let days = null;
   // 星期前缀 = 第一个空白之前的部分，但**头段含冒号就不是前缀**（那是时段本身，
   // 例如 "09:00-12:00, 14:00-18:00" 里的逗号空格）。前缀解析失败一律按未配置处理，
