@@ -352,9 +352,10 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
   // spec 存在时点火：一把全点会把新座位的注册塞进老宿主，测出来的就不是真行为。
   const fire = (ctx, key) => ctx.injected.filter((i) => i.key === key).map((i) => i.cb());
 
-  // 新宿主：panellist 已声明。panellist + main 各四份（记忆 + chorography +
-  // 知识库 + 日记四个座位），每对各自 id/key 逐字同名；footer 回落不装。
-  // 人格页是面板内的第五个标签页（不是座位），它不在这里出现。
+  // 新宿主：panellist 已声明。panellist + main 各三份（记忆 + chorography +
+  // 知识库三个座位），每对各自 id/key 逐字同名；footer 回落不装。
+  // 日记本原有第四对座位，2026-11-09 按桉桉要求撤掉——它现在是记忆面板内的
+  // 一个标签页，与人格页并列，不再占侧边栏；人格页同理（面板内标签页，不是座位）。
   {
     const { ctx, regs } = makeCtx((key) => (key === "sidebar.panellist" ? { kind: "list" } : undefined));
     const api = boot(ctx, (k) => k, () => null);
@@ -363,10 +364,10 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
     fire(ctx, "sidebar.footer.action");
     assert.equal(disposes.length, 1);
     const ids = (name) => regs.filter((r) => r.alive && r.opts.name === name).map((r) => r.opts.id ?? r.opts.key).sort();
-    assert.equal(alive(regs, "sidebar.panellist"), 4, "memory + wiki + kb + diary glyphs");
-    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-diary", "dsh-mneme-kb", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
-    assert.equal(alive(regs, "main"), 4, "memory + wiki + kb + diary pages");
-    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-diary", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
+    assert.equal(alive(regs, "sidebar.panellist"), 3, "memory + wiki + kb glyphs");
+    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
+    assert.equal(alive(regs, "main"), 3, "memory + wiki + kb pages");
+    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
     assert.equal(alive(regs, "sidebar.footer.action"), 0, "the footer fallback must not mount on a host that has the seat");
   }
 
@@ -2473,6 +2474,91 @@ test("diary pane: own gate, named component, and distinct outcomes", () => {
   );
 });
 
+// 日记本重做（2026-11-09，桉桉：「像本子一样的UI风格」/「导航应该是人格名」）。
+// 两件事都必须由测试锁住，因为它们都只错在「看起来还行」：
+// ①导航拿 frontmatter 括号里的 agent 名当人格名——本机旧数据里五个桶都写着
+//   `default (ptc)`，于是导航栏出现一排项目键加一个 ptc。正确名字只能从人格卡取。
+// ②纸张只存内存或只存一处，两个入口各选各的，同一本日记看起来像两个东西。
+test("diary book: navigation names come from persona cards, never from the agent tag", () => {
+  const start = clientSource.indexOf("function diaryBucketName(");
+  assert.ok(start > -1, "diaryBucketName must exist");
+  const end = clientSource.indexOf("function DiaryLibraryPanel(");
+  assert.ok(end > start, "diaryBucketName must sit before the panel");
+  // 注释里本来就要出现 `persona: default (ptc)` 这个反例，只审代码行。
+  const body = clientSource.slice(start, end).split("\n")
+    .filter((line) => !line.trim().startsWith("//")).join("\n");
+  const fn = new Function(body + "\n return diaryBucketName;")();
+  const store = {
+    default: { name: "Amarre" },
+    byAgent: { ptc: null, studio: { name: "Studio" } },
+    bySession: {}
+  };
+  // 括号里是 agent 名：必须换成人格卡的名字，不是 agent 名，也不是桶键。
+  assert.equal(fn({ key: "amarre-c836db6a", project: "amarre-c836db6a", persona: "default (ptc)" }, store), "Amarre",
+    "an agent tag must resolve to the default card's name, not to 'ptc'");
+  assert.equal(fn({ key: "x-1", project: "x-1", persona: "settings (studio)" }, store), "Studio",
+    "a named card must win over the default card");
+  // 还没挂卡（或卡被删了）时走默认卡，这是写日记时真实的回落口径。
+  assert.equal(fn({ key: "y-2", project: "y-2", persona: "settings (gone)" }, store), "Amarre",
+    "a missing agent card falls back to the default card, the same way writing does");
+  // 没有 store（人格卡还没读到）时绝不把 agent 名顶上，退回项目名。
+  assert.equal(fn({ key: "z-3", project: "z-3", persona: "default (ptc)" }, null), "z-3",
+    "without a card store the name must fall back to the project, never leak the agent tag");
+  // 完全没有 persona 行的老日记：项目名，再不行桶键。
+  assert.equal(fn({ key: "old-4", project: "老项目", persona: "" }, store), "老项目");
+  assert.equal(fn({ key: "only-5", project: "", persona: "" }, store), "only-5");
+});
+
+test("diary book: paper choice is one shared setting across both entries", () => {
+  // 一个 localStorage 键、一处读、一处写：两个入口看的是同一本日记。
+  assert.ok(clientSource.includes('const DIARY_BOOK_KEY = "dsh-mneme-diary-book"'),
+    "the paper choice needs a single storage key");
+  assert.equal((clientSource.match(/localStorage\.getItem\(DIARY_BOOK_KEY\)/g) || []).length, 1,
+    "reading the paper must go through readDiaryBook only");
+  assert.ok(clientSource.includes("function readDiaryBook()") && clientSource.includes("function writeDiaryBook("),
+    "read and write helpers must both exist");
+  // 右栏 DiaryPane 也要套同一套纸：只改左面板等于两处观感打架。
+  const pane = clientSource.slice(clientSource.indexOf("function DiaryPane("), clientSource.indexOf("function DiaryLibraryPanel("));
+  assert.ok(pane.includes("readDiaryBook"), "the right-side pane must read the same paper choice");
+  assert.ok(/mneme-diary-paper mneme-diary-paper--" \+ book/.test(pane),
+    "the right-side pane must apply the selected paper texture");
+  // 同页另一处入口收不到 storage 事件（那只在别的标签页触发），必须自己广播。
+  assert.ok(clientSource.includes('new CustomEvent("mneme:diary-book-changed")'),
+    "a same-page change must be broadcast, storage events never fire in the same document");
+  assert.ok(clientSource.includes('addEventListener("mneme:diary-book-changed"'),
+    "the other entry must listen for that broadcast");
+  // 四种纸都要有文案，否则按钮上是裸 key。
+  for (const key of ["memory.diary.bookLabel", "memory.diary.book.plain", "memory.diary.book.ruled",
+    "memory.diary.book.grid", "memory.diary.book.kraft"]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  // 本子观感：正文用衬线、行高与纸纹 26px 网格对齐，否则横线会穿字。
+  // 源文件里这段 CSS 在 JS 字符串内，引号是转义的；这里只钉字体族的骨架。
+  assert.ok(clientSource.includes("font-family:Georgia,") && clientSource.includes("Songti SC") &&
+    clientSource.includes("Noto Serif SC") && clientSource.includes("serif"),
+    "the diary body needs a serif typeface to read like a notebook");
+  assert.ok(clientSource.includes("background-size:100% 26px"),
+    "the ruled texture must be locked to the 26px line height");
+});
+
+// 日记本不再占侧边栏座位（2026-11-09 桉桉：还保留旧版本的侧边栏打开，这个要去掉）。
+// 它现在是记忆面板内的一个标签页，和人格页并列；右栏那个入口是另一回事，保留。
+test("diary is a panel tab now, not a sidebar seat", () => {
+  assert.ok(!clientSource.includes('id: "dsh-mneme-diary"') && !clientSource.includes('key: "dsh-mneme-diary"'),
+    "the sidebar seat pair must be gone");
+  assert.ok(!clientSource.includes("disposeDiaryGlyph") && !clientSource.includes("disposeDiaryMain"),
+    "the seat disposers must be gone too, not just left dangling");
+  // 面板内必须有 diary 这个标签页，否则入口只剩下右栏那一个。
+  assert.match(clientSource, /\{ key: "diary", label: t\("memory\.diary\.title"\) \}/,
+    "the memory panel must carry the diary tab");
+  assert.match(clientSource, /view === "diary"[\s\S]{0,200}?DiaryLibraryPanel/,
+    "the diary tab must render the library panel");
+  // 右栏入口照旧保留：那是会话内的快速入口，不是侧边栏座位。
+  assert.ok(clientSource.includes("function registerDiarySeats(ctx, t) {"),
+    "the right-sidebar entry must stay");
+});
+
 // v0.13.0 发出去之后用户重启完说「侧边栏没有入口」：类型注册了、正文座位注册了、
 // 旗标闸也是绿的，但没有任何一个座位能调 openTab——页签永远打不开，界面上等于
 // 不存在。这条锁的就是「注册了页签类型，就必须同时给一个能打开它的入口」：
@@ -2881,15 +2967,22 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
   assert.ok(/group\.enhance[\s\S]{0,700}"profileExtractEnabled"/.test(clientSource),
     "FEATURE_GROUPS group.enhance must carry profileExtractEnabled");
 
-  // 位置锁（2026-11-09 改口径）：提取按钮属于「用户画像」卡。
-  // 它跟人格页分家之后，草稿要补的是「用户是谁」这份资料，所以它跟着画像卡走，
-  // 而不是跟着已经搬走的人格只读卡。锁法：画像卡标题 → 按钮 → 规则卡标题，
-  // 搬丢或搬错卡都会红。
-  const profileCardIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))');
-  const extractButtonIdx = clientSource.indexOf('t("memory.settings.profileExtract")');
-  const rulesCardIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.rules"))');
-  assert.ok(profileCardIdx > 0 && extractButtonIdx > profileCardIdx && rulesCardIdx > extractButtonIdx,
-    "the extract button must render inside the user-profile card, ahead of the rules card");
+  // 位置锁（2026-11-09 再改口径）：提取按钮属于「用户画像」卡，而画像卡本身
+  // 已经从设置页搬进记忆面板的「人格」页（桉桉：mneme 设置里面的个性化还没移走）。
+  // 两处都在同一份客户端里，光比先后会被设置页的规则卡骗过——必须先切出
+  // 人格页那一段再比，并额外断言设置页里不再有画像卡（搬回去就红）。
+  const personaStart = clientSource.indexOf("function PersonaMainPanel(");
+  const settingsStart = clientSource.indexOf("function SettingsContent(");
+  assert.ok(settingsStart > 0 && personaStart > settingsStart, "both panels must exist");
+  const settingsSlice = clientSource.slice(settingsStart, personaStart);
+  const personaSlice = clientSource.slice(personaStart);
+  const profileTitle = 'h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))';
+  assert.ok(!settingsSlice.includes(profileTitle),
+    "the profile card must be gone from the settings page (it moved into the persona page)");
+  const profileCardIdx = personaSlice.indexOf(profileTitle);
+  const extractButtonIdx = personaSlice.indexOf('t("memory.settings.profileExtract")');
+  assert.ok(profileCardIdx > 0 && extractButtonIdx > profileCardIdx,
+    "the extract button must render inside the user-profile card on the persona page");
   // 只出副本（2026-11-04 桉桉定的口径）：草稿不许再走落库路径。此前 applyProfileDraft 会
   // 直接 PUT /profile —— 把用户手写的那份覆盖掉，且没有撤销。
   assert.ok(clientSource.includes("function copyProfileDraft()"), "the draft action must be a copy, not a save");
@@ -2963,29 +3056,37 @@ test("profile facts card ships management UI, run outcomes and never touches the
   assert.ok(/group\.enhance[\s\S]{0,1200}"profileFactsEnabled"/.test(clientSource),
     "FEATURE_GROUPS group.enhance must carry profileFactsEnabled");
 
-  // 位置锁：事实卡是画像卡之后、规则卡之前的独立一张——塞回画像卡内部或搬到
-  // 规则卡后面都不会红，所以先钉住先后顺序（同 profile-extract 的位置锁）。
-  const profileCardIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))');
-  const rulesCardIdx = clientSource.indexOf('t("memory.settings.rules"))');
-  const factsCardIdx = clientSource.indexOf('t("memory.settings.factsTitle")');
-  assert.ok(profileCardIdx > 0 && factsCardIdx > profileCardIdx && rulesCardIdx > factsCardIdx,
-    "the facts card must sit between the user-profile card and the rules card");
+  // 位置锁（2026-11-09 改口径）：画像卡与事实卡一起搬进了人格页，事实卡仍是画像卡
+  // 之后的一张。切段比较，防止设置页的规则卡把顺序骗过去；设置页里两张卡都不许再有。
+  const personaStart = clientSource.indexOf("function PersonaMainPanel(");
+  const settingsStart = clientSource.indexOf("function SettingsContent(");
+  assert.ok(settingsStart > 0 && personaStart > settingsStart, "both panels must exist");
+  const settingsSlice = clientSource.slice(settingsStart, personaStart);
+  const personaSlice = clientSource.slice(personaStart);
+  assert.ok(!settingsSlice.includes('t("memory.settings.factsTitle")'),
+    "the facts card must be gone from the settings page (it moved into the persona page)");
+  assert.ok(!settingsSlice.includes('h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))'),
+    "the profile card must be gone from the settings page (it moved into the persona page)");
+  const profileCardIdx = personaSlice.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))');
+  const factsCardIdx = personaSlice.indexOf('t("memory.settings.factsTitle")');
+  assert.ok(profileCardIdx > 0 && factsCardIdx > profileCardIdx,
+    "the facts card must sit after the user-profile card on the persona page");
   // 手填画像神圣：事实域的全部面板代码（loadFacts 起到事实卡渲染止）里不许出现
   // PUT /profile 的路径字面量。断言的是**带闭引号**的精确串——/profile-facts/* 的
   // 路径都以 /profile 开头，不带闭引号的话这个断言会自己误伤自己。
-  const handlersStart = clientSource.indexOf("const loadFacts");
-  const factsSlice = clientSource.slice(handlersStart, factsCardIdx);
+  // 两个下标必须在同一个坐标系里比：factsCardIdx 是相对 personaSlice 的，
+  // 而 handlersStart 相对整份源码——混用会切出空片，让下面每条断言都空跑。
+  const handlersStart = personaSlice.indexOf("const loadFacts");
+  const factsSlice = personaSlice.slice(handlersStart, factsCardIdx);
   assert.ok(handlersStart > 0 && factsSlice.length > 0, "the facts handlers must exist");
   assert.ok(!factsSlice.includes('"/api/dsh-mneme/profile"'),
     "the facts domain must never write the hand-filled profile (PUT /profile is off-limits here)");
   for (const fragment of ["/api/dsh-mneme/profile-facts?agent=", "/api/dsh-mneme/profile-facts/apply", "/api/dsh-mneme/profile-facts/run"]) {
     assert.ok(factsSlice.includes(fragment), `the facts handlers must call ${fragment}`);
   }
-  // 人工 apply 成功后注入预览必须跟着刷新——但刷新动作现在属于人格页自己。
-  // 事实卡留在设置页，人格页是另一个视图：它每次进入都重新拉 /persona?agent=，
-  // 所以在设置页里调它的 setPreview 属于跨视图写别人的状态（而且那边已经搬走，
-  // 旧写法只会调到一个不存在的函数）。改成锁两边各自的接口：
-  // ①事实卡不跨视图碰预览；②人格页保存后自己重取预览。
+  // 人工 apply 成功后注入预览必须跟着刷新。2026-11-09 起画像卡与事实卡同在人格页，
+  // 不再跨视图写别人的状态——事实卡仍然不直接调 loadPreview，刷新走人格页自己的
+  // tick 哨兵；所以锁两条：①事实处理段不直接碰 loadPreview；②页面有 tick 刷新。
   assert.ok(!factsSlice.includes("loadPreview("),
     "the facts card must not write the persona view's preview state from another view");
   assert.ok(clientSource.includes("setPreviewTick((n) => n + 1)"),

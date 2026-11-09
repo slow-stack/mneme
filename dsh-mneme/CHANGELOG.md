@@ -4,6 +4,16 @@
 
 ## 🆕 新增
 
+- **日记本进面板、长成本子样、导航只写人格名；设置页「个性化」里的画像与自动事实搬到人格页**。上一版日记本的问题全是「看着有、点了不对」：侧边栏还留着旧版第四对座位（面板里同时也有入口，两处各开一个）；风格是一张白纸；导航列的是项目桶键（`QQ---4f061790`、`amarre-c836db6a`），而且写的是 `ptc` 这种 agent 名；用户画像与「自动事实」两张卡躺在设置页的「个性化」分组里，改了一半得翻两个页面。这一档把四件事一起收掉。
+
+  - **侧边栏第四对座位撤掉（`lib/client.js`）**：`disposeDiaryGlyph` / `disposeDiaryMain` 整块与 `return` 里的两行 dispose 全删，`sidebar.panellist` 回到三对（`dsh-mneme` 60 / `dsh-mneme-wiki` 61 / `dsh-mneme-kb` 62）。日记本变成记忆面板内的标签页（`{ key: "diary", label: t("memory.diary.title") }`，`view === "diary"` 渲染 `DiaryLibraryPanel`）；右栏 `registerDiarySeats` 那个入口**保留**——用户要在看对话时顺手记一笔。
+  - **本子观感：四套纸 + 衬线正文**。`DIARY_BOOKS` = 素纸 / 横线 / 方格 / 牛皮；横线与方格用 `repeating-linear-gradient` 配 `background-size:100% 26px`，正文行高同步成 `26px`，横线正好压在字行下沿（这两处必须一起改，改一个就成了歪格纸）。正文从 `font-size:13px;line-height:22px` 的继承字体换成衬线 `Georgia,"Times New Roman","Songti SC","Noto Serif SC",serif; 14px/26px`。纸的选择存 `localStorage` 单键 `dsh-mneme-diary-book`（非法值回落横线），**面板与右栏共用同一个键**：`writeDiaryBook` 写完后派 `mneme:diary-book-changed`，右栏同时听 `storage` 与这个自定义事件——只监听 `storage` 会漏掉「同一个页面里另一个入口改的」这种情况，用户就会看到两处观感不一致。
+  - **导航按人格名归并，不再泄出桶键与 agent 名**。原 `diaryBucketName(bucket)` 直接读 frontmatter 的 `persona: <source> (<agent>)`，而括号里是**写日记的 agent 名**（本机 6 个桶里 5 个是 `default (ptc)`），所以导航上一直在写 `ptc`——这正是「不要有那个什么 ptc」的来源。新签名 `diaryBucketName(bucket, store)`：取括号里的 agent → `store.byAgent[agent].name`，没有这张卡就回落 `store.default.name`（与写日记时 `resolvePersonaCard` 的回落口径一致）；**拿不到人格卡 store 时退回项目名，绝不把 agent 名顶上**；最后才退回桶键。同名桶在面板里合成一本书（`byName` Map，entries 按日期倒序），一个身份一本，而不是一个项目一本。悬停提示只放篇数，也不放桶键。
+  - **设置页两张卡搬进人格页（同一个数据不该有两个所有者）**。画像卡与自动事实卡（含 #497「从记忆提取草稿」）整体移入 `PersonaMainPanel` 的 `mneme-persona-about` 区，profile / facts 全套状态、`loadFacts`、两个 effect 与十个处理函数一起搬走，设置页 `load()` 的 `Promise.all` 从四路减到三路（rules / commands / vector-config）。画像的读取改成人格页自己的 `useEffect`（依赖原有的 `tick` 哨兵）——**这一条必须补**：原来画像是在设置页 `load()` 里读的，只搬走渲染而不搬读取，人格页的画像框永远是空的，一按保存就把库里的画像写成空字符串。
+  - **踩到的坑**：① `const injectStatus = useInjectStatus();` 在文件里有两处（设置页与人靠页各一），`String.replace` 会命中前一处——插入点必须从 `function PersonaMainPanel` 之后开始找；② `about` 一开始写在分支里，而 `return` 在外面，改成函数顶部 `let about = null`；③ 三条老测试是「在整份源码里比先后」，搬迁后会被设置页里的规则卡骗过去，改成按 `PersonaMainPanel` / `SettingsContent` 切段再比，并反向断言设置页已经没有这两张卡。
+  - **验证**：`test/client.test.js` 新增 3 条（导航名来自人格卡而非 agent 标签、纸的选择两处共用一个键、日记是面板标签页而不是侧边栏座位），117 例全过；全量 `node --test test/*.test.js` 3146 用例 / 3145 通过 / 0 失败 / 1 跳过；`test/contrast.test.js` 5/5（四套纸新增的颜色只用 `--mneme-*` 与 `--dsw-alias-*` 语义层，纸纹走 `background-image` 不参与对比度主锁）。
+  - **已知边界**：本版只绑 `default` 这一张人格卡（`byAgent` / `bySession` 皆空），所以六本日记会合成「Amarre」一本——这是正确的归并结果，不是没分组。会话绑多人格（人设卡绑会话那期）还没做，做完之后 `bySession` 里不同的卡会各自成书，面板代码不用再改。
+
 - **`reflectionUpdateEnabled` 终于接上了：一个从 v0.7.1 起就拨了没反应的开关**。`src/config.js:523` 声明它、`src/settings.js:184` 把它列进白名单、`docs/CONFIGURATION.md:244` 与 `docs/SEMANTIC.md:252` 写着「检索后的反思更新既有记忆 / update 决策总开关」——但全仓库没有任何运行时代码读它（`git log -S` 追到 `5b5a2aa chore: release v0.7.1 (#33)`，从引入那天起就是死开关）。同族的 `reflectionFailureTracking` 有真实消费者（`src/service.js:2684`、`:2945`），`reflectionUpdateMaxPerRun` / `reflectionUpdateMinAgeHours` 也分别被 `src/dream.js:1380/1385` 与 `src/dream/sleep.js:690/796` 用着，只有 Enabled 这个总闸空着。
 
   - **双侧都接，不只加一行判断**：只在校验侧拦（`validateDecisions` 拒掉 update），模型每轮仍会按 prompt 教的那样输出一批必然被拒的 update——`skipInvalid` 下被丢弃，但 token 照付；只改 prompt，模型仍可能自己写。所以 prompt 与校验各一道。

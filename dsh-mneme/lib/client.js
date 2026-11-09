@@ -466,6 +466,7 @@ window.__ModuleLoader__.load({
         "memory.persona.previewUnknown": "读不到预览（请求失败或后端版本过旧），这里不显示猜测的内容。",
         "memory.persona.diary": "这个身份的日记",
         "memory.persona.diaryHint": "日记只认卡的口吻：写日记时按会话身份选卡，没身份才用默认卡。",
+        "memory.persona.about": "你是谁的画像",
         "memory.persona.diaryCount": "{count} 篇 · 最近 {latest}",
         "memory.persona.diaryNone": "还没有日记。去左侧「ta 的日记」里写一篇，它就会按这张卡的口吻落笔。",
         "memory.persona.readFailed": "读不到人格库（请求失败或后端版本过旧），这里不显示猜测的内容。",
@@ -882,6 +883,11 @@ window.__ModuleLoader__.load({
 "memory.diary.libraryEmpty": "还没有任何一本日记",
 "memory.diary.libraryEmptyHint": "日记按 Agent 分本，写在记忆库的 diaries 目录下。写完第一篇这里就会出现它的名字。",
         "memory.diary.pickHint": "左边选一天，右边看正文。",
+        "memory.diary.bookLabel": "纸和字",
+        "memory.diary.book.plain": "素纸",
+        "memory.diary.book.ruled": "横线",
+        "memory.diary.book.grid": "方格",
+        "memory.diary.book.kraft": "牛皮",
         "memory.diary.count": "共 {n} 篇",
         "memory.diary.writtenOk": "写好了：{path}",
   "memory.diary.exportOk": "已存到 {path}",
@@ -1483,6 +1489,7 @@ window.__ModuleLoader__.load({
         "memory.persona.previewUnknown": "Could not read the preview (request failed or backend too old). Nothing is guessed here.",
         "memory.persona.diary": "This identity's diary",
         "memory.persona.diaryHint": "The diary only follows the card: writing picks the card by session identity, and falls back to the default card only when there is no identity.",
+        "memory.persona.about": "Who you are, from the agent's side",
         "memory.persona.diaryCount": "{count} entries · latest {latest}",
         "memory.persona.diaryNone": "No diary yet. Write one from “their diary” on the left and it lands in this card's voice.",
         "memory.persona.readFailed": "Could not read the persona store (request failed or backend too old). Nothing is guessed here.",
@@ -1880,6 +1887,11 @@ window.__ModuleLoader__.load({
 "memory.diary.libraryEmpty": "No diaries yet",
 "memory.diary.libraryEmptyHint": "Diaries are kept one per agent under the memory library's diaries folder. The first entry written makes its name appear here.",
         "memory.diary.pickHint": "Pick a day on the left, read the entry on the right.",
+        "memory.diary.bookLabel": "Paper and type",
+        "memory.diary.book.plain": "Plain",
+        "memory.diary.book.ruled": "Ruled",
+        "memory.diary.book.grid": "Grid",
+        "memory.diary.book.kraft": "Kraft",
         "memory.diary.count": "{n} entries",
         "memory.diary.writtenOk": "Written: {path}",
   "memory.diary.exportOk": "Saved to {path}",
@@ -3281,8 +3293,28 @@ window.__ModuleLoader__.load({
       ".mneme-diary-day:hover{background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-diary-day:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
       ".mneme-diary-day--on{background:var(--dsw-alias-interactive-bg-active);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
+      // 本子：四套纸 + 固定字。纸纹走 background-image（不是 color 声明），
+      // 主锁只看 color，所以纸纹不会把对比度审计带偏；但这意味着**纸再花，
+      // 字也必须用 --mneme-* 那层语义色**，别为了「像本子」写一个浅灰字。
+      ".mneme-diary-books{display:flex;gap:4px;flex:none;flex-wrap:wrap}",
+      ".mneme-diary-book{border:1.5px solid transparent;background:0 0;cursor:pointer;font-family:inherit;font-size:11px;line-height:16px;padding:2px 8px;border-radius:10px 7px 11px 6px;color:var(--mneme-fg-dim)}",
+      ".mneme-diary-book:hover{background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-diary-book:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
+      ".mneme-diary-book--on{border-color:var(--mneme-accent);color:var(--mneme-accent);font-weight:600}",
+      ".mneme-diary-meta{flex:none;font-size:11px;line-height:16px;color:var(--mneme-fg-dim);display:flex;gap:6px;align-items:baseline;padding:0 2px}",
+      ".mneme-diary-paperhead{display:flex;align-items:baseline;gap:8px;padding-bottom:6px;margin-bottom:6px;border-bottom:1px solid var(--dsw-alias-border-l1)}",
+      ".mneme-diary-papername{font-size:13px;line-height:19px;font-weight:600;color:var(--mneme-accent);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".mneme-diary-paperdate{font-size:11px;line-height:16px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums;flex:none}",
+      // 纸地：素纸 / 横线 / 方格 / 牛皮。横线与方格用 background-size 让格线正好
+      // 落在 26px 行高上，行距一改就得同步改这两个数，否则字会压在线上。
+      ".mneme-diary-paper--ruled{background-image:repeating-linear-gradient(to bottom,transparent 0 25px,var(--dsw-alias-border-l1) 25px 26px);background-size:100% 26px;background-position:0 0}",
+      ".mneme-diary-paper--grid{background-image:repeating-linear-gradient(to bottom,transparent 0 25px,var(--dsw-alias-border-l1) 25px 26px),repeating-linear-gradient(to right,transparent 0 25px,var(--dsw-alias-border-l1) 25px 26px);background-size:100% 26px,26px 100%;background-position:0 0,0 0}",
+      ".mneme-diary-paper--kraft{background:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 8%,transparent)}",
+      ".mneme-diary-paper--plain{background:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
       ".mneme-diary-paper{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.18deg);background:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
-      ".mneme-diary-text{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:13px;line-height:22px;color:var(--dsw-alias-label-primary)}",
+      // 日记正文用衬线：本子上写字不该像聊天记录。四套纸共用一套字，行高 26px
+      // 与 --ruled/--grid 的格线对齐；行高一改必须同步上面两条 background-size。
+      ".mneme-diary-text{margin:0;white-space:pre-wrap;word-break:break-word;font-family:Georgia,\"Times New Roman\",\"Songti SC\",\"Noto Serif SC\",serif;font-size:14px;line-height:26px;color:var(--dsw-alias-label-primary)}",
       ".mneme-diary-sheet{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
       ".mneme-diary-empty{padding:14px 0;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
       ".mneme-diary-warn{font-size:12px;line-height:17px;color:var(--mneme-danger)}",
@@ -3306,6 +3338,8 @@ window.__ModuleLoader__.load({
       ".mneme-persona-title{font-size:15px;line-height:21px;font-weight:700;letter-spacing:.3px;color:var(--dsw-alias-label-primary)}",
       ".mneme-persona-spacer{flex:1 1 auto;min-width:0}",
       ".mneme-persona-body{display:flex;gap:12px;min-height:0;flex:1 1 auto}",
+      ".mneme-persona-about{flex:0 1 auto;min-height:0;max-height:46%;overflow:auto;border-top:1px dashed var(--dsw-alias-border-l2);padding-top:10px;margin-top:2px}",
+      ".mneme-persona-about .mneme-set-card{padding:12px 14px;margin-bottom:8px}",
       // 左列身份卡：宽度固定，卡片是「贴纸」而不是菜单行。
       ".mneme-persona-col{flex:0 0 190px;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;padding-right:2px;border-right:1px dashed var(--dsw-alias-border-l2)}",
       ".mneme-persona-card{display:flex;align-items:center;gap:2px}",
@@ -4649,27 +4683,10 @@ window.__ModuleLoader__.load({
     }
 
     function SettingsContent({ t }) {
-      const [profile, setProfile] = react.useState("");
       const [rules, setRules] = react.useState([]);
       const [commands, setCommands] = react.useState([]);
       const [newRule, setNewRule] = react.useState("");
       const [newCmd, setNewCmd] = react.useState({ name: "", description: "", instruction: "" });
-      const [saved, setSaved] = react.useState(false);
-      // 画像提取草稿（#497）：null = 没有结果；否则带 kind 的一次性结果，四种结局各一句
-      // 话——把「没启用」「库里没东西」「模型没配合」压成同一句「没有草稿」，用户就只能瞎猜。
-      const [profileDraft, setProfileDraft] = react.useState(null);
-      const [profileExtracting, setProfileExtracting] = react.useState(false);
-      const [profileDraftCopied, setProfileDraftCopied] = react.useState(false);
-      // 复制失败必须**看得见**：announce() 那个 live region 是 1px 裁剪元素，只有屏幕
-      // 阅读器读得到。视力正常的用户看到按钮文字没变、页面也没变化，就会以为复制成功，
-      // 粘贴时拿到旧的剪贴板内容——比不提示更糟。
-      const [profileDraftCopyFailed, setProfileDraftCopyFailed] = react.useState(false);
-      // 复制的每一趟都要能认出「这条回调还属于当前这份草稿吗」。剪贴板是异步的，复制 A 的
-      // promise 还没落地时又提取出草稿 B，A 的回调就会在 B 上打勾或报错——B 一个字都没被
-      // 复制过。用递增序号做票据：换草稿或重新复制都换票，旧票的回调直接丢弃。
-      const profileCopyTicket = react.useRef(0);
-      // 保存失败要可见（persona 那条一直有，画像这条以前是静默 catch）。
-      const [profileError, setProfileError] = react.useState("");
       const [cmdError, setCmdError] = react.useState("");
       const [vector, setVector] = react.useState({ enabled: false, baseUrl: "", apiKey: "", model: "" });
       const [vectorSaved, setVectorSaved] = react.useState(false);
@@ -4732,15 +4749,15 @@ window.__ModuleLoader__.load({
       // 令牌默认遮蔽显示：完整值只经「复制」离开面板，不直接铺在页面上。
       const [extapiTokenShown, setExtapiTokenShown] = react.useState(false);
 
+      // 画像搬去「人格」页之后，这一路只剩规则/指令/向量三个请求：画像的读取跟着
+      // 那张卡一起走（同一个数据不该有两个所有者，否则两页会各自显示不同的旧值）。
       const load = react.useCallback(async () => {
         try {
-          const [p, r, c, v] = await Promise.all([
-            apiFetch("/api/dsh-mneme/profile").then((res) => res.json()),
+          const [r, c, v] = await Promise.all([
             apiFetch("/api/dsh-mneme/rules").then((res) => res.json()),
             apiFetch("/api/dsh-mneme/commands").then((res) => res.json()),
             apiFetch("/api/dsh-mneme/vector-config").then((res) => res.json()),
           ]);
-          setProfile(p.profile || "");
           setRules(Array.isArray(r.rules) ? r.rules : []);
           setCommands(Array.isArray(c.commands) ? c.commands : []);
           setVector(v.config || { enabled: false, baseUrl: "", apiKey: "", model: "" });
@@ -4809,320 +4826,8 @@ window.__ModuleLoader__.load({
         return () => { cancelled = true; };
       }, []);
 
-      // 返回「是否真的存下了」。apiFetch 只是 fetch 的薄壳，非 2xx 不会抛——同页的
-      // savePersonaCards 一直判 `res.ok`，画像这条一直没判，于是服务端 403/413 时界面
-      // 照样闪「画像已保存」（评审实测的同类洞，这次一起收）。
-      async function saveProfile(next = profile) {
-        try {
-          const res = await apiFetch("/api/dsh-mneme/profile", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ profile: next })
-          });
-          if (!res.ok) throw new Error("HTTP " + res.status);
-          setSaved(true);
-          setProfileError("");
-          announce(t("memory.settings.profileSaved"));
-          setTimeout(() => setSaved(false), 1500);
-          return true;
-        } catch (err) {
-          setProfileError((err && err.message) || "failed");
-          setTimeout(() => setProfileError(""), 4000);
-          return false;
-        }
-      }
-
-      // 画像提取：一次宿主 LLM 调用，只在用户点按钮时发生。开关没开时后端直接回
-      // 409，这里显示「未启用」而不是转圈后什么也没有——那会被读成按钮坏了。
-      async function extractProfileDraft() {
-        setProfileExtracting(true);
-        setProfileDraft(null);
-        // 新草稿一出现，上一趟复制的回调立刻作废，连它留下的两种提示也一并清掉。
-        profileCopyTicket.current += 1;
-        setProfileDraftCopied(false);
-        setProfileDraftCopyFailed(false);
-        try {
-          const res = await apiFetch("/api/dsh-mneme/profile/extract", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: "{}"
-          });
-          const body = await res.json().catch(() => null);
-          if (res.ok && typeof body?.draft === "string" && body.draft.trim()) {
-            setProfileDraft({
-              kind: "draft",
-              text: body.draft,
-              rowsUsed: Number.isInteger(body.rowsUsed) ? body.rowsUsed : 0,
-              truncated: body.truncated === true
-            });
-            return;
-          }
-          const error = body && typeof body.error === "string" ? body.error : "";
-          // 五种结局各一句话：没启用 / 库里没内容 / 没配模型 / 模型不配合或调用失败 /
-          // 成功草稿。压在一起就是把「环境缺东西」报成「这次没提炼出东西」。
-          const kind = error === "disabled" ? "disabled"
-            : error === "no-input" ? "empty"
-            : error === "no-route" ? "noroute"
-            : "failed";
-          setProfileDraft({ kind });
-        } catch {
-          setProfileDraft({ kind: "failed" });
-        } finally {
-          setProfileExtracting(false);
-        }
-      }
-
-      // 草稿只展示副本（桉桉 2026-11-04 定的口径）。这一段以前叫「采用为画像」，
-      // 点一下就直接 PUT /profile —— 把用户手写的那份覆盖掉，且没有撤销。现在改成
-      // 复制：要落进「用户画像」必须由用户自己粘贴再点保存，手写原文一个字都不会被
-      // 后台改掉。剪贴板不可用（无权限 / 非安全上下文）时不许假装成功——退回
-      // execCommand 那条老路，仍然失败就明确让她手动选中复制。
-      function copyProfileDraft() {
-        if (profileDraft?.kind !== "draft") return;
-        const text = profileDraft.text || "";
-        // 每次尝试先清掉上次的失败提示：失败过以后再成功，红字不能留在屏上。
-        setProfileDraftCopyFailed(false);
-        // 这一趟的票。回调落地时票已经不是当前那张，就说明界面早已换了一份草稿。
-        const ticket = ++profileCopyTicket.current;
-        const current = () => ticket === profileCopyTicket.current;
-        const ok = () => {
-          if (!current()) return;
-          setProfileDraftCopied(true);
-          announce(t("memory.settings.profileDraftCopied"));
-          setTimeout(() => { if (current()) setProfileDraftCopied(false); }, 1500);
-        };
-        // 剪贴板失败要说话：这个方法唯一的产出就是"文本进了剪贴板"，静默失败
-        // 会让用户以为复制成功、粘贴时却拿到旧内容（草稿是只读 <pre>，选中再
-        // 复制是她能自己走的退路，得明确告诉她走这条）。
-        // 失败还要顺手撤掉「已复制」：成功态能挂 1.5 秒，这期间重试失败会同时出现
-        // 「已复制」和「复制没成功」两句相反的话。
-        const failed = () => {
-          if (!current()) return;
-          setProfileDraftCopied(false);
-          setProfileDraftCopyFailed(true);
-          announce(t("memory.settings.profileDraftCopyFailed"));
-        };
-        if (navigator.clipboard?.writeText) {
-          navigator.clipboard.writeText(text).then(ok, () => copyProfileDraftFallback(text) ? ok() : failed());
-        } else {
-          copyProfileDraftFallback(text) ? ok() : failed();
-        }
-      }
-
-      // 没有 Clipboard API（非安全上下文 / 内嵌 webview 未授权）时的退路：
-      // 临时 textarea + execCommand("copy")。失败返回 false，由调用方说话。
-      function copyProfileDraftFallback(text) {
-        try {
-          const ta = document.createElement("textarea");
-          ta.value = text;
-          ta.setAttribute("readonly", "");
-          ta.style.position = "fixed";
-          ta.style.opacity = "0";
-          document.body.appendChild(ta);
-          ta.select();
-          const done = document.execCommand("copy");
-          document.body.removeChild(ta);
-          return done === true;
-        } catch {
-          return false;
-        }
-      }
 
 
-      // 「Agent 眼中的你」自动事实（profile_facts 三表）：展示与人工修正独立于手填
-      // 画像（#497 口径：user_settings 神圣，这里一个字都不写它）。增改删全走
-      // POST /apply（删除=归档，可恢复），与 dream 自动轮共用后端同一份 applyOps
-      // 与同一本账——前端不复述任何判据，也不自己维护第二份事实列表。
-      const [factsCards, setFactsCards] = react.useState([]); // 卡清单是全局的，不随选中卡变化
-      const [factsRows, setFactsRows] = react.useState(null); // null = 还没读到/读失败（fail-closed，不拿旧卡的行冒充这张卡）
-      const [factsJournal, setFactsJournal] = react.useState([]);
-      const [factsRuns, setFactsRuns] = react.useState([]);
-      const [factsAgent, setFactsAgent] = react.useState(""); // "" = default 卡
-      const [factsEditId, setFactsEditId] = react.useState(null);
-      const [factsEditDraft, setFactsEditDraft] = react.useState("");
-      const [factsNew, setFactsNew] = react.useState("");
-      const [factsBusy, setFactsBusy] = react.useState(false); // apply 提交中
-      const [factsRunning, setFactsRunning] = react.useState(false); // 手动维护轮进行中
-      // apply 的一次性回执：{kind, text}。failures / dupsSkipped 必须如实摆出来——
-      // 把失败装成成功，人会以为删掉的事实在下一轮不会再来。
-      const [factsNotice, setFactsNotice] = react.useState(null);
-      // 手动维护轮的结局文案（profileDraft 的 kind 分支同款）：把「没启用」「没配模型」
-      // 「模型不配合」压成一句「失败」，用户就只能瞎猜该去修什么。
-      const [factsRunEnd, setFactsRunEnd] = react.useState(null);
-      // 总闸快照只管「立即更新」按钮的可用性：null = 还没读到（读失败不猜，按钮保持
-      // 可用，点下去由后端 409 disabled 兜底）；事实的展示与人工修正不受这个闸管。
-      const [factsFlag, setFactsFlag] = react.useState(null);
-      // 与 loadPreview 同一套序号守卫：先切 A 再切 B，A 的响应后到不能盖掉 B 的。
-      const factsSeq = react.useRef(0);
-      const loadFacts = react.useCallback(async (agentKey) => {
-        const seq = ++factsSeq.current;
-        try {
-          const res = await apiFetch(`/api/dsh-mneme/profile-facts?agent=${encodeURIComponent(agentKey)}`);
-          const body = await res.json().catch(() => null);
-          if (seq !== factsSeq.current) return;
-          if (res.ok && body && Array.isArray(body.facts)) {
-            setFactsCards(Array.isArray(body.cards) ? body.cards.filter((k) => typeof k === "string") : []);
-            setFactsRows(body.facts);
-            setFactsJournal(Array.isArray(body.journal) ? body.journal : []);
-            setFactsRuns(Array.isArray(body.runs) ? body.runs : []);
-          } else {
-            // 503 unavailable / 后端过旧：行清空走「读不到」文案；卡清单是全局的，
-            // 保留上次读到的，选择器不至于闪空。
-            setFactsRows(null);
-            setFactsJournal([]);
-            setFactsRuns([]);
-          }
-        } catch {
-          if (seq === factsSeq.current) {
-            setFactsRows(null);
-            setFactsJournal([]);
-            setFactsRuns([]);
-          }
-        }
-      }, []);
-      // 切卡先清行再取：上一张卡的事实留在屏上会被当成这张的（同 loadPreview 的
-      // 单一所有者纪律——这里没有直接写数据，都交给 loadFacts）。维护轮结局一并
-      // 清：A 卡跑完的「已更新 N 条」不该显示在 B 卡下（评审 P3：跨卡残留）。
-      react.useEffect(() => {
-        setFactsRows(null);
-        setFactsEditId(null);
-        setFactsEditDraft("");
-        setFactsNotice(null);
-        setFactsRunEnd(null);
-        loadFacts(factsAgent);
-      }, [factsAgent, loadFacts]);
-      // 总闸快照：features 由功能开关卡管写，这里只读不写、失败不猜。功能开关卡
-      // 即改即存并广播 mneme:features-changed——不监听的话，按提示开了「自动事实」
-      // 还得关面板重开才解禁（正是广播工作项要消灭的那类体验）。
-      react.useEffect(() => {
-        let cancelled = false;
-        const loadFlag = () => {
-          apiFetch("/api/dsh-mneme/features")
-            .then((res) => (res.ok ? res.json() : null))
-            .then((j) => {
-              if (cancelled) return;
-              const eff = (j && j.effective) || {};
-              setFactsFlag(eff.profileFactsEnabled === true);
-            })
-            .catch(() => {}); // 读失败保持 null：按钮不锁死，409 兜底
-        };
-        loadFlag();
-        window.addEventListener("mneme:features-changed", loadFlag);
-        return () => { cancelled = true; window.removeEventListener("mneme:features-changed", loadFlag); };
-      }, []);
-      // 人工修正统一入口：一张卡上的小批量 ops 一次 POST，回来重取 GET 让账本跟上，
-      // 并刷新注入预览（事实段是注入文本的一部分，预览别停在编辑前）。
-      async function applyFactsOps(ops) {
-        if (factsBusy) return null;
-        setFactsBusy(true);
-        try {
-          const res = await apiFetch("/api/dsh-mneme/profile-facts/apply", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ agent: factsAgent, ops })
-          });
-          const body = await res.json().catch(() => null);
-          if (!res.ok || !body || !Array.isArray(body.facts)) {
-            setFactsNotice({ kind: "fail", text: t("memory.settings.factsApplyError") });
-            announce(t("memory.settings.factsApplyError"));
-            return null;
-          }
-          const fails = Array.isArray(body.failures) ? body.failures : [];
-          const dups = Number(body.dupsSkipped) || 0;
-          let text = t("memory.settings.factsApplyDone");
-          let kind = "ok";
-          if (fails.length || dups > 0) {
-            const parts = [];
-            if (fails.length) parts.push(t("memory.settings.factsApplyFailures").replace("{n}", String(fails.length)));
-            if (dups > 0) parts.push(t("memory.settings.factsApplyDups").replace("{n}", String(dups)));
-            text = parts.join(" · ");
-            kind = fails.length ? "fail" : "dup";
-          }
-          setFactsNotice({ kind, text });
-          announce(text);
-          await loadFacts(factsAgent);
-          return body;
-        } catch {
-          setFactsNotice({ kind: "fail", text: t("memory.settings.factsApplyError") });
-          announce(t("memory.settings.factsApplyError"));
-          return null;
-        } finally {
-          setFactsBusy(false);
-        }
-      }
-      async function addFact() {
-        const content = factsNew.trim();
-        if (!content) return;
-        const body = await applyFactsOps([{ op: "add", content }]);
-        // 与既有活跃事实重复的 add 会被后端跳过并计数：输入框照常清空，跳了几条
-        // 由提示条说明，别让人以为没点上。
-        if (body) setFactsNew("");
-      }
-      function startFactEdit(f) {
-        setFactsEditId(f.id);
-        setFactsEditDraft(typeof f.content === "string" ? f.content : "");
-      }
-      function cancelFactEdit() {
-        setFactsEditId(null);
-        setFactsEditDraft("");
-      }
-      async function saveFactEdit() {
-        if (factsEditId === null) return;
-        const content = factsEditDraft.trim();
-        if (!content) return;
-        const editId = factsEditId;
-        const body = await applyFactsOps([{ op: "update", id: editId, content }]);
-        // 只有这条真的写进去了才收起编辑框；它自己的 op 失败时留着草稿，别让人重打。
-        if (body && !(Array.isArray(body.failures) && body.failures.some((x) => x && x.id === editId))) {
-          cancelFactEdit();
-        }
-      }
-      async function archiveFact(id) {
-        await applyFactsOps([{ op: "archive", id }]);
-      }
-      // 手动维护轮：结局按后端 error 码分派——no-route 重跑也一样、unparseable 等
-      // 可重试、disabled 是闸没开，三种话不能混。跑完重取 GET 并刷新预览。
-      async function runFacts() {
-        if (factsRunning || factsBusy) return;
-        setFactsRunning(true);
-        setFactsRunEnd(null);
-        try {
-          const res = await apiFetch("/api/dsh-mneme/profile-facts/run", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ agent: factsAgent })
-          });
-          const body = await res.json().catch(() => null);
-          if (res.ok && body && typeof body.status === "string") {
-            const n = Number(body.opsApplied) || 0;
-            setFactsRunEnd(body.status === "noop" ? { kind: "noop" } : { kind: "ok", n });
-            announce(t(body.status === "noop" ? "memory.settings.factsRunNoop" : "memory.settings.factsRunOk").replace("{n}", String(n)));
-          } else {
-            const error = body && typeof body.error === "string" ? body.error : "";
-            const kind = error === "disabled" ? "disabled" : error === "no-route" ? "noroute" : "failed";
-            setFactsRunEnd({ kind });
-            announce(t(kind === "disabled" ? "memory.settings.factsRunDisabled"
-              : kind === "noroute" ? "memory.settings.factsRunNoRoute"
-              : "memory.settings.factsRunFailed"));
-          }
-          await loadFacts(factsAgent);
-        } catch {
-          setFactsRunEnd({ kind: "failed" });
-          announce(t("memory.settings.factsRunFailed"));
-        } finally {
-          setFactsRunning(false);
-        }
-      }
-      // 账本行的摘要截断：before/after 各 ~40 字符，长了加省略号——账本给「扫一眼」
-      // 用，整句塞进来会把最近变更撑成一堵墙。
-      const clipFactText = (s) => {
-        const v = String(s ?? "");
-        return v.length > 40 ? v.slice(0, 40) + "…" : v;
-      };
-      const factOpLabel = (op) => (op === "add" ? t("memory.settings.factsOpAdd")
-        : op === "update" ? t("memory.settings.factsOpUpdate")
-        : op === "archive" ? t("memory.settings.factsOpArchive")
-        : String(op ?? ""));
 
       async function putRules(next) {
         await apiFetch("/api/dsh-mneme/rules", {
@@ -5345,204 +5050,10 @@ window.__ModuleLoader__.load({
             }, group.label))
           )
         ),
-        // —— 个性化：画像 / 人格 / 规则 / 自定义指令（Agent 怎么对你） ——
+        // —— 个性化：规则 / 自定义指令（Agent 怎么对你） ——
+        // 画像与自动事实已搬进记忆面板的「人格」页：它们说的是「你是谁、Agent 眼里
+        // 你是谁」，跟人设卡必须待在同一页，否则一处改一半、两页各显示一半。
         groupHead("personal"),
-        // 用户画像 — who the agent is talking to
-        h("section", { className: "mneme-set-card" },
-          h("div", { className: "mneme-set-title" }, t("memory.settings.profile")),
-          h("div", { className: "mneme-set-desc" }, t("memory.settings.profileHint")),
-          h("textarea", {
-            className: "mneme-set-input mneme-set-input--area",
-            value: profile,
-            placeholder: t("memory.settings.profile"),
-            onChange: (e) => setProfile(e.target.value)
-          }),
-          h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
-            h("button", { className: "mneme-btn", onClick: () => saveProfile() }, t("memory.settings.profileSave")),
-            saved && h("span", { className: "mneme-saved" }, t("memory.settings.profileSaved")),
-            profileError ? h("span", { className: "mneme-saved", style: { color: "var(--dsw-danger, #d33)" } },
-              t("memory.settings.profileSaveFailed") + " (" + profileError + ")") : null
-          ),
-          // 从记忆提取草稿（#497）。**放在这张卡上而不是「用户画像」卡**：画像那一栏是
-          // 用户自己手填的地方；这一段是从记忆里反推出来的「Agent 眼中的你」，属于可
-          // 沉淀的那一侧。它只出**副本**——不写 user_settings，也不碰手写画像（桉桉
-          // 2026-11-04 定的口径：只展示副本）。要改成手写画像只能自己复制再粘过去。
-          h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 12 } },
-            h("button", {
-              type: "button",
-              className: "mneme-btn",
-              disabled: profileExtracting,
-              onClick: extractProfileDraft
-            }, t("memory.settings.profileExtract")),
-            profileExtracting ? h("span", { className: "mneme-saved" }, t("memory.settings.profileExtracting")) : null
-          ),
-          h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractHint")),
-          profileDraft?.kind === "disabled" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractDisabled")) : null,
-          profileDraft?.kind === "empty" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractEmpty")) : null,
-          profileDraft?.kind === "noroute" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractNoRoute")) : null,
-          profileDraft?.kind === "failed" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractFailed")) : null,
-          profileDraft?.kind === "draft" ? h("div", null,
-            h("div", { className: "mneme-featnumlabel" }, t("memory.settings.profileDraftTitle")),
-            h("div", { className: "mneme-set-desc" },
-              t("memory.settings.profileDraftRows") + ": " + profileDraft.rowsUsed
-              + (profileDraft.truncated ? " · " + t("memory.settings.profileDraftTruncated") : "")),
-            h("pre", { className: "mneme-set-input mneme-set-input--area", style: { whiteSpace: "pre-wrap", minHeight: 0 } }, profileDraft.text),
-            h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 6 } },
-              h("button", { type: "button", className: "mneme-btn", onClick: copyProfileDraft },
-                profileDraftCopied ? t("memory.settings.profileDraftCopied") : t("memory.settings.profileDraftCopy")),
-              h("button", { type: "button", className: "mneme-btn", onClick: () => {
-                profileCopyTicket.current += 1;
-                setProfileDraft(null);
-                setProfileDraftCopied(false);
-                setProfileDraftCopyFailed(false);
-              } }, t("memory.settings.profileDraftDiscard")),
-              h("span", { className: "mneme-set-desc" }, t("memory.settings.profileDraftCopyHint")),
-              profileDraftCopyFailed ? h("span", { className: "mneme-set-desc", role: "alert", style: { color: "var(--mneme-danger)" } },
-                t("memory.settings.profileDraftCopyFailed")) : null
-            )
-          ) : null
-        ),
-        // 自动事实（profile_facts）：dream 后自动维护的「Agent 眼中的你」，按会话身份
-        // 分卡。放在注入预览卡之后——预览里事实段的来源就在这里，看预览的人顺势就能
-        // 找到改它的地方；规则是用户立的另一域（另一张卡），不混。
-        h("section", { className: "mneme-set-card" },
-          h("div", { className: "mneme-set-title" }, t("memory.settings.factsTitle")),
-          h("div", { className: "mneme-set-desc" }, t("memory.settings.factsHint")),
-          // 卡选择器：default + 各身份卡，人格卡同款 chip 形态；切换即重取（effect 里清行）。
-          h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
-            h("button", {
-              type: "button",
-              className: "mneme-btn" + (factsAgent === "" ? " mneme-btn--active" : ""),
-              onClick: () => setFactsAgent("")
-            }, t("memory.settings.personaDefaultCard")),
-            // 选中卡即使这轮从清单里消失（事实全归档且无同 scope 记忆）也不让它从
-            // 选择器上失踪——正在编辑的人不能失去落点。
-            [...new Set([factsAgent, ...factsCards])].filter((k) => k && k.trim()).map((k) =>
-              h("button", {
-                key: k,
-                type: "button",
-                className: "mneme-btn" + (factsAgent === k ? " mneme-btn--active" : ""),
-                onClick: () => setFactsAgent(k)
-              }, k))
-          ),
-          factsRows === null
-            ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsUnavailable"))
-            : h("div", null,
-                // 只列活跃行：归档的行留在账本里可追溯，不再回到清单上（恢复=重新添加）。
-                factsRows.filter((f) => f && f.status === "active").length === 0
-                  ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsEmpty"))
-                  : null,
-                factsRows.filter((f) => f && f.status === "active").map((f) =>
-                  factsEditId === f.id
-                    ? h("div", { key: f.id, className: "mneme-set-row" },
-                        h("input", {
-                          className: "mneme-set-input",
-                          style: { marginBottom: 0, flex: "1 1 auto" },
-                          value: factsEditDraft,
-                          autoFocus: true,
-                          onChange: (e) => setFactsEditDraft(e.target.value),
-                          onKeyDown: (e) => {
-                            if (e.key === "Enter") saveFactEdit();
-                            if (e.key === "Escape") cancelFactEdit();
-                          }
-                        }),
-                        h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: saveFactEdit },
-                          t("memory.settings.factsRowSave")),
-                        h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: cancelFactEdit },
-                          t("memory.settings.factsRowCancel"))
-                      )
-                    : h("div", { key: f.id, className: "mneme-set-row" },
-                        h("span", { className: "mneme-set-ruletext", style: { flex: "1 1 auto" } }, f.content),
-                        // ✎ 与 × 都走 mneme-set-del（悬停显形）：低频动作不常驻，
-                        // 与规则卡同一套视觉语言。
-                        h("button", {
-                          type: "button",
-                          className: "mneme-set-del",
-                          title: t("memory.settings.factsRowEdit"),
-                          "aria-label": t("memory.settings.factsRowEdit"),
-                          onClick: () => startFactEdit(f)
-                        }, "✎"),
-                        // 删除不二次确认：archive 可恢复（账本里留 before），打断比误删贵。
-                        h("button", {
-                          type: "button",
-                          className: "mneme-set-del",
-                          title: t("memory.settings.factsRowDelete"),
-                          "aria-label": t("memory.settings.factsRowDelete"),
-                          onClick: () => archiveFact(f.id)
-                        }, "×")
-                      )
-                ),
-                h("div", { style: { display: "flex", gap: 8, marginTop: 6 } },
-                  h("input", {
-                    className: "mneme-set-input",
-                    style: { marginBottom: 0 },
-                    value: factsNew,
-                    placeholder: t("memory.settings.factsAddPlaceholder"),
-                    onChange: (e) => setFactsNew(e.target.value),
-                    onKeyDown: (e) => { if (e.key === "Enter") addFact(); }
-                  }),
-                  h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: addFact },
-                    t("memory.settings.factsAdd"))
-                ),
-                // apply 回执：失败（role=alert）与跳重如实摆出来，全成才说成功。
-                factsNotice
-                  ? h("div", {
-                      className: "mneme-set-desc",
-                      role: factsNotice.kind === "fail" ? "alert" : undefined,
-                      style: { color: factsNotice.kind === "fail" ? "var(--mneme-danger)" : undefined }
-                    }, factsNotice.text)
-                  : null,
-                // 手动维护轮：总闸快照关着就禁用（features 只读不写）；快照没读到时
-                // 不锁——点下去由后端 409 disabled 给出同款解释。
-                h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 12 } },
-                  h("button", {
-                    type: "button",
-                    className: "mneme-btn",
-                    disabled: factsRunning || factsFlag === false,
-                    onClick: runFacts
-                  }, factsRunning ? t("memory.settings.factsRunning") : t("memory.settings.factsRun")),
-                  factsRunning ? h("span", { className: "mneme-saved" }, t("memory.settings.factsRunning")) : null
-                ),
-                factsFlag === false ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsGateOff")) : null,
-                // 五种结局各一句话（profileDraft 的 kind 分支同款）。
-                factsRunEnd?.kind === "ok" ? h("div", { className: "mneme-set-desc" },
-                  t("memory.settings.factsRunOk").replace("{n}", String(factsRunEnd.n))) : null,
-                factsRunEnd?.kind === "noop" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunNoop")) : null,
-                factsRunEnd?.kind === "disabled" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunDisabled")) : null,
-                factsRunEnd?.kind === "noroute" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunNoRoute")) : null,
-                factsRunEnd?.kind === "failed" ? h("div", { className: "mneme-set-desc", role: "alert", style: { color: "var(--mneme-danger)" } },
-                  t("memory.settings.factsRunFailed")) : null,
-                // 最近变更（账本尾 8 条，后端按新→旧给）：时间 + op + 内容变化 + actor 徽章。
-                h("div", { className: "mneme-featnumlabel", style: { marginTop: 12 } }, t("memory.settings.factsJournalTitle")),
-                factsJournal.length === 0 ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsJournalEmpty")) : null,
-                factsJournal.slice(0, 8).map((j) =>
-                  h("div", { key: j.id, className: "mneme-set-row", style: { flexWrap: "wrap", gap: 6 } },
-                    h("span", { className: "mneme-set-desc", title: j.at }, formatRelativeTime(j.at, t)),
-                    h("span", { className: "mneme-set-ruletext" }, factOpLabel(j.op)),
-                    h("span", { className: "mneme-set-desc", style: { flex: "1 1 160px" } },
-                      // add 只展示新值；archive 只展示旧值（op 标签已经说了归档）；
-                      // update 才有真正的 before→after。
-                      j.op === "add" ? "+ " + clipFactText(j.after)
-                        : j.op === "archive" ? clipFactText(j.before)
-                        : clipFactText(j.before) + " → " + clipFactText(j.after)),
-                    h("span", { className: "mneme-badge " + (j.actor === "manual" ? "mneme-badge--scope" : "mneme-badge--default") },
-                      t(j.actor === "manual" ? "memory.settings.factsActorManual" : "memory.settings.factsActorAuto"))
-                  )
-                ),
-                // 最近一轮维护（回执尾 1 条，后端按新→旧给）：状态 + 输入/应用计数。
-                factsRuns[0]
-                  ? h("div", { className: "mneme-set-desc" },
-                      t("memory.settings.factsRunLast")
-                      + (factsRuns[0].status === "ok" ? t("memory.settings.factsRunStatusOk")
-                        : factsRuns[0].status === "noop" ? t("memory.settings.factsRunStatusNoop")
-                        : factsRuns[0].status === "failed" ? t("memory.settings.factsRunStatusFailed")
-                        : String(factsRuns[0].status ?? ""))
-                      + " · " + t("memory.settings.factsRunCounts")
-                        .replace("{input}", String(Number(factsRuns[0].input_count) || 0))
-                        .replace("{ops}", String(Number(factsRuns[0].ops_applied) || 0)))
-                  : null
-              )
-        ),
         // 规则 — numbered rows, hover reveals the delete affordance
         h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.rules")),
@@ -9052,7 +8563,8 @@ window.__ModuleLoader__.load({
         { key: "entity", label: t("memory.explorer.tabEntities") },
         { key: "status", label: t("memory.explorer.tabStatus") },
         { key: "settings", label: t("memory.explorer.tabSettings") },
-        { key: "persona", label: t("memory.explorer.tabPersona") }
+        { key: "persona", label: t("memory.explorer.tabPersona") },
+        { key: "diary", label: t("memory.diary.title") }
       ];
 
       return h("div", { className: "mneme-x" },
@@ -9414,6 +8926,9 @@ window.__ModuleLoader__.load({
         ),
         view === "persona" && h("div", { className: "mneme-set" },
           h("div", { className: "mneme-set-inner" }, h(PersonaMainPanel, { t }))
+        ),
+        view === "diary" && h("div", { className: "mneme-set" },
+          h("div", { className: "mneme-set-inner" }, h(DiaryLibraryPanel, { t }))
         ),
         toastMsg && h("div", { className: "mneme-toast", role: "status" }, toastMsg)
       );
@@ -10882,6 +10397,9 @@ window.__ModuleLoader__.load({
       const [entry, setEntry] = useState(undefined);
       const [busy, setBusy] = useState("");      // "" | "compose" | "export"
       const [notice, setNotice] = useState(null);
+      // 纸和字与记忆面板里的日记本共用同一个 localStorage 键：两处入口看的是
+      // 同一本日记，纸张各选各的会让人以为进了两个不同的东西。
+      const [book, setBook] = useState(readDiaryBook);
 
       useEffect(() => {
         if (!project) { setDoc(null); return; }
@@ -10911,6 +10429,17 @@ window.__ModuleLoader__.load({
 
       const rows = (doc && doc.diaries) || [];
       const activeDay = day || (rows.length ? rows[0].date : null);
+
+      // 面板里改纸张时这个组件是挂着的，只读一次初值会一直用旧纸。
+      useEffect(() => {
+        const sync = () => setBook(readDiaryBook());
+        window.addEventListener("storage", sync);
+        window.addEventListener("mneme:diary-book-changed", sync);
+        return () => {
+          window.removeEventListener("storage", sync);
+          window.removeEventListener("mneme:diary-book-changed", sync);
+        };
+      }, []);
 
       useEffect(() => {
         if (!project || !activeDay) { setEntry(undefined); return; }
@@ -11016,7 +10545,7 @@ window.__ModuleLoader__.load({
           onClick: () => setDay(r.date)
         }, r.date)));
         const text = entry && entry.date === activeDay ? entry.text : undefined;
-        const paper = h("div", { className: "mneme-diary-paper" },
+        const paper = h("div", { className: "mneme-diary-paper mneme-diary-paper--" + book },
           text === undefined
             ? h("div", { className: "mneme-diary-empty" }, t("memory.diary.loading"))
             : text === null
@@ -11084,17 +10613,26 @@ window.__ModuleLoader__.load({
           h("path", { d: "M12 7v14" })));
     }
 
-    // 一篇日记的 frontmatter 里，人格那一行形如 `persona: settings (amarre)`，
-    // 括号里是 agent 名。这是「一个 Agent 一本」唯一可信的署名来源——库里没有
-    // 第二份，桶名会漂（#613 的双桶就是这么来的）。取不到就退回项目名，再退回桶键，
-    // 三级都不猜。
-    function diaryBucketName(bucket) {
+    // 一篇日记的 frontmatter 里，人格那一行形如 `persona: default (ptc)`：
+    // 括号里是**写这篇的 agent 名**，前面是卡来自哪一维（default / settings / bySession…）。
+    // 括号里那个词从来不是人格名——本机旧数据里五个桶都写着 `(ptc)`、一个写着
+    // `(amarre)`，直接上屏就是导航栏一排项目键加一个 ptc（桉桉 2026-11-09 原话：
+    // 「不要有那个什么ptc什么的其他导航，导航应该是人格名」）。
+    //
+    // 正确的名字只能从人格卡里取：agent 名 → 它自己那张卡的名字 → 没有就用
+    // default 卡的名字（走的就是 resolvePersonaCard 的回落口径，写这篇时用的
+    // 就是默认卡）。两级都取不到才退回项目名，再退回桶键，绝不把 agent 名当人格名。
+    function diaryBucketName(bucket, store) {
       const persona = String((bucket && bucket.persona) || "");
       const hit = /\(([^)]+)\)\s*$/.exec(persona);
-      if (hit) {
-        const name = hit[1].trim();
-        if (name && name !== "default" && name !== "standard") return name;
+      const agent = hit ? hit[1].trim() : "";
+      if (agent && store) {
+        const byAgent = store.byAgent && store.byAgent[agent];
+        if (byAgent && byAgent.name) return String(byAgent.name);
+        const fallback = store.default && store.default.name;
+        if (fallback) return String(fallback);
       }
+      // 没有模板行（老日记）或还没读到人格卡：只剩项目名这一级，仍然不上 agent 名。
       if (bucket && bucket.project) return String(bucket.project);
       return String((bucket && bucket.key) || "");
     }
@@ -11107,13 +10645,65 @@ window.__ModuleLoader__.load({
     //
     // 座位无条件注册、开关只管内容层：`diaryEnabled` 关着时后端回 409，面板据此
     // 渲染「去哪儿打开」的空态，而不是让入口凭空消失（#607 的教训）。
+    // 左侧「ta 的日记」面板：一本本子的样子。
+    //
+    // 两条硬要求（桉桉 2026-11-09）：①导航写**人格名**，不写项目桶键——
+    // `QQ---4f061790`、`amarre-c836db6a` 是存储实现，不是人；②长得像本子：
+    // 固定几套纸与字，用户只挑不调。所以这里先把桶按人格名归并（同一个身份
+    // 住过好几个项目桶时合成一个人），再用纸纹 + 字族做「本子」观感。
+    //
+    // 与右栏 DiaryPane 的关键差别：右栏拿得到 sessionId（座位 `inject` 透传），
+    // 所以能算出「当前会话的项目」；`main` 座位不注入 sessionId，这里算不出来，
+    // 也不该只给一个项目看——它读的是跨桶清单（/diary/library）。
+    //
+    // 座位无条件注册、开关只管内容层：`diaryEnabled` 关着时后端回 409，面板据此
+    // 渲染「去哪儿打开」的空态，而不是让入口凭空消失（#607 的教训）。
+    const DIARY_BOOKS = [
+      { key: "plain", label: "memory.diary.book.plain" },
+      { key: "ruled", label: "memory.diary.book.ruled" },
+      { key: "grid", label: "memory.diary.book.grid" },
+      { key: "kraft", label: "memory.diary.book.kraft" }
+    ];
+    const DIARY_BOOK_KEY = "dsh-mneme-diary-book";
+
+    // 纸的选择只存本地（每台机器一本自己的本子），读不到就用横线：横线最像本子，
+    // 而「没有纸纹」在视觉上最不像，不该是默认。
+    function readDiaryBook() {
+      try {
+        const raw = window.localStorage.getItem(DIARY_BOOK_KEY);
+        return DIARY_BOOKS.some((b) => b.key === raw) ? raw : "ruled";
+      } catch { return "ruled"; }
+    }
+
+    function writeDiaryBook(book) {
+      // 隐私模式 / 存储被禁时写不进去——纸纹是纯外观，失败就只在本次会话生效，
+      // 不弹错、不谎报（下一次开面板会回落到默认，用户看得见）。
+      try { window.localStorage.setItem(DIARY_BOOK_KEY, book); } catch { /* 忽略 */ }
+      // storage 事件只在别的标签页触发，同一页里另一处入口（右栏 DiaryPane）
+      // 收不到——自己补一个同页广播，否则换个入口纸张又变回旧样式。
+      try { window.dispatchEvent(new CustomEvent("mneme:diary-book-changed")); } catch { /* 忽略 */ }
+    }
+
     function DiaryLibraryPanel({ t }) {
       const [lib, setLib] = useState(undefined); // undefined=读中 null=读不出 对象=拿到
       const [gate, setGate] = useState(null);    // {kind, status}
       const [tick, setTick] = useState(0);
-      const [pick, setPick] = useState(null);    // 选中的桶键
-      const [day, setDay] = useState(null);      // 选中的日期串
+      const [pick, setPick] = useState(null);    // 选中的人格名
+      const [day, setDay] = useState(null);      // 选中的那天（`桶键@日期` 复合键）
       const [entry, setEntry] = useState(undefined);
+      const [book, setBook] = useState(readDiaryBook);
+      // 导航要显示人格名，而人格名只在人格卡里；日记正文只写了 agent 名。
+      // 读不到卡时导航退回项目名——不拿 agent 名顶上（见 diaryBucketName）。
+      const [store, setStore] = useState(null);
+
+      useEffect(() => {
+        let dead = false;
+        apiFetch("/api/dsh-mneme/persona")
+          .then((res) => (res.ok ? res.json() : null))
+          .then((j) => { if (!dead && j) setStore(personaStoreShape(j.persona)); })
+          .catch(() => { /* 读不到就只用项目名，不阻断日记 */ });
+        return () => { dead = true; };
+      }, []);
 
       useEffect(() => {
         let dead = false;
@@ -11140,15 +10730,40 @@ window.__ModuleLoader__.load({
       }, [tick]);
 
       const buckets = (lib && lib.buckets) || [];
-      const activeBucket = buckets.find((b) => b.key === pick) || buckets[0] || null;
-      const activeDay = day || (activeBucket && activeBucket.entries.length ? activeBucket.entries[0].date : null);
+
+      // 桶 → 人。同一个名字在几个项目桶里各写过，合成一个人：导航上是「一个身份
+      // 一本书」，不是「一个项目一本」。桶键只留在复合日期键里，用作取正文的线索。
+      const people = [];
+      const byName = new Map();
+      for (const b of buckets) {
+        const name = diaryBucketName(b, store);
+        let person = byName.get(name);
+        if (!person) {
+          person = { name, entries: [], count: 0, latest: "" };
+          byName.set(name, person);
+          people.push(person);
+        }
+        for (const e of b.entries || []) {
+          person.entries.push({ key: b.key + "@" + e.date, date: String(e.date), bucket: b.key });
+        }
+        person.count += Number(b.count) || 0;
+        const latest = String(b.latest || "");
+        if (latest > person.latest) person.latest = latest;
+      }
+      for (const p of people) {
+        p.entries.sort((a, b2) => (a.date === b2.date ? 0 : a.date < b2.date ? 1 : -1));
+      }
+
+      const activePerson = people.find((p) => p.name === pick) || people[0] || null;
+      const days = (activePerson && activePerson.entries) || [];
+      const activeItem = days.find((d) => d.key === day) || days[0] || null;
 
       useEffect(() => {
-        if (!activeBucket || !activeDay) { setEntry(undefined); return; }
+        if (!activeItem) { setEntry(undefined); return; }
         let dead = false;
         setEntry(undefined);
-        apiFetch("/api/dsh-mneme/diary/library/entry?bucket=" + encodeURIComponent(activeBucket.key)
-          + "&date=" + encodeURIComponent(activeDay))
+        apiFetch("/api/dsh-mneme/diary/library/entry?bucket=" + encodeURIComponent(activeItem.bucket)
+          + "&date=" + encodeURIComponent(activeItem.date))
           .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
           .then((r) => {
             if (dead) return;
@@ -11159,12 +10774,21 @@ window.__ModuleLoader__.load({
             if (!dead) setEntry(null);
           });
         return () => { dead = true; };
-      }, [activeBucket && activeBucket.key, activeDay]);
+      }, [activeItem && activeItem.key]);
+
+      const paperButtons = h("div", { className: "mneme-diary-books", role: "group", "aria-label": t("memory.diary.bookLabel") },
+        DIARY_BOOKS.map((b) => h("button", {
+          key: b.key, type: "button",
+          "aria-pressed": book === b.key ? "true" : "false",
+          className: "mneme-diary-book" + (book === b.key ? " mneme-diary-book--on" : ""),
+          onClick: () => { setBook(b.key); writeDiaryBook(b.key); }
+        }, t(b.label))));
 
       const head = h("div", { className: "mneme-diary-head" },
         h(DiaryMark, { size: 16 }),
         h("span", { className: "mneme-diary-title" }, t("memory.diary.title")),
         h("span", { className: "mneme-diary-spacer" }),
+        paperButtons,
         h("button", {
           type: "button", className: "mneme-diary-btn",
           disabled: !!gate, onClick: () => setTick((n) => n + 1)
@@ -11181,32 +10805,42 @@ window.__ModuleLoader__.load({
         body = h("div", { className: "mneme-diary-empty" },
           h("span", { className: "mneme-diary-warn" }, t("memory.diary.readFailed")), " ",
           h("button", { type: "button", className: "mneme-diary-btn", onClick: () => setTick((n) => n + 1) }, t("memory.diary.retry")));
-      } else if (!buckets.length) {
+      } else if (!people.length) {
         body = h("div", { className: "mneme-diary-empty" },
           h("div", null, t("memory.diary.libraryEmpty")),
           h("div", null, t("memory.diary.libraryEmptyHint")));
       } else {
-        const nav = h("div", { className: "mneme-diary-nav" }, buckets.map((b) => h("button", {
-          key: b.key, type: "button",
-          className: "mneme-diary-agent" + (activeBucket && b.key === activeBucket.key ? " mneme-diary-agent--on" : ""),
-          title: (b.project || b.key) + " · " + String(b.count),
-          onClick: () => { setPick(b.key); setDay(null); }
-        }, h("span", { className: "mneme-diary-agentName" }, diaryBucketName(b)))));
-        const days = (activeBucket && activeBucket.entries) || [];
+        const nav = h("div", { className: "mneme-diary-nav" }, people.map((p) => h("button", {
+          key: p.name, type: "button",
+          className: "mneme-diary-agent" + (activePerson && p.name === activePerson.name ? " mneme-diary-agent--on" : ""),
+          // title 只给数量，绝不放桶键：悬停提示里泄出 `QQ---4f061790` 与导航
+          // 上写桶键是同一个错，只是藏得浅一点。
+          title: t("memory.diary.count").replace("{n}", String(p.count)),
+          onClick: () => { setPick(p.name); setDay(null); }
+        }, h("span", { className: "mneme-diary-agentName" }, p.name))));
+
         const list = h("div", { className: "mneme-diary-list" }, days.map((r) => h("button", {
-          key: r.date, type: "button",
-          className: "mneme-diary-day" + (r.date === activeDay ? " mneme-diary-day--on" : ""),
-          onClick: () => setDay(r.date)
+          key: r.key, type: "button",
+          className: "mneme-diary-day" + (activeItem && r.key === activeItem.key ? " mneme-diary-day--on" : ""),
+          onClick: () => setDay(r.key)
         }, r.date)));
-        const text = typeof entry === "string" && activeDay ? entry : undefined;
-        const paper = h("div", { className: "mneme-diary-paper" },
+
+        const text = typeof entry === "string" ? entry : undefined;
+        const paper = h("div", { className: "mneme-diary-paper mneme-diary-paper--" + book },
+          h("div", { className: "mneme-diary-paperhead" },
+            h("span", { className: "mneme-diary-papername" }, (activePerson && activePerson.name) || ""),
+            h("span", { className: "mneme-diary-paperdate" }, (activeItem && activeItem.date) || "")),
           text === undefined
             ? h("div", { className: "mneme-diary-empty" }, t("memory.diary.loading"))
             : text === null
               ? h("span", { className: "mneme-diary-warn" }, t("memory.diary.readFailed"))
               : h("pre", { className: "mneme-diary-text" }, text));
-        body = h("div", { className: "mneme-diary-body" }, list, paper);
-        body = h(react.Fragment, null, nav, body);
+
+        const meta = h("div", { className: "mneme-diary-meta" },
+          t("memory.diary.count").replace("{n}", String((activePerson && activePerson.count) || 0)),
+          activePerson && activePerson.latest ? h("span", { className: "mneme-diary-metaWhen" }, " · " + activePerson.latest) : null);
+
+        body = h(react.Fragment, null, nav, meta, h("div", { className: "mneme-diary-body" }, list, paper));
       }
 
       return h("div", { className: "mneme-diary" }, head, body);
@@ -11287,6 +10921,353 @@ window.__ModuleLoader__.load({
       // 与状态页、设置页共用 useInjectStatus，三处口径不会各自漂。
       const injectStatus = useInjectStatus();
       const minimalWarn = !injectStatus.loading && injectStatus.suppressed;
+
+      // ——— 从设置页「个性化」整块搬来的两件事 ——————————————————————————
+      // 桉桉 2026-11-09：「mneme 设置里面的个性化还没移走」。人设、画像、Agent 眼中
+      // 的你，说的是同一个「你是谁」，分在两页只会让人在两处各改一半。搬进来时口径
+      // 一字未改（画像仍只由用户手填、草稿只出副本、事实仍只走 apply），只是换了宿主。
+      const [profile, setProfile] = react.useState(""); // 用户手填的自我介绍（原设置页「用户画像」卡）
+      const [saved, setSaved] = react.useState(false);
+      // 画像提取草稿（#497）：null = 没有结果；否则带 kind 的一次性结果，四种结局各一句
+      // 话——把「没启用」「库里没东西」「模型没配合」压成同一句「没有草稿」，用户就只能瞎猜。
+      const [profileDraft, setProfileDraft] = react.useState(null);
+      const [profileExtracting, setProfileExtracting] = react.useState(false);
+      const [profileDraftCopied, setProfileDraftCopied] = react.useState(false);
+      // 复制失败必须**看得见**：announce() 那个 live region 是 1px 裁剪元素，只有屏幕
+      // 阅读器读得到。视力正常的用户看到按钮文字没变、页面也没变化，就会以为复制成功，
+      // 粘贴时拿到旧的剪贴板内容——比不提示更糟。
+      const [profileDraftCopyFailed, setProfileDraftCopyFailed] = react.useState(false);
+      // 复制的每一趟都要能认出「这条回调还属于当前这份草稿吗」。剪贴板是异步的，复制 A 的
+      // promise 还没落地时又提取出草稿 B，A 的回调就会在 B 上打勾或报错——B 一个字都没被
+      // 复制过。用递增序号做票据：换草稿或重新复制都换票，旧票的回调直接丢弃。
+      const profileCopyTicket = react.useRef(0);
+      // 保存失败要可见（persona 那条一直有，画像这条以前是静默 catch）。
+      const [profileError, setProfileError] = react.useState("");
+      // 画像的读取：搬过来时从设置页的 load() 里摘出来单独放着——那张卡现在住在这里，
+      // 数据的所有者也就该是这里（两页各读一份会各自显示不同的旧值）。
+      // 失败保持空字符串：画像读不到时输入框是空的，用户一保存就会把它清掉，所以
+      // 读失败要能重试（tick 由页头的「重试」按钮推）。
+      useEffect(() => {
+        let dead = false;
+        apiFetch("/api/dsh-mneme/profile")
+          .then((res) => (res.ok ? res.json() : null))
+          .then((j) => { if (!dead && j && typeof j.profile === "string") setProfile(j.profile); })
+          .catch(() => { /* 读不到就留空：下一次 tick 再试 */ });
+        return () => { dead = true; };
+      }, [tick]);
+
+      // 返回「是否真的存下了」。apiFetch 只是 fetch 的薄壳，非 2xx 不会抛——同页的
+      // savePersonaCards 一直判 `res.ok`，画像这条一直没判，于是服务端 403/413 时界面
+      // 照样闪「画像已保存」（评审实测的同类洞，这次一起收）。
+      async function saveProfile(next = profile) {
+        try {
+          const res = await apiFetch("/api/dsh-mneme/profile", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ profile: next })
+          });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          setSaved(true);
+          setProfileError("");
+          announce(t("memory.settings.profileSaved"));
+          setTimeout(() => setSaved(false), 1500);
+          return true;
+        } catch (err) {
+          setProfileError((err && err.message) || "failed");
+          setTimeout(() => setProfileError(""), 4000);
+          return false;
+        }
+      }
+
+      // 画像提取：一次宿主 LLM 调用，只在用户点按钮时发生。开关没开时后端直接回
+      // 409，这里显示「未启用」而不是转圈后什么也没有——那会被读成按钮坏了。
+      async function extractProfileDraft() {
+        setProfileExtracting(true);
+        setProfileDraft(null);
+        // 新草稿一出现，上一趟复制的回调立刻作废，连它留下的两种提示也一并清掉。
+        profileCopyTicket.current += 1;
+        setProfileDraftCopied(false);
+        setProfileDraftCopyFailed(false);
+        try {
+          const res = await apiFetch("/api/dsh-mneme/profile/extract", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}"
+          });
+          const body = await res.json().catch(() => null);
+          if (res.ok && typeof body?.draft === "string" && body.draft.trim()) {
+            setProfileDraft({
+              kind: "draft",
+              text: body.draft,
+              rowsUsed: Number.isInteger(body.rowsUsed) ? body.rowsUsed : 0,
+              truncated: body.truncated === true
+            });
+            return;
+          }
+          const error = body && typeof body.error === "string" ? body.error : "";
+          // 五种结局各一句话：没启用 / 库里没内容 / 没配模型 / 模型不配合或调用失败 /
+          // 成功草稿。压在一起就是把「环境缺东西」报成「这次没提炼出东西」。
+          const kind = error === "disabled" ? "disabled"
+            : error === "no-input" ? "empty"
+            : error === "no-route" ? "noroute"
+            : "failed";
+          setProfileDraft({ kind });
+        } catch {
+          setProfileDraft({ kind: "failed" });
+        } finally {
+          setProfileExtracting(false);
+        }
+      }
+
+      // 草稿只展示副本（桉桉 2026-11-04 定的口径）。这一段以前叫「采用为画像」，
+      // 点一下就直接 PUT /profile —— 把用户手写的那份覆盖掉，且没有撤销。现在改成
+      // 复制：要落进「用户画像」必须由用户自己粘贴再点保存，手写原文一个字都不会被
+      // 后台改掉。剪贴板不可用（无权限 / 非安全上下文）时不许假装成功——退回
+      // execCommand 那条老路，仍然失败就明确让她手动选中复制。
+      function copyProfileDraft() {
+        if (profileDraft?.kind !== "draft") return;
+        const text = profileDraft.text || "";
+        // 每次尝试先清掉上次的失败提示：失败过以后再成功，红字不能留在屏上。
+        setProfileDraftCopyFailed(false);
+        // 这一趟的票。回调落地时票已经不是当前那张，就说明界面早已换了一份草稿。
+        const ticket = ++profileCopyTicket.current;
+        const current = () => ticket === profileCopyTicket.current;
+        const ok = () => {
+          if (!current()) return;
+          setProfileDraftCopied(true);
+          announce(t("memory.settings.profileDraftCopied"));
+          setTimeout(() => { if (current()) setProfileDraftCopied(false); }, 1500);
+        };
+        // 剪贴板失败要说话：这个方法唯一的产出就是"文本进了剪贴板"，静默失败
+        // 会让用户以为复制成功、粘贴时却拿到旧内容（草稿是只读 <pre>，选中再
+        // 复制是她能自己走的退路，得明确告诉她走这条）。
+        // 失败还要顺手撤掉「已复制」：成功态能挂 1.5 秒，这期间重试失败会同时出现
+        // 「已复制」和「复制没成功」两句相反的话。
+        const failed = () => {
+          if (!current()) return;
+          setProfileDraftCopied(false);
+          setProfileDraftCopyFailed(true);
+          announce(t("memory.settings.profileDraftCopyFailed"));
+        };
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(text).then(ok, () => copyProfileDraftFallback(text) ? ok() : failed());
+        } else {
+          copyProfileDraftFallback(text) ? ok() : failed();
+        }
+      }
+
+      // 没有 Clipboard API（非安全上下文 / 内嵌 webview 未授权）时的退路：
+      // 临时 textarea + execCommand("copy")。失败返回 false，由调用方说话。
+      function copyProfileDraftFallback(text) {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = text;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          const done = document.execCommand("copy");
+          document.body.removeChild(ta);
+          return done === true;
+        } catch {
+          return false;
+        }
+      }
+      // 「Agent 眼中的你」自动事实（profile_facts 三表）：展示与人工修正独立于手填
+      // 画像（#497 口径：user_settings 神圣，这里一个字都不写它）。增改删全走
+      // POST /apply（删除=归档，可恢复），与 dream 自动轮共用后端同一份 applyOps
+      // 与同一本账——前端不复述任何判据，也不自己维护第二份事实列表。
+      const [factsCards, setFactsCards] = react.useState([]); // 卡清单是全局的，不随选中卡变化
+      const [factsRows, setFactsRows] = react.useState(null); // null = 还没读到/读失败（fail-closed，不拿旧卡的行冒充这张卡）
+      const [factsJournal, setFactsJournal] = react.useState([]);
+      const [factsRuns, setFactsRuns] = react.useState([]);
+      const [factsAgent, setFactsAgent] = react.useState(""); // "" = default 卡
+      const [factsEditId, setFactsEditId] = react.useState(null);
+      const [factsEditDraft, setFactsEditDraft] = react.useState("");
+      const [factsNew, setFactsNew] = react.useState("");
+      const [factsBusy, setFactsBusy] = react.useState(false); // apply 提交中
+      const [factsRunning, setFactsRunning] = react.useState(false); // 手动维护轮进行中
+      // apply 的一次性回执：{kind, text}。failures / dupsSkipped 必须如实摆出来——
+      // 把失败装成成功，人会以为删掉的事实在下一轮不会再来。
+      const [factsNotice, setFactsNotice] = react.useState(null);
+      // 手动维护轮的结局文案（profileDraft 的 kind 分支同款）：把「没启用」「没配模型」
+      // 「模型不配合」压成一句「失败」，用户就只能瞎猜该去修什么。
+      const [factsRunEnd, setFactsRunEnd] = react.useState(null);
+      // 总闸快照只管「立即更新」按钮的可用性：null = 还没读到（读失败不猜，按钮保持
+      // 可用，点下去由后端 409 disabled 兜底）；事实的展示与人工修正不受这个闸管。
+      const [factsFlag, setFactsFlag] = react.useState(null);
+      // 与 loadPreview 同一套序号守卫：先切 A 再切 B，A 的响应后到不能盖掉 B 的。
+      const factsSeq = react.useRef(0);
+      const loadFacts = react.useCallback(async (agentKey) => {
+        const seq = ++factsSeq.current;
+        try {
+          const res = await apiFetch(`/api/dsh-mneme/profile-facts?agent=${encodeURIComponent(agentKey)}`);
+          const body = await res.json().catch(() => null);
+          if (seq !== factsSeq.current) return;
+          if (res.ok && body && Array.isArray(body.facts)) {
+            setFactsCards(Array.isArray(body.cards) ? body.cards.filter((k) => typeof k === "string") : []);
+            setFactsRows(body.facts);
+            setFactsJournal(Array.isArray(body.journal) ? body.journal : []);
+            setFactsRuns(Array.isArray(body.runs) ? body.runs : []);
+          } else {
+            // 503 unavailable / 后端过旧：行清空走「读不到」文案；卡清单是全局的，
+            // 保留上次读到的，选择器不至于闪空。
+            setFactsRows(null);
+            setFactsJournal([]);
+            setFactsRuns([]);
+          }
+        } catch {
+          if (seq === factsSeq.current) {
+            setFactsRows(null);
+            setFactsJournal([]);
+            setFactsRuns([]);
+          }
+        }
+      }, []);
+      // 切卡先清行再取：上一张卡的事实留在屏上会被当成这张的（同 loadPreview 的
+      // 单一所有者纪律——这里没有直接写数据，都交给 loadFacts）。维护轮结局一并
+      // 清：A 卡跑完的「已更新 N 条」不该显示在 B 卡下（评审 P3：跨卡残留）。
+      react.useEffect(() => {
+        setFactsRows(null);
+        setFactsEditId(null);
+        setFactsEditDraft("");
+        setFactsNotice(null);
+        setFactsRunEnd(null);
+        loadFacts(factsAgent);
+      }, [factsAgent, loadFacts]);
+      // 总闸快照：features 由功能开关卡管写，这里只读不写、失败不猜。功能开关卡
+      // 即改即存并广播 mneme:features-changed——不监听的话，按提示开了「自动事实」
+      // 还得关面板重开才解禁（正是广播工作项要消灭的那类体验）。
+      react.useEffect(() => {
+        let cancelled = false;
+        const loadFlag = () => {
+          apiFetch("/api/dsh-mneme/features")
+            .then((res) => (res.ok ? res.json() : null))
+            .then((j) => {
+              if (cancelled) return;
+              const eff = (j && j.effective) || {};
+              setFactsFlag(eff.profileFactsEnabled === true);
+            })
+            .catch(() => {}); // 读失败保持 null：按钮不锁死，409 兜底
+        };
+        loadFlag();
+        window.addEventListener("mneme:features-changed", loadFlag);
+        return () => { cancelled = true; window.removeEventListener("mneme:features-changed", loadFlag); };
+      }, []);
+      // 人工修正统一入口：一张卡上的小批量 ops 一次 POST，回来重取 GET 让账本跟上，
+      // 并刷新注入预览（事实段是注入文本的一部分，预览别停在编辑前）。
+      async function applyFactsOps(ops) {
+        if (factsBusy) return null;
+        setFactsBusy(true);
+        try {
+          const res = await apiFetch("/api/dsh-mneme/profile-facts/apply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agent: factsAgent, ops })
+          });
+          const body = await res.json().catch(() => null);
+          if (!res.ok || !body || !Array.isArray(body.facts)) {
+            setFactsNotice({ kind: "fail", text: t("memory.settings.factsApplyError") });
+            announce(t("memory.settings.factsApplyError"));
+            return null;
+          }
+          const fails = Array.isArray(body.failures) ? body.failures : [];
+          const dups = Number(body.dupsSkipped) || 0;
+          let text = t("memory.settings.factsApplyDone");
+          let kind = "ok";
+          if (fails.length || dups > 0) {
+            const parts = [];
+            if (fails.length) parts.push(t("memory.settings.factsApplyFailures").replace("{n}", String(fails.length)));
+            if (dups > 0) parts.push(t("memory.settings.factsApplyDups").replace("{n}", String(dups)));
+            text = parts.join(" · ");
+            kind = fails.length ? "fail" : "dup";
+          }
+          setFactsNotice({ kind, text });
+          announce(text);
+          await loadFacts(factsAgent);
+          return body;
+        } catch {
+          setFactsNotice({ kind: "fail", text: t("memory.settings.factsApplyError") });
+          announce(t("memory.settings.factsApplyError"));
+          return null;
+        } finally {
+          setFactsBusy(false);
+        }
+      }
+      async function addFact() {
+        const content = factsNew.trim();
+        if (!content) return;
+        const body = await applyFactsOps([{ op: "add", content }]);
+        // 与既有活跃事实重复的 add 会被后端跳过并计数：输入框照常清空，跳了几条
+        // 由提示条说明，别让人以为没点上。
+        if (body) setFactsNew("");
+      }
+      function startFactEdit(f) {
+        setFactsEditId(f.id);
+        setFactsEditDraft(typeof f.content === "string" ? f.content : "");
+      }
+      function cancelFactEdit() {
+        setFactsEditId(null);
+        setFactsEditDraft("");
+      }
+      async function saveFactEdit() {
+        if (factsEditId === null) return;
+        const content = factsEditDraft.trim();
+        if (!content) return;
+        const editId = factsEditId;
+        const body = await applyFactsOps([{ op: "update", id: editId, content }]);
+        // 只有这条真的写进去了才收起编辑框；它自己的 op 失败时留着草稿，别让人重打。
+        if (body && !(Array.isArray(body.failures) && body.failures.some((x) => x && x.id === editId))) {
+          cancelFactEdit();
+        }
+      }
+      async function archiveFact(id) {
+        await applyFactsOps([{ op: "archive", id }]);
+      }
+      // 手动维护轮：结局按后端 error 码分派——no-route 重跑也一样、unparseable 等
+      // 可重试、disabled 是闸没开，三种话不能混。跑完重取 GET 并刷新预览。
+      async function runFacts() {
+        if (factsRunning || factsBusy) return;
+        setFactsRunning(true);
+        setFactsRunEnd(null);
+        try {
+          const res = await apiFetch("/api/dsh-mneme/profile-facts/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agent: factsAgent })
+          });
+          const body = await res.json().catch(() => null);
+          if (res.ok && body && typeof body.status === "string") {
+            const n = Number(body.opsApplied) || 0;
+            setFactsRunEnd(body.status === "noop" ? { kind: "noop" } : { kind: "ok", n });
+            announce(t(body.status === "noop" ? "memory.settings.factsRunNoop" : "memory.settings.factsRunOk").replace("{n}", String(n)));
+          } else {
+            const error = body && typeof body.error === "string" ? body.error : "";
+            const kind = error === "disabled" ? "disabled" : error === "no-route" ? "noroute" : "failed";
+            setFactsRunEnd({ kind });
+            announce(t(kind === "disabled" ? "memory.settings.factsRunDisabled"
+              : kind === "noroute" ? "memory.settings.factsRunNoRoute"
+              : "memory.settings.factsRunFailed"));
+          }
+          await loadFacts(factsAgent);
+        } catch {
+          setFactsRunEnd({ kind: "failed" });
+          announce(t("memory.settings.factsRunFailed"));
+        } finally {
+          setFactsRunning(false);
+        }
+      }
+      // 账本行的摘要截断：before/after 各 ~40 字符，长了加省略号——账本给「扫一眼」
+      // 用，整句塞进来会把最近变更撑成一堵墙。
+      const clipFactText = (s) => {
+        const v = String(s ?? "");
+        return v.length > 40 ? v.slice(0, 40) + "…" : v;
+      };
+      const factOpLabel = (op) => (op === "add" ? t("memory.settings.factsOpAdd")
+        : op === "update" ? t("memory.settings.factsOpUpdate")
+        : op === "archive" ? t("memory.settings.factsOpArchive")
+        : String(op ?? ""));
 
       useEffect(() => {
         let dead = false;
@@ -11427,7 +11408,7 @@ window.__ModuleLoader__.load({
       const buckets = Array.isArray(diary) ? diary : [];
       const name = String(editing || "");
       const mine = name && name !== "default"
-        ? buckets.filter((b) => diaryBucketName(b).toLowerCase() === name.toLowerCase())
+        ? buckets.filter((b) => diaryBucketName(b, draft).toLowerCase() === name.toLowerCase())
         : [];
       const entryTotal = mine.reduce((sum, b) => sum + (Number(b.count) || 0), 0);
       const latest = mine.map((b) => String(b.latest || "")).sort().pop() || "";
@@ -11445,6 +11426,7 @@ window.__ModuleLoader__.load({
         }, t("memory.diary.retry")));
 
       let body = null;
+      let about = null;
       if (phase === "loading") {
         body = h("div", { className: "mneme-diary-empty" }, t("memory.persona.loading"));
       } else if (phase === "unknown") {
@@ -11559,9 +11541,210 @@ window.__ModuleLoader__.load({
               }, t("memory.persona.previewRefresh")))));
 
         body = h("div", { className: "mneme-persona-body" }, cards, sheet);
+
+        // 画像与自动事实（原设置页「个性化」里的两张卡）。人格页本身就是竖向排布：
+        // 上面是这三张卡，这一块独占下方可滚动的区域，不与卡片选择器抢横向空间。
+        about = h("div", { className: "mneme-persona-about" },
+          h("div", { className: "mneme-persona-label" }, t("memory.persona.about")),
+          h("section", { className: "mneme-set-card" },
+            h("div", { className: "mneme-set-title" }, t("memory.settings.profile")),
+            h("div", { className: "mneme-set-desc" }, t("memory.settings.profileHint")),
+            h("textarea", {
+              className: "mneme-set-input mneme-set-input--area",
+              value: profile,
+              placeholder: t("memory.settings.profile"),
+              onChange: (e) => setProfile(e.target.value)
+            }),
+            h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+              h("button", { className: "mneme-btn", onClick: () => saveProfile() }, t("memory.settings.profileSave")),
+              saved && h("span", { className: "mneme-saved" }, t("memory.settings.profileSaved")),
+              profileError ? h("span", { className: "mneme-saved", style: { color: "var(--mneme-danger)" } },
+                t("memory.settings.profileSaveFailed") + " (" + profileError + ")") : null
+            ),
+            // 从记忆提取草稿（#497）。**放在这张卡上而不是「用户画像」卡**：画像那一栏是
+            // 用户自己手填的地方；这一段是从记忆里反推出来的「Agent 眼中的你」，属于可
+            // 沉淀的那一侧。它只出**副本**——不写 user_settings，也不碰手写画像（桉桉
+            // 2026-11-04 定的口径：只展示副本）。要改成手写画像只能自己复制再粘过去。
+            h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 12 } },
+              h("button", {
+                type: "button",
+                className: "mneme-btn",
+                disabled: profileExtracting,
+                onClick: extractProfileDraft
+              }, t("memory.settings.profileExtract")),
+              profileExtracting ? h("span", { className: "mneme-saved" }, t("memory.settings.profileExtracting")) : null
+            ),
+            h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractHint")),
+            profileDraft?.kind === "disabled" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractDisabled")) : null,
+            profileDraft?.kind === "empty" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractEmpty")) : null,
+            profileDraft?.kind === "noroute" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractNoRoute")) : null,
+            profileDraft?.kind === "failed" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.profileExtractFailed")) : null,
+            profileDraft?.kind === "draft" ? h("div", null,
+              h("div", { className: "mneme-featnumlabel" }, t("memory.settings.profileDraftTitle")),
+              h("div", { className: "mneme-set-desc" },
+                t("memory.settings.profileDraftRows") + ": " + profileDraft.rowsUsed
+                + (profileDraft.truncated ? " · " + t("memory.settings.profileDraftTruncated") : "")),
+              h("pre", { className: "mneme-set-input mneme-set-input--area", style: { whiteSpace: "pre-wrap", minHeight: 0 } }, profileDraft.text),
+              h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 6 } },
+                h("button", { type: "button", className: "mneme-btn", onClick: copyProfileDraft },
+                  profileDraftCopied ? t("memory.settings.profileDraftCopied") : t("memory.settings.profileDraftCopy")),
+                h("button", { type: "button", className: "mneme-btn", onClick: () => {
+                  profileCopyTicket.current += 1;
+                  setProfileDraft(null);
+                  setProfileDraftCopied(false);
+                  setProfileDraftCopyFailed(false);
+                } }, t("memory.settings.profileDraftDiscard")),
+                h("span", { className: "mneme-set-desc" }, t("memory.settings.profileDraftCopyHint")),
+                profileDraftCopyFailed ? h("span", { className: "mneme-set-desc", role: "alert", style: { color: "var(--mneme-danger)" } },
+                  t("memory.settings.profileDraftCopyFailed")) : null
+              )
+            ) : null
+          ),
+          // 自动事实（profile_facts）：dream 后自动维护的「Agent 眼中的你」，按会话身份
+          // 分卡。放在注入预览卡之后——预览里事实段的来源就在这里，看预览的人顺势就能
+          // 找到改它的地方；规则是用户立的另一域（另一张卡），不混。
+          h("section", { className: "mneme-set-card" },
+            h("div", { className: "mneme-set-title" }, t("memory.settings.factsTitle")),
+            h("div", { className: "mneme-set-desc" }, t("memory.settings.factsHint")),
+            // 卡选择器：default + 各身份卡，人格卡同款 chip 形态；切换即重取（effect 里清行）。
+            h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
+              h("button", {
+                type: "button",
+                className: "mneme-btn" + (factsAgent === "" ? " mneme-btn--active" : ""),
+                onClick: () => setFactsAgent("")
+              }, t("memory.settings.personaDefaultCard")),
+              // 选中卡即使这轮从清单里消失（事实全归档且无同 scope 记忆）也不让它从
+              // 选择器上失踪——正在编辑的人不能失去落点。
+              [...new Set([factsAgent, ...factsCards])].filter((k) => k && k.trim()).map((k) =>
+                h("button", {
+                  key: k,
+                  type: "button",
+                  className: "mneme-btn" + (factsAgent === k ? " mneme-btn--active" : ""),
+                  onClick: () => setFactsAgent(k)
+                }, k))
+            ),
+            factsRows === null
+              ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsUnavailable"))
+              : h("div", null,
+                  // 只列活跃行：归档的行留在账本里可追溯，不再回到清单上（恢复=重新添加）。
+                  factsRows.filter((f) => f && f.status === "active").length === 0
+                    ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsEmpty"))
+                    : null,
+                  factsRows.filter((f) => f && f.status === "active").map((f) =>
+                    factsEditId === f.id
+                      ? h("div", { key: f.id, className: "mneme-set-row" },
+                          h("input", {
+                            className: "mneme-set-input",
+                            style: { marginBottom: 0, flex: "1 1 auto" },
+                            value: factsEditDraft,
+                            autoFocus: true,
+                            onChange: (e) => setFactsEditDraft(e.target.value),
+                            onKeyDown: (e) => {
+                              if (e.key === "Enter") saveFactEdit();
+                              if (e.key === "Escape") cancelFactEdit();
+                            }
+                          }),
+                          h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: saveFactEdit },
+                            t("memory.settings.factsRowSave")),
+                          h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: cancelFactEdit },
+                            t("memory.settings.factsRowCancel"))
+                        )
+                      : h("div", { key: f.id, className: "mneme-set-row" },
+                          h("span", { className: "mneme-set-ruletext", style: { flex: "1 1 auto" } }, f.content),
+                          // ✎ 与 × 都走 mneme-set-del（悬停显形）：低频动作不常驻，
+                          // 与规则卡同一套视觉语言。
+                          h("button", {
+                            type: "button",
+                            className: "mneme-set-del",
+                            title: t("memory.settings.factsRowEdit"),
+                            "aria-label": t("memory.settings.factsRowEdit"),
+                            onClick: () => startFactEdit(f)
+                          }, "✎"),
+                          // 删除不二次确认：archive 可恢复（账本里留 before），打断比误删贵。
+                          h("button", {
+                            type: "button",
+                            className: "mneme-set-del",
+                            title: t("memory.settings.factsRowDelete"),
+                            "aria-label": t("memory.settings.factsRowDelete"),
+                            onClick: () => archiveFact(f.id)
+                          }, "×")
+                        )
+                  ),
+                  h("div", { style: { display: "flex", gap: 8, marginTop: 6 } },
+                    h("input", {
+                      className: "mneme-set-input",
+                      style: { marginBottom: 0 },
+                      value: factsNew,
+                      placeholder: t("memory.settings.factsAddPlaceholder"),
+                      onChange: (e) => setFactsNew(e.target.value),
+                      onKeyDown: (e) => { if (e.key === "Enter") addFact(); }
+                    }),
+                    h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: addFact },
+                      t("memory.settings.factsAdd"))
+                  ),
+                  // apply 回执：失败（role=alert）与跳重如实摆出来，全成才说成功。
+                  factsNotice
+                    ? h("div", {
+                        className: "mneme-set-desc",
+                        role: factsNotice.kind === "fail" ? "alert" : undefined,
+                        style: { color: factsNotice.kind === "fail" ? "var(--mneme-danger)" : undefined }
+                      }, factsNotice.text)
+                    : null,
+                  // 手动维护轮：总闸快照关着就禁用（features 只读不写）；快照没读到时
+                  // 不锁——点下去由后端 409 disabled 给出同款解释。
+                  h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 12 } },
+                    h("button", {
+                      type: "button",
+                      className: "mneme-btn",
+                      disabled: factsRunning || factsFlag === false,
+                      onClick: runFacts
+                    }, factsRunning ? t("memory.settings.factsRunning") : t("memory.settings.factsRun")),
+                    factsRunning ? h("span", { className: "mneme-saved" }, t("memory.settings.factsRunning")) : null
+                  ),
+                  factsFlag === false ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsGateOff")) : null,
+                  // 五种结局各一句话（profileDraft 的 kind 分支同款）。
+                  factsRunEnd?.kind === "ok" ? h("div", { className: "mneme-set-desc" },
+                    t("memory.settings.factsRunOk").replace("{n}", String(factsRunEnd.n))) : null,
+                  factsRunEnd?.kind === "noop" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunNoop")) : null,
+                  factsRunEnd?.kind === "disabled" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunDisabled")) : null,
+                  factsRunEnd?.kind === "noroute" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunNoRoute")) : null,
+                  factsRunEnd?.kind === "failed" ? h("div", { className: "mneme-set-desc", role: "alert", style: { color: "var(--mneme-danger)" } },
+                    t("memory.settings.factsRunFailed")) : null,
+                  // 最近变更（账本尾 8 条，后端按新→旧给）：时间 + op + 内容变化 + actor 徽章。
+                  h("div", { className: "mneme-featnumlabel", style: { marginTop: 12 } }, t("memory.settings.factsJournalTitle")),
+                  factsJournal.length === 0 ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsJournalEmpty")) : null,
+                  factsJournal.slice(0, 8).map((j) =>
+                    h("div", { key: j.id, className: "mneme-set-row", style: { flexWrap: "wrap", gap: 6 } },
+                      h("span", { className: "mneme-set-desc", title: j.at }, formatRelativeTime(j.at, t)),
+                      h("span", { className: "mneme-set-ruletext" }, factOpLabel(j.op)),
+                      h("span", { className: "mneme-set-desc", style: { flex: "1 1 160px" } },
+                        // add 只展示新值；archive 只展示旧值（op 标签已经说了归档）；
+                        // update 才有真正的 before→after。
+                        j.op === "add" ? "+ " + clipFactText(j.after)
+                          : j.op === "archive" ? clipFactText(j.before)
+                          : clipFactText(j.before) + " → " + clipFactText(j.after)),
+                      h("span", { className: "mneme-badge " + (j.actor === "manual" ? "mneme-badge--scope" : "mneme-badge--default") },
+                        t(j.actor === "manual" ? "memory.settings.factsActorManual" : "memory.settings.factsActorAuto"))
+                    )
+                  ),
+                  // 最近一轮维护（回执尾 1 条，后端按新→旧给）：状态 + 输入/应用计数。
+                  factsRuns[0]
+                    ? h("div", { className: "mneme-set-desc" },
+                        t("memory.settings.factsRunLast")
+                        + (factsRuns[0].status === "ok" ? t("memory.settings.factsRunStatusOk")
+                          : factsRuns[0].status === "noop" ? t("memory.settings.factsRunStatusNoop")
+                          : factsRuns[0].status === "failed" ? t("memory.settings.factsRunStatusFailed")
+                          : String(factsRuns[0].status ?? ""))
+                        + " · " + t("memory.settings.factsRunCounts")
+                          .replace("{input}", String(Number(factsRuns[0].input_count) || 0))
+                          .replace("{ops}", String(Number(factsRuns[0].ops_applied) || 0)))
+                    : null
+                )
+          ),
+        );
       }
 
-      return h("div", { className: "mneme-persona" }, head, body);
+      return h("div", { className: "mneme-persona" }, head, body, about);
     }
 
     // 右栏 tab 的座位注册（仅在 diaryEnabled 开启后被调用）。与 M.O. 那套同样的三条纪律：
@@ -12598,25 +12781,6 @@ window.__ModuleLoader__.load({
           name: "main",
           key: "dsh-mneme-kb"
         }, () => h(KbMainPanel, { t }));
-        // 日记本第四个座位：桉桉要的是**左侧**入口（「在左侧侧边栏开一个 ta 的日记」），
-        // 不是右栏页签。所以这里与上面三个同形：panellist 出图标、main 出中列整页，
-        // id 与 key 逐字同为 "dsh-mneme-diary"。
-        //
-        // 与右栏那套（registerDiarySeats）并存而不是替代：右栏 pane 按会话的项目定位，
-        // 这个面板按 agent 定位、读的是跨桶清单。两套共用同一个 DiaryMark 与 API 契约。
-        //
-        // 座位**无条件注册**，开关只管内容层——diaryEnabled 关着时面板自己渲染
-        // 「去哪儿打开」的空态，而不是让入口凭空消失（#607 的教训）。
-        const disposeDiaryGlyph = ctx.slots.register({
-          name: "sidebar.panellist",
-          id: "dsh-mneme-diary",
-          order: 63,
-          label: () => t("memory.diary.title")
-        }, (props) => h(DiaryLibraryGlyph, { size: props && props.size }));
-        const disposeDiaryMain = ctx.slots.register({
-          name: "main",
-          key: "dsh-mneme-diary"
-        }, () => h(DiaryLibraryPanel, { t }));
         return () => {
           disposeGlyph();
           disposeMain();
@@ -12624,8 +12788,6 @@ window.__ModuleLoader__.load({
           disposeWikiMain();
           disposeKbGlyph();
           disposeKbMain();
-          disposeDiaryGlyph();
-          disposeDiaryMain();
           // 座位被撤（宿主折叠该槽 / 换宿主形态）时把回落装回去：两条路径都
           // 只靠各自的 inject 触发，谁不动谁就永远停在「没有入口」的状态。
           mountFooterSeat();
