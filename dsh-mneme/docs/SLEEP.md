@@ -25,9 +25,10 @@ flowchart TD
         P1 --> P2[Phase 2: archival_demotion]
         P2 --> P3[Phase 3: pattern_discovery]
         P3 --> P4[Phase 4: relation_completion]
+        P4 --> P5[Phase 5: affective_attribution]
     end
     
-    P4 -->|独立 try/catch 隔离| Receipt[buildReceipt]
+    P5 -->|独立 try/catch 隔离| Receipt[buildReceipt]
     Receipt -->|saveDreamRun run_type='sleep'| Audit[(dream_runs)]
     
     User -->|活动触发| Abort[AbortController.abort]
@@ -51,12 +52,15 @@ flowchart TD
 | `sleepPatternMinMemories` | `100` | 模式发现阶段扫描的最近记忆条数下限 |
 | `sleepPatternLookbackDays` | `30` | 模式发现回溯的时间窗口（天） |
 | `sleepMaxPatternPerRun` | `3` | 单次运行最多创建的模式数量上限 |
+| `sleepAffectiveEnabled` | `false` | 情感归因相位（#619，opt-in）：情境情绪写成 `affective_context` 关系，跨多次独立会话的稳定倾向才铸成 pattern。是 `sleepModeEnabled` 的子相，父开关关着整个 sleep 不跑 |
+| `sleepAffectiveTraitMinSessions` | `3` | 判「稳定倾向」所需的**独立会话**数（2–10）。下界 2 是故意的：N=1 就是单次场合，正是必须禁止升成特质的那个情形 |
+| `sleepAffectiveMaxRelationsPerRun` | `10` | 单轮最多写多少条 `affective_context` 关系（0–50，0 = 一条不写） |
 | `sleepProvider` | `''` | 睡眠模式专用 LLM Provider（留空则复用默认） |
 | `sleepModel` | `''` | 睡眠模式专用 LLM Model（留空则复用默认） |
 | `sleepReasoningEffort` | （未配置） | 睡眠 LLM 推理强度透传：`off` / `low` / `medium` / `high` / `none`。未配置 = 自动取模型支持的最低档（#135：避免思考模型用自带默认档烧光预算返回空体）；显式 `none` = 不传该字段，使用模型默认（与 `dreamReasoningEffort` 语义一致） |
 | `sleepMaxTokens` | `8192` | 冲突消解与模式发现阶段的 LLM 输出预算上限（token，#257：原硬编码 2048——`sleepActionSet: full` 实测 24 对需约 7000，截断即整轮裁决失败）。流式计费按实际用量，调大不增加成本 |
 
-## 四阶段详解
+## 五阶段详解
 每个阶段独立包裹 `try/catch`，任一阶段失败仅跳过该阶段，不阻塞后续流程。四个相位读取的记忆行池都先剔掉 `source='imported'` 的外来行（`src/dream/sleep.js`）——外来行不经本方蒸馏与召回，时间分层与冲突判据在它身上系统性失真，我方对它的原文和归档面没有处置权，所以下文「输入」一栏里的「全量」一律读作「本方活跃行」，契约见 [SHARE.md](SHARE.md)。
 
 ### 1. `conflict_resolution`（冲突消解）
@@ -113,6 +117,20 @@ flowchart TD
 - **输出**：新增关系边列表。
 - **验收**：关系推断符合领域常识；不引入循环依赖；图谱连通性提升。
 
+### 5. `affective_attribution`（情感归因，#619）
+- **目标**：把「谁在什么场合因为什么而有情绪」写成图上的一条边，并且**不**让一次性的情绪升格成「他就是这种人」。
+- **输入**：实体列表（`listEntities`，至少 2 个），扫描池口径与模式发现一致（`sleepPatternMinMemories`、剔除 document/summary/pattern、剔除 imported、剔暂停项）；`sleepAffectiveTraitMinSessions`、`sleepAffectiveMaxRelationsPerRun`。
+- **算法**：
+  1. 开关 `sleepAffectiveEnabled !== true` → `skipped: disabled`；无 LLM 路由 → `skipped: no llm route`；实体不足 2 个 → `skipped: too few entities`。
+  2. LLM 读实体名清单 + 记忆列表，每条候选输出 `person` / `target` / `emotion` / `attribution`（`occasion` 或 `trait`）/ `evidence`（记忆 id）/ `why`。
+  3. **护栏在代码里，不在 prompt 里**：`person`/`target` 必须解析到已存在的实体（否则丢进 `dropped: unknown entity`）；`evidence` 必须是本轮扫描池里的真实 id（否则 `no real evidence`）；`emotion` 非空。
+  4. **升特质要过 provenance**：模型说 `trait`，就用 `service.provenanceFor(memoryId)` 收集这批 evidence 覆盖的 `session_id`，去重后数量 `< sleepAffectiveTraitMinSessions` 的一律**降级为 `occasion`**（记 `downgradedFrom: "trait"`，不丢弃）。被降级的条数就是这张探针要抓的误归因数——静默丢掉它就等于把测到的东西藏起来。
+  5. `occasion` 直接落边：`saveRelation({relation_type: "affective_context", source: "llm", memory_id: evidence[0], metadata: {emotion, attribution, why, evidence, sessionCount, model, runId}})`，单轮最多 `sleepAffectiveMaxRelationsPerRun` 条（超出的进 `dropped: relation cap`）。
+  6. `trait` 走**标准决策通道**——铸成 `type=pattern` 记忆，经 `validateDecisions`（`allowedActions: ["create"]`、`maxCreatePerRun` 取 `sleepMaxPatternPerRun`）与 `applyDecisions`（`mintSource: "sleep"`，带 #512 铸造台账）。不新增写路径，因此继承所有既有上限与审计。
+- **输出**：`{status, scanned, relations, applied, failures, conflicts, traits, downgraded, dropped}`。`downgraded` 与 `dropped` 必须都是可见数字。
+- **验收**：一次场合的情绪只能落 `affective_context` 边、不能铸 pattern；同一类型跨 N 个独立会话才允许铸 pattern；判为 `related_to` 的关系计数在本相位后不增长。
+- **为什么不能接在 `relation_completion` 里**：那一相只扫**孤立**实体（`getRelations(e.id).length === 0`），且 `inferRelationType` 三种类型硬编码、末行 `return "related_to"` 兜底——把情感塞进去只会得到一批 `related_to`，图上看不出情感轴。
+
 ## 分层压缩策略表
 | 记忆层级 | 判定条件 (`last_accessed_at`) | 处理策略 | 存储形态 |
 |:---|:---|:---|:---|
@@ -158,7 +176,7 @@ flowchart TD
 2. **`minRefTimeMs` 防误降级**：调用 `demoteToSummary` 时必须传入快照时刻 `{minRefTimeMs: archiveCut}`。否则在 Sleep Run 执行期间被用户 `touch` 的记忆会因时间窗口漂移被错误降级。
 3. **证据强过滤**：Pattern Discovery 阶段 LLM 返回的 `evidence` 必须与 DB 真实 ID 列表求交集。未通过 `intersect` 校验的证据一律丢弃，严防幻觉伪造关联。
 4. **严格串行化**：所有 Sleep Run **必须**走 `service.enqueue`。禁止直接调用异步函数启动，确保与 `autoDream` 绝对不重叠，避免写入锁冲突。
-5. **Fail-Safe 阶段隔离**：四阶段必须各自独立 `try/catch`。LLM 服务抖动或网络异常时，仅跳过当前阶段（如跳过 Pattern 发现），后续阶段（如 Demotion、Relation）必须继续执行并记录 Receipt。
+5. **Fail-Safe 阶段隔离**：各阶段必须各自独立 `try/catch`。LLM 服务抖动或网络异常时，仅跳过当前阶段（如跳过 Pattern 发现），后续阶段（如 Demotion、Relation、Affective）必须继续执行并记录 Receipt。
 6. **无 LLM 降级路由**：当 `resolveSleepRoute` 返回 `undefined`（如 Provider 未配置或模型不可用）时，系统应自动跳过所有依赖 LLM 的阶段，但 `archival_demotion`（纯规则）仍需照常执行，保障基础压缩能力不丢失。
 
 ## 测试清单
@@ -167,6 +185,7 @@ flowchart TD
 - [ ] **阶段隔离**：Mock LLM 500 错误，验证仅对应阶段跳过，Receipt 仍生成且 `run_type='sleep'`。
 - [ ] **降级策略**：构造不同 `last_accessed_at` 的记忆，验证 `minRefTimeMs` 防误降级逻辑及分层归档正确性。
 - [ ] **模式发现**：注入含虚假 ID 的 LLM 响应，验证 `intersect` 过滤生效且创建数 `<= sleepMaxPatternPerRun`。
+- [ ] **情感归因（#619）**：单会话证据判 `trait` → 必须降级为 `occasion` 且 `downgraded` 计数 +1；跨 N 个独立会话才铸 pattern；`related_to` 计数在本相位后不增长；未知实体/伪造 evidence 进 `dropped` 而不是静默消失。
 - [ ] **迁移幂等**：重复执行迁移脚本，验证无报错、无重复列/数据。
 - [ ] **队列互斥**：并发触发 `autoDream` 与 Sleep，验证 `service.enqueue` 串行执行无重叠。
 

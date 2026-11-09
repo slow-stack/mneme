@@ -818,3 +818,134 @@ test("issue#536 review ⑤: a batch that throws does not take the rest of the ru
   assert.equal(result.phases.conflicts.batches, 2, "抛错的批次不吞掉轮次的形状");
   store.close();
 });
+
+// ------------------------------------------------------------ affective (#619)
+
+// Only the affective phase gets a real answer; every other LLM phase says "[]"
+// so this file keeps testing one thing at a time.
+function affectiveCtx(payload) {
+  return {
+    logger: { warn: () => {}, info: () => {} },
+    agentDefaultModel: { currentSelection: () => ({ provider: "mock", model: "affective-model" }) },
+    llm: {
+      async *stream(options) {
+        const reply = options.purpose === "sleep-affective"
+          ? JSON.stringify(payload)
+          : "[]";
+        yield { type: "text-delta", index: 0, text: reply };
+        yield { type: "finish", reason: { kind: "stop" } };
+      }
+    }
+  };
+}
+
+function affectiveConfig(overrides = {}) {
+  return baseConfig({ sleepAffectiveEnabled: true, sleepPatternMinMemories: 10, ...overrides });
+}
+
+function linkSession(service, memoryId, sessionId) {
+  service.saveMemoryProvenance({ memoryId, sessionId, seqStart: 1, seqEnd: 2, createdAt: new Date().toISOString() });
+}
+
+test("sleep: affective phase stays off unless explicitly enabled", async () => {
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  makeMemory(service, "答辩前一晚", "答辩前一晚他很焦虑");
+  const ctx = affectiveCtx([]);
+  const result = await runSleep(ctx, service, baseConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(result.phases.affective.status, "skipped");
+  assert.equal(result.phases.affective.reason, "disabled");
+  store.close();
+});
+
+test("sleep: a one-session emotion lands as affective_context, and a trait claim is downgraded", async () => {
+  // 这条是整个 #619 的主 claim：模型说这是「稳定特质」，但证据只覆盖一个会话
+  // ⇒ 必须降级成场合边，绝不能铸出「他是焦虑的人」。
+  const { service, store } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const target = service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  linkSession(service, mem.id, "session-A");
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "trait", evidence: [mem.id], why: "提到答辩就焦虑" }
+  ]);
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  const phase = result.phases.affective;
+  assert.equal(phase.status, "ok");
+  assert.equal(phase.downgraded, 1, "trait claim on one session must be counted as downgraded");
+  assert.equal(phase.traits, 0, "no trait pattern minted");
+  assert.equal(service.all().filter((m) => m.type === "pattern").length, 0, "nothing minted as a trait");
+  const rels = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  assert.equal(rels.length, 1, "emotion landed as a relation instead");
+  assert.equal(rels[0].to_entity, target.id);
+  assert.equal(rels[0].source, "llm");
+  assert.equal(rels[0].metadata.attribution, "occasion");
+  assert.equal(rels[0].metadata.downgradedFrom, "trait");
+  store.close();
+});
+
+test("sleep: an emotion backed by enough independent sessions mints a trait pattern", async () => {
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const ids = [];
+  for (const session of ["s1", "s2", "s3"]) {
+    const mem = makeMemory(service, `答辩-${session}`, `第 ${session} 次答辩前都失眠`);
+    linkSession(service, mem.id, session);
+    ids.push(mem.id);
+  }
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "trait", evidence: ids, why: "三次独立答辩前都这样" }
+  ]);
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  const phase = result.phases.affective;
+  assert.equal(phase.downgraded, 0, "three independent sessions is a real trait");
+  assert.equal(phase.traits, 1);
+  assert.equal(phase.applied, 1, "trait went through applyDecisions");
+  const patterns = service.all().filter((m) => m.type === "pattern");
+  assert.equal(patterns.length, 1, "one trait pattern minted");
+  assert.match(patterns[0].title, /稳定倾向/);
+  assert.match(patterns[0].content, /3 个相互独立/);
+  store.close();
+});
+
+test("sleep: unknown entities and fabricated evidence are reported in dropped, not silently discarded", async () => {
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  linkSession(service, mem.id, "session-A");
+  const ctx = affectiveCtx([
+    { person: "不存在的人", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [mem.id] },
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: ["fake-zzz"] },
+    { person: "桉桉", target: "答辩", emotion: "", attribution: "occasion", evidence: [mem.id] }
+  ]);
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  const phase = result.phases.affective;
+  assert.equal(phase.relations, 0, "nothing landed");
+  assert.equal(phase.dropped.length, 3, "every rejection is accounted for");
+  const reasons = phase.dropped.map((d) => d.reason).sort();
+  assert.deepEqual(reasons, ["no emotion", "no real evidence", "unknown entity"]);
+  store.close();
+});
+
+test("sleep: the affective phase never adds a related_to edge", async () => {
+  // 变异自证的反面：如果情感边走的是 related_to（旧兜底行为），这条会挂。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  linkSession(service, mem.id, "session-A");
+  const before = service.all().map((m) => m.id).length;
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [mem.id] }
+  ]);
+  await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  const person = service.findEntityByName("桉桉");
+  const rels = service.getRelations(person.id);
+  assert.equal(rels.filter((r) => r.relation_type === "related_to").length, 0, "no related_to smuggled in");
+  assert.equal(rels.filter((r) => r.relation_type === "affective_context").length, 1);
+  assert.equal(service.all().length, before, "no memory minted for a single-occasion emotion");
+  store.close();
+});

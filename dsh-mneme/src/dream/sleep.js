@@ -13,6 +13,9 @@ import { STR, langOf } from "../lang.js";
 //      type=pattern entries carrying evidence id references.
 //   4. relation completion — orphan entities (zero relations) get implied
 //      relations completed from memory co-occurrence.
+//   5. affective attribution (v0.13.0, #619) — opt-in. Occasion-bound emotions
+//      become affective_context relations; only emotions recurring across
+//      enough independent sessions are minted as type=pattern traits.
 // Each phase is wrapped so one failure never aborts the others, and a missing
 // LLM route / semantic embedder only skips the phases that need it. A run is
 // abortable via an AbortController signal (user activity) — phases check the
@@ -1089,6 +1092,208 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
 }
 
 /**
+ * Phase 5 — affective attribution (issue #619). The LLM reads recent memories and
+ * names emotions, but the shape of what it may write is fixed here, not by the
+ * prompt: an emotion tied to **one occasion** becomes an `affective_context`
+ * relation carrying the attribution on the edge; only an emotion that recurs
+ * across sleepAffectiveTraitMinSessions **independent sessions** may be minted as
+ * a standing trait (a type=pattern memory, through the same
+ * validateDecisions/applyDecisions channel every other mint uses).
+ *
+ * The whole point is the guardrail, so it lives in code and not in the prompt:
+ *  - the model may *claim* trait, but the claim only survives if provenance shows
+ *    enough distinct sessions. A single session is downgraded to occasion, never
+ *    dropped silently — dropped claims are counted and reported.
+ *  - person/target must resolve to entities that already exist; an emotion about
+ *    an unknown name is not evidence, it is a hallucination.
+ *  - evidence ids must be inside the scanned pool (same rule phasePatterns uses).
+ * Off by default (sleepAffectiveEnabled) and a child of sleepModeEnabled: no
+ * route, no entities, or the flag off all mean "skip", never "run anyway".
+ */
+async function phaseAffective(ctx, service, config, logger, runId, signal = null) {
+  if (config.sleepAffectiveEnabled !== true) return { status: "skipped", reason: "disabled" };
+  const route = resolveSleepRoute(ctx, config, logger);
+  if (!route) return { status: "skipped", reason: "no llm route" };
+  const entities = service.listEntities({ limit: 1000 }) ?? [];
+  if (entities.length < 2) return { status: "skipped", reason: "too few entities" };
+  const limit = config.sleepPatternMinMemories ?? 100;
+  const poolQuery = {
+    limit: Math.max(200, limit),
+    includeForgotten: false,
+    excludeTypes: ["document", "summary", "pattern"],
+    excludeImported: true
+  };
+  const gather = (query) => withoutPaused(service, service.list(query));
+  let pool = gather(poolQuery);
+  if (pool.length < limit) pool = gather({ ...poolQuery, limit: null });
+  const memories = [...pool].sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))).slice(0, limit);
+  if (memories.length === 0) return { status: "skipped", reason: "no memories" };
+  const scannedIds = new Set(memories.map((m) => m.id));
+  const byName = new Map();
+  for (const e of entities) byName.set(e.name.toLowerCase(), e);
+  const traitMinSessions = config.sleepAffectiveTraitMinSessions ?? 3;
+  const maxRelations = config.sleepAffectiveMaxRelationsPerRun ?? 10;
+  const maxTraits = config.sleepMaxPatternPerRun ?? 3;
+  const language = langOf(config).startsWith("zh") ? "zh" : "en";
+  const entityNames = entities.map((e) => e.name).slice(0, 200).join(", ");
+  const listText = memories.map((m) => `id=${m.id} | time=${m.updated_at ?? ""} | type=${m.type} | title=${m.title} | content=${m.content}`).join("\n");
+  let streamFailure;
+  const runAffective = (tokens) => auditedSleepLlm(
+    ctx, service, config, logger,
+    {
+      triggerSource: "sleep",
+      operationType: "sleep_affective",
+      modelId: `${route.provider}:${route.model}`,
+      relatedMemoryIds: memories.map((m) => m.id),
+      streamError: () => streamFailure,
+      auditError: (out) => (parseJsonArray(out) ? null : "no json array in llm output"),
+      metadataFrom: (out) => (parseJsonArray(out) ? null : parseFailureMeta(out))
+    },
+    (reportUsage) => streamText(ctx, {
+      provider: route.provider,
+      model: route.model,
+      purpose: "sleep-affective",
+      maxTokens: tokens,
+      messages: [
+        {
+          role: "system",
+          content: [{ type: "text", text: STR.prompts.affective[language].replace("N", String(traitMinSessions)) }],
+          source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" }
+        },
+        { role: "user", content: [{ type: "text", text: fenceListBody(language, `${entityNames}\n---\n${listText}`) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
+      ]
+    }, reportUsage, (reason) => { streamFailure = describeStreamFailure(reason); })
+  );
+  const text = await withMaxTokensFallback(ctx, config.sleepMaxTokens ?? 2048, runAffective, () => streamFailure);
+  if (text === undefined) return { status: "failed", error: "llm failed" };
+  const items = parseJsonArray(text) ?? [];
+  if (items.length === 0) return { status: "skipped", reason: "no attributions found" };
+  const relations = [];
+  const traits = [];
+  const dropped = [];
+  let downgradedCount = 0;
+  const sessionCache = new Map();
+  const sessionsFor = (memoryIds) => {
+    const out = new Set();
+    for (const id of memoryIds) {
+      if (!sessionCache.has(id)) {
+        let rows = [];
+        try {
+          rows = service.provenanceFor?.(id) ?? [];
+        } catch {
+          rows = [];
+        }
+        sessionCache.set(id, rows.map((r) => r.session_id).filter((s) => typeof s === "string" && s));
+      }
+      for (const s of sessionCache.get(id)) out.add(s);
+    }
+    return out;
+  };
+  for (const item of items) {
+    if (signal?.aborted) break;
+    if (!item || typeof item !== "object") continue;
+    const person = byName.get(String(item.person ?? "").toLowerCase());
+    const target = byName.get(String(item.target ?? "").toLowerCase());
+    if (!person || !target || person.id === target.id) {
+      dropped.push({ reason: "unknown entity", person: item.person, target: item.target });
+      continue;
+    }
+    const evidence = (Array.isArray(item.evidence) ? item.evidence : []).filter((id) => scannedIds.has(id));
+    if (evidence.length === 0) {
+      dropped.push({ reason: "no real evidence", person: item.person, target: item.target });
+      continue;
+    }
+    const emotion = String(item.emotion ?? "").trim();
+    if (!emotion) {
+      dropped.push({ reason: "no emotion", person: item.person, target: item.target });
+      continue;
+    }
+    // The guardrail: a claimed trait is checked against provenance, and a claim
+    // that does not survive is demoted — not discarded. Demoted claims are the
+    // interesting number: they are exactly the mis-attributions the probe hunts.
+    const claimedTrait = String(item.attribution ?? "").toLowerCase() === "trait";
+    const sessions = sessionsFor(evidence);
+    const downgraded = claimedTrait && sessions.size < traitMinSessions;
+    const attribution = claimedTrait && !downgraded ? "trait" : "occasion";
+    const record = {
+      person: person.name,
+      target: target.name,
+      emotion,
+      attribution,
+      evidence,
+      sessionCount: sessions.size,
+      why: String(item.why ?? "").slice(0, 200),
+      ...(downgraded ? { downgradedFrom: "trait" } : {})
+    };
+    if (downgraded) downgradedCount += 1;
+    if (attribution === "trait") {
+      traits.push(record);
+      continue;
+    }
+    if (relations.length >= maxRelations) {
+      dropped.push({ reason: "relation cap", person: person.name, target: target.name });
+      continue;
+    }
+    try {
+      const saved = service.saveRelation({
+        from_entity: person.id,
+        to_entity: target.id,
+        relation_type: "affective_context",
+        memory_id: evidence[0],
+        source: "llm",
+        metadata: {
+          emotion,
+          attribution,
+          why: record.why,
+          evidence,
+          sessionCount: sessions.size,
+          ...(record.downgradedFrom ? { downgradedFrom: record.downgradedFrom } : {}),
+          model: `${route.provider}:${route.model}`,
+          runId
+        }
+      });
+      relations.push({ id: saved?.id, from: person.name, to: target.name, emotion, attribution, ...(record.downgradedFrom ? { downgradedFrom: record.downgradedFrom } : {}) });
+    } catch (error) {
+      logger?.warn?.(`dsh-mneme sleep: affective relation ${person.name}/${target.name} failed: ${String(error)}`);
+    }
+  }
+  // Traits ride the standard decision channel so they inherit every existing cap
+  // and the #512 mint ledger. No new write path is introduced for them.
+  let applied = 0;
+  let failures = [];
+  let conflicts = [];
+  if (traits.length > 0) {
+    const decisions = traits.slice(0, maxTraits).map((t) => ({
+      action: "create",
+      type: "pattern",
+      title: `稳定倾向：${t.person} 在多次独立场合 ${t.emotion}`,
+      content: `${t.person} 在 ${t.sessionCount} 个相互独立的场合（${t.evidence.length} 条记忆）中反复表现出「${t.emotion}」，对象是 ${t.target}。${t.why}`,
+      importance: 3,
+      evidence: t.evidence
+    }));
+    const snapshot = new Map();
+    const { ok } = validateDecisions(decisions, snapshot, { maxCreatePerRun: maxTraits, allowedActions: ["create"] });
+    if (ok) {
+      const result = applyDecisions(decisions, service, logger, snapshot, { ...config, mintSource: "sleep", runId });
+      applied = result.applied;
+      failures = result.failures;
+      conflicts = result.conflicts;
+    }
+  }
+  return {
+    status: relations.length + applied > 0 ? "ok" : "noop",
+    scanned: memories.length,
+    relations: relations.length,
+    applied,
+    failures,
+    conflicts,
+    traits: traits.length,
+    downgraded: downgradedCount,
+    dropped
+  };
+}
+
+/**
  * Phase 4 — entity relation completion. Detects orphan entities (zero
  * relations) and completes implied relations from memory co-occurrence:
  * entities named in the same memory → related_to; container kinds
@@ -1190,6 +1395,9 @@ export async function runSleep(ctx, service, config, logger, semantic = null, si
   await attempt("demotion", () => phaseDemotion(service, config, logger, runId, signal));
   await attempt("patterns", () => phasePatterns(ctx, service, config, logger, runId, signal));
   await attempt("relations", () => phaseRelations(service, config, logger, runId, signal));
+  // #619：情感归因排在 relations 之后——它要读实体与 provenance，先让孤立实体的
+  // 结构边补完，再往上挂情绪轴；两相写的是不同 relation_type，不抢同一批对。
+  await attempt("affective", () => phaseAffective(ctx, service, config, logger, runId, signal));
 
   const status = deriveStatus(phases);
   const route = resolveSleepRoute(ctx, config, logger);

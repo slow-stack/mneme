@@ -1,5 +1,9 @@
 const VALID_TYPES = new Set(["person", "project", "concept", "technology", "organization"]);
-const VALID_RELATIONS = new Set(["uses", "depends_on", "part_of", "related_to"]);
+// #619：affective_context 是「人 ↔ 当时那件事」的情绪关联，与其余四种
+// 结构关系（uses / depends_on / part_of / related_to）不同轴。加进白名单不是
+// 装饰：白名单外的类型会被 sanitizeRelationType 拒收，模型抽出来的情感边会
+// 一条都落不了库，而库面上看不出任何异常。
+const VALID_RELATIONS = new Set(["uses", "depends_on", "part_of", "related_to", "affective_context"]);
 const MAX_MEMORY_CHARS = 4000;
 
 function buildSystemPrompt(config) {
@@ -19,12 +23,14 @@ RULES:
     {"name": "string", "type": "person|project|concept|technology|organization", "attrs": [{"key": "string", "value": "string", "confidence": 0.9}]}
   ],
   "relations": [
-    {"from": "entityName", "to": "entityName", "type": "uses|depends_on|part_of|related_to"}
+    {"from": "entityName", "to": "entityName", "type": "uses|depends_on|part_of|related_to|affective_context"}
   ]
 }
 
 CONSTRAINTS:
 - "type" must be one of: person, project, concept, technology, organization. If unsure, use "concept".
+- Relation "type" must be one of: uses, depends_on, part_of, related_to, affective_context. If unsure, use related_to.
+- affective_context is for an emotional state tied to a specific occasion (a person felt X on that day, about that thing). Never use it to declare a lasting trait of a person.
 - "relations" from/to must reference entity names from the "entities" list.
 - Maximum ${maxEntities} entities. Maximum ${maxAttrs} attributes per entity. Truncate if exceeded.
 - Only include entity-related attributes. Ignore irrelevant miscellaneous details.
@@ -72,12 +78,19 @@ function sanitizeConfidence(conf) {
   return Math.min(1, Math.max(0, num));
 }
 
+// #619：未知关系类型**不再静默降级成 related_to**。旧行为是「写入成功、不报错、
+// 图上没有那条轴」——最难排查的一种失败：模型抽对了，库里却读不出它抽的是情感边
+// 还是普通关联。现在返回 null，由调用方丢弃并 logger.warn 带原始类型名。
+// 注意这与 sanitizeType（未知实体类型 → concept）刻意不同：实体类型是可容错的
+// 粗分类，关系类型是语义轴本身，猜错一条边就是给图加错误事实。
 function sanitizeRelationType(type) {
-  if (VALID_RELATIONS.has(type)) return type;
-  return "related_to";
+  if (typeof type !== "string") return null;
+  const normalized = type.trim();
+  if (VALID_RELATIONS.has(normalized)) return normalized;
+  return null;
 }
 
-function sanitizeExtractedData(data, config) {
+function sanitizeExtractedData(data, config, logger = null) {
   const maxEntities = config.entityExtractionMaxEntities ?? 10;
   const maxAttrs = config.entityExtractionMaxAttrs ?? 20;
   
@@ -115,19 +128,31 @@ function sanitizeExtractedData(data, config) {
   }
   
   const relations = [];
+  const rejectedRelationTypes = [];
   if (Array.isArray(data.relations)) {
     for (const rawRel of data.relations) {
       if (!rawRel || typeof rawRel.from !== "string" || typeof rawRel.to !== "string") continue;
       if (!seenNames.has(rawRel.from) || !seenNames.has(rawRel.to)) continue;
+      const relationType = sanitizeRelationType(rawRel.type);
+      if (!relationType) {
+        // #619：不再降级成 related_to——记下原始类型名，交给调用方 warn。
+        rejectedRelationTypes.push(String(rawRel.type));
+        continue;
+      }
       relations.push({
         from: rawRel.from,
         to: rawRel.to,
-        type: sanitizeRelationType(rawRel.type)
+        type: relationType
       });
     }
   }
-  
-  return { entities, relations };
+  if (rejectedRelationTypes.length > 0) {
+    logger?.warn?.(
+      `[extractor] dropped ${rejectedRelationTypes.length} relation(s) with unknown type(s): ${[...new Set(rejectedRelationTypes)].join(", ")}`
+    );
+  }
+
+  return { entities, relations, rejectedRelationTypes };
 }
 
 async function resolveEntity(entity, store) {
@@ -178,7 +203,7 @@ export async function extractEntities(memory, { store, config, callLLM, logger }
       return { ok: false, error: "Failed to parse JSON from LLM response" };
     }
     
-    const { entities, relations } = sanitizeExtractedData(rawData, config);
+    const { entities, relations, rejectedRelationTypes } = sanitizeExtractedData(rawData, config, logger);
     
     const resolvedEntities = [];
     const entityIdMap = new Map();
@@ -247,6 +272,9 @@ export async function extractEntities(memory, { store, config, callLLM, logger }
       entities: resolvedEntities,
       attrs,
       relations: savedRelations,
+      // #619：被丢弃的未知关系类型（含原始名字）。调用方据此判断「模型没抽」
+      // 与「抽了但类型不认识」——两者的运维动作完全不同。
+      rejectedRelationTypes,
       skipped: skipCount
     };
     
