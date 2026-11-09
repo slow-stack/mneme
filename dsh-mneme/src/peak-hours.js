@@ -44,26 +44,21 @@ function isoDay(date) {
 // 是常态（#424 实测的失败写法里全角类占四种）；而解析失败的语义是「未配置 =
 // 不限制」（见文件头），错一个字符整串静默失效 = 错峰闸门悄悄关掉、巩固回到
 // 全天候——这正是 #424 报的现象。这里只做**等价映射**，不做救错：
-//   * U+FF01–FF5D（全角！到全角－）与 ASCII 0x21–0x7D 恒差 0xFEE0，整段一起折，
+//   * U+FF01–FF5D（全角！到全角］）与 ASCII 0x21–0x7D 恒差 0xFEE0，整段一起折，
 //     覆盖 ，：０-９－与全角字母（星期前缀一起受益）；
-//   * 全角～（U+FF5E）**不**走区间折叠——折回半角是 `~`，而 `~` 是既有契约里
-//     故意非法的连接号写法；波浪号无论全半形都当范围连接号，映成 '-'。
-//     〜（U+301C，波浪号的另一半）同理。
+//   * 两个例外码不走折叠，直接映成 '-'：全角～（U+FF5E）折回半角是 `~`，而 `~` 是
+//     既有契约里故意非法的连接号写法；〜（U+301C）是波浪号的另一半，同理。
 // 合法写法只含 ASCII，归一前合法的串归一后逐字节不变，语义零漂移；
 // `24:00` 这类**值本身写错**的串仍按非法处理（跨零点的正写是 `04:00-00:00`），
 // 归一化不背救错的锅。
-const FULLWIDTH_EQUIVALENTS = /[\uFF01-\uFF5E]/g;
-const FULLWIDTH_TILDE = 0xff5e;
-const WAVE_DASH = /\u301C/g;
+const FULLWIDTH_EQUIVALENTS = /[\uFF01-\uFF5E\u301C]/g;
 
 function normalizeFullwidth(spec) {
-  return spec
-    .replace(FULLWIDTH_EQUIVALENTS, (ch) => {
-      const code = ch.charCodeAt(0);
-      if (code === FULLWIDTH_TILDE) return "-";
-      return String.fromCharCode(code - 0xfee0);
-    })
-    .replace(WAVE_DASH, "-");
+  return spec.replace(FULLWIDTH_EQUIVALENTS, (ch) => {
+    const code = ch.charCodeAt(0);
+    if (code === 0xff5e || code === 0x301c) return "-";
+    return String.fromCharCode(code - 0xfee0);
+  });
 }
 
 export function parsePeakSpec(spec) {
