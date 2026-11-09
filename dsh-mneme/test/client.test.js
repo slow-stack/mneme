@@ -4019,3 +4019,29 @@ test("the entity rail counts the whole library, not the newest slice", () => {
     "the notice needs its own dim style on the semantic colour layer"
   );
 });
+
+// --- issue #622 可观测性：错峰时段串解析失败的面板提示 ---
+// parsePeakSpec 的失败语义是「整串视为未配置」（排程是省钱手段，不救错——这个契约
+// 不动）。但静默意味着用户写错格式的唯一症状是「功能悄悄没生效」。本批的可见性分
+// 工：校验在服务端（/features 的 invalidPeakHours，parsePeakSpec 只此一份实现），
+// 面板只渲染提示行——独立 bundle 复制一份解析器必然漂移，这里锁死这个分工不被
+// 「优化」成面板自己解析。
+test("peak hours observability: invalid-spec hint renders from server field, never parses locally", () => {
+  // 两个键的提示行都接上了（蒸馏侧与巩固侧各一处）
+  const uses = clientSource.split("peakInvalidHint(").length - 1; // 两处调用（定义处是 "= (key)"，不匹配）
+  assert.ok(uses >= 2, `peakInvalidHint must be wired for both peak rows (got ${uses})`);
+  assert.ok(clientSource.includes('peakInvalidHint("summarizePeakHours")'), "distill-side row must carry the hint");
+  assert.ok(clientSource.includes('peakInvalidHint("dreamPeakHours")'), "dream-side row must carry the hint");
+  // 数据源是服务端字段，不是面板本地解析
+  assert.ok(clientSource.includes("state?.invalidPeakHours"), "hint must read the server-computed field");
+  // 反拷贝锁匹配**调用形态**而非名字——注释里提到解析器名字是允许的，调用不许有
+  assert.ok(!/parsePeakSpec\(|invalidPeakSpecs\(/.test(clientSource), "panel must not copy the parser (single implementation stays in src/peak-hours.js)");
+  // i18n 双语键成对出现
+  for (const key of [
+    "memory.features.summarizePeakHours.invalid",
+    "memory.features.dreamPeakHours.invalid"
+  ]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+});

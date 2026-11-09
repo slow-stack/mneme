@@ -4,6 +4,13 @@
 
 ## 🆕 新增
 
+- **错峰时段串写错不再静默：启动日志告警 + 面板红色提示（#622，可观测性）**。`parsePeakSpec` 的失败语义是「整串视为未配置」——排程是省钱手段，绝不因为写错格式把蒸馏/巩固停掉，这个契约不动。但它的代价是配置写错的唯一症状是「功能悄悄没生效」：用户明明写了 `summarizePeakHours` / `dreamPeakHours`，排程却回到全天候，日志、面板、审计里没有任何痕迹（#424 主楼的排查只能靠「高峰期还在巩固」倒推）。#621 的全角归一收掉了等价类写法，但 24:00 越界、点号当冒号这类只能靠可见性。
+
+  - **启动告警（`src/index.js`）**：cfg 装配后对两个时段键各跑一次解析——**非空**且解析为 null 时 `logger.warn` 一条（键名 + 原串 + 正确写法示例）。空串是合法的未配置，不告警（否则每个没配错峰的用户开机都被警告一遍，验收第 2 条）；行为零变化，只 log，不改 cfg。
+  - **面板提示（`lib/client.js` + `src/api.js`）**：`GET/PUT /features` 答复新增 `invalidPeakHours`（服务端用同一份 `parsePeakSpec` 算好，面板只渲染——独立 bundle 复制解析器必然漂移，与 config-keys 卡「分类在服务端算好」同一纪律）。两个时段键的输入行下，值非法时出红色提示行（含正确写法）；保存（PUT 同走 `featureSnapshot`）后提示立即跟着换。
+  - **单一口径（`src/peak-hours.js`）**：新增 `PEAK_SPEC_KEYS` + `invalidPeakSpecs(cfg)`——告警点与提示点认同一份键表，helper 只转述 `parsePeakSpec` 的话：等价类归一（PR #621，评审中）落地后救得了的写法自然不再告警，两批无需联动。
+  - **验证**：`test/peak-hours-observability.test.js` 新增 3 条（helper 只报「非空且解析失败」+ 接线锁：启动告警读装配后的 cfg 且不改写它 + 解析语义原样未动）；`test/api.test.js` 新增 1 条（GET/PUT 的 `invalidPeakHours` 与 helper 同源、合法/空串不报）；`test/client.test.js` 新增面板锁（提示行走服务端字段、反拷贝锁匹配调用形态、i18n 双语键）。全量 3159 用例 / 3158 通过 / 0 失败 / 1 跳过；check-sync 通过。
+
 - **会话头顶那个日记入口撤了；「写今天 / 存到这个项目」补进面板**。两处入口同时存在时，用户点哪一个都像「又开了一本」，而右栏那套是旧版遗留下来的：会话头一个按钮 → 右栏页签 → 里面才是写与导出。现在只留一个入口：记忆面板的「日记」标签页。
 
   - **删的是什么（`lib/client.js`）**：`registerDiarySeats` 里原本注册三件事——① 右栏页签类型 ② `conversation.session.header.actions` 会话头入口（`id: "dsh-mneme:diary"`、`order: 31`）③ `sidebar.right.pane.tab` 右栏正文。删的是 ②，连同 `DiaryEntryButton` 组件、`.mneme-diary-trigger*` 五条 CSS、`memory.diary.openFailed` 文案。**为什么不是「看着多余」就删**：`openTab` 全仓库只有两处调用（M.O. 一处、日记 ② 一处），所以删掉 ② 之后本插件自己再也打不开右栏那一页。但宿主把页签类型目录 `tabTypes.getSnapshot() => tabs.entries()` 交给了右栏的「新建页签」选择器，用户从宿主自己的列表里仍能打开它——那套正文因此**留着**，不是死代码。

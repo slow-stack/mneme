@@ -984,8 +984,10 @@ window.__ModuleLoader__.load({
         "memory.features.dreamModelHint": "留空 = 跟随主对话模型；只影响记忆巩固（autoDream）用的模型",
         "memory.features.dreamPeakHours": "高峰时段（不做梦）",
         "memory.features.dreamPeakHours.hint": "设置忙碌时段，巩固会避开这些时间、事后补跑。写法：09:00-18:00，多段用逗号分隔，可带星期（如 mon-fri 08:00-12:00），支持跨零点；留空 = 不限制",
+        "memory.features.dreamPeakHours.invalid": "当前值无法解析为时段，将按未配置处理（巩固全天候生效）。写法：09:00-18:00，多段用逗号分隔，可带星期前缀（mon-fri 08:00-12:00），支持跨零点；24:00 越界请写 00:00",
         "memory.features.summarizePeakHours": "高峰时段（不蒸馏）",
         "memory.features.summarizePeakHours.hint": "与巩固侧同一份写法；蒸馏会避开这些时段，窗口先攒着、非高峰一次蒸完",
+        "memory.features.summarizePeakHours.invalid": "当前值无法解析为时段，将按未配置处理（蒸馏全天候生效）。写法与巩固侧相同：09:00-18:00，多段用逗号分隔，可带星期前缀，支持跨零点",
         "memory.features.sleepProvider": "睡眠 Provider",
         "memory.features.sleepModel": "睡眠模型",
         "memory.features.sleepModelHint": "留空 = 用巩固模型或当前模型；建议选非思考模型",
@@ -1986,8 +1988,10 @@ window.__ModuleLoader__.load({
         "memory.features.dreamModelHint": "Leave empty to follow the main conversation model; only affects autoDream consolidation",
         "memory.features.dreamPeakHours": "Peak hours (no dreaming)",
         "memory.features.dreamPeakHours.hint": "Busy hours for the machine; consolidation avoids them and catches up afterwards. Syntax: 09:00-18:00, several windows comma-separated, weekday prefix allowed (mon-fri 08:00-12:00), midnight-crossing allowed; empty = no limit",
+        "memory.features.dreamPeakHours.invalid": "Current value is not a valid time-window spec and will be treated as unset (consolidation runs around the clock). Syntax: 09:00-18:00, comma-separated windows, optional weekday prefix (mon-fri 08:00-12:00), midnight-crossing allowed; write 00:00 instead of 24:00",
         "memory.features.summarizePeakHours": "Peak hours (no distillation)",
         "memory.features.summarizePeakHours.hint": "Same syntax as the consolidation side above; distillation avoids these windows and accumulates the material for one run off-peak",
+        "memory.features.summarizePeakHours.invalid": "Current value is not a valid time-window spec and will be treated as unset (distillation runs around the clock). Syntax as on the consolidation side: 09:00-18:00, comma-separated windows, optional weekday prefix, midnight-crossing allowed",
         "memory.features.sleepProvider": "Sleep provider",
         "memory.features.sleepModel": "Sleep model",
         "memory.features.sleepModelHint": "Leave empty to reuse the consolidation model; a non-reasoning model is recommended",
@@ -4444,6 +4448,16 @@ window.__ModuleLoader__.load({
           onKeyDown: (e) => { if (e.key === "Enter") e.target.blur(); }
         }));
 
+      // #622 可观测性：错峰时段串解析失败在面板可见。校验在服务端算好（/features
+      // 的 invalidPeakHours，parsePeakSpec 只许有一份实现），面板只渲染——独立
+      // bundle 复制一份解析器必然漂移。跟的是 effective 侧的计算结果，与输入框
+      // 显示的值同源；改完保存（PUT 答复同走 featureSnapshot）提示立即跟着换。
+      const peakInvalidHint = (key) =>
+        Array.isArray(state?.invalidPeakHours) && state.invalidPeakHours.includes(key)
+          ? h("div", { className: "mneme-featsubhint", style: { color: "var(--mneme-danger)" } },
+              "⚠ " + t(`memory.features.${key}.invalid`))
+          : null;
+
       // type 刻意用 text + inputMode 而不是 number：number 输入框在部分内容被
       // 判非法时 e.target.value 会变成空串，草稿与用户所见脱节；这里要自己拿
       // 到原文才能挡下非整数并退回生效值。
@@ -4490,6 +4504,7 @@ window.__ModuleLoader__.load({
         // Issue #239 第 4 项镜像到巩固：高峰时段串（空 = 关闭）。放在 autoDream
         // 子块内——它是巩固的排程，开关关掉时不该还在界面上留着可编辑的输入框。
         strRow("dreamPeakHours"),
+        peakInvalidHint("dreamPeakHours"),
         h("div", { className: "mneme-featsubhint" }, t("memory.features.dreamPeakHours.hint")),
         // Issue #478：单轮巩固的 max_tokens 预算。后端白名单（256–131072）早就有，
         // 修复前 UI 够不着；默认 131072 超过很多 OpenAI 兼容网关的硬上限又看不见调不了。
@@ -4543,6 +4558,7 @@ window.__ModuleLoader__.load({
         // Issue #239 第 4 项：蒸馏侧错峰时段串（空 = 关闭）。与思考强度同处一个
         // autoSummarize 子块——两处错峰开关都能在面板上调（巩固侧见 dreamSub）。
         strRow("summarizePeakHours"),
+        peakInvalidHint("summarizePeakHours"),
         h("div", { className: "mneme-featsubhint" }, t("memory.features.summarizePeakHours.hint"))
       );
 

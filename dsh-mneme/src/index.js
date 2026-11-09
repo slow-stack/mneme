@@ -17,6 +17,9 @@ import { createSummarizer } from "./summarize.js";
 import { createSessionGate } from "./session-gate.js";
 import { createDreamScheduler, describeStreamFailure } from "./dream.js";
 import { createSleepScheduler, runSleep } from "./dream/sleep.js";
+// #622 可观测性：错峰时段串解析失败是「静默未配置」（parsePeakSpec 契约不救错），
+// 启动装配后对非空且解析失败的键出一条 warn——只补可见性，不改语义。
+import { invalidPeakSpecs } from "./peak-hours.js";
 import { createApi } from "./api.js";
 import { createStandaloneApi } from "./api-standalone.js";
 // #275 存储生命周期第一批：无损回收（手动入口，不挂启动路径）。
@@ -250,6 +253,19 @@ export const apply = (ctx, config) => {
   const cfg = { ...applyLightModePreset({ ...rawCfg, lightMode }), ...flatFlags };
   for (const [objKey, sub] of Object.entries(nestedFlags)) {
     cfg[objKey] = { ...(cfg[objKey] ?? {}), ...sub };
+  }
+  // #622：错峰时段串（summarizePeakHours / dreamPeakHours）解析失败 = 静默未配置
+  // （parsePeakSpec 的契约：排程是省钱手段，绝不该因写错格式停掉蒸馏/巩固）。但
+  // 「不救错」不等于「不吭声」——配置写错的唯一症状是功能悄悄没生效（#424 的排查
+  // 只能靠「高峰期还在巩固」倒推）。这里对**非空**且解析为 null 的键各出一条 warn：
+  // 空串是合法的未配置，不告警（否则每个没配错峰的用户开机都被警告一遍）。helper
+  // 只转述 parsePeakSpec：等价类归一（PR #621，评审中）落地后，救得了的写法自然
+  // 不再走到这。行为零变化：只 log，不改 cfg。
+  for (const [key, spec] of Object.entries(invalidPeakSpecs(cfg))) {
+    ctx.logger?.warn?.(
+      `[dsh-mneme] ${key} "${spec}" 不是合法的高峰时段串，将按未配置处理（错峰不生效、全天候运行）。` +
+      `写法：09:00-18:00，多段用逗号分隔，可带星期前缀（mon-fri 08:00-12:00），支持跨零点；24:00 越界请写 00:00`
+    );
   }
   const sessionGate = createSessionGate(cfg);
 

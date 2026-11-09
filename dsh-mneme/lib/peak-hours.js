@@ -69,6 +69,39 @@ export function parsePeakSpec(spec) {
   return windows.length > 0 ? { days, windows } : null;
 }
 
+// --- 可观测性（issue #622）：解析失败不许静默 ---------------------------------
+//
+// 上面的失败语义（整串视为未配置）是对的——排程是省钱手段，绝不该因为写错格式
+// 把蒸馏/巩固停掉。但它的代价是：**配置写错的唯一症状是「功能悄悄没生效」**——
+// 用户明明写了 summarizePeakHours / dreamPeakHours，排程却回到全天候，日志、
+// 面板、审计里没有任何痕迹（#424 主楼的排查只能靠「高峰期还在巩固」倒推）。
+// 归一化类补救（PR #621 的全角等价）收得掉一小类，但 24:00 越界、点号当冒号这类
+// 只能靠告警——归一化不救错，静默失效面永远存在。本节只补**可见性**，不动语义：
+// helper 只转述 parsePeakSpec 的话，解析口径变了（如 #621 落地）告警面自动跟随，
+// 两批无需联动。
+//
+// 两个键名单独成表：告警点（index.js 启动装配）与提示点（/features 答复、面板
+// 输入行）都要认同一份「哪些键是时段键」，不各写一份字符串数组然后各自漂移。
+export const PEAK_SPEC_KEYS = ["summarizePeakHours", "dreamPeakHours"];
+
+/**
+ * 找出「非空且解析失败」的时段配置。空串是合法的「未配置」（调用方用 `?? ""`
+ * 兜底），不进结果——否则每个没配错峰的用户开机都被警告一遍（#622 验收第 2 条）。
+ * 非法串映射 key → 原串：告警要带原串才能对上配置文件里那一行；/features 答复
+ * 只取 Object.keys（面板只需要「哪个键坏了」，不需要回显值）。
+ */
+export function invalidPeakSpecs(cfg) {
+  const out = {};
+  if (!cfg || typeof cfg !== "object") return out;
+  for (const key of PEAK_SPEC_KEYS) {
+    const spec = cfg[key];
+    if (typeof spec === "string" && spec.trim() !== "" && parsePeakSpec(spec) === null) {
+      out[key] = spec;
+    }
+  }
+  return out;
+}
+
 /**
  * 该时刻是否落在高峰内。跨零点段（start > end）按「窗口所属的那一天」认星期：
  * `mon-fri 23:00-06:00` 的周六 02:00 属于周五开的那个窗口，仍算高峰。
