@@ -532,6 +532,25 @@ export function createService({ store, mirror, config, onWrite, logger, document
     return dot / (Math.sqrt(na) * Math.sqrt(nb));
   }
 
+  // BM25 语料索引缓存（#617 审计 O2）。此前每次渲染都 store.list 500 行 + 重新
+  // tokenize 全语料，实测 4.318ms/次、每个 step 一次；其中 store.list 占 4.318ms
+  // 里的绝大部分，而语料在两次写入之间根本没变。
+  //
+  // 失效键用 mirror_state.generation，不另建计数器：改正文/可见性的写入（insert /
+  // update / remove / setArchived / setForgotten / setContent …）都已经 bump 它，
+  // 而 last_accessed_at 与 embedding 这两类写入**刻意不 bump**（store.js 里写明
+  // reads must not mark the mirror dirty）——这两类恰好也不改 title+content 语料，
+  // 正是我们要的失效粒度，不用额外判断。
+  //
+  // 水位每次从库里现读，不在进程内记本地计数：多宿主共用一个 memoryDir 是支持形态
+  // （busy_timeout + WAL），另一个进程写完 bump 的是库里的 generation，本地计数
+  // 永远看不见，只有现读才收得到。
+  //
+  // 只缓存索引、不缓存查询结果：search() 返回的是 {...row, score} 副本，索引里
+  // 留着的原始行不会被调用方改到；缓存结果则会跨 step 串味（同一 query 在不同
+  // 池子状态下该给不同答案）。
+  let bm25IndexCache = null; // { generation, index } | null
+
   /**
    * BM25 third recall path (v0.5.0 1.1). Scores the query tokens against the
    * live non-archived rows and returns the top `limit` hits with scores
@@ -541,12 +560,38 @@ export function createService({ store, mirror, config, onWrite, logger, document
   function bm25Recall(q, limit) {
     if (config?.bm25SearchEnabled === false) return [];
     try {
-      const docs = store.list({ limit: 500, includeForgotten: false }).filter((m) => !m.archived);
-      if (!docs.length) return [];
-      return createBM25Index(docs).search(q, { limit });
+      const index = bm25CorpusIndex();
+      if (!index) return [];
+      return index.search(q, { limit });
     } catch {
       return [];
     }
+  }
+
+  /**
+   * 取（必要时重建）BM25 语料索引。水位读不到时退化成每次重建而不是报错：这条
+   * 通路是 recall booster，读不到 mirror_state 只该慢一点，不该让词法召回整批消失。
+   */
+  function bm25CorpusIndex() {
+    let generation = null;
+    try {
+      generation = store.getMirrorState().generation;
+    } catch { /* 水位不可读：本次退回重建，且不写缓存 */ }
+    if (bm25IndexCache && generation !== null && bm25IndexCache.generation === generation) {
+      return bm25IndexCache.index;
+    }
+    const docs = store.list({ limit: 500, includeForgotten: false }).filter((m) => !m.archived);
+    if (!docs.length) {
+      bm25IndexCache = null;
+      return null;
+    }
+    const index = createBM25Index(docs);
+    // 水位读不到时**不碰缓存**，保留上一份「已知有效 generation」的条目：读失败
+    // 若只是偶发（库锁、迁移窗口）而期间没有写入，恢复后水位与条目一致，直接命中；
+    // 期间真有写入，水位已经变了，下一轮自然重建。反过来把 null 当键存进去则是纯
+    // 噪声——那样的条目永远命不中，还把有效的那份挤掉了。
+    if (generation !== null) bm25IndexCache = { generation, index };
+    return index;
   }
 
   /**
