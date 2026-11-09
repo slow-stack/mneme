@@ -906,7 +906,78 @@ test("sleep: an emotion backed by enough independent sessions mints a trait patt
   const patterns = service.all().filter((m) => m.type === "pattern");
   assert.equal(patterns.length, 1, "one trait pattern minted");
   assert.match(patterns[0].title, /稳定倾向/);
+  assert.match(patterns[0].title, /答辩/, "标题必须带对象，否则人对什么焦虑都看不出来");
   assert.match(patterns[0].content, /3 个相互独立/);
+  store.close();
+});
+
+test("sleep: two different targets mint two patterns instead of one swallowing the other", async () => {
+  // #619 / Ephor 第 5 轮：标题原本不含 target，而 applyCreate 走
+  // saveWithDedupe，按 (type, title) 找同题行。于是「对答辩长期焦虑」与
+  // 「对面试长期焦虑」共用同一个标题，第二条被判为重复——不报错、不进
+  // failures、applied 还如实显示写入了。一条真实结论就这样静默消失，
+  // 正好落在本相位「降级不丢弃」这条原则的反面。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  service.createEntity({ name: "面试", type: "concept" });
+  const ids = { 答辩: [], 面试: [] };
+  for (const target of ["答辩", "面试"]) {
+    for (const session of ["s1", "s2", "s3"]) {
+      const mem = makeMemory(service, `${target}-${session}`, `第 ${session} 次${target}前都失眠`);
+      linkSession(service, mem.id, `${target}-${session}`);
+      ids[target].push(mem.id);
+    }
+  }
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "trait", evidence: ids.答辩, why: "三次答辩前都这样" },
+    { person: "桉桉", target: "面试", emotion: "焦虑", attribution: "trait", evidence: ids.面试, why: "三次面试前都这样" }
+  ]);
+  const result = await runSleep(ctx, service, affectiveConfig({ sleepMaxPatternPerRun: 2 }), ctx.logger, { embedder, vectorIndex: null }, null);
+  const phase = result.phases.affective;
+  assert.equal(phase.traits, 2, "两条 trait 候选");
+  assert.equal(phase.failures.length, 0, "没有失败");
+  assert.equal(phase.applied, 2, "两条都真的落库了");
+  const patterns = service.all().filter((m) => m.type === "pattern");
+  assert.equal(patterns.length, 2, "两个对象各一条，第二条不许被静默合并掉");
+  const titles = patterns.map((m) => m.title).sort();
+  assert.ok(titles.some((t) => t.includes("答辩")), "答辩那条在");
+  assert.ok(titles.some((t) => t.includes("面试")), "面试那条也在 —— 这条以前会消失");
+  assert.notEqual(titles[0], titles[1], "标题必须不同，否则去重键仍会撞");
+  store.close();
+});
+
+test("sleep: an occasion edge is marked when the same emotion is later confirmed as a trait", async () => {
+  // #619 / Ephor 第 5 轮 C：先有 occasion 边，后来证据够了判成 trait。
+  // 边不改（它表示「这次场合观察到过」，这句仍然是真的），但要标上
+  // promotedToTrait——否则同一件事实在图上是「一次性」、在 pattern 里是
+  // 「长期」，读归因覆盖率的人拿到两份互相矛盾的记录，而这不会自愈。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const mem0 = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  linkSession(service, mem0.id, "s0");
+  const ctxOccasion = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [mem0.id] }
+  ]);
+  const first = await runSleep(ctxOccasion, service, affectiveConfig(), ctxOccasion.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(first.phases.affective.relations, 1, "先落一条 occasion 边");
+  const ids = [];
+  for (const session of ["s1", "s2", "s3"]) {
+    const mem = makeMemory(service, `答辩-${session}`, `第 ${session} 次答辩前都失眠`);
+    linkSession(service, mem.id, session);
+    ids.push(mem.id);
+  }
+  const ctxTrait = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "trait", evidence: ids, why: "三次独立答辩前都这样" }
+  ]);
+  const second = await runSleep(ctxTrait, service, affectiveConfig(), ctxTrait.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(second.phases.affective.traits, 1, "够格铸 trait");
+  const person = service.findEntityByName("桉桉");
+  const edges = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  assert.equal(edges.length, 1, "仍然是同一条边");
+  assert.equal(edges[0].metadata.sessionCount, 1, "边的场合数不因后来升格而改写");
+  assert.equal(edges[0].metadata.promotedToTrait, true, "但必须标上升格过，否则两份记录互相打脸");
   store.close();
 });
 

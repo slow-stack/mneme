@@ -309,9 +309,14 @@ export const STR = {
   // 写在 sleep.js 里，因为 en prompt 明确要求 why 用英文，标题正文却是中文
   // 会让同一条记忆两种语言混排。
   affectiveTrait: {
+    // 标题必须带 target。`applyCreate` 走 `service.saveWithDedupe`，而它按
+    // (type, title) 找同题行——标题不含对象时，「对答辩长期焦虑」与「对面试
+    // 长期焦虑」是同一条，第二条会被静默合并掉：不报错、不进 failures、
+    // `applied` 还如实显示写入了。也就是说一条真实结论被吞掉，而返回值说它
+    // 已经落库。对象写进标题既修好去重键，也让标题自己说清是对什么焦虑。
     title: {
-      zh: (p) => `稳定倾向：${p.person} 在多次独立场合 ${p.emotion}`,
-      en: (p) => `Stable disposition: ${p.person} is ${p.emotion} across several independent occasions`
+      zh: (p) => `稳定倾向：${p.person} 对${p.target}在多次独立场合${p.emotion}`,
+      en: (p) => `Stable disposition: ${p.person} is ${p.emotion} about ${p.target} across several independent occasions`
     },
     content: {
       zh: (t) => `${t.person} 在 ${t.sessionCount} 个相互独立的场合（${t.evidence.length} 条记忆）中反复表现出「${t.emotion}」，对象是 ${t.target}。${t.why}`,

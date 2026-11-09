@@ -1349,6 +1349,34 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       applied = result.applied;
       failures = result.failures;
       conflicts = result.conflicts;
+      // Ocasion edges observed before a disposition was confirmed do not get
+      // rewritten — an edge records "this occasion was observed", which stays
+      // true. But the edge and the pattern would then answer "how many
+      // occasions" differently (edge.sessionCount vs pattern evidence), and a
+      // coverage query reading both would have no way to tell they describe the
+      // same thing. Mark them instead of mutating the count: the edge still
+      // means one observed occasion, and `promotedToTrait` says that occasion is
+      // now part of a confirmed disposition.
+      for (const trait of traits.slice(0, maxTraits)) {
+        const person = byName.get(String(trait.person ?? "").toLowerCase());
+        const target = byName.get(String(trait.target ?? "").toLowerCase());
+        if (!person || !target || person.id === target.id) continue;
+        for (const edge of service.getRelations(person.id) ?? []) {
+          if (edge.relation_type !== "affective_context" || edge.to_entity !== target.id) continue;
+          const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : null;
+          if (String(meta?.emotion ?? "").trim() !== trait.emotion) continue;
+          if (meta?.promotedToTrait === true) continue;
+          try {
+            service.updateRelationMetadata?.(edge.id, {
+              ...meta,
+              promotedToTrait: true,
+              traitSessionCount: trait.sessionCount
+            });
+          } catch (error) {
+            logger?.warn?.(`dsh-mneme sleep: marking occasion ${edge.id} as promoted failed: ${String(error)}`);
+          }
+        }
+      }
     }
   }
   // Aborting mid-pass is not "did nothing" and not "all done". Even when nothing
