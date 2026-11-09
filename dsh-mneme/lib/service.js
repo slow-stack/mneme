@@ -2920,6 +2920,8 @@ export function createService({ store, mirror, config, onWrite, logger, document
     list: (o) => store.list(o),
     all: () => store.all(),
     count: (type, opts) => store.count(type, opts),
+    // #597：/list 的 typeCounts——同一份筛选、不带 type 的全库分布（面板分类栏数字源）。
+    countByType: (opts) => store.countByType(opts),
     getById: (id) => store.getById(id),
     remove: (id) => {
       store.remove(id);

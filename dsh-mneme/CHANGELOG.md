@@ -4,6 +4,12 @@
 
 ## 🆕 新增
 
+- **记忆面板的「共 N 条」与分类 chip 改读服务端真分布（#597）**。浏览页被 type 筛过又分了页，页内现数两头都数不出真分布：页头「共 N 条」用 `visible.length`（滚动一次后恒停在 200），分类 chip 从已加载页现数——选中任一类后其它类计数为 0 被整条滤掉，分类栏塌剩两枚、数字从 5 跳到 200。
+
+  - **服务端**：`store.count()` 的 WHERE 构造抽成共用的 `pushCountFilters`，新增 `countByType(opts)`（同一份筛选、**不带 type**，一次 GROUP BY 拿全库分布）；宿主内 `/api/dsh-mneme/list` 与 Bearer `/memories` 两张面同口径补 `typeCounts` 格（按 id 取单条的答复不带——分布无意义，客户端据此降级）。
+  - **客户端**：页头 = 服务端 `total`（搜索态的 total 本就是命中数）；chips = `typeCounts` 全库分布、缺类补 0（选中一类后分类栏恒定不塌）；「全部」chip = 分布合计（不再从 5 跳到 200）。老服务端没有 `typeCounts` 时退回页内现数——功能不炸，只是回到旧的「只数已加载页」行为。
+  - **验证**：`test/store.test.js` +1（分布合计恒等于 `count(undefined)`、筛选同口径）；`test/api.test.js` / `test/standalone-api.test.js` 各 +1（带 type 请求下分布仍全量、合计 = total）；`test/client.test.js` +1 源码断言（服务端源 + 降级路径同时在）。顺带一提：状态页 `MemoriesStatusCard` 的每类一次请求（N+1）是同一痛点的另一处，可后续切到 `typeCounts`，不在本 PR。
+
 - **会话头顶那个日记入口撤了；「写今天 / 存到这个项目」补进面板**。两处入口同时存在时，用户点哪一个都像「又开了一本」，而右栏那套是旧版遗留下来的：会话头一个按钮 → 右栏页签 → 里面才是写与导出。现在只留一个入口：记忆面板的「日记」标签页。
 
   - **删的是什么（`lib/client.js`）**：`registerDiarySeats` 里原本注册三件事——① 右栏页签类型 ② `conversation.session.header.actions` 会话头入口（`id: "dsh-mneme:diary"`、`order: 31`）③ `sidebar.right.pane.tab` 右栏正文。删的是 ②，连同 `DiaryEntryButton` 组件、`.mneme-diary-trigger*` 五条 CSS、`memory.diary.openFailed` 文案。**为什么不是「看着多余」就删**：`openTab` 全仓库只有两处调用（M.O. 一处、日记 ② 一处），所以删掉 ② 之后本插件自己再也打不开右栏那一页。但宿主把页签类型目录 `tabTypes.getSnapshot() => tabs.entries()` 交给了右栏的「新建页签」选择器，用户从宿主自己的列表里仍能打开它——那套正文因此**留着**，不是死代码。
