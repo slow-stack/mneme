@@ -764,6 +764,7 @@ npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动
 - [连续性抢救（#249 N3）：触发器口径与事件契约](docs/CONTINUITY.md)
 - [Sleep Mode：空闲四阶段深度维护](docs/SLEEP.md)
 - [存储与回收：表结构、保留期、`dsh-mneme reclaim`](docs/STORAGE.md)
+- [选择性遗忘与事实更正：行粒度契约与失效关系缺口（#532）](docs/FORGET.md)
 - [记忆分享包：出包与收包的口径、信任边界与实测（`dsh-mneme share` / `receive` / `undo-share`）](docs/SHARE.md)
 - [独立服务 daemon（`dsh-mneme-serve`）](docs/DAEMON.md)
 - [与 Zep / Graphiti / Mem0 / Letta / Hindsight 的能力对比](../docs/COMPARISON.md)
