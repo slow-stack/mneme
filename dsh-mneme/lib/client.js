@@ -5326,6 +5326,12 @@ window.__ModuleLoader__.load({
         ref: (node) => { if (node) tocRefs.current[key] = node; }
       }, t("memory.settings.group." + key));
 
+      // #514 的告示在运行模式卡也要出现，所以共享状态必须在本组件里声明。只在人格卡声明
+      // 会让这张卡读到自由变量：渲染即 ReferenceError，而宿主只报 "import failed"，
+      // 看起来像整个 bundle 加载不了。一份声明供本组件内两处消费，不要在每张卡里各取一次数。
+      const injectStatus = useInjectStatus();
+      const minimalWarn = !injectStatus.loading && injectStatus.suppressed;
+
       return h("div", null,
         h("nav", { className: "mneme-set-toc", "aria-label": t("memory.settings.toc.aria") },
           h("div", { className: "mneme-set-toclabel" }, t("memory.settings.toc.label")),

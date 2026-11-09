@@ -3221,6 +3221,52 @@ test("minimal preset notice reaches the settings page, not just the status tab (
   assert.ok(!/minimalWarn\s*=\s*true/.test(clientSource), "the notice must never be hard-wired on");
 });
 
+// 上面那条只证明"声明字符串存在"，证明不了"每个消费点的作用域里有它"。
+// 人格页搬进 SettingsContent 之后，运行模式卡这一处读的是自由变量：渲染即 ReferenceError，
+// 而宿主只记一句 "import failed: client-modules: could not load @modusensus/dsh-mneme"，
+// 看起来像整个插件加载不了，实际是一个 JSX 分支炸了（本机 crash-*-web-boot.log 实录）。
+// 不变量是"每个消费点的作用域里有声明"，不是"声明数量等于消费点数量"：
+// 同一个组件消费两次（SettingsContent 里两张卡各一处）只需要一份声明，按数量判会把正确代码钉红。
+test("each minimalWarn consumer resolves the declaration inside its own component", () => {
+  const lines = clientSource.split("\n");
+  const components = [];
+  lines.forEach((line, i) => {
+    const m = /^(?:    |      )(?:function |const )([A-Z]\w*)/.exec(line);
+    if (m) components.push({ line: i + 1, name: m[1] });
+  });
+  const owner = function (at) {
+    let found = null;
+    for (const c of components) {
+      if (c.line <= at) found = c;
+      else break;
+    }
+    return found;
+  };
+  assert.ok(components.length > 0, "component scan matched nothing — bundle layout changed; fix this lock, don't delete it");
+
+  const decls = [];
+  const uses = [];
+  lines.forEach((line, i) => {
+    if (!line.includes("minimalWarn") || line.trim().startsWith("//")) return;
+    (/const minimalWarn\s*=/.test(line) ? decls : uses).push(i + 1);
+  });
+  assert.ok(uses.length >= 2, `expected the notice in both surfaces (got ${uses.length} use sites)`);
+
+  const byComponent = new Map();
+  for (const d of decls) {
+    const name = owner(d).name;
+    if (!byComponent.has(name)) byComponent.set(name, []);
+    byComponent.get(name).push(d);
+  }
+  for (const u of uses) {
+    const c = owner(u);
+    const inScope = (byComponent.get(c.name) || []).filter((d) => d < u);
+    assert.ok(inScope.length > 0,
+      `line ${u} reads minimalWarn inside ${c.name} (opens at ${c.line}) which has no declaration before it — ` +
+      "renders as ReferenceError and the host reports only \"import failed\"");
+  }
+});
+
 // --- 移动端适配（mobile-adapt 车道）---
 // 面板在 320–430px 容器里原本是「骨架级失衡」而不是「略挤」：记忆页左栏固定
 // 216px、卡片最小轨道 252+48=300px，要 ≥517px 才排得下；实体页 rail 224px +
