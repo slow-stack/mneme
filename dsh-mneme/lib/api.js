@@ -305,7 +305,12 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     // Issue #471：政策轴——作用域级可逆闸门。两个键都是嵌套子字段，漏登记的后果
     // 同上（effective 静默缺键、面板读不到也 PUT 不进）。
     "scopeState.enabled": ["scopeState", "enabled"],
-    "scopeState.enforce": ["scopeState", "enforce"]
+    "scopeState.enforce": ["scopeState", "enforce"],
+    // #275 容量预警：三个阈值都是嵌套子字段（两个整数走 INT_RANGES、一个浮点走
+    // NUMBER_RANGES），漏登记的后果同上——effective 静默缺键、面板读不到也 PUT 不进。
+    "capacityWarning.dbSizeWarnMb": ["capacityWarning", "dbSizeWarnMb"],
+    "capacityWarning.archivedRowsWarn": ["capacityWarning", "archivedRowsWarn"],
+    "capacityWarning.archivedRatioWarn": ["capacityWarning", "archivedRatioWarn"]
     // sensitiveScanEnabled（#164 A2）是顶层扁平键，不需要进这张表——走 configFlagValue
     // 的默认分支即可。
   };
@@ -1297,7 +1302,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     handler(req, res) {
       try {
         if (!embedder) {
-          sendJson(res, 200, { indexed: 0, skipped: 0, error: "vector-unavailable" });
+          sendJson(res, 200, { indexed: 0, failed: 0, skipped: 0, error: "vector-unavailable" });
           return;
         }
         const url = new URL(req.url, "http://localhost");
@@ -1307,13 +1312,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const viaIndex = semantic?.vectorIndex && semantic?.vectorIndex.rebuildIndex;
         const task = viaIndex
           ? semantic.vectorIndex.rebuildIndex(embedder, { limit })
-          : embedder.reindexMissing ? embedder.reindexMissing(limit) : Promise.resolve({ indexed: 0, skipped: 0, error: "vector-unavailable" });
+          : embedder.reindexMissing ? embedder.reindexMissing(limit) : Promise.resolve({ indexed: 0, failed: 0, skipped: 0, error: "vector-unavailable" });
         // Return the chain so awaiting callers (tests/health checks) observe the
         // finished response rather than racing the async backfill.
         return task.then((result) => {
           sendJson(res, 200, result);
         }).catch(() => {
-          sendJson(res, 200, { indexed: 0, skipped: 0, error: "vector-failed" });
+          sendJson(res, 200, { indexed: 0, failed: 0, skipped: 0, error: "vector-failed" });
         });
       } catch {
         sendJson(res, 500, { error: "internal" });
@@ -1390,6 +1395,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           dimension: embedder?.dimension ?? null,
           reranker: semantic?.reranker ? "ready" : null,
           index: stats,
+          // #604：回填与写入两条嵌入路径的诊断。此前 backfillStatus() 与
+          // embedReceipts() 都已经算好了，但没有任何出口 —— 面板能看到的只有
+          // 「已索引 N 条」，看不出「上一轮撞了 cap」「最近一次嵌入为什么失败」。
+          // 两个字段都是只读快照，不查库、不触发推理。
+          embeddings: typeof semantic?.embeddingDiagnostics === "function"
+            ? semantic.embeddingDiagnostics()
+            : null,
           // issue #131 / PR-A：自管运行时的状态。无论当前 provider 是不是 local
           // 都报 —— 面板需要区分「已收编但没启用」和「要用本地却没收编」。
           // 这里只做结构检查（不跑推理），失败降级成状态对象，不会让本端点 500。
@@ -2233,7 +2245,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     }
   });
 
-  // --- health: mirror sync state (F-NEW-03 / v0.3.6) ---
+  // --- health: mirror sync state (F-NEW-03 / v0.3.6) + capacity (#275) ---
   // Auth-gated; only returns a sanitized error code (never raw last_error which
   // may leak paths/token-like strings/internal hosts). On state read failure it
   // reports unknown/degraded (fail-closed) instead of a false dirty=false.
@@ -2242,23 +2254,34 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     path: "/api/dsh-mneme/health",
     policy: "token",
     handler(req, res) {
+      // 容量预警（#275 空间维度）：与镜像状态同面但**互相独立**——镜像读失败不该
+      // 把容量数字一起藏掉，所以每个分支都带上。getCapacityHealth 自身 fail-safe
+      // （读失败回 status:"unknown"）；?.() 兜住没接线的老 mock service（此时显式
+      // capacity:null，面板渲染成「未知」，不冒充正常）。
+      let capacity = null;
+      try {
+        capacity = service.getCapacityHealth?.() ?? null;
+      } catch {
+        capacity = null;
+      }
       let state = null;
       try {
         state = service.getMirrorHealth?.() ?? null;
       } catch {
         // read failure is itself a health signal: do not report a false clean
-        sendJson(res, 200, { mirror: { dirty: null, status: "unknown", last_error: null, last_attempt: null, success_at: null } });
+        sendJson(res, 200, { mirror: { dirty: null, status: "unknown", last_error: null, last_attempt: null, success_at: null }, capacity });
         return;
       }
       if (!state) {
-        sendJson(res, 200, { mirror: { dirty: null, status: "unknown", last_error: null, last_attempt: null, success_at: null } });
+        sendJson(res, 200, { mirror: { dirty: null, status: "unknown", last_error: null, last_attempt: null, success_at: null }, capacity });
         return;
       }
       // Real read failure surfaces as dirty === null (peer blocker 5): report
       // unknown explicitly instead of collapsing into a false "ok"/"degraded".
       if (state.dirty === null) {
         sendJson(res, 200, {
-          mirror: { dirty: null, status: "unknown", last_error: null, last_attempt: null, success_at: null }
+          mirror: { dirty: null, status: "unknown", last_error: null, last_attempt: null, success_at: null },
+          capacity
         });
         return;
       }
@@ -2276,7 +2299,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           last_error: code,
           last_attempt: state.last_attempt ?? null,
           success_at: state.success_at ?? null
-        }
+        },
+        capacity
       });
     }
   });

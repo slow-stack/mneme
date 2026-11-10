@@ -657,6 +657,9 @@ window.__ModuleLoader__.load({
         "memory.settings.vectorReindex": "重建索引",
         "memory.settings.vectorReindexing": "索引中…",
         "memory.settings.vectorReindexDone": "已索引 {n} 条",
+        "memory.settings.vectorReindexPartial": "已索引 {n} 条，{f} 条失败",
+        "memory.settings.vectorReindexRemaining": "已索引 {n} 条，还剩 {r} 条待重建",
+        "memory.settings.vectorReindexNothing": "没有需要重建的行（当前模型的向量已齐）",
         "memory.settings.apiTokenTitle": "API Token（可选）",
         "memory.settings.apiTokenHint": "这里只把 Token 存在当前浏览器（localStorage），供面板请求携带；服务端的锁是插件配置里的 apiToken，两边填同一个值才真正上锁。只填这里不改服务端 = 没上锁。",
         "memory.settings.apiTokenPlaceholder": "与插件配置的 apiToken 保持一致",
@@ -1277,6 +1280,11 @@ window.__ModuleLoader__.load({
         "memory.status.vectorRuntimeFetchDownloaded": "下载完成：{n} 个包 / {m} 个文件。**请重启 DSH 使本地嵌入生效**（取回不会让当前进程里的 embedder 复活）。",
         "memory.status.vectorRuntimeFetchFailed": "取回失败：{reason}",
         "memory.status.vectorIndexed": "已索引 {n} / {m} 条",
+        "memory.status.vectorBackfillRunning": "回填中：本轮上限 {m} 条",
+        "memory.status.vectorBackfillDrained": "回填完成：本次启动补了 {n} 条",
+        "memory.status.vectorBackfillCapped": "回填暂停：本轮额度用完（上限 {m} 条），会继续排下一轮",
+        "memory.status.vectorBackfillStalled": "回填卡住：{f} 条嵌不进去，下次启动再试",
+        "memory.status.vectorBackfillError": "回填失败：{e}",
       "memory.status.vectorUnconfigured": "未配置",
       "memory.status.vectorUnconfiguredHint": "未填 embedding 端点/模型或未启用，语义召回不可用",
       "memory.status.vectorDegradedHint": "已索引 0 / {m} 条，语义召回实际不可用",
@@ -1293,6 +1301,16 @@ window.__ModuleLoader__.load({
         "memory.status.mirror.lastAttempt": "上次尝试",
         "memory.status.mirror.successAt": "上次成功",
         "memory.status.mirror.foot": "记忆条目在磁盘上的 Markdown 副本同步状态",
+        "memory.status.capacity": "库体积",
+        "memory.status.capacity.unknown": "未知",
+        "memory.status.capacity.unknownFoot": "容量读数拿不到（面板请求失败，或宿主版本还没有这块）",
+        "memory.status.capacity.active": "活跃条目",
+        "memory.status.capacity.archived": "归档条目",
+        "memory.status.capacity.reclaimable": "可回收（空闲页）",
+        "memory.status.capacity.check.dbSize": "库体积过线",
+        "memory.status.capacity.check.archivedRows": "归档条数过线",
+        "memory.status.capacity.check.archivedRatio": "归档占比过线",
+        "memory.status.capacity.foot": "三道预警线（体积 / 归档条数 / 归档占比）都可在设置里调；超限先跑维护卡的无损回收，真删由人确认",
         "memory.status.sec.overview": "库内一览",
         "memory.status.sec.engine": "后台运转",
         "memory.status.sec.maintenance": "维护",
@@ -1696,6 +1714,9 @@ window.__ModuleLoader__.load({
         "memory.settings.vectorReindex": "Reindex",
         "memory.settings.vectorReindexing": "Indexing…",
         "memory.settings.vectorReindexDone": "Indexed {n} items",
+        "memory.settings.vectorReindexPartial": "Indexed {n} items, {f} failed",
+        "memory.settings.vectorReindexRemaining": "Indexed {n} items, {r} still pending",
+        "memory.settings.vectorReindexNothing": "Nothing to rebuild (every row already carries this model's vector)",
         "memory.settings.apiTokenTitle": "API Token (optional)",
         "memory.settings.apiTokenHint": "This field only stores the token in this browser (localStorage) for the panel requests. The server-side lock is the plugin\u0027s apiToken config — set both to the same value; this field alone locks nothing.",
         "memory.settings.apiTokenPlaceholder": "Must match the plugin\u0027s apiToken",
@@ -2293,6 +2314,11 @@ window.__ModuleLoader__.load({
         "memory.status.vectorRuntimeFetchDownloaded": "Download complete: {n} packages / {m} files. **Restart DSH to activate local embedding** (fetching does not revive the embedder already running in this process).",
         "memory.status.vectorRuntimeFetchFailed": "Fetch failed: {reason}",
         "memory.status.vectorIndexed": "Indexed {n} / {m} items",
+        "memory.status.vectorBackfillRunning": "Backfilling: {m} rows per run",
+        "memory.status.vectorBackfillDrained": "Backfill finished: {n} rows embedded this start",
+        "memory.status.vectorBackfillCapped": "Backfill paused: run budget spent ({m} rows), another round is queued",
+        "memory.status.vectorBackfillStalled": "Backfill stuck: {f} rows will not embed, retrying on next start",
+        "memory.status.vectorBackfillError": "Backfill failed: {e}",
       "memory.status.vectorUnconfigured": "Not configured",
       "memory.status.vectorUnconfiguredHint": "No embedding endpoint/model configured — semantic recall is off",
       "memory.status.vectorDegradedHint": "Indexed 0 / {m} items — semantic recall is effectively unavailable",
@@ -2309,6 +2335,16 @@ window.__ModuleLoader__.load({
         "memory.status.mirror.lastAttempt": "Last attempt",
         "memory.status.mirror.successAt": "Last success",
         "memory.status.mirror.foot": "Sync state of the on-disk Markdown mirror of memory entries",
+        "memory.status.capacity": "Storage size",
+        "memory.status.capacity.unknown": "Unknown",
+        "memory.status.capacity.unknownFoot": "Capacity readout unavailable (panel request failed, or the host predates this block)",
+        "memory.status.capacity.active": "Active entries",
+        "memory.status.capacity.archived": "Archived entries",
+        "memory.status.capacity.reclaimable": "Reclaimable (freelist)",
+        "memory.status.capacity.check.dbSize": "DB size over threshold",
+        "memory.status.capacity.check.archivedRows": "Archived count over threshold",
+        "memory.status.capacity.check.archivedRatio": "Archive share over threshold",
+        "memory.status.capacity.foot": "The three thresholds (size / archived count / archive share) are adjustable in settings; when tripped, start with lossless reclaim in the maintenance card — real deletion stays human-confirmed",
         "memory.status.sec.overview": "Library",
         "memory.status.sec.engine": "Background activity",
         "memory.status.sec.maintenance": "Maintenance",
@@ -2975,6 +3011,10 @@ window.__ModuleLoader__.load({
       ".mneme-statrow{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
       ".mneme-statrow>span:first-child{flex:none;white-space:nowrap}",
       ".mneme-statrow .mneme-heatdot{align-self:center}",
+      // 预警行（#275 库体积卡）：行与值都要落预警色——.mneme-statrowval 自带
+      // color 声明，只染行不染值的话，过线的数字仍是次级文本色。
+      ".mneme-statrow--warn{color:var(--mneme-warn)}",
+      ".mneme-statrow--warn .mneme-statrowval{color:var(--mneme-warn)}",
       ".mneme-statrowval{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}",
       ".mneme-statfoot{margin-top:8px;font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
       // 热度分布条：三档占比一图看清，行标只补数字（类名带双横线，与 heatdot 同款）
@@ -3083,6 +3123,9 @@ window.__ModuleLoader__.load({
       ".mneme-wbmemo .mneme-xdot{flex:none}",
       ".mneme-wbmemo-main{min-width:0;flex:1}",
       ".mneme-statusnum{font-size:24px;font-weight:600;line-height:32px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}",
+      // 大数字预警色（#275 库体积卡）：状态卡都走 StatusCard，只有传 numWarn 的
+      // 卡会挂这个类。
+      ".mneme-statusnum--warn{color:var(--mneme-warn)}",
       ".mneme-statuscap{margin-top:4px;font-size:13px;line-height:19px;color:var(--mneme-fg-dim);word-break:break-word}",
       // --- destructive actions: red outline = delete, solid red = confirm ---
       ".mneme-btndanger{color:var(--mneme-danger);border-color:var(--mneme-danger)}",
@@ -4976,8 +5019,25 @@ window.__ModuleLoader__.load({
         try {
           const res = await apiFetch("/api/dsh-mneme/vector-reindex");
           const data = await res.json();
-          const n = data.indexed ?? 0;
-          setReindexMsg(t("memory.settings.vectorReindexDone").replace("{n}", String(n)));
+          const n = Number(data.indexed ?? 0);
+          const f = Number(data.failed ?? 0);
+          const r = data.remaining;
+          // #604: "已索引 0 条" used to be the only outcome ever shown, so a
+          // rebuild that selected nothing (model switch, wrong selector) looked
+          // exactly like a successful no-op. Say which of the three it was.
+          if (data.error) {
+            setReindexMsg("");
+          } else if (n === 0 && f === 0 && (r === 0 || r == null)) {
+            setReindexMsg(t("memory.settings.vectorReindexNothing"));
+          } else if (f > 0) {
+            setReindexMsg(t("memory.settings.vectorReindexPartial")
+              .replace("{n}", String(n)).replace("{f}", String(f)));
+          } else if (Number.isFinite(r) && r > 0) {
+            setReindexMsg(t("memory.settings.vectorReindexRemaining")
+              .replace("{n}", String(n)).replace("{r}", String(r)));
+          } else {
+            setReindexMsg(t("memory.settings.vectorReindexDone").replace("{n}", String(n)));
+          }
         } catch { setReindexMsg(""); }
         setReindexing(false);
       }
@@ -5537,7 +5597,7 @@ window.__ModuleLoader__.load({
     // never blanks or blocks the others.
     // 卡片解剖：标题（h3）→ 大数字 → 指标行（rows，一行一指标）→ 脚注
     // （foot，采样口径这类背景信息）。cap 仍保留给单句说明型卡片。
-    function StatusCard({ t, title, loading, error, num, cap, rows, foot, className }) {
+    function StatusCard({ t, title, loading, error, num, numWarn, cap, rows, foot, className }) {
       return h("div", { className: className ? `mneme-statuscard ${className}` : "mneme-statuscard" },
         h("h3", { className: "mneme-xcolhead" }, title),
         loading
@@ -5545,10 +5605,12 @@ window.__ModuleLoader__.load({
           : error
             ? h("div", { className: "mneme-statuscap", style: { color: "var(--mneme-danger)" } }, t("memory.status.error"))
             : h(react.Fragment, null,
-                h("div", { className: "mneme-statusnum" }, num),
+                // numWarn：大数字走预警色（--mneme-warn）。只有需要报警的卡传它，
+                // 其余卡不传、渲染与之前逐字节一致。
+                h("div", { className: numWarn ? "mneme-statusnum mneme-statusnum--warn" : "mneme-statusnum" }, num),
                 rows && rows.length
                   ? h("div", { className: "mneme-statrows" },
-                      rows.map((r, i) => h("div", { className: "mneme-statrow", key: r.key ?? i },
+                      rows.map((r, i) => h("div", { className: r.warn ? "mneme-statrow mneme-statrow--warn" : "mneme-statrow", key: r.key ?? i },
                         h("span", null, r.label),
                         h("span", { className: "mneme-statrowval", title: String(r.value) }, String(r.value))))
                     )
@@ -5717,7 +5779,7 @@ window.__ModuleLoader__.load({
       );
     }
     function VectorStatusCard({ t }) {
-      const [state, setState] = useState({ loading: true, error: false, provider: null, ready: null, configured: null, degraded: false, dimension: 0, embedded: 0, total: 0, localRuntime: null });
+      const [state, setState] = useState({ loading: true, error: false, provider: null, ready: null, configured: null, degraded: false, dimension: 0, embedded: 0, total: 0, localRuntime: null, backfill: null });
       // 收编是写操作、耗时数秒，所以要有忙碌态与就地结果；reload 只是用来让上面的
       // 加载 useEffect 重跑一次，从而把最新状态拉回来。
       const [reload, setReload] = useState(0);
@@ -5746,12 +5808,22 @@ window.__ModuleLoader__.load({
               embedded: Number(j?.index?.embeddedCount ?? 0),
               total: Number(j?.index?.totalCount ?? 0),
               // issue #131: 自管运行时状态。与 provider 无关地拿来，由下面决定是否要展示。
-              localRuntime: j?.localRuntime ?? null
+              localRuntime: j?.localRuntime ?? null,
+              // #604：上一轮回填的去向。此前这一段完全没有出口 —— 面板只能看到
+              // 「已索引 N / M 条」，撞 cap 停了、全行失败、抛错都长得一样。
+              backfill: j?.embeddings?.backfill ?? null
             });
           })
           .catch(() => { if (!cancelled) setState({ loading: false, error: true, provider: null, ready: null, dimension: 0, embedded: 0, localRuntime: null }); });
         return () => { cancelled = true; };
       }, [reload]);
+      // #604：回填在后台跑，卡如果只在挂载时取一次，「回填中」会一直挂着不动 ——
+      // 那正是这次要修的「看不见」。跑着的时候每 5 秒自己再问一次，停了就不再问。
+      useEffect(() => {
+        if (state.backfill?.state !== "running") return undefined;
+        const timer = setTimeout(() => setReload((n) => n + 1), 5000);
+        return () => clearTimeout(timer);
+      }, [state.backfill?.state, reload]);
       const off = !state.provider;
       // issue #135: 先把「没配」和「配了但在初始化」分开。此前两者都落到
       // ready !== true，于是未配置的 legacy embedder（ready 恒 true）反而
@@ -5790,6 +5862,26 @@ window.__ModuleLoader__.load({
                   ? t("memory.status.vectorDegradedHint").replace("{m}", state.total)
                   : t("memory.status.vectorIndexed").replace("{n}", state.embedded).replace("{m}", state.total);
 
+      // #604：回填这一轮到底怎么了，必须在卡上说得出来。三种停法含义完全不同：
+      //   capped  → 还有活，额度用完了，会自动续排（可等）
+      //   stalled → 剩下的都嵌不进去，本轮不再重试（要查原因）
+      //   error   → 这一轮整个抛错（要看日志）
+      // 都没跑过时 backfill 为 null，这里不出任何多余的行。
+      const bf = state.backfill;
+      const backfillHint = !bf || off || unconfigured || pending || localBlocked
+        ? ""
+        : bf.state === "running"
+          ? t("memory.status.vectorBackfillRunning").replace("{m}", String(bf.maxTotal ?? "?"))
+          : bf.state === "error"
+            ? t("memory.status.vectorBackfillError").replace("{e}", String(bf.error ?? "").slice(0, 120))
+            : bf.finishReason === "capped"
+              ? t("memory.status.vectorBackfillCapped").replace("{m}", String(bf.maxTotal ?? "?"))
+              : bf.finishReason === "stalled"
+                ? t("memory.status.vectorBackfillStalled").replace("{f}", String(bf.failed ?? 0))
+                : bf.finishReason === "drained"
+                  ? t("memory.status.vectorBackfillDrained").replace("{n}", String(bf.indexed ?? 0))
+                  : "";
+
 
       // 取回运行时由共享组件负责（设置页用的是同一份实现，见 RuntimeProvisionBlock）：
       // 代价说明、三档来源、结果文案与「要重启」都在那里 —— 同一件事不该有两份代码。
@@ -5801,6 +5893,9 @@ window.__ModuleLoader__.load({
           error: state.error,
           num,
           cap,
+          // #604：回填去向单独一行，不与「已索引 N / M」混在一句里 —— 那两件事
+          // 回答的是不同问题（现在有多少可用 / 上一轮为什么停）。
+          foot: backfillHint || null,
           // 概览区三张卡在 2 列档位会剩下半行空洞：向量卡在该档位跨满整行
           className: "mneme-statuscard--vectorwide"
         }),
@@ -6093,6 +6188,70 @@ window.__ModuleLoader__.load({
         num,
         rows,
         foot: t("memory.status.mirror.foot")
+      });
+    }
+
+    // 库体积卡（#275 容量预警，空间维度）。数据与镜像健康卡同一条 /health 路径，
+    // 读它的 capacity 块——维护者的接手口径就是「加一个库体积卡是同一条路径」。
+    // 三种拿不到数据的情况全部 fail-closed 渲染成「未知」，绝不显示「正常」：
+    // fetch 失败、老宿主没有 capacity 块、后端读失败（status:"unknown"）。
+    // 预警只是观察口：卡片给的是「过线了，先跑无损回收」，不自动做任何事
+    // （#275 拍板：真删由人显式确认）。
+    function CapacityCard({ t }) {
+      const [state, setState] = useState({ loading: true, capacity: null });
+      useEffect(() => {
+        let cancelled = false;
+        apiFetch("/api/dsh-mneme/health")
+          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+          .then((j) => { if (!cancelled) setState({ loading: false, capacity: (j && j.capacity) || null }); })
+          .catch(() => { if (!cancelled) setState({ loading: false, capacity: null }); });
+        return () => { cancelled = true; };
+      }, []);
+      const c = state.capacity;
+      const unknown = !c || c.status === "unknown";
+      const pct = (x) => `${Math.round(x * 1000) / 10}%`;
+      const rows = [];
+      if (!unknown && typeof c.active_rows === "number") {
+        rows.push({ key: "active", label: t("memory.status.capacity.active"), value: c.active_rows.toLocaleString() });
+      }
+      if (!unknown && typeof c.archived_rows === "number") {
+        const share = typeof c.archived_ratio === "number" ? ` (${pct(c.archived_ratio)})` : "";
+        rows.push({ key: "archived", label: t("memory.status.capacity.archived"), value: c.archived_rows.toLocaleString() + share });
+      }
+      if (!unknown && typeof c.freelist_bytes === "number") {
+        rows.push({ key: "freelist", label: t("memory.status.capacity.reclaimable"), value: formatBytes(c.freelist_bytes) });
+      }
+      // 过线的检查逐条列出，值/阈值都给全——「报警」要是能对上数字的，不然只是
+      // 一句让人去翻配置的空话。键集合有界（服务端只发那三种），但标签仍显式
+      // 映射：不按键名拼 i18n key，老字典缺键时会直接把键名漏给用户。
+      const checkLabel = (key) =>
+        key === "db_size" ? t("memory.status.capacity.check.dbSize")
+          : key === "archived_rows" ? t("memory.status.capacity.check.archivedRows")
+          : t("memory.status.capacity.check.archivedRatio");
+      const checkValue = (chk) =>
+        chk.key === "db_size" ? `${formatBytes(chk.value_bytes)} / ${formatBytes(chk.threshold_bytes)}`
+          : chk.key === "archived_rows" ? `${chk.value.toLocaleString()} / ${chk.threshold.toLocaleString()}`
+          : `${pct(chk.value)} / ${pct(chk.threshold)}`;
+      const checks = !unknown && Array.isArray(c.checks) ? c.checks : [];
+      let warn = false;
+      for (const chk of checks) {
+        if (chk.status === "warn") {
+          warn = true;
+          rows.push({ key: `warn-${chk.key}`, warn: true, label: checkLabel(chk.key), value: checkValue(chk) });
+        }
+      }
+      // :memory: 库没有磁盘足迹（file_bytes 为 null）——大数字给「—」而不是 0，
+      // 「量不到」和「零体积」是两回事。
+      const num = unknown ? t("memory.status.capacity.unknown") : (typeof c.file_bytes === "number" ? formatBytes(c.file_bytes) : "—");
+      return h(StatusCard, {
+        t,
+        title: t("memory.status.capacity"),
+        loading: state.loading,
+        error: false,
+        num,
+        numWarn: warn,
+        rows,
+        foot: unknown ? t("memory.status.capacity.unknownFoot") : t("memory.status.capacity.foot")
       });
     }
 
@@ -7262,7 +7421,8 @@ window.__ModuleLoader__.load({
               h(MemoriesStatusCard, { t }),
               h(EntitiesStatusCard, { t }),
               h(VectorStatusCard, { t }),
-              h(MirrorHealthCard, { t })
+              h(MirrorHealthCard, { t }),
+              h(CapacityCard, { t })
             ),
             h("div", { className: "mneme-statushead" }, t("memory.status.sec.engine")),
             h("div", { className: "mneme-statusgrid" },
