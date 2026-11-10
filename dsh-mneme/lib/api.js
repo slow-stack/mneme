@@ -1670,7 +1670,16 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             // 少了它们，「这条边被抬过」在面板上根本看不出来。取不到时给
             // 初值形状而不是 undefined，前端不必到处判空。
             weight: e.weight ?? 1.0,
-            source: e.source ?? "manual"
+            source: e.source ?? "manual",
+            // #619 可见化 B：边上的 metadata 必须原样透传，否则情感边写进去的
+            // emotion / attribution / sessionCount / evidence 在面板上永远取不到
+            // ——数据在库里、在 store.toRelation 里（src/store.js 已 JSON.parse），
+            // 只在最后一跳被这个映射丢掉，读起来就像「这个功能不存在」。
+            // 不裁剪字段：情感边的 metadata 由 sleep 相位写入，形状本来就会随版本
+            // 演进，在 API 层挑字段等于给未来的字段再挖一个同样的坑。
+            // 无 metadata 时给 null，不伪造空对象——前端要靠 null 区分「老边（抽取器
+            // 写的，本来就没有情绪）」和「有 metadata 但没有 emotion」。
+            metadata: e.metadata ?? null
           }))
         });
       } catch {
@@ -1716,6 +1725,92 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             gain: r.gain,
             source: r.source
           }))
+        });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  // --- affective: 情绪归因一览（#619 可见化 C） ---
+  // `ego` 端点只能从某个实体往外看，回答不了「这库里一共记了哪些情绪」。
+  // 所以单开一条：按 person/target/emotion 聚合，occasion 与 trait 分开。
+  //
+  // 三处刻意的选择，都是为了让面板不撒谎：
+  // - 聚键含 attribution（occasion / trait），两类不混在一条里。同一个「焦虑」
+  //   在一件事上是 occasion，跨三件事才是 trait，合成一条会把「这次」说成「一贯」。
+  // - trait 组带 independentSessions（跨几个独立会话）。trait 的判据本来就是会话数，
+  //   面板只显示「稳定倾向」而不给数字，用户没法判断它是攒够了还是被猜测出来的。
+  // - 完全读不到时返回 500 + error，不返回空列表：空列表在面板上长得跟
+  //   「你还没记过任何情绪」一样，而这两件事对用户的含义完全相反。
+  //   前端靠 httpStatusCode 区分，不靠 items.length。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/semantic/graph/affective",
+    policy: "open",
+    handler(req, res) {
+      try {
+        const url = new URL(req.url, "http://localhost");
+        const limit = Math.max(1, Math.min(500, Number(url.searchParams.get("limit") ?? 200) || 200));
+        if (typeof service.relationsByType !== "function") {
+          sendJson(res, 500, { error: "unavailable" });
+          return;
+        }
+        const edges = service.relationsByType("affective_context", limit) ?? [];
+        const groups = new Map();
+        for (const e of edges) {
+          const meta = e.metadata && typeof e.metadata === "object" ? e.metadata : {};
+          const emotion = String(meta.emotion ?? "").trim();
+          // 没有情绪名的边不进聚合：它是老版本或手工写的空壳，凑进「情绪一览」
+          // 会造出一个名字为空的条目。但也不能假装它不存在——计数单列。
+          const attribution = String(meta.attribution ?? "").trim() || "occasion";
+          if (!emotion) continue;
+          const key = `${e.from_entity}\u0000${e.to_entity}\u0000${emotion}\u0000${attribution}`;
+          if (!groups.has(key)) {
+            groups.set(key, {
+              person: e.from_name ?? null,
+              personId: e.from_entity,
+              target: e.to_name ?? null,
+              targetId: e.to_entity,
+              emotion,
+              attribution,
+              promotedToTrait: meta.promotedToTrait === true,
+              sessionCount: Number.isFinite(meta.sessionCount) ? meta.sessionCount : null,
+              traitSessionCount: Number.isFinite(meta.traitSessionCount) ? meta.traitSessionCount : null,
+              evidenceCount: Array.isArray(meta.evidence) ? meta.evidence.length : (e.memory_id ? 1 : 0),
+              firstSeen: e.created_at ?? null,
+              lastSeen: e.created_at ?? null,
+              edgeIds: []
+            });
+          }
+          const g = groups.get(key);
+          g.edgeIds.push(e.id);
+          if (e.created_at && (!g.lastSeen || e.created_at > g.lastSeen)) g.lastSeen = e.created_at;
+          if (e.created_at && (!g.firstSeen || e.created_at < g.firstSeen)) g.firstSeen = e.created_at;
+          if (e.from_name) g.person = e.from_name;
+          if (e.to_name) g.target = e.to_name;
+          if (Number.isFinite(meta.sessionCount)) {
+            g.sessionCount = Math.max(g.sessionCount ?? 0, meta.sessionCount);
+          }
+          if (Number.isFinite(meta.traitSessionCount)) {
+            g.traitSessionCount = Math.max(g.traitSessionCount ?? 0, meta.traitSessionCount);
+          }
+          if (meta.promotedToTrait === true) g.promotedToTrait = true;
+        }
+        const items = [...groups.values()].sort((a, b) => {
+          // trait 在前（更值得看），同类按最近一次出现倒序。
+          if ((b.attribution === "trait") !== (a.attribution === "trait")) {
+            return a.attribution === "trait" ? -1 : 1;
+          }
+          return String(b.lastSeen ?? "").localeCompare(String(a.lastSeen ?? ""));
+        });
+        sendJson(res, 200, {
+          items,
+          // 读到了多少条原始边、其中多少条因为没情绪名没进聚合。给出来是为了
+          // 让「只有 0 条」能自我解释：是库里真没有，还是有边但都不带情绪。
+          totalEdges: edges.length,
+          skippedEdges: edges.length - items.reduce((n, g) => n + g.edgeIds.length, 0),
+          truncated: edges.length >= limit
         });
       } catch {
         sendJson(res, 500, { error: "internal" });

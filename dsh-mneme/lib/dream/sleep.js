@@ -1169,7 +1169,18 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
     }, reportUsage, (reason) => { streamFailure = describeStreamFailure(reason); })
   );
   const text = await withMaxTokensFallback(ctx, config.sleepMaxTokens ?? 2048, runAffective, () => streamFailure);
-  if (text === undefined) return { status: "failed", error: "llm failed" };
+  if (text === undefined) {
+    // #619 可见化 A：失败原因不能只写成 "llm failed"。conflict 相位
+    // （src/dream/sleep.js 的 adjudicateBatch 调用处）早就把 stream 层的原文写进
+    // warn 并挂在返回值的 `failure` 上，理由写在它旁边的注释里：只写 "llm failed"
+    // 的话，运维分不清是上下文超限、模型拒收还是用户活动打断。affective 相位漏了
+    // 这一步，实测 2026-11-10T16:09 那一轮审计行只有 {"status":"failed",
+    // "error":"llm failed"}，502 原文只能去 llm_audit_logs 里捞。
+    // 相位自身不重试 5xx（withMaxTokensFallback 只处理 max_tokens 被拒、
+    // withEffortFallback 只处理 effort 被拒），所以这里记的就是一次性失败的真因。
+    if (streamFailure) logger?.warn?.(`dsh-mneme sleep: affective stream aborted or errored (${streamFailure})`);
+    return { status: "failed", error: "llm failed", failure: streamFailure || undefined };
+  }
   const items = parseJsonArray(text) ?? [];
   if (items.length === 0) return { status: "skipped", reason: "no attributions found" };
   const relations = [];

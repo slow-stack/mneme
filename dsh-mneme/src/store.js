@@ -4665,6 +4665,40 @@ export function createStore(path) {
     ).all(memoryId).map(toRelation);
   }
 
+  /**
+   * 按关系类型取全部边（#619 可见化 C）。情感边散在 23k 个实体之间，`ego` 端点
+   * 是「从某个实体往外看」，天然不适合回答「这库里一共记了哪些情绪」——那要的
+   * 是反向的、全局的一眼。所以单开一条按类型全表取，一次 SQL，不做 N 次往返。
+   *
+   * 只按类型过滤，不在 SQL 里碰 metadata：情绪/归属/场合数都由调用方从 metadata
+   * 里读，SQL 里拼 JSON 提取会把「字段名」焊进查询，下一版改字段名就得改 SQL。
+   * 按 created_at DESC 排，最近记的更靠前；limit 兜底防止面板把整表拖进内存。
+   */
+  function relationsByType(relationType, limit = 500) {
+    if (!relationType) return [];
+    const lim = Number.isFinite(limit) ? Math.max(0, Math.trunc(limit)) : 500;
+    if (lim === 0) return [];
+    // 端点名字一并取回：面板要显示「谁对谁」，让调用方拿 id 再逐条查实体
+    // 就是 N 次往返，而这个列表本来就是给「一眼看全」用的。
+    const rows = db.prepare(
+      `SELECT r.*, f.name AS from_name, f.type AS from_type,
+              t.name AS to_name, t.type AS to_type
+         FROM entity_relations r
+         LEFT JOIN entities f ON f.id = r.from_entity
+         LEFT JOIN entities t ON t.id = r.to_entity
+        WHERE r.relation_type = ?
+        ORDER BY r.created_at DESC
+        LIMIT ?`
+    ).all(relationType, lim);
+    return rows.map((row) => ({
+      ...toRelation(row),
+      from_name: row.from_name ?? null,
+      from_type: row.from_type ?? null,
+      to_name: row.to_name ?? null,
+      to_type: row.to_type ?? null
+    }));
+  }
+
   /** All entities (optionally name-filtered, newest first). Used by sleep phase 4
    *  orphan detection: an entity with zero relations is a candidate for relation
    *  completion. */
@@ -5602,6 +5636,7 @@ export function createStore(path) {
     bumpRelationWeight,
     migrateAttrsToMemory,
     getRelations,
+    relationsByType,
     getEntityNeighbors,
     getRelationsByMemory,
     setMirrorState,
