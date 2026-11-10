@@ -168,6 +168,9 @@ const FEATURE_FLAG_BOOLEANS = [
   // Issue #292：autoDream 连续失败退避（默认关）。基数是 dreamMinIntervalMinutes，
   // 有效间隔 = 基数 × 2^连续失败数（成功清零），封顶 30 分钟；面板可启停。
   "autoDreamFailureBackoff",
+  // Issue #557：dream 审计行输入快照瘦身（默认关）。开启后 auto 轮只落骨架
+  // （不含 content），organize 轮的重放载荷不受影响；面板可启停。
+  "dreamInputSummaryEnabled",
   "sleepModeEnabled",
   // Issue #529：sleep 连续失败退避（默认关）。基数是 sleepMinIntervalHours，
   // 有效间隔 = 基数 × 2^连续失败数（成功清零），封顶 max(基数, 24h)；面板可启停。
@@ -350,7 +353,12 @@ const FEATURE_FLAG_INT_RANGES = {
   graphInjectBudget: [0, 5],
   // Issue #399：蒸馏原文记录的保留天数（与 config.js 的 z.natural().min(1).max(3650)
   // 对齐；同 llmAudit.retentionDays，是 int 而非开关）。
-  "distillRecords.retentionDays": [1, 3650]
+  "distillRecords.retentionDays": [1, 3650],
+  // #275 容量预警阈值（嵌套点号键，必须同时进 api.js 的 NESTED_FLAG_PATHS）。
+  // 0 = 显式关掉那一条检查（阈值判级的启用条件写在 service.getCapacityHealth）。
+  // 上限与 config.js 的 z.natural().min(0).max() 成对。
+  "capacityWarning.dbSizeWarnMb": [0, 1048576],
+  "capacityWarning.archivedRowsWarn": [0, 10000000]
 };
 // 浮点开关的闭区间（与 config.js 的 z.number().min().max() 对齐）。与整数开关
 // 分开：面板的整数控件要求 Number.isInteger，而余弦相似度阈值必须允许小数。
@@ -363,7 +371,11 @@ const FEATURE_FLAG_NUMBER_RANGES = {
   graphWeightDelta: [0, 1],
   // Issue #603 第 4 层：自动裁决的相似度门槛。下界 0.85 与冲突检测阈值同源——
   // 低于它就不是「重复」而是「相似」，不该自动归档任何一条。
-  conflictAutoResolveMinSimilarity: [0.85, 1]
+  conflictAutoResolveMinSimilarity: [0.85, 1],
+  // #275 容量预警的归档占比阈值（0 = 关）：健康形态本身就落在 0.8~0.9，默认
+  // 0.95 起才算「归档区吞掉活跃区」——0.9 会对着健康库天天报警（依据见 config.js
+  // capacityWarning 的注释）。浮点键，同 conflictAutoResolveMinSimilarity 的缘由。
+  "capacityWarning.archivedRatioWarn": [0, 1]
 };
 // 自由字符串开关（与 config.js 的 z.string() 同名同型）：trim 后 ≤200 字符，
 // 空串合法（= 跟随主对话模型/默认路径，面板显示 placeholder）。

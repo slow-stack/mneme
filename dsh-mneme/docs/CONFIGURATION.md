@@ -28,6 +28,18 @@
 | `memoryDir` | `~/.dsh/memory` | SQLite 记忆库目录 | WAL + busy_timeout 已为多进程就绪；两个宿主共用库时 `externalApiEnabled` 与 `autoDream` 只能一边开 |
 | `lightMode` | `false` | 轻量档总闸：一键关掉全部重型路径，保留核心循环（见文末清单） | 面板 `panel_mode=light` 等效为 `true` 且优先于 bundle 配置 |
 
+## 容量预警（#275，空间维度）
+
+库体积 / 归档区规模过线时在 `GET /api/dsh-mneme/health` 的 `capacity` 块与面板「库体积」卡上报。三道阈值都是**观察口**，不是动作触发：没有周期性消费者（`/health` 被读到才算一次），预警也永不自动归档 / 删除——真删由人显式确认（#275 拍板），出口是维护卡的无损回收（`dsh-mneme reclaim`，见 [STORAGE.md](STORAGE.md)）。判级实现 `service.getCapacityHealth`，与镜像健康 fail-safe 同款：读失败显式 `status:"unknown"`，绝不伪装 ok。
+
+| 键 | 默认 | 作用 | 开启后果 / 冲突 |
+|---|---|---|---|
+| `capacityWarning.dbSizeWarnMb` | `256` | 库磁盘足迹（主文件 + WAL + SHM）预警线，整数 MB | **0 = 关掉这条检查**。默认锚定议题实测：55 MB 库 VACUUM 0.8s，256 MB 起代价才值得先看数字再动手（议题「现在便宜、以后贵」） |
+| `capacityWarning.archivedRowsWarn` | `5000` | 归档区行数预警线 | **0 = 关**。锚定议题形态区间「归档是数千条这个量级」的上沿（实测 2,400 时还没坏） |
+| `capacityWarning.archivedRatioWarn` | `0.95` | 归档占比（归档 / 全部）预警线，浮点 0–1 | **0 = 关**。健康形态本身就落在 0.8~0.9（活跃数百 / 归档数千），0.9 会对着健康库报警；0.95 起才是「归档区吞掉活跃区」的形态 |
+
+三个键都走 feature_flags 白名单（面板可改，改动是**启动快照**，与 `panel_mode` 同节奏，面板显示「待重启」）；两个整数走 INT_RANGES、占比浮点走 NUMBER_RANGES。不设 `enabled` 总开关：数字恒在 `/health`，把某条检查关掉就是把对应阈值设 0。`:memory:` 库没有磁盘足迹，`db_size` 检查缺席（不是 ok）；答复只带数字、不带库文件路径。归档增速（净增速率）是 recall-stats `archive` 块的第五指标，不在这里重复。
+
 ## 逐会话无痕（issue #539）
 
 命中会话后，Mneme 不向该会话注入记忆、用户设置或工具指引，不接受其 `memory_*` / `set_scope_state` 工具调用，不对它蒸馏，也不由压缩抢救、M.O. 记账或自动提议路径保存该会话的内容。
@@ -181,6 +193,7 @@
 | `dreamDelayMs` | `2000` | 触发后的延迟（毫秒） | — |
 | `dreamMinIntervalMinutes` | `0` | 两次开跑最小间隔（分钟，≤10080，#89） | 失败/degraded run 也占用；0 = 不限 |
 | `autoDreamFailureBackoff` | `false` | 连续失败指数退避：有效间隔 = 基数 × 2^连败，封顶 30 分钟（#292） | opt-in；基数取 `dreamMinIntervalMinutes`（0 = 无闸可翻倍）；成功一次清零；重启归零 |
+| `dreamInputSummaryEnabled` | `false` | dream 审计行输入快照瘦身（#557）：auto 轮只落骨架（id/type/title/importance/updated_at，不含 content） | opt-in；LLM 输入与 `snapshot_hash` 都不受影响；organize 轮重放载荷不受影响；开启后审计行无法离线重算 hash（骨架级回放） |
 | `dreamPeakHours` | `""` | 巩固错峰，与 `summarizePeakHours` 同一份时段语法（#239，全角等价符号同样归一） | 命中高峰不做梦、阈值继续累积、留 skip 审计；非法写法按未配置 |
 | `dreamPeakMaxDeferMinutes` | `120` | 巩固顺延上限（分钟） | 0 = 不设上限；到点仍处高峰照跑 |
 | `dreamProvider` / `dreamModel` | 空 | 巩固专用路由（settings「巩固模型」） | 建议非思考模型——思考模型易烧光预算返回空体（#135） |
