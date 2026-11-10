@@ -2578,19 +2578,25 @@ window.__ModuleLoader__.load({
         // （--mneme-space-8 就是 8px），而不是 0..8 的档位号：
         // 档位号会让 gap:"4" 等于 8px，写的人要背一张表，读的人没法核对；
         // 值命名让调用点自解释，也让 test/panel-tokens.test.js 能用「允许的 px 集」
-        // 直接校验，不需要第二份映射表。2 与 6 是 inline 半档（图标与文字之间）。
+        // 直接校验，不需要第二份映射表。2/6/10 是半档（图标与文字之间、标题与卡之间），
+        // 40 是滚动区末端的留白：24 之后一格跨度太窄，装不下滚到底时需要的呼吸。
         "--mneme-space-0:0;" +
         "--mneme-space-2:2px;" +
         "--mneme-space-4:4px;" +
         "--mneme-space-6:6px;" +
         "--mneme-space-8:8px;" +
+        "--mneme-space-10:10px;" +
         "--mneme-space-12:12px;" +
         "--mneme-space-16:16px;" +
         "--mneme-space-20:20px;" +
         "--mneme-space-24:24px;" +
+        "--mneme-space-40:40px;" +
         // 圆角：全文件此前 borderRadius 声明 0 处（圆角全靠宿主，各页不统一）。
+        // 留两档是因为用途不同：8 是列表里的小卡，12 是仪表盘大卡（容器大、信息
+        // 密度低，8 会让四角显得太紧）。
         "--mneme-radius-4:4px;" +
         "--mneme-radius-8:8px;" +
+        "--mneme-radius-12:12px;" +
         "--mneme-radius-pill:999px;" +
         // 字号：现有 12/13/15 三种覆盖了绝大多数文本，把既有事实写成 token；
         // 10/14/18 仍散落在 133/61/52 处，属待迁移，不在此列（迁移要逐页视觉复核，
@@ -2993,27 +2999,27 @@ window.__ModuleLoader__.load({
       ".mneme-badge--default{color:var(--mneme-fg-dim);background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-badge--changed{color:var(--mneme-accent);background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 10%,transparent);border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary) 30%,transparent)}",
       // 冲突集中处理队列（v0.8.0）：状态页的待确认冲突列表
-      ".mneme-conflictq{display:flex;flex-direction:column;gap:10px}",
-      ".mneme-conflictq-head{display:flex;align-items:center;gap:8px}",
+      ".mneme-conflictq{display:flex;flex-direction:column;gap:var(--mneme-space-10)}",
+      ".mneme-conflictq-head{display:flex;align-items:center;gap:var(--mneme-space-8)}",
 ".mneme-conflictq-truncated{flex:1;font-size:12px;line-height:16px;color:var(--mneme-fg-dim);text-align:right}",
-      ".mneme-conflict-item{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px}",
+      ".mneme-conflict-item{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:var(--mneme-radius-8);padding:var(--mneme-space-10);display:flex;flex-direction:column;gap:var(--mneme-space-8)}",
       ".mneme-conflict-reason{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary)}",
-      ".mneme-conflict-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}",
-      ".mneme-conflict-side{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:4px;min-width:0}",
+      ".mneme-conflict-pair{display:grid;grid-template-columns:1fr 1fr;gap:var(--mneme-space-8)}",
+      ".mneme-conflict-side{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:var(--mneme-radius-8);padding:var(--mneme-space-8);display:flex;flex-direction:column;gap:var(--mneme-space-4);min-width:0}",
       ".mneme-conflict-sidelabel{font-size:11px;color:var(--mneme-fg-dim)}",
       ".mneme-conflict-sidetitle{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".mneme-conflict-snippet{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}",
       ".mneme-conflict-missing{font-size:12px;color:var(--mneme-fg-dim)}",
-      ".mneme-conflict-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}",
+      ".mneme-conflict-actions{display:flex;align-items:center;gap:var(--mneme-space-6);flex-wrap:wrap}",
       ".mneme-conflict-hint{font-size:11px;color:var(--mneme-fg-dim);margin-right:auto}",
       // #177 冲突队列视觉批次：A/B 侧色、相似度条、词级 diff、主色按钮、空态
       ".mneme-conflict-side--a{border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary) 35%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 4%,transparent)}",
       ".mneme-conflict-side--a .mneme-conflict-sidelabel{color:var(--mneme-accent);font-weight:600}",
       ".mneme-conflict-side--b{border-color:color-mix(in srgb,var(--mneme-warn) 45%,transparent);background:color-mix(in srgb,var(--mneme-warn) 5%,transparent)}",
       ".mneme-conflict-side--b .mneme-conflict-sidelabel{color:var(--mneme-warn);font-weight:600}",
-      ".mneme-conflict-simrow{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dsw-alias-label-secondary)}",
-      ".mneme-conflict-simbar{position:relative;flex:1;height:5px;border-radius:3px;background:var(--dsw-alias-interactive-bg-hover);overflow:hidden}",
-      ".mneme-conflict-simfill{position:absolute;top:0;bottom:0;left:0;border-radius:3px;background:var(--dsw-alias-state-business-primary)}",
+      ".mneme-conflict-simrow{display:flex;align-items:center;gap:var(--mneme-space-8);font-size:11px;color:var(--dsw-alias-label-secondary)}",
+      ".mneme-conflict-simbar{position:relative;flex:1;height:5px;border-radius:var(--mneme-radius-pill);background:var(--dsw-alias-interactive-bg-hover);overflow:hidden}",
+      ".mneme-conflict-simfill{position:absolute;top:0;bottom:0;left:0;border-radius:var(--mneme-radius-pill);background:var(--dsw-alias-state-business-primary)}",
       ".mneme-conflict-diff{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}",
       // 展开全文：取消行数钳制并给一个内部滚动区——报障点是「窗口太小又不能
       // 放大，完全对比不了内容」，所以展开态必须能容纳长文本且不撑破面板。
@@ -3021,25 +3027,25 @@ window.__ModuleLoader__.load({
       // 页），那时 46vh 会算成 0px，展开态直接看不见字——实测踩过。
       ".mneme-conflict-diff--full{display:block;-webkit-line-clamp:unset;max-height:28em;overflow-y:auto}",
       ".mneme-conflict-text{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;overflow-wrap:anywhere;max-height:28em;overflow-y:auto}",
-      ".mneme-conflict-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
+      ".mneme-conflict-meta{display:flex;align-items:center;gap:var(--mneme-space-6);flex-wrap:wrap;font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
       ".mneme-conflict-metaval{color:var(--dsw-alias-label-secondary)}",
       // 窄面板下并排会把每侧挤到无法阅读，退成单列（容器查询按面板实际宽度判）
       "@container (max-width:560px){.mneme-conflict-pair{grid-template-columns:1fr}}",
-      ".mneme-conflict-mark{text-decoration:none;border-radius:3px;padding:0 1px}",
+      ".mneme-conflict-mark{text-decoration:none;border-radius:var(--mneme-radius-4);padding:0 1px}",
       ".mneme-conflict-mark--del{background:color-mix(in srgb,var(--mneme-danger) 16%,transparent);text-decoration:line-through}",
       ".mneme-conflict-mark--ins{background:color-mix(in srgb,var(--mneme-ok) 18%,transparent)}",
-      ".mneme-conflict-primary{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 10px;border-radius:8px;border:none;background:var(--mneme-accent);color:var(--dsw-alias-bg-layer-1);cursor:pointer;font-family:inherit;font-size:12px;line-height:16px}",
+      ".mneme-conflict-primary{display:inline-flex;align-items:center;gap:var(--mneme-space-4);height:24px;padding:0 var(--mneme-space-10);border-radius:var(--mneme-radius-8);border:none;background:var(--mneme-accent);color:var(--dsw-alias-bg-layer-1);cursor:pointer;font-family:inherit;font-size:12px;line-height:16px}",
       ".mneme-conflict-primary:disabled{opacity:.55;cursor:default}",
       ".mneme-conflict-primary:hover:not(:disabled){background:color-mix(in srgb,var(--mneme-accent) 85%,var(--dsw-alias-label-primary))}",
       ".mneme-badge--frozen{color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 12%,transparent)}",
       // 「待重启」徽标：沿用 frozen 的 warn 语义（都是「现状不是你刚设的样子」），
       // 但加边框把它和只读冻结态区分开——它需要用户动手，不是终态。
       ".mneme-badge--pending{color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 12%,transparent);border:1px solid color-mix(in srgb,var(--mneme-warn) 30%,transparent)}",
-      ".mneme-pending{display:flex;align-items:flex-start;gap:8px;margin:8px 0 0;padding:8px 10px;border-radius:8px;font-size:12.5px;line-height:18px;color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 10%,transparent);border:1px solid color-mix(in srgb,var(--mneme-warn) 28%,transparent)}",
+      ".mneme-pending{display:flex;align-items:flex-start;gap:var(--mneme-space-8);margin:var(--mneme-space-8) 0 0;padding:var(--mneme-space-8) var(--mneme-space-12);border-radius:var(--mneme-radius-8);font-size:12.5px;line-height:18px;color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 10%,transparent);border:1px solid color-mix(in srgb,var(--mneme-warn) 28%,transparent)}",
       // 圆点用当前色（currentColor）而不是再引一次 --mneme-warn：色值只有一个真源，
       // 改主题时提示行与圆点不会走散。
-      ".mneme-pending-dot{flex:none;width:6px;height:6px;margin-top:6px;border-radius:50%;background:currentColor}",
-      ".mneme-conflict-empty{border:1px dashed var(--dsw-alias-border-l2);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px}",
+      ".mneme-pending-dot{flex:none;width:6px;height:6px;margin-top:var(--mneme-space-6);border-radius:50%;background:currentColor}",
+      ".mneme-conflict-empty{border:1px dashed var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-8);padding:var(--mneme-space-12);display:flex;flex-direction:column;gap:var(--mneme-space-4)}",
       ".mneme-conflict-empty-title{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-secondary)}",
       ".mneme-conflict-empty-body{font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
       ".mneme-statuscard--actionable{border-color:color-mix(in srgb,var(--mneme-warn) 55%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--mneme-warn) 35%,transparent)}",
@@ -3047,7 +3053,7 @@ window.__ModuleLoader__.load({
       ".mneme-triggerwrap{position:relative;pointer-events:none}",
       ".mneme-triggerwrap .mneme-trigger{pointer-events:auto}",
       ".mneme-conflict-jump .mneme-statuscard{border-color:color-mix(in srgb,var(--mneme-warn) 55%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--mneme-warn) 35%,transparent)}",
-      ".mneme-conflict-jump:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px;border-radius:12px}",
+      ".mneme-conflict-jump:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px;border-radius:var(--mneme-radius-12)}",
       // 详情抽屉：sheet 内右侧滑出，覆盖在浏览区之上
       ".mneme-xmain{position:relative}",
       "@keyframes mneme-slidein{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:translateX(0)}}",
@@ -3103,8 +3109,8 @@ window.__ModuleLoader__.load({
       ".mneme-xmore{display:flex;justify-content:center;align-items:center;padding:10px 0 24px;min-height:20px}",
       ".mneme-xemptyico{display:block;margin:0 auto 6px;opacity:.7}",
       // --- status sub-view: responsive stat-card grid (auto-fill, ~220px min) ---
-      ".mneme-status{flex:1;min-height:0;overflow-y:auto;padding:20px 24px 40px;box-sizing:border-box}",
-      ".mneme-statusgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;max-width:1000px;margin:0 auto 12px}",
+      ".mneme-status{flex:1;min-height:0;overflow-y:auto;padding:var(--mneme-space-20) var(--mneme-space-24) var(--mneme-space-40);box-sizing:border-box}",
+      ".mneme-statusgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:var(--mneme-space-12);max-width:1000px;margin:0 auto var(--mneme-space-12)}",
       ".mneme-statusgrid:last-of-type{margin-bottom:0}",
       // 概览区是单行三卡：auto-fit 让不满的轨道塌缩，三张卡恒等宽铺满、行尾不留洞
       ".mneme-statusgrid--overview{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}",
@@ -3113,13 +3119,13 @@ window.__ModuleLoader__.load({
       "@container (min-width:452px) and (max-width:683px){.mneme-statuscard--vectorwide{grid-column:span 2}}",
       "@container (min-width:452px){.mneme-statuscard--wide{grid-column:span 2}}",
       // 状态页分组标题（库内一览 / 后台运转）：只做扫读锚点，压得比卡片标题低
-      ".mneme-statushead{max-width:1000px;margin:0 auto 10px;font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim)}",
-      ".mneme-statusgrid+.mneme-statushead{margin-top:26px}",
-      ".mneme-statuscard{min-width:0;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px 16px 14px}",
+      ".mneme-statushead{max-width:1000px;margin:0 auto var(--mneme-space-10);font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim)}",
+      ".mneme-statusgrid+.mneme-statushead{margin-top:var(--mneme-space-24)}",
+      ".mneme-statuscard{min-width:0;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:var(--mneme-space-16) var(--mneme-space-16) var(--mneme-space-12)}",
       // 指标行：一行一指标（label 左 / 数值右），取代「·」串联的说明长句——
       // 拥挤感的根源是把多指标压进一段会换行的散文
-      ".mneme-statrows{margin-top:10px;display:flex;flex-direction:column;gap:4px}",
-      ".mneme-statrow{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
+      ".mneme-statrows{margin-top:var(--mneme-space-10);display:flex;flex-direction:column;gap:var(--mneme-space-4)}",
+      ".mneme-statrow{display:flex;align-items:baseline;justify-content:space-between;gap:var(--mneme-space-12);font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
       ".mneme-statrow>span:first-child{flex:none;white-space:nowrap}",
       ".mneme-statrow .mneme-heatdot{align-self:center}",
       // 预警行（#275 库体积卡）：行与值都要落预警色——.mneme-statrowval 自带
@@ -3127,9 +3133,9 @@ window.__ModuleLoader__.load({
       ".mneme-statrow--warn{color:var(--mneme-warn)}",
       ".mneme-statrow--warn .mneme-statrowval{color:var(--mneme-warn)}",
       ".mneme-statrowval{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}",
-      ".mneme-statfoot{margin-top:8px;font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
+      ".mneme-statfoot{margin-top:var(--mneme-space-8);font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
       // 热度分布条：三档占比一图看清，行标只补数字（类名带双横线，与 heatdot 同款）
-      ".mneme-heatbar{display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:12px;background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-heatbar{display:flex;height:6px;border-radius:var(--mneme-radius-pill);overflow:hidden;margin-top:var(--mneme-space-12);background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-heatbar-seg{min-width:2px}",
       ".mneme-heatbar--hot{background:var(--mneme-warn)}",
       ".mneme-heatbar--warm{background:var(--mneme-fg-dim)}",
@@ -3141,10 +3147,10 @@ window.__ModuleLoader__.load({
       // --- Token 去向三屏（2026-10 可观测性改造）：KPI 带 / donut / 7 天柱状 / 8 周热力 ---
       // KPI 带固定 4 列、容器收窄降 2 列：用 @container 不用 @media——面板同时长在
       // 宿主侧栏（~500px）与 sheet（1240px）里，决定布局的是容器宽度而非视口。
-      ".mneme-kpiband{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;max-width:1000px;margin:0 auto 12px}",
+      ".mneme-kpiband{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--mneme-space-12);max-width:1000px;margin:0 auto var(--mneme-space-12)}",
       "@container (max-width:560px){.mneme-kpiband{grid-template-columns:repeat(2,minmax(0,1fr))}}",
-      ".mneme-tokenflow{max-width:1000px;margin:0 auto 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px 16px 14px}",
-      ".mneme-donutwrap{display:flex;gap:20px;align-items:center;margin-top:12px}",
+      ".mneme-tokenflow{max-width:1000px;margin:0 auto var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:var(--mneme-space-16) var(--mneme-space-16) var(--mneme-space-12)}",
+      ".mneme-donutwrap{display:flex;gap:var(--mneme-space-20);align-items:center;margin-top:var(--mneme-space-12)}",
       "@container (max-width:480px){.mneme-donutwrap{flex-direction:column;align-items:stretch}.mneme-donutbox{align-self:center}}",
       ".mneme-donutbox{position:relative;flex:none;width:148px;height:148px}",
       ".mneme-donutbox svg{width:100%;height:100%;display:block}",
@@ -3209,35 +3215,35 @@ window.__ModuleLoader__.load({
       ".mneme-flowsink{min-width:0;display:flex;flex-direction:column}",
       // 8 周沉淀只画两条（进来的 / 稳住的）：220px 宽里三序列会细到看不清，
       // 归档数改在下方图例里给总量。
-      ".mneme-sinkchart{display:flex;align-items:flex-end;gap:4px;height:96px;margin-top:12px}",
-      ".mneme-sinkcol{flex:1;min-width:0;display:flex;align-items:flex-end;gap:2px;height:100%}",
-      ".mneme-sinkbar{flex:1;min-width:0;border-radius:2px 2px 0 0;min-height:1px}",
+      ".mneme-sinkchart{display:flex;align-items:flex-end;gap:var(--mneme-space-4);height:96px;margin-top:var(--mneme-space-12)}",
+      ".mneme-sinkcol{flex:1;min-width:0;display:flex;align-items:flex-end;gap:var(--mneme-space-2);height:100%}",
+      ".mneme-sinkbar{flex:1;min-width:0;border-radius:var(--mneme-radius-4) var(--mneme-radius-4) 0 0;min-height:1px}",
       ".mneme-sinkbar--added{background:var(--mneme-chart-3)}",
       ".mneme-sinkbar--merged{background:var(--mneme-chart-2)}",
-      ".mneme-sinklabels{display:flex;gap:4px;margin-top:4px;font-size:9.5px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums}",
+      ".mneme-sinklabels{display:flex;gap:var(--mneme-space-4);margin-top:var(--mneme-space-4);font-size:9.5px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums}",
       ".mneme-sinklabels span{flex:1;min-width:0;text-align:center;white-space:nowrap}",
-      ".mneme-sinklegend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:8px;font-size:10.5px;color:var(--mneme-fg-dim)}",
+      ".mneme-sinklegend{display:flex;flex-wrap:wrap;align-items:center;gap:var(--mneme-space-4) var(--mneme-space-10);margin-top:var(--mneme-space-8);font-size:10.5px;color:var(--mneme-fg-dim)}",
       ".mneme-sinklegend b{font-weight:600;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}",
       // 原 9 卡降级折叠区：默认收起，展开才挂载子卡（见 TokenFlowSection 注释）。
-      ".mneme-legacy{max-width:1000px;margin:0 auto 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:12px 16px}",
+      ".mneme-legacy{max-width:1000px;margin:0 auto var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:var(--mneme-space-12) var(--mneme-space-16)}",
       ".mneme-legacy summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}",
       // --- 状态页工作台：让用户看见插件在干活（动态/沉淀/归档） ---
-      ".mneme-wbhead{margin:28px auto 10px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);max-width:1000px;display:flex;align-items:baseline;justify-content:space-between;gap:8px}",
-      ".mneme-wblist{max-width:1000px;display:flex;flex-direction:column;gap:6px}",
-      ".mneme-wbrow{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px}",
-      ".mneme-wbdot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:6px;background:var(--mneme-ok)}",
+      ".mneme-wbhead{margin:var(--mneme-space-24) auto var(--mneme-space-10);font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);max-width:1000px;display:flex;align-items:baseline;justify-content:space-between;gap:var(--mneme-space-8)}",
+      ".mneme-wblist{max-width:1000px;display:flex;flex-direction:column;gap:var(--mneme-space-6)}",
+      ".mneme-wbrow{display:flex;gap:var(--mneme-space-10);align-items:flex-start;padding:var(--mneme-space-10) var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l1);border-radius:var(--mneme-radius-8)}",
+      ".mneme-wbdot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:var(--mneme-space-6);background:var(--mneme-ok)}",
       ".mneme-wbdot--err{background:var(--mneme-danger)}",
       ".mneme-wbmain{min-width:0;flex:1}",
       ".mneme-wbtitle{font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
       ".mneme-wbsub{font-size:12px;line-height:17px;color:var(--mneme-fg-dim);margin-top:1px}",
-      ".mneme-wbmemo{display:flex;gap:10px;align-items:center;padding:10px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px}",
+      ".mneme-wbmemo{display:flex;gap:var(--mneme-space-10);align-items:center;padding:var(--mneme-space-10) var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l1);border-radius:var(--mneme-radius-8)}",
       ".mneme-wbmemo .mneme-xdot{flex:none}",
       ".mneme-wbmemo-main{min-width:0;flex:1}",
       ".mneme-statusnum{font-size:24px;font-weight:600;line-height:32px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}",
       // 大数字预警色（#275 库体积卡）：状态卡都走 StatusCard，只有传 numWarn 的
       // 卡会挂这个类。
       ".mneme-statusnum--warn{color:var(--mneme-warn)}",
-      ".mneme-statuscap{margin-top:4px;font-size:13px;line-height:19px;color:var(--mneme-fg-dim);word-break:break-word}",
+      ".mneme-statuscap{margin-top:var(--mneme-space-4);font-size:13px;line-height:19px;color:var(--mneme-fg-dim);word-break:break-word}",
       // --- destructive actions: red outline = delete, solid red = confirm ---
       ".mneme-btndanger{color:var(--mneme-danger);border-color:var(--mneme-danger)}",
       ".mneme-btndanger:hover{background:color-mix(in srgb,var(--mneme-danger) 12%,transparent)}",
@@ -3641,8 +3647,8 @@ window.__ModuleLoader__.load({
      * 直接跑（注入一个假的 createElement），所以这段必须保持纯函数、不许 require。
      */
     const GEOMETRY = {
-      space: [0, 2, 4, 6, 8, 12, 16, 20, 24],
-      radius: [4, 8, "pill"],
+      space: [0, 2, 4, 6, 8, 10, 12, 16, 20, 24, 40],
+      radius: [4, 8, 12, "pill"],
       type: [12, 13, 15],
       weight: [400, 600]
     };
@@ -7058,7 +7064,7 @@ window.__ModuleLoader__.load({
         h("div", { className: "mneme-statusnum", style: { fontSize: "16px", lineHeight: "24px" } },
           t("memory.status.skippedTitle").replace("{n}", String(total))),
         h("div", { className: "mneme-statuscap", style: { marginBottom: "6px" } }, t("memory.status.skippedHint")),
-        h("ul", { style: { margin: 0, paddingLeft: "18px", fontSize: "12px", lineHeight: "18px" } },
+        h("ul", { style: { margin: 0, paddingLeft: space(16), fontSize: "12px", lineHeight: "18px" } },
           list.slice(0, 4).map((bucket, i) =>
             h("li", { key: i, style: { color: "var(--mneme-fg-dim)" } },
               (bucket.action ? bucket.action + " · " : "") + bucket.reason + " ×" + String(bucket.count)))),
@@ -7214,10 +7220,10 @@ window.__ModuleLoader__.load({
             h("span", null, r.label),
             h("span", { className: "mneme-statrowval", title: String(r.value) }, String(r.value))))),
         foot ? h("div", { className: "mneme-statfoot" }, foot) : null,
-        h("div", { style: { marginTop: 10 } },
+        h("div", { style: { marginTop: space(10) } },
           (snap.entries || []).length === 0
             ? h("div", { className: "mneme-statuscap" }, t("memory.status.injectPreview.empty"))
-            : (snap.entries || []).map((m) => h("div", { key: m.id, style: { display: "flex", gap: 8, alignItems: "baseline", fontSize: 12, padding: "2px 0" } },
+            : (snap.entries || []).map((m) => h("div", { key: m.id, style: { display: "flex", gap: space(8), alignItems: "baseline", fontSize: 12, padding: space(2) + " 0" } },
                 h("span", { className: "mneme-xcolhead" }, typeLabel(t, m.type)),
                 h("span", { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title || "—"),
                 h("span", { className: "mneme-xcolhead" },
@@ -7617,7 +7623,7 @@ window.__ModuleLoader__.load({
                 }))),
               h("div", { className: "mneme-statrows" },
                 tiers.map(([tier, n, label]) => h("div", { className: "mneme-statrow", key: tier },
-                  h("span", { style: { display: "flex", alignItems: "center", gap: 6 } },
+                  h("span", { style: { display: "flex", alignItems: "center", gap: space(6) } },
                     h("span", { className: `mneme-heatdot mneme-heatdot${tier}`, "aria-hidden": "true" }),
                     label),
                   h("span", { className: "mneme-statrowval" }, String(n))))),
