@@ -112,10 +112,11 @@ test("chorography wiki entry registers its own seat pair in the same panellist b
   );
 });
 
-// 收尾档（P34）：面板的生成触发点只接 T0（秒级同步回执）；T1 是 30–240s 起步的
-// 长任务，不上 HTTP——这条边界同时是安全边界（token-write 只罩秒级写）与体验
-// 边界（面板请求不挂死）。锁三件事：按钮打到 /choro/run、rebuilding 态防连点、
-// t1Loss/指引文案存在（spec §3「现在生成」的落点 + M2 补洞的警告透出）。
+// 收尾档（P34）留下的边界：面板的「重建」触发点只接 T0（秒级同步回执）。
+// T1 后来按契约 §3.5 单开了自己的路由（/choro/t1 + 轮询），所以这里的
+// 「不上 HTTP」只对重建按钮成立，不再是整个面板的规矩——重建仍然是同步回执，
+// 锁三件事：按钮打到 /choro/run、rebuilding 态防连点、t1Loss/指引文案存在
+// （spec §3「现在生成」的落点 + M2 补洞的警告透出）。
 test("chorography wiki page exposes the rebuild action against /choro/run", () => {
   assert.ok(
     clientSource.includes('"/api/dsh-mneme/choro/run"'),
@@ -132,6 +133,195 @@ test("chorography wiki page exposes the rebuild action against /choro/run", () =
   assert.ok(
     clientSource.includes("wiki.rebuild.done"),
     "the receipt note must surface the rebuilt module/page counts"
+  );
+});
+
+// issue #607 正面修复：空态（phase === "no-repo"）以前只有一句「去跑 CLI」的
+// 纯文字，一个可点的东西都没有，而那句命令在 PATH 里根本不存在。回归表现：
+//  · 空态退回纯文字 → 用户第一次进这块只能自己去翻文档；
+//  · 命令示例写回裸 CLI 名 → 抄进终端就是 "command not found"；
+//  · 文案出现「cd 进目录」→ 命令收的是路径参数，cd 进去反而找不着仓库。
+test("#607: the no-repo empty state offers a clickable path-to-generate entry", () => {
+  assert.ok(
+    clientSource.includes("mneme-wikirunrow"),
+    "the no-repo empty state must render an input+button row, not a bare paragraph"
+  );
+  assert.ok(
+    clientSource.includes('t("wiki.empty.generate")'),
+    "the empty state must carry its own generate button label"
+  );
+  assert.ok(
+    clientSource.includes('t("wiki.empty.pathPlaceholder")'),
+    "the empty state must ask for the repository's absolute path (the CLI takes a path argument)"
+  );
+  // 命令要给绝对路径：dsh-mneme-choro 不在 PATH 里，裸名抄进终端必然找不到。
+  // 值里含转义引号（路径要用引号包住），所以逐字取到未转义的那个收尾引号。
+  const cmds = [...clientSource.matchAll(/"wiki\.empty\.cliCmd":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  assert.equal(cmds.length, 2, "wiki.empty.cliCmd must exist in both dictionaries");
+  for (const cmd of cmds) {
+    assert.ok(
+      cmd.includes("node ") && cmd.includes("dsh-mneme-choro.mjs"),
+      "the CLI example must be a node call on the bin script, got: " + cmd
+    );
+    assert.ok(cmd.includes("--apply"), "the example must carry --apply, otherwise it only previews");
+  }
+  // 收的是路径参数，不能教用户 cd 进目录：cd 进去再传 "." 又会因为命令不在
+  // PATH 里失败，这是 #607 报告里最常被踩的一步。判据落在两处：旧的「在仓库
+  // 目录里跑」这句必须消失；剩下的提及只允许是「不必先 cd」这种反例澄清。
+  const noRepos = [...clientSource.matchAll(/"wiki\.empty\.noRepo":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  assert.equal(noRepos.length, 2, "wiki.empty.noRepo must exist in both dictionaries");
+  for (const copy of noRepos) {
+    assert.equal(
+      /在仓库目录里跑|inside the repository|run this inside/i.test(copy),
+      false,
+      "the copy must not tell the user to run the command from inside the repository, got: " + copy
+    );
+    // #607 的三件事缺一不可：是什么、在哪里开、命令要给绝对路径。
+    assert.ok(copy.includes("mneme"), "the copy must say which plugin this belongs to");
+  }
+  const hints = [...clientSource.matchAll(/"wiki\.empty\.cliHint":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  assert.equal(hints.length, 2, "wiki.empty.cliHint must exist in both dictionaries");
+  for (const hint of hints) {
+    assert.ok(
+      /不必先 cd|no need to cd/i.test(hint),
+      "a mention of cd must be the explicit disclaimer, got: " + hint
+    );
+  }
+  assert.ok(
+    clientSource.includes('t("wiki.run.notGit")'),
+    "a not-git rejection must be translated into an explanation, not echoed as a bare code"
+  );
+});
+
+// 空态那条 POST 要带 path 字段（契约 §3.2）：老实现只认 repo，新实现认 path，
+// 两个都带上才能同时跑在两版后端上。回归表现：只发 repo → 第一次进来自报家门
+// 的目录永远登记不上。
+test("#607: generating from the empty state posts the absolute path to /choro/run", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(/body = \{ path: p \}/.test(fn), "the run body must carry the path field");
+  assert.ok(fn.includes("body.repo = "), "the run body must still carry repo when one is already loaded");
+  assert.ok(fn.includes('"/api/dsh-mneme/choro/run"'), "both entry points share the token-write route");
+});
+
+// 失败也要能读懂（#607 的另一半：原文案把错误码直接糊在屏幕上）。
+// 后端把 wiki 层的 err.code "not-git" 翻成了对外契约的 "not-a-git-repo"，两个码
+// 都要认——只认一个就会出现「同一个失败，换个后端版本就只剩错误码」的半修状态。
+test("#607: run failures explain themselves instead of echoing a bare error code", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(fn.includes('data.error === "not-git"'), "the wiki-layer code must still be understood");
+  assert.ok(fn.includes('data.error === "not-a-git-repo"'), "the public API code is the one the server actually sends");
+  assert.ok(fn.includes('t("wiki.run.notGit")'), "not-git must resolve to an explanation, not a code");
+  assert.ok(fn.includes('t("wiki.run.notAbsolute")'), "a relative path must say it has to be absolute");
+  assert.ok(fn.includes('t("wiki.run.notFound")'), "a missing directory must say so");
+
+  // 解释本身要讲清「为什么」：非 git 没有可比基线，且不含「cd 进目录」这类误导。
+  const notGit = clientSource.match(/"wiki\.run\.notGit":\s*"((?:[^"\\]|\\.)+)"/g) || [];
+  assert.equal(notGit.length, 2, "wiki.run.notGit must exist in zh and en");
+  for (const line of notGit) {
+    assert.ok(/git/.test(line), "the not-git copy must mention git");
+    assert.ok(/基线|baseline/.test(line), "the not-git copy must explain the missing baseline, i.e. why it is refused");
+  }
+});
+
+// 契约 §3.5-2：面板顶栏两枚子开关 + T1 长任务。
+//  · T1 是 30–240s 起步的长任务，POST 只负责起跑，进度必须靠轮询；
+//  · 轮询依赖取 jobId 而不是整个 t1 对象，否则每拍 setState 都把定时器拆了重建；
+//  · stale 的仓库要在行内标出来，否则用户以为页面和代码同步。
+test("choro page wires the two feature toggles, the T1 job and the stale marker", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(fn.includes('toggleFlag("chorographyAutoRefresh")'), "the auto-refresh toggle must ride on chorographyAutoRefresh");
+  // 两枚都是「面板就地能改」的开关，不是只读回显：点一下要把同一个键 PUT 回 /features。
+  assert.ok(fn.includes('toggleFlag("chorographyT1FromPanel")'), "the T1 permission is its own toggle, not a read-only echo");
+  assert.ok(fn.includes('"/api/dsh-mneme/features"'), "toggling must write back through /features, not a local-only flag");
+  assert.ok(fn.includes('"/api/dsh-mneme/choro/t1"'), "the T1 button must POST /choro/t1");
+  assert.ok(fn.includes("/api/dsh-mneme/choro/t1/status?jobId="), "T1 progress must be polled from /choro/t1/status");
+  assert.ok(fn.includes("setInterval(tick, 2000)"), "the poll interval is 2s per contract §3.5");
+  assert.ok(fn.includes("clearInterval"), "the poller must be torn down when the job ends or the panel unmounts");
+  assert.ok(
+    fn.includes("mneme-badge--pending") && fn.includes('t("wiki.stale")'),
+    'stale repos need an inline "code changed" badge'
+  );
+});
+
+// 知识库页（契约 §3.6）。这条锁的是「路由与就近文案都在」，不是布局：
+//  · 409/503 各有自己的空态，不把裸状态码丢屏幕上；
+//  · disabled 那句必须说清去哪儿开（#607 的教训：只说「未启用」等于没说）；
+//  · 地志页导入要拼绝对路径，根路径只从 /choro/repos 取，拿不到就停手。
+test("knowledge base page exposes the §3.6 routes and explains every empty state", () => {
+  const fn = sliceComponent("KbMainPanel");
+  for (const route of [
+    '"/api/dsh-mneme/kb/collections',
+    '"/api/dsh-mneme/kb/docs?collection=',
+    '"/api/dsh-mneme/kb/ingest"',
+    '"/api/dsh-mneme/kb/search"'
+  ]) {
+    assert.ok(fn.includes(route), "the knowledge base page must call " + route);
+  }
+  assert.ok(fn.includes('t("kb.empty.disabled")'), "409 must render the disabled explanation");
+  assert.ok(fn.includes('t("kb.empty.unavailable")'), "503 must render the unavailable explanation");
+  assert.ok(fn.includes('t("kb.empty.collections")'), "an empty collection list must explain what to do next");
+  assert.ok(fn.includes('t("kb.repo.noPath")'), "a missing rootPath must stop before composing a guaranteed 404");
+  // 后端 /choro/modules 曾只回 snake_case 的 page_rel_path，面板读 mod.relPath 恒 undefined，
+  // 于是「选完模块点导入」永远弹「请先选模块」——把后端缺陷说成用户没点（#607 同型）。
+  // 现在后端补了 relPath，缺字段时也必须落到独立的解释上，不许复用 pickFirst。
+  assert.ok(fn.includes('t("kb.repo.noRelPath")'), "a module without relPath needs its own explanation");
+  assert.ok(
+    !/if \(!relPath\) \{ patch\(\{ toast: t\("kb\.repo\.pickFirst"\) \}\); return; \}/.test(fn),
+    "a missing relPath must not be reported as 'pick a module first'"
+  );
+  assert.ok(fn.includes("kb/collections?key="), "deleting a collection addresses it by key");
+
+  // 文案本身锁一次：说清这是 mneme 的功能、开关在哪儿。
+  assert.ok(
+    clientSource.includes("设置 → 记忆(mneme) → 功能 → 知识库"),
+    "the Chinese disabled copy must name the exact toggle path"
+  );
+  assert.ok(
+    clientSource.includes("Settings → Memory (mneme) → Features → Knowledge base"),
+    "the English disabled copy must name the same path"
+  );
+});
+
+// 仓库卡片 + 一键整理（#607 反馈：希望「在这里选择整理知识」，照 Qoder Repo Wiki 那样）。
+// 这条锁四件事，都是「假成功」的高发点：
+//  · /choro/repos 的 409/503 不能并进「还没有仓库」，否则地志没开被说成用户没生成；
+//  · 批量整理的失败必须逐条留名（toast 2.5 秒就没了，名字一多读不完）；
+//  · 只有 relPath 存在的模块才去灌（没骨架页硬灌 = 一串 file-not-found）；
+//  · 手动入库降级为可折叠的高级入口，卡片才是首屏路径。
+test("knowledge base organises a whole repo from cards and never fakes a clean result", () => {
+  const fn = sliceComponent("KbMainPanel");
+  assert.ok(fn.includes('"/api/dsh-mneme/choro/repos"'), "the cards read the repo list (the only route with rootPath)");
+  assert.ok(fn.includes('"/api/dsh-mneme/choro/modules?repo="'), "organising needs each repo's page relative paths");
+  // 409/503 必须各走各的 reposPhase，不许落进空列表。
+  assert.ok(/status === 409[^}]*reposPhase: "disabled"/.test(fn), "409 must set reposPhase=disabled, not an empty list");
+  assert.ok(/status === 503[^}]*reposPhase: "unavailable"/.test(fn), "503 must set reposPhase=unavailable, not an empty list");
+  assert.ok(fn.includes('t("kb.repos.empty")'), "a genuinely empty repo list gets its own copy");
+  // 三档回执：新增 / 未变 / 失败，合并成一句「整理完成」就是假回声。
+  assert.ok(fn.includes('t("kb.repos.new")') && fn.includes('t("kb.repos.same")') && fn.includes('t("kb.repos.failedN")'),
+    "the batch receipt must report added, unchanged and failed separately");
+  assert.ok(fn.includes("organizeErrors"), "failed pages must stay on the page, not only in a 2.5s toast");
+  // 只灌有 relPath 的页。
+  assert.ok(/\.filter\(\(m\) => m\.relPath\)/.test(fn), "only modules with a relPath may be ingested");
+  // 高级入口：手动表单常驻，但折叠在按钮后面。
+  assert.ok(fn.includes("mneme-kbadvtoggle") && fn.includes('t("kb.advanced")'),
+    "manual ingest stays available behind one explicit toggle");
+  // 卡片上的「已整理 N/M」按当前集合的 relKey 前缀数，不额外打请求。
+  assert.ok(fn.includes("organizedCount") && fn.includes("state.docs"), "the organised count reads the loaded docs, not a new request");
+});
+
+// 知识库是第三个座位：id 与 main 的 key 必须逐字同名，否则宿主 selectPanel
+// 直接抛 "main panel ... is not registered"（#562 在记忆座位上踩过）。
+test("knowledge base entry registers its own seat pair in the same panellist block", () => {
+  assert.ok(clientSource.includes('id: "dsh-mneme-kb"'), "the kb sidebar seat must use its own id");
+  assert.ok(clientSource.includes('key: "dsh-mneme-kb"'), "the kb main seat key must match the sidebar id verbatim");
+  assert.ok(clientSource.includes("h(KbMainPanel, { t })"), "the kb main seat must render KbMainPanel");
+  assert.ok(
+    clientSource.includes("h(KbGlyph, { size: props && props.size })"),
+    "the kb glyph takes its size from the host"
+  );
+  assert.ok(
+    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);\s*disposeWikiGlyph\(\);\s*disposeWikiMain\(\);\s*disposeKbGlyph\(\);\s*disposeKbMain\(\);/.test(clientSource),
+    "the panellist cleanup must dispose all three seat pairs"
   );
 });
 
@@ -189,8 +379,10 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
   // spec 存在时点火：一把全点会把新座位的注册塞进老宿主，测出来的就不是真行为。
   const fire = (ctx, key) => ctx.injected.filter((i) => i.key === key).map((i) => i.cb());
 
-  // 新宿主：panellist 已声明。panellist + main 各两份（记忆 + chorography 两个
-  // 座位，M1），每对各自 id/key 逐字同名；footer 回落不装。
+  // 新宿主：panellist 已声明。panellist + main 各三份（记忆 + chorography +
+  // 知识库三个座位），每对各自 id/key 逐字同名；footer 回落不装。
+  // 日记本原有第四对座位，2026-11-09 按桉桉要求撤掉——它现在是记忆面板内的
+  // 一个标签页，与人格页并列，不再占侧边栏；人格页同理（面板内标签页，不是座位）。
   {
     const { ctx, regs } = makeCtx((key) => (key === "sidebar.panellist" ? { kind: "list" } : undefined));
     const api = boot(ctx, (k) => k, () => null);
@@ -199,10 +391,10 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
     fire(ctx, "sidebar.footer.action");
     assert.equal(disposes.length, 1);
     const ids = (name) => regs.filter((r) => r.alive && r.opts.name === name).map((r) => r.opts.id ?? r.opts.key).sort();
-    assert.equal(alive(regs, "sidebar.panellist"), 2, "memory + wiki glyphs");
-    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
-    assert.equal(alive(regs, "main"), 2, "memory + wiki pages");
-    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
+    assert.equal(alive(regs, "sidebar.panellist"), 3, "memory + wiki + kb glyphs");
+    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
+    assert.equal(alive(regs, "main"), 3, "memory + wiki + kb pages");
+    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
     assert.equal(alive(regs, "sidebar.footer.action"), 0, "the footer fallback must not mount on a host that has the seat");
   }
 
@@ -1304,14 +1496,23 @@ test("scope isolation ships panel switches and provenance surfaces (A4)", () => 
 // 默认值），面板自判、不加后端字段；④分组与折叠键中英成对。验收口径：首屏
 // 可点项 = 3 总开关 + autoInject 的 2 个子开关 + scope 2 开关 + 「全部设置」
 // 按钮 = 8（≤ 8），由 ①② 的组成正则共同钉死，不另数 DOM。
-// v0.9.0 复验修订：首屏加 group.mo（M.O. 独立组），可点项预算 8→9。这不是
-// 悄悄放宽——是产品主人点名「别藏在里面」：M.O. 独立成组却仍折在「全部
-// 设置」后等于换个地方继续藏。≤8 原为 #427 自设软预算，owner 豁免一项。
+// v0.9.0 复验修订：首屏加 group.mo（M.O. 独立组），可点项预算 8→9——产品
+// 主人点名「别藏在里面」，M.O. 独立成组却仍折在「全部设置」后等于换个地方
+// 继续藏。**v0.13.x 反转**：主人决定把 M.O. 下架，那一组连同首屏位一起摘掉，
+// 预算回到 8，本锁随之收紧回两组。反转是产品决策、不是放宽，注释留档防下次
+// 有人照着旧注释把组加回来。
 test("settings card folds everything beyond the first screen behind All settings (issue #427)", () => {
-  // ① 首屏层组成：三组都要在（basic 总开关 / mo 座位闸门 / scope 必答题），
+  // ① 首屏层组成：两组都要在（basic 总开关 / scope 必答题），
   // 且 basic 的成员是从 core/dream 移走的。
-  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.mo", "group\.scope"\];/.test(clientSource),
-    "the first screen must be exactly the basic, mo and scope groups");
+  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.scope"\];/.test(clientSource),
+    "the first screen must be exactly the basic and scope groups (M.O. was taken down in v0.13.x)");
+  // M.O. 下架锁：组从 FEATURE_GROUPS 摘掉 ≠ 只把首屏位去掉。少了这一条，下次
+  // 有人「顺手把组加回来」时会折进「全部设置」，测试照绿而 M.O. 又出现在面板上。
+  assert.ok(!/\{ key: "group\.mo", items: \[/.test(clientSource),
+    "M.O. must stay off the panel: group.mo is deliberately absent from FEATURE_GROUPS (taken down in v0.13.x)");
+  // 但键本身不能删——config schema / settings 白名单里还在，恢复时零改动。
+  assert.ok(clientSource.includes("actionPipelineEnabled"),
+    "the M.O. flags must remain reachable (config + settings whitelist) so the takedown stays reversible");
   assert.ok(/key: "group\.basic", items: \["autoInject", "autoSummarize", "autoDream"\]/.test(clientSource),
     "group.basic must carry exactly the three master switches");
   assert.ok(!/key: "group\.core", items: \["autoInject/.test(clientSource) && !/key: "group\.dream", items: \["autoDream/.test(clientSource),
@@ -1394,9 +1595,28 @@ test("conflict queue ships a central review surface on the status tab", () => {
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
   assert.ok(/function ConflictsQueue\(\{ t \}\)/.test(clientSource), "ConflictsQueue component must exist");
-  assert.ok(clientSource.includes('"/api/dsh-mneme/conflicts"'), "queue must fetch the conflicts endpoint");
+  assert.ok(clientSource.includes('"/api/dsh-mneme/conflicts?limit=200"'), "queue must fetch the conflicts endpoint");
   assert.ok(clientSource.includes('"/api/dsh-mneme/conflicts/resolve"'), "queue must call the resolve endpoint");
   assert.ok(clientSource.includes("h(ConflictsQueue, { t })"), "status tab must render the queue");
+});
+
+// Issue #603 第 3 层：服务端一直返回 { items, total }，面板此前既不带 limit 也不读
+// total——列 50 条而徽章 60，第 51–60 条翻不到、也没有任何提示。这条锁三件事：
+// 请求要取满服务端上限、total 要存下来、被截断时要说出来。
+test("#603 conflict queue: the panel asks for the server cap and admits truncation", () => {
+  assert.ok(clientSource.includes('"/api/dsh-mneme/conflicts?limit=200"'),
+    "the queue must request the server's 200-row cap, not the 50-row default");
+  assert.ok(clientSource.includes("setTotal(typeof d.total === \"number\" ? d.total : null)"),
+    "the response total must be kept (it was dropped before)");
+  assert.ok(clientSource.includes("memory.status.conflictQueue.truncated"),
+    "a truncated list must say so");
+  for (const key of ["memory.status.conflictQueue.truncated"]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  // 差额才提示：总数等于行数时不该多出一行噪声。
+  assert.ok(clientSource.includes("total > shown ? total - shown : 0"),
+    "the notice must only appear when rows are actually hidden");
 });
 
 // --- issue #178 批次一：无障碍（aria-live 网络 / 语义标题 / 焦点管理 / 图摘要） ---
@@ -1446,10 +1666,12 @@ test("a11y: entity graph svg exposes a count summary", () => {
 
 // --- issue #177：冲突队列交互与视觉重做 ---
 
-// 相似度进度条：只从「相似度 X / similarity X」锚定短语回收数字（防把年份当
-// 相似度），A/B 卡片带侧色类，冻结徽章替代预裁决阶段的「已归档」徽章。
+// 相似度进度条：优先取服务端落列的 similarity（#603 第 2 层），老行才回落到
+// 「相似度 X / similarity X」锚定短语（防把年份当相似度）；A/B 卡片带侧色类，
+// 冻结徽章替代预裁决阶段的「已归档」徽章。
 test("conflict queue: similarity bar, side colors and frozen badge", () => {
-  assert.ok(clientSource.includes("similarityOf(it.reason)"), "reason must be parsed for similarity");
+  assert.ok(clientSource.includes("similarityOf(it)"), "the whole item must be parsed, not just reason");
+  assert.ok(clientSource.includes("typeof it.similarity === \"number\""), "the server-side column wins over text parsing");
   assert.ok(clientSource.includes("/(?:相似度|similarity)\\s*([01](?:\\.\\d+)?)/i"), "parse must anchor on the similarity phrase");
   for (const key of ["memory.status.conflictQueue.similarity", "memory.status.conflictQueue.frozenBadge"]) {
     const occurrences = clientSource.split(`"${key}"`).length - 1;
@@ -2024,10 +2246,17 @@ test("distill retention switches are reachable from the panel (#399)", () => {
     coreGroup[1].includes('"distillRecords.enabled"'),
     "distillRecords.enabled must be an item of the core group, not merely referenced elsewhere"
   );
-  assert.ok(
-    /const FEATURE_NUMBERS = \["distillRecords\.retentionDays", "dreamMaxTokens", "sleepMaxTokens"\]/.test(clientSource),
-    "retentionDays must be in the numeric key list (dreamMaxTokens/sleepMaxTokens joined by #478)"
+  // 数值清单会随新键增长（v0.13 加了 diaryWriteEveryMinutes），所以钉「这三个都在、
+  // 且顺序不变」，不钉整行字面量——否则每加一个数值键这条锁就假红一次。
+  const numList = clientSource.match(/const FEATURE_NUMBERS = \[([\s\S]*?)\];/);
+  assert.ok(numList, "the numeric key list must be declared");
+  const numKeys = (numList[1].match(/"[^"]+"/g) || []).map((k) => k.slice(1, -1));
+  assert.deepEqual(
+    numKeys.slice(0, 3),
+    ["distillRecords.retentionDays", "dreamMaxTokens", "sleepMaxTokens"],
+    "retentionDays must stay in the numeric key list, after dreamMaxTokens/sleepMaxTokens (#478)"
   );
+  assert.ok(numKeys.includes("distillRecords.retentionDays"), "retentionDays must be in the numeric key list");
   assert.ok(
     /for \(const key of FEATURE_NUMBERS\) numDraft\[key\] = String\(e\[key\] \?\? ""\);/.test(clientSource)
       && /setNums\(numDraft\);/.test(clientSource),
@@ -2231,6 +2460,171 @@ test("right-pane tab renders a named component instead of a bare hook callback",
 // 「仓库里还没有工作流」与「一条运行记录都没有」是两句不同的话，都得中英齐全——
 // i18n 掉一边，界面上就是一行 key 裸奔。作用域那三句尤其不能缺：清单行上「项目」
 // 与「全局」是唯一的来源提示，缺了它，人分不清手里这条是本项目的还是跟着插件来的。
+// 日记本（v0.13）的四条形状锁。为什么值得单独立锁而不是靠上面的通用闸门：
+// ① 它的旗标闸必须**独立**——M.O. 那条 effect 读的是 actionPipelineEnabled，
+//    把日记塞进同一个 then 里，关掉 M.O. 会连带关掉日记，而两者毫无关系；
+// ② 右栏正文同样必须是具名组件（同 PipelinePane 的理由，hook 顺序只在运行时炸）；
+// ③ 「写成 / 今天写过 / 没素材」是三种不同结果，混成一句「成功」就是假成功；
+// ④ 503（没装配）与 409（没开）是两种不同的「不能用」，合并文案用户会以为日记坏了。
+test("diary pane: own gate, named component, and distinct outcomes", () => {
+  assert.match(clientSource, /function DiaryPane\(/, "DiaryPane must exist");
+  // 回调必须把「这个会话是谁」一路传进正文：project 定位素材、agent 定位人格卡。
+  // 少传 agent 就会退回 default 卡——自动轮是带 agentId 的，两个入口写同一天
+  // 会变成两个声音，这正是「只以这个人格的口吻写日记」没做到的那一半。
+  assert.match(
+    clientSource,
+    /\}, \(props\) => \{[\s\S]{0,400}?return h\(DiaryPane, \{[\s\S]{0,200}?project: sessionProject\(ctx, sid\),[\s\S]{0,200}?agent: sessionAgent\(ctx, sid\),[\s\S]{0,200}?session: sid \|\| null[\s\S]{0,40}?\}\);\s*\}\);/,
+    "the diary tab callback must delegate to the named DiaryPane component and pass agent + session"
+  );
+  assert.match(clientSource, /function sessionAgent\(ctx, sessionId\)/, "sessionAgent must exist to resolve the persona card");
+
+  // 从日记那段注释起算、到自己的 effect 名止：不能退 1600 字符去数，
+  // 那会把上面 M.O. 那段（它本来就写着 actionPipelineEnabled）一起框进来。
+  const gateHead = clientSource.indexOf("// --- v0.13 日记本（beta）：独立旗标门控 ---");
+  const gateAt = clientSource.indexOf('"dsh-mneme: diary gate"');
+  assert.ok(gateHead > -1, "the diary gate comment must exist");
+  assert.ok(gateAt > gateHead, "the diary must carry its own flag gate, after that comment");
+  // 只审代码、不审注释：那段注释本身就在解释「为什么不复用 M.O. 那条」，
+  // 会把 actionPipelineEnabled 这个字放进来说明——按注释判会把这个正确的说明当成违规。
+  const gateBody = clientSource
+    .slice(gateHead, gateAt)
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("//"))
+    .join("\n");
+  assert.ok(gateBody.includes("eff.diaryEnabled"), "the diary gate must read its own flag");
+  assert.ok(
+    !gateBody.includes("actionPipelineEnabled"),
+    "the diary gate must not ride on actionPipelineEnabled — the two features are unrelated"
+  );
+
+  // 三种结果必须各有自己的分支，不能都落进同一句「成功」
+  for (const marker of ['b.status === "written"', '"already-written"', '"no-material"']) {
+    assert.ok(clientSource.includes(marker), "diary write outcome must be handled explicitly: " + marker);
+  }
+  // 503 与 409 分开成两种 gate 文案
+  assert.ok(
+    clientSource.includes("r.status === 503") && clientSource.includes("r.status === 409"),
+    "diary unavailable (503) and disabled (409) must be told apart"
+  );
+});
+
+// 日记本重做（2026-11-09，桉桉：「像本子一样的UI风格」/「导航应该是人格名」）。
+// 两件事都必须由测试锁住，因为它们都只错在「看起来还行」：
+// ①导航拿 frontmatter 括号里的 agent 名当人格名——本机旧数据里五个桶都写着
+//   `default (ptc)`，于是导航栏出现一排项目键加一个 ptc。正确名字只能从人格卡取。
+// ②纸张只存内存或只存一处，两个入口各选各的，同一本日记看起来像两个东西。
+test("diary book: navigation names come from persona cards, never from the agent tag", () => {
+  const start = clientSource.indexOf("function diaryBucketName(");
+  assert.ok(start > -1, "diaryBucketName must exist");
+  const end = clientSource.indexOf("function DiaryLibraryPanel(");
+  assert.ok(end > start, "diaryBucketName must sit before the panel");
+  // 注释里本来就要出现 `persona: default (ptc)` 这个反例，只审代码行。
+  const body = clientSource.slice(start, end).split("\n")
+    .filter((line) => !line.trim().startsWith("//")).join("\n");
+  const fn = new Function(body + "\n return diaryBucketName;")();
+  const store = {
+    default: { name: "Amarre" },
+    byAgent: { ptc: null, studio: { name: "Studio" } },
+    bySession: {}
+  };
+  // 括号里是 agent 名：必须换成人格卡的名字，不是 agent 名，也不是桶键。
+  assert.equal(fn({ key: "amarre-c836db6a", project: "amarre-c836db6a", persona: "default (ptc)" }, store), "Amarre",
+    "an agent tag must resolve to the default card's name, not to 'ptc'");
+  assert.equal(fn({ key: "x-1", project: "x-1", persona: "settings (studio)" }, store), "Studio",
+    "a named card must win over the default card");
+  // 还没挂卡（或卡被删了）时走默认卡，这是写日记时真实的回落口径。
+  assert.equal(fn({ key: "y-2", project: "y-2", persona: "settings (gone)" }, store), "Amarre",
+    "a missing agent card falls back to the default card, the same way writing does");
+  // 没有 store（人格卡还没读到）时绝不把 agent 名顶上，退回项目名。
+  assert.equal(fn({ key: "z-3", project: "z-3", persona: "default (ptc)" }, null), "z-3",
+    "without a card store the name must fall back to the project, never leak the agent tag");
+  // 完全没有 persona 行的老日记：项目名，再不行桶键。
+  assert.equal(fn({ key: "old-4", project: "老项目", persona: "" }, store), "老项目");
+  assert.equal(fn({ key: "only-5", project: "", persona: "" }, store), "only-5");
+});
+
+test("diary book: paper choice is one shared setting across both entries", () => {
+  // 一个 localStorage 键、一处读、一处写：两个入口看的是同一本日记。
+  assert.ok(clientSource.includes('const DIARY_BOOK_KEY = "dsh-mneme-diary-book"'),
+    "the paper choice needs a single storage key");
+  assert.equal((clientSource.match(/localStorage\.getItem\(DIARY_BOOK_KEY\)/g) || []).length, 1,
+    "reading the paper must go through readDiaryBook only");
+  assert.ok(clientSource.includes("function readDiaryBook()") && clientSource.includes("function writeDiaryBook("),
+    "read and write helpers must both exist");
+  // 右栏 DiaryPane 也要套同一套纸：只改左面板等于两处观感打架。
+  const pane = clientSource.slice(clientSource.indexOf("function DiaryPane("), clientSource.indexOf("function DiaryLibraryPanel("));
+  assert.ok(pane.includes("readDiaryBook"), "the right-side pane must read the same paper choice");
+  assert.ok(/mneme-diary-paper mneme-diary-paper--" \+ book/.test(pane),
+    "the right-side pane must apply the selected paper texture");
+  // 同页另一处入口收不到 storage 事件（那只在别的标签页触发），必须自己广播。
+  assert.ok(clientSource.includes('new CustomEvent("mneme:diary-book-changed")'),
+    "a same-page change must be broadcast, storage events never fire in the same document");
+  assert.ok(clientSource.includes('addEventListener("mneme:diary-book-changed"'),
+    "the other entry must listen for that broadcast");
+  // 四种纸都要有文案，否则按钮上是裸 key。
+  for (const key of ["memory.diary.bookLabel", "memory.diary.book.plain", "memory.diary.book.ruled",
+    "memory.diary.book.grid", "memory.diary.book.kraft"]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  // 本子观感：正文用衬线、行高与纸纹 26px 网格对齐，否则横线会穿字。
+  // 源文件里这段 CSS 在 JS 字符串内，引号是转义的；这里只钉字体族的骨架。
+  assert.ok(clientSource.includes("font-family:Georgia,") && clientSource.includes("Songti SC") &&
+    clientSource.includes("Noto Serif SC") && clientSource.includes("serif"),
+    "the diary body needs a serif typeface to read like a notebook");
+  assert.ok(clientSource.includes("background-size:100% 26px"),
+    "the ruled texture must be locked to the 26px line height");
+});
+
+// 日记本不再占侧边栏座位（2026-11-09 桉桉：还保留旧版本的侧边栏打开，这个要去掉）。
+// 它现在是记忆面板内的一个标签页，和人格页并列；右栏那个入口是另一回事，保留。
+test("diary is a panel tab now, not a sidebar seat", () => {
+  assert.ok(!clientSource.includes('id: "dsh-mneme-diary"') && !clientSource.includes('key: "dsh-mneme-diary"'),
+    "the sidebar seat pair must be gone");
+  assert.ok(!clientSource.includes("disposeDiaryGlyph") && !clientSource.includes("disposeDiaryMain"),
+    "the seat disposers must be gone too, not just left dangling");
+  // 面板内必须有 diary 这个标签页，否则入口只剩下右栏那一个。
+  assert.match(clientSource, /\{ key: "diary", label: t\("memory\.diary\.title"\) \}/,
+    "the memory panel must carry the diary tab");
+  assert.match(clientSource, /view === "diary"[\s\S]{0,200}?DiaryLibraryPanel/,
+    "the diary tab must render the library panel");
+  // 右栏入口照旧保留：那是会话内的快速入口，不是侧边栏座位。
+  assert.ok(clientSource.includes("function registerDiarySeats(ctx, t) {"),
+    "the right-sidebar entry must stay");
+});
+
+// v0.13.0 第一次发出去时右栏页签类型注册了、正文座位也注册了，却没有任何一个
+// 能调 openTab 的按钮——页签永远打不开。当时的修法是往会话头塞一个入口按钮；
+// 2026-11-09 桉桉又要求把它撤掉：日记已经进了记忆面板当标签页，会话头顶再挂一个
+// 指向右栏的按钮，就是同一件事有两个入口。所以现在锁的是「没有第二个入口」。
+test("diary has exactly one entry: the panel tab, not a session header button", () => {
+  const start = clientSource.indexOf("function registerDiarySeats(ctx, t) {");
+  const end = clientSource.indexOf("function apply(ctx) {", start);
+  assert.ok(start > -1 && end > start, "registerDiarySeats must sit before apply()");
+  const body = clientSource.slice(start, end);
+
+  // ① 会话头入口必须彻底消失：座位、按钮组件、打开动作、失败文案一个都不留。
+  assert.ok(
+    !body.includes("conversation.session.header.actions"),
+    "the diary must not register a second entry in the session header"
+  );
+  assert.ok(!body.includes("openPane"), "the openPane helper only existed for the header button");
+  assert.ok(!body.includes("hasPane"), "hasPane only gated the header button");
+  assert.ok(
+    !/function DiaryEntryButton\s*\(/.test(clientSource),
+    "the header entry component must be gone, not just unregistered"
+  );
+  assert.ok(
+    !clientSource.includes("memory.diary.openFailed"),
+    "the \"cannot open\" copy is dead once nothing can fail to open it"
+  );
+
+  // ② 右栏那套照旧：页签类型 + 正文 + 标题都还在（宿主若有自己的页签选择器仍可达）。
+  assert.ok(body.includes('ctx.get("sidebarRightTabs")'), "tab type registration stays");
+  assert.ok(body.includes('name: "sidebar.right.pane.tab"'), "pane body stays registered");
+  assert.ok(body.includes('name: "sidebar.right.pane.tab.title"'), "pane title stays registered");
+});
+
 test("M.O. empty-state, list and scope copy exist in both languages", () => {
   for (const key of [
     "memory.actions.empty.title",
@@ -2395,7 +2789,7 @@ test("panel copy and icons must not silently vanish (missing dict lines, unregis
 
 // 人格定义页（beta）面板面回归：形状沿用 A4 的「分组 + i18n 双语 occurrences ≥ 2
 // + 关键接线」断言风格（只做源码断言，不挂 React 渲染环境）。
-test("persona page ships settings card, master switch and i18n (beta v1)", () => {
+test("persona page is a panel tab, not a settings card (beta v2)", () => {
   // 开关进 FEATURE_GROUPS 的 enhance 组（行为开关非座位闸门）。按组解析成员再逐个点名，
   // 而不是把某一行写成字面量正则——那样往组里加第二个键就会把这条护栏弄红（实测踩过）。
   const enhance = clientSource.match(/group\.enhance", items: \[((?:[^\]]|\n)*)\]/);
@@ -2407,82 +2801,91 @@ test("persona page ships settings card, master switch and i18n (beta v1)", () =>
   for (const key of [
     "memory.features.personaEnabled",
     "memory.features.personaEnabled.hint",
-    "memory.settings.persona",
-    "memory.settings.personaHint",
-    "memory.settings.personaName",
-    "memory.settings.personaPersonality",
-    "memory.settings.personaReplyStyle",
-    "memory.settings.personaSave",
-    "memory.settings.personaSaved",
-    "memory.settings.personaEnabledToggle",
-    "memory.settings.personaView",
-    "memory.settings.personaViewHint",
-    "memory.settings.personaViewEmpty",
-    // 预览改由后端渲染之后新增的读数文案（缺一种语言就是半边界面裸奔键名）
     "memory.features.personaStrictAddressing",
     "memory.features.personaStrictAddressing.hint",
-    "memory.settings.personaViewUnknown",
-    "memory.settings.personaViewSourceDefault",
-    "memory.settings.personaViewSourceCard",
-    "memory.settings.personaViewSourceNone",
-    "memory.settings.personaViewSourceFallback",
-    "memory.settings.personaViewGateOff",
-    "memory.settings.personaViewRefresh"
+    "memory.explorer.tabPersona",
+    "memory.persona.title",
+    "memory.persona.hint",
+    "memory.persona.cards",
+    "memory.persona.defaultCard",
+    "memory.persona.name",
+    "memory.persona.personality",
+    "memory.persona.replyStyle",
+    "memory.persona.scenario",
+    "memory.persona.mesExample",
+    "memory.persona.save",
+    "memory.persona.saved",
+    "memory.persona.saveFailed",
+    "memory.persona.enabled",
+    "memory.persona.preview",
+    "memory.persona.previewEmpty",
+    "memory.persona.previewUnknown",
+    "memory.persona.diary",
+    "memory.persona.diaryHint",
+    "memory.persona.loading"
   ]) {
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
-  // 设置卡接线：保存走 PUT /persona、卡内开关改 enabled 即保存、只读卡渲染
-  assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/persona"'), "persona card must talk to /persona");
-  assert.ok(clientSource.includes("method: \"PUT\""), "persona save must PUT");
-  assert.ok(clientSource.includes("t(\"memory.settings.personaView\")"), "read-only injected-view card must exist");
-  // 双闸门提示：hint 文案必须说明「总闸与卡内开关同时打开才生效」
-  assert.ok(
-    clientSource.includes("memory.features.personaEnabled.hint"),
-    "the master-switch hint must document the two-gate semantics"
-  );
-  // 「注入生效文本」必须由后端给：前端再拼一份就是第二张皮（原来正是这段前端拼接
-  // 没有人格行、没有表头与前缀，却自称生效文本）。
-  assert.ok(clientSource.includes("injectedPreview.text"), "the view must render the backend-rendered block");
+  // 形态：面板自己的第五个标签页，设置页那张卡搬走（不是并存）
+  assert.ok(clientSource.includes('{ key: "persona", label: t("memory.explorer.tabPersona") }'),
+    "the persona view must be registered in the panel's subviews");
+  assert.ok(clientSource.includes('view === "persona" &&'), "the panel must route a persona view branch");
+  assert.ok(clientSource.includes("h(PersonaMainPanel, { t })"), "the persona tab must render PersonaMainPanel");
+  assert.ok(!clientSource.includes('t("memory.settings.persona")'),
+    "the settings card must be gone, not duplicated next to the new page");
+  // 只读卡「Agent 眼中的你」的职能并进本页预览：它自己的键与渲染都不许残留
+  assert.ok(!clientSource.includes("memory.settings.personaView"),
+    "the read-only injected-view card must be removed; this page's preview owns that job");
+  // 保存走 PUT /persona，且必须三维全量（settings.setPersona 是全量替换）
+  assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/persona"'), "persona page must talk to /persona");
+  assert.ok(clientSource.includes('method: "PUT"'), "persona save must PUT");
+  assert.ok(clientSource.includes("bySession"), "the store shape must carry bySession through saves");
+  // 预览必须由后端渲染：前端再拼一份就是第二张皮
+  assert.ok(clientSource.includes("preview.text"), "the preview must render the backend-rendered block");
   assert.ok(!clientSource.includes('"- " + profile.trim()'), "frontend hand-splicing of the injected block must be gone");
-  assert.ok(clientSource.includes("setInjectedPreview(null)"), "a failed preview must fail closed to 未知, not to a stale or guessed block");
+  // 读不到就说读不到：失败不许停在上一张卡的旧文本
+  assert.ok(clientSource.includes("setPreview(null)"), "a failed preview must fail closed to 未知, not to a stale block");
   // 预览只能有一个所有者，且要丢掉过期响应：先切卡 A 再切卡 B 时，A 的 GET 可能后回来。
-  // 这张卡的标题是「注入生效文本」，显示另一张卡的文本比不显示更糟。
   assert.ok(clientSource.includes("if (seq !== previewSeq.current) return;"), "preview must drop stale responses");
-  assert.equal(clientSource.split("setInjectedPreview(").length - 1, 2, "loadPreview must be the only preview writer (success + failure)");
-  // source=default 有两种来路：带了 ?agent=<身份> 却回落 ≠ 真的解析不到身份。
-  assert.ok(clientSource.includes("injectedPreview.agent"), "the fallback label must separate a resolved-but-fallen-back identity from an unresolvable one");
+  // #514：轻量档压制要有告示，且这一页自己得说（人是在这里开关人格的）
+  assert.ok(clientSource.includes('t("memory.status.minimalPresetTitle")'), "the page must carry the minimal-preset notice");
 });
 
-// v1.2 多卡回归：卡列表 CRUD 可见、字段标签渲染为可见元素（v1.1 反馈：
-// aria-label 看不见）、保存失败必须冒可见错误（v1 静默 catch 吞 404 教训）。
-test("persona card is multi-card with visible field labels and save-failure error", () => {
+test("persona page is multi-card with visible field labels and save-failure error", () => {
   for (const key of [
-    "memory.settings.personaDefaultCard",
-    "memory.settings.personaAdd",
-    "memory.settings.personaAddPlaceholder",
-    "memory.settings.personaEditingDefault",
-    "memory.settings.personaEditingFor",
-    "memory.settings.personaDeleteCard",
-    "memory.settings.personaSaveFailed",
-    "memory.settings.personaEnabledOn",
-    "memory.settings.personaEnabledOff"
+    "memory.persona.cards",
+    "memory.persona.defaultCard",
+    "memory.persona.add",
+    "memory.persona.newPlaceholder",
+    "memory.persona.delete",
+    "memory.persona.saveFailed",
+    "memory.persona.saved",
+    "memory.persona.enabledOn",
+    "memory.persona.enabledOff"
   ]) {
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
-  // 多卡接线：加卡/删卡/切换/保存全链函数存在
-  for (const fn of ["addPersonaCard", "removePersonaCard", "savePersonaCards", "setPersonaEditing"]) {
+  // 多卡接线：加卡/删卡/改字段/保存全链函数存在
+  for (const fn of ["addCard", "removeCard", "saveEditing", "setField"]) {
     assert.ok(clientSource.includes(fn), `multi-card wiring must include ${fn}`);
   }
-  // 可见字段标签：三个字段名的 t() 调用出现在 label 元素（mneme-featnumlabel）
-  const labelBlock = clientSource.match(/mneme-featnumlabel[^]{0,120}personaName/);
-  assert.ok(labelBlock, "persona field labels must be visible (featnumlabel class), not aria-only");
-  // 保存失败提示：personaError 状态有渲染路径（非仅 setState）
-  assert.ok(clientSource.includes("t(\"memory.settings.personaSaveFailed\")"), "save failure must render an error line");
+  // 可见字段标签：五处字段都走同一个 field() helper，helper 里必须是真 <label>
+  // （v1.1 反馈：aria-label 看不见）。分别锁「字段被渲染成 label」与「builder 用 label 元素」。
+  for (const f of ["name", "personality", "replyStyle", "scenario", "mesExample"]) {
+    assert.ok(
+      new RegExp('field\\("' + f + '", t\\("memory\\.persona\\.' + f + '"\\)').test(clientSource),
+      "persona field " + f + " must go through the labeled field builder"
+    );
+  }
+  assert.ok(/h\("label", \{ className: "mneme-persona-label", htmlFor:/.test(clientSource),
+    "the field builder must render a real label element, not an aria-only name");
+  // 保存失败提示：error 状态有渲染路径（非仅 setState）
+  assert.ok(clientSource.includes('t("memory.persona.saveFailed")'), "save failure must render an error line");
   // 卡删除 × 常显回归锁 v2（#457 内联覆写被 #459 回滚的教训）：× 不得复用
   // mneme-set-del（opacity:0 仅在 .mneme-set-row:hover 解除，卡标签不在该容器
-  // → 永远不可见），必须用独立类 mneme-persona-del 且该类常显（opacity:1）。
+  // → 永远不可见），必须用独立类 mneme-persona-del 且该类常显（opacity 不得为 0）。
   assert.ok(
     /className: "mneme-persona-del"/.test(clientSource),
     "persona card delete × must use the dedicated always-visible class"
@@ -2492,10 +2895,11 @@ test("persona card is multi-card with visible field labels and save-failure erro
   assert.ok(!/opacity:0/.test(delStyle[0]), "mneme-persona-del must not be transparent");
   // 不许再把 mneme-set-del 挂回卡删除按钮（防 #457 式修法回归）；直接锁按钮
   // 的 className 值（onClick 前最近的 className 属性，注释文字不参与）。
-  const delBtn = clientSource.match(/className: "([^"]+)"[\s\S]{0,300}?onClick: \(\) => removePersonaCard\(id\)/);
+  const delBtn = clientSource.match(/className: "([^"]+)"[\s\S]{0,300}?onClick: \(\) => removeCard\(id\)/);
   assert.ok(delBtn, "card delete button wiring must exist");
   assert.strictEqual(delBtn[1], "mneme-persona-del", "card delete × must use mneme-persona-del, not mneme-set-del");
 });
+
 
 // 回归锁（复验实测踩中）：面板「检测更新」的状态名必须与后端 classify
 // （src/version-check.js）逐字对齐。此前前端误写 "latest"/"up_to_date"（后端
@@ -2532,6 +2936,28 @@ test("update-check status names match the backend classify contract verbatim", (
 
 // 画像提取草稿（#497）面板面：路由对齐、四种结局各有自己的话、按钮坐在哪张卡上、
 // 以及草稿**只出副本**（2026-11-04 改口径：不再把草稿写进画像字段）。
+// 严格寻址的「第一张卡」陷阱（Persis 复验）：live 库 personaStrictAddressing=true，
+// 现在 byAgent/bySession 都空，走 #587 例外回落 default，所以注入正常。但只要在这个
+// 页面建出第一张卡，anyCard 就变 true，strict 立刻生效——所有没建卡的会话（含主会话）
+// 人格静默不再注入，界面一个字都不报。这种「改一个开关，别处的行为跟着变且无提示」
+// 必须在建卡之前就写在脸上，所以锁三件事：①两个阶段的文案都在；②按现有卡数选话；
+// ③文案确实渲染进人格页，而不是定义完没人读。
+test("strict addressing warns before the first card quietly changes everyone else", () => {
+  for (const key of ["memory.persona.strictBefore", "memory.persona.strictAfter"]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  // 生效值来自 /features 的真实快照，不许前端猜默认
+  assert.ok(/personaStrictAddressing === true/.test(clientSource),
+    "the guardrail must read the effective flag from /features, not assume a default");
+  // 两条话按「现在有几张卡」分流：没有卡时说「建第一张会变严」，有了之后说「已经变严」
+  assert.ok(clientSource.includes('t(cardCount > 0 ? "memory.persona.strictAfter" : "memory.persona.strictBefore")'),
+    "the notice must pick its wording from the current card count");
+  // 只有严格寻址真的开着才说，否则是假警报
+  assert.ok(/strict \? h\("div"/.test(clientSource),
+    "the notice must be gated on the effective strict flag");
+});
+
 test("profile extraction ships its button, distinct outcomes and correct save wiring", () => {
   const apiSource = readFileSync(join(root, "src/api.js"), "utf8");
   assert.ok(clientSource.includes('apiFetch("/api/dsh-mneme/profile/extract"'),
@@ -2567,17 +2993,22 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
   assert.ok(/group\.enhance[\s\S]{0,700}"profileExtractEnabled"/.test(clientSource),
     "FEATURE_GROUPS group.enhance must carry profileExtractEnabled");
 
-  // 位置锁（2026-11-04）：提取按钮属于「Agent 眼中的你」卡，不属于「用户画像」卡。
-  // 此前没有任何用例锁位置——整块 UI 搬走测试也不会红，这正是它被放错地方却一直绿的原因。
-  // 锁法：三处锚点的先后顺序 + 两张卡标题之间不许出现 profileExtract。
-  const profileCardIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))');
-  const personaViewIdx = clientSource.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.personaView"))');
-  const extractButtonIdx = clientSource.indexOf('t("memory.settings.profileExtract")');
-  assert.ok(profileCardIdx > 0 && personaViewIdx > profileCardIdx && extractButtonIdx > personaViewIdx,
-    "the extract button must render inside the persona-view card, which comes after the user-profile card");
-  assert.ok(!clientSource.slice(profileCardIdx, personaViewIdx).includes("profileExtract"),
-    "the user-profile card must not carry any extract UI");
-
+  // 位置锁（2026-11-09 再改口径）：提取按钮属于「用户画像」卡，而画像卡本身
+  // 已经从设置页搬进记忆面板的「人格」页（桉桉：mneme 设置里面的个性化还没移走）。
+  // 两处都在同一份客户端里，光比先后会被设置页的规则卡骗过——必须先切出
+  // 人格页那一段再比，并额外断言设置页里不再有画像卡（搬回去就红）。
+  const personaStart = clientSource.indexOf("function PersonaMainPanel(");
+  const settingsStart = clientSource.indexOf("function SettingsContent(");
+  assert.ok(settingsStart > 0 && personaStart > settingsStart, "both panels must exist");
+  const settingsSlice = clientSource.slice(settingsStart, personaStart);
+  const personaSlice = clientSource.slice(personaStart);
+  const profileTitle = 'h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))';
+  assert.ok(!settingsSlice.includes(profileTitle),
+    "the profile card must be gone from the settings page (it moved into the persona page)");
+  const profileCardIdx = personaSlice.indexOf(profileTitle);
+  const extractButtonIdx = personaSlice.indexOf('t("memory.settings.profileExtract")');
+  assert.ok(profileCardIdx > 0 && extractButtonIdx > profileCardIdx,
+    "the extract button must render inside the user-profile card on the persona page");
   // 只出副本（2026-11-04 桉桉定的口径）：草稿不许再走落库路径。此前 applyProfileDraft 会
   // 直接 PUT /profile —— 把用户手写的那份覆盖掉，且没有撤销。
   assert.ok(clientSource.includes("function copyProfileDraft()"), "the draft action must be a copy, not a save");
@@ -2651,29 +3082,41 @@ test("profile facts card ships management UI, run outcomes and never touches the
   assert.ok(/group\.enhance[\s\S]{0,1200}"profileFactsEnabled"/.test(clientSource),
     "FEATURE_GROUPS group.enhance must carry profileFactsEnabled");
 
-  // 位置锁：事实卡是 personaView 之后、规则卡之前的独立一张——塞回 personaView 卡
-  // 内部或搬到规则卡后面都不会红，所以先钉住先后顺序（同 profile-extract 的位置锁）。
-  const personaViewIdx = clientSource.indexOf('t("memory.settings.personaView"))');
-  const rulesCardIdx = clientSource.indexOf('t("memory.settings.rules"))');
-  const factsCardIdx = clientSource.indexOf('t("memory.settings.factsTitle")');
-  assert.ok(personaViewIdx > 0 && factsCardIdx > personaViewIdx && rulesCardIdx > factsCardIdx,
-    "the facts card must sit between the persona-view card and the rules card");
-
+  // 位置锁（2026-11-09 改口径）：画像卡与事实卡一起搬进了人格页，事实卡仍是画像卡
+  // 之后的一张。切段比较，防止设置页的规则卡把顺序骗过去；设置页里两张卡都不许再有。
+  const personaStart = clientSource.indexOf("function PersonaMainPanel(");
+  const settingsStart = clientSource.indexOf("function SettingsContent(");
+  assert.ok(settingsStart > 0 && personaStart > settingsStart, "both panels must exist");
+  const settingsSlice = clientSource.slice(settingsStart, personaStart);
+  const personaSlice = clientSource.slice(personaStart);
+  assert.ok(!settingsSlice.includes('t("memory.settings.factsTitle")'),
+    "the facts card must be gone from the settings page (it moved into the persona page)");
+  assert.ok(!settingsSlice.includes('h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))'),
+    "the profile card must be gone from the settings page (it moved into the persona page)");
+  const profileCardIdx = personaSlice.indexOf('h("div", { className: "mneme-set-title" }, t("memory.settings.profile"))');
+  const factsCardIdx = personaSlice.indexOf('t("memory.settings.factsTitle")');
+  assert.ok(profileCardIdx > 0 && factsCardIdx > profileCardIdx,
+    "the facts card must sit after the user-profile card on the persona page");
   // 手填画像神圣：事实域的全部面板代码（loadFacts 起到事实卡渲染止）里不许出现
   // PUT /profile 的路径字面量。断言的是**带闭引号**的精确串——/profile-facts/* 的
   // 路径都以 /profile 开头，不带闭引号的话这个断言会自己误伤自己。
-  const handlersStart = clientSource.indexOf("const loadFacts");
-  const factsSlice = clientSource.slice(handlersStart, factsCardIdx);
+  // 两个下标必须在同一个坐标系里比：factsCardIdx 是相对 personaSlice 的，
+  // 而 handlersStart 相对整份源码——混用会切出空片，让下面每条断言都空跑。
+  const handlersStart = personaSlice.indexOf("const loadFacts");
+  const factsSlice = personaSlice.slice(handlersStart, factsCardIdx);
   assert.ok(handlersStart > 0 && factsSlice.length > 0, "the facts handlers must exist");
   assert.ok(!factsSlice.includes('"/api/dsh-mneme/profile"'),
     "the facts domain must never write the hand-filled profile (PUT /profile is off-limits here)");
   for (const fragment of ["/api/dsh-mneme/profile-facts?agent=", "/api/dsh-mneme/profile-facts/apply", "/api/dsh-mneme/profile-facts/run"]) {
     assert.ok(factsSlice.includes(fragment), `the facts handlers must call ${fragment}`);
   }
-  // 人工 apply 成功后注入预览必须跟着刷新：事实段是注入文本的一部分，
-  // 只在 run 后刷新会让「改完一条、预览还是旧的」。
-  assert.ok(factsSlice.includes("loadPreview(personaEditing)"),
-    "both apply and run success paths must refresh the injected preview");
+  // 人工 apply 成功后注入预览必须跟着刷新。2026-11-09 起画像卡与事实卡同在人格页，
+  // 不再跨视图写别人的状态——事实卡仍然不直接调 loadPreview，刷新走人格页自己的
+  // tick 哨兵；所以锁两条：①事实处理段不直接碰 loadPreview；②页面有 tick 刷新。
+  assert.ok(!factsSlice.includes("loadPreview("),
+    "the facts card must not write the persona view's preview state from another view");
+  assert.ok(clientSource.includes("setPreviewTick((n) => n + 1)"),
+    "the persona page must refetch its own preview after a save");
   // 总闸快照要跟着功能开关走：FeaturesCard 即改即存并广播 mneme:features-changed，
   // 事实卡监听重读——不然按提示开了「自动事实」，按钮还得关面板重开才解禁
   // （评审 P2：快照 effect 是 [] 依赖，监听缺失等于回到「重开才生效」的老病）。
@@ -2903,6 +3346,52 @@ test("minimal preset notice reaches the settings page, not just the status tab (
 
   // 3 未压制时零打扰：settings 里判的必须是 injectStatus.suppressed。
   assert.ok(!/minimalWarn\s*=\s*true/.test(clientSource), "the notice must never be hard-wired on");
+});
+
+// 上面那条只证明"声明字符串存在"，证明不了"每个消费点的作用域里有它"。
+// 人格页搬进 SettingsContent 之后，运行模式卡这一处读的是自由变量：渲染即 ReferenceError，
+// 而宿主只记一句 "import failed: client-modules: could not load @modusensus/dsh-mneme"，
+// 看起来像整个插件加载不了，实际是一个 JSX 分支炸了（本机 crash-*-web-boot.log 实录）。
+// 不变量是"每个消费点的作用域里有声明"，不是"声明数量等于消费点数量"：
+// 同一个组件消费两次（SettingsContent 里两张卡各一处）只需要一份声明，按数量判会把正确代码钉红。
+test("each minimalWarn consumer resolves the declaration inside its own component", () => {
+  const lines = clientSource.split("\n");
+  const components = [];
+  lines.forEach((line, i) => {
+    const m = /^(?:    |      )(?:function |const )([A-Z]\w*)/.exec(line);
+    if (m) components.push({ line: i + 1, name: m[1] });
+  });
+  const owner = function (at) {
+    let found = null;
+    for (const c of components) {
+      if (c.line <= at) found = c;
+      else break;
+    }
+    return found;
+  };
+  assert.ok(components.length > 0, "component scan matched nothing — bundle layout changed; fix this lock, don't delete it");
+
+  const decls = [];
+  const uses = [];
+  lines.forEach((line, i) => {
+    if (!line.includes("minimalWarn") || line.trim().startsWith("//")) return;
+    (/const minimalWarn\s*=/.test(line) ? decls : uses).push(i + 1);
+  });
+  assert.ok(uses.length >= 2, `expected the notice in both surfaces (got ${uses.length} use sites)`);
+
+  const byComponent = new Map();
+  for (const d of decls) {
+    const name = owner(d).name;
+    if (!byComponent.has(name)) byComponent.set(name, []);
+    byComponent.get(name).push(d);
+  }
+  for (const u of uses) {
+    const c = owner(u);
+    const inScope = (byComponent.get(c.name) || []).filter((d) => d < u);
+    assert.ok(inScope.length > 0,
+      `line ${u} reads minimalWarn inside ${c.name} (opens at ${c.line}) which has no declaration before it — ` +
+      "renders as ReferenceError and the host reports only \"import failed\"");
+  }
 });
 
 // --- 移动端适配（mobile-adapt 车道）---

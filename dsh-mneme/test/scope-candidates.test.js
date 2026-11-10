@@ -199,6 +199,255 @@ test("dream (non-freeze): same-scope conflict is still auto-adjudicated (regress
   store.close();
 });
 
+// Issue #603 第 1 层：freeze 分支此前绕过全部三个上限，且把「已在队列里的对」
+// 当成新停车报进 frozen。下面三条锁住修完之后的三个性质。
+test("#603 freeze: a pair already in the queue is not re-reported as a new freeze", async () => {
+  const { store, service, vectorIndex } = setup();
+  savePair(service, vectorIndex, "索引策略A", "索引策略B", { agent: "coder" }, { agent: "coder" });
+  const logger = { warn: () => {}, info: () => {} };
+
+  const first = await runSleep(llmCtx(), service, baseConfig({ conflictFreezeEnabled: true }), logger, { embedder, vectorIndex }, null);
+  assert.equal(first.phases.conflicts.frozen, 1, "第一次是真插入");
+  assert.equal(store.countConflictPending(), 1);
+
+  const second = await runSleep(llmCtx(), service, baseConfig({ conflictFreezeEnabled: true }), logger, { embedder, vectorIndex }, null);
+  assert.equal(second.phases.conflicts.frozen, 0, "第二次检出的是已入队的对，不算新停车");
+  assert.equal(second.status, "noop", "没有新停车就是 noop，不是 ok");
+  assert.equal(store.countConflictPending(), 1, "队列没有被重复写入");
+  store.close();
+});
+
+test("#603 freeze: cap is applied after filtering already-parked pairs, so the queue keeps growing", async () => {
+  const { store, service, vectorIndex } = setup();
+  // 三对互不相交的高相似记忆：贪心配对每轮都能检出三对。
+  savePair(service, vectorIndex, "队列A1", "队列A2", { agent: "coder" }, { agent: "coder" });
+  savePair(service, vectorIndex, "队列B1", "队列B2", { agent: "coder" }, { agent: "coder" });
+  savePair(service, vectorIndex, "队列C1", "队列C2", { agent: "coder" }, { agent: "coder" });
+  const logger = { warn: () => {}, info: () => {} };
+  // 每轮只处理一对，且远小于候选数——裸 slice 会让第一对永远占住这个名额。
+  const cfg = baseConfig({ conflictFreezeEnabled: true, sleepConflictMaxPairsPerRun: 1 });
+
+  await runSleep(llmCtx(), service, cfg, logger, { embedder, vectorIndex }, null);
+  assert.equal(store.countConflictPending(), 1);
+  await runSleep(llmCtx(), service, cfg, logger, { embedder, vectorIndex }, null);
+  assert.equal(store.countConflictPending(), 2, "第二对必须能轮到，不能被第一对饿死");
+  await runSleep(llmCtx(), service, cfg, logger, { embedder, vectorIndex }, null);
+  assert.equal(store.countConflictPending(), 3, "第三对同理");
+
+  const done = await runSleep(llmCtx(), service, cfg, logger, { embedder, vectorIndex }, null);
+  assert.equal(done.phases.conflicts.frozen, 0, "全部入队后不再虚报");
+  assert.equal(done.phases.conflicts.perRunSkipped, 0, "没有新对可处理，不算被截断");
+  store.close();
+});
+
+test("#603 freeze: the pending queue budget stops parking and says so", async () => {
+  const { store, service, vectorIndex } = setup();
+  savePair(service, vectorIndex, "预算A1", "预算A2", { agent: "coder" }, { agent: "coder" });
+  savePair(service, vectorIndex, "预算B1", "预算B2", { agent: "coder" }, { agent: "coder" });
+  savePair(service, vectorIndex, "预算C1", "预算C2", { agent: "coder" }, { agent: "coder" });
+  const warnings = [];
+  const logger = { warn: (m) => warnings.push(String(m)), info: () => {} };
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictFreezeMaxPending: 2 }),
+    logger, { embedder, vectorIndex }, null
+  );
+  assert.equal(store.countConflictPending(), 2, "只装到队列上限为止");
+  assert.equal(result.phases.conflicts.frozen, 2);
+  assert.equal(result.phases.conflicts.pendingSkipped, 1, "被队列上限挡下的对要如实报出来");
+  assert.ok(warnings.some((w) => /freeze queue full/.test(w)), "要留一条 warn，不能静默丢弃");
+
+  // 队列已满：再跑一轮不会新增，也不会把「满了」报成可续排的 backlog。
+  const again = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictFreezeMaxPending: 2 }),
+    logger, { embedder, vectorIndex }, null
+  );
+  assert.equal(store.countConflictPending(), 2);
+  assert.equal(again.phases.conflicts.frozen, 0);
+  assert.equal(again.phases.conflicts.perRunSkipped, 0, "队列满不是 per-run 截断，不该触发续排");
+  store.close();
+});
+
+// Issue #603 第 2 层：sleep 停车时必须把候选对的相似度一起落库。此前这个数字只
+// 活在 reason 文本里（「相似度 0.87」），面板靠正则回收、排序无从下手——同一轮
+// 产出的对 created_at 全同，队列顺序等于随机。
+test("#603 freeze: the parked row carries the similarity the detector measured", async () => {
+  const { store, service, vectorIndex } = setup();
+  savePair(service, vectorIndex, "排序A1", "排序A2", { agent: "coder" }, { agent: "coder" });
+
+  await runSleep(llmCtx(), service, baseConfig({ conflictFreezeEnabled: true }), { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null);
+
+  const [row] = store.listConflictPending();
+  assert.ok(row, "the pair must be parked");
+  // 两条记忆的向量都是 [1,0,0]，余弦为 1。断言「是数字且等于 1」而不是「非空」：
+  // 前者能抓住「传了 undefined / 传了字符串」这类静默降级。
+  assert.equal(typeof row.similarity, "number", "similarity must be a number, not a string or undefined");
+  assert.equal(row.similarity, 1, "identical vectors are similarity 1");
+  store.close();
+});
+
+// 与上一条互补：拿不到相似度时必须是「未知」而不是 0。0 会被排到最后，等于替
+// 用户断言「这两条毫不相似」——那是编造。
+test("#603 freeze: a pair parked without a measured similarity stays unknown", async () => {
+  const { store, service } = setup();
+  // 直接走 service 的停车口（没有向量索引参与 = 没测过相似度）。
+  const a = service.saveWithDedupe({ type: "project", title: "未知A", content: "正文A" }).memory;
+  const b = service.saveWithDedupe({ type: "project", title: "未知B", content: "正文B" }).memory;
+  service.saveConflictPending({ run_id: "r1", memory_a: a.id, memory_b: b.id, reason: "人工停车" });
+
+  const [row] = store.listConflictPending();
+  assert.equal(row.similarity, undefined, "no measurement must read back as unknown, not 0");
+  store.close();
+});
+
+// Issue #603 第 4 层：自动裁决档。相似度极高的**同 scope** 对直接保留新条、归档
+// 旧条，不进人工队列；跨 scope 对永不自动（归属是用户的决定）。
+test("#603 auto-resolve: a near-duplicate same-scope pair is superseded without entering the queue", async () => {
+  const { store, service, vectorIndex } = setup();
+  const [first, second] = savePair(service, vectorIndex, "缓存策略A", "缓存策略B", { agent: "coder" }, { agent: "coder" });
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictAutoResolveEnabled: true, conflictAutoResolveMinSimilarity: 0.95 }),
+    { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null
+  );
+  assert.equal(result.status, "ok");
+
+  // 队列必须是空的：这一对根本没进人工队列。
+  assert.equal(store.countConflictPending(), 0, "auto-resolved pairs must not reach the manual queue");
+  // 不猜 id 顺序，用归档状态反推哪一侧被取代。
+  const archivedIds = [first.id, second.id].filter((id) => store.getById(id).archived);
+  assert.equal(archivedIds.length, 1, "exactly one side is archived");
+  const loser = archivedIds[0];
+  const survivor = [first.id, second.id].find((id) => !store.getById(id).archived);
+  // 留下的那条正文一字不动（supersede 把注记写在败者侧，不污染幸存者）。
+  assert.doesNotMatch(store.getById(survivor).content, /已被取代|superseded by/,
+    "the survivor's body must stay clean");
+  // 败者侧带可追溯注记（#126 的原设计）。
+  assert.match(store.getById(loser).content, /已被取代|superseded by/,
+    "traceability lives on the archived side");
+  // 机器台账也要有一条：自动动作必须能事后回答「什么时候、被谁判的」。
+  const reviewed = typeof store.listConflictReviewed === "function" ? store.listConflictReviewed({ limit: 10 }) : [];
+  assert.ok(reviewed.length >= 1, "auto-resolve must leave a ledger row");
+  assert.equal(reviewed[0].outcome, "supersede");
+  store.close();
+});
+
+test("#603 auto-resolve: a cross-scope pair is never auto-adjudicated, even at similarity 1", async () => {
+  const { store, service, vectorIndex } = setup();
+  const [xNew, xOld] = savePair(service, vectorIndex, "部署清单A", "部署清单B", { agent: "coder" }, { agent: "writer" });
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictAutoResolveEnabled: true, conflictAutoResolveMinSimilarity: 0.95 }),
+    { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null
+  );
+  assert.equal(result.status, "ok");
+
+  // 向量完全相同（余弦 1），但归属不同 → 只能停车等人判。
+  assert.equal(store.countConflictPending(), 1, "cross-scope pair still goes to the manual queue");
+  assert.equal(store.getById(xOld.id).archived, false, "cross-scope loser is never auto-archived");
+  assert.equal(store.getById(xNew.id).archived, false, "cross-scope winner is untouched too");
+  store.close();
+});
+
+test("#603 auto-resolve: with the switch off nothing is auto-adjudicated", async () => {
+  const { store, service, vectorIndex } = setup();
+  savePair(service, vectorIndex, "主题A", "主题B", { agent: "coder" }, { agent: "coder" });
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictAutoResolveEnabled: false }),
+    { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null
+  );
+  assert.equal(result.status, "ok");
+  assert.equal(store.countConflictPending(), 1, "with the switch off, nothing is auto-adjudicated");
+  store.close();
+});
+
+// 自动裁决保留的是**信息量更大**的那条，不是更新的那条。
+// 反例来自 live 库：>=0.95 的 20 对里 11 对（55%）新条比旧条短，平均短 132 字——
+// 蒸馏压缩过的一版反而更新时间更晚，按「留新的」会把更完整的那条归档掉。
+test("#603 auto-resolve: the longer copy survives even when the shorter one is newer", async () => {
+  const { store, service, vectorIndex } = setup();
+  // 先存长的那条（更旧），再存短的那条（更新）：新条更短，正是实测里的多数情况。
+  const longBody = "缓存策略要按写入频率分三档：热数据走内存、温数据走 SSD、冷数据归档到对象存储。"
+    + "切换阈值由每小时访问次数决定，低于一次就降档，连续三天高于十次再升档。";
+  const shortBody = "缓存策略按写入频率分档。";
+  const older = service.saveWithDedupe({
+    type: "project", title: "缓存分层", content: longBody
+  }).memory;
+  const newer = service.saveWithDedupe({
+    type: "project", title: "缓存分层摘要", content: shortBody
+  }).memory;
+  vectorIndex.saveEmbedding(older.id, [1, 0, 0]);
+  vectorIndex.saveEmbedding(newer.id, [1, 0, 0]);
+  assert.ok(older.content.length > newer.content.length, "fixture: the older copy must be the longer one");
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictAutoResolveEnabled: true, conflictAutoResolveMinSimilarity: 0.95 }),
+    { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null
+  );
+  assert.equal(result.status, "ok");
+  assert.equal(result.phases.conflicts.autoResolved, 1, "the pair is auto-adjudicated");
+
+  // 幸存者必须是长的那条：留新的会把三档策略削成一句话。
+  assert.equal(store.getById(older.id).archived, false, "the longer, older copy must survive");
+  assert.equal(store.getById(newer.id).archived, true, "the shorter, newer copy is the one archived");
+  store.close();
+});
+
+// 长度相同才是「信息量相当」，此时退回更新时间：新条胜出，且结论确定可重放。
+test("#603 auto-resolve: equal-length copies fall back to the newer one, deterministically", async () => {
+  const { store, service, vectorIndex } = setup();
+  const body = "部署脚本先跑 migrate 再跑 smoke，任一步失败就回滚到上一个 tag。";
+  const older = service.saveWithDedupe({ type: "project", title: "部署甲", content: body }).memory;
+  const newer = service.saveWithDedupe({ type: "project", title: "部署乙", content: body }).memory;
+  vectorIndex.saveEmbedding(older.id, [1, 0, 0]);
+  vectorIndex.saveEmbedding(newer.id, [1, 0, 0]);
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictAutoResolveEnabled: true, conflictAutoResolveMinSimilarity: 0.95 }),
+    { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null
+  );
+  assert.equal(result.status, "ok");
+  assert.equal(result.phases.conflicts.autoResolved, 1);
+  // 等长 → 比 updated_at：后存的赢。长度相等时不至于两边都"更完整"，留新的是安全的。
+  assert.equal(store.getById(newer.id).archived, false, "equal length: the newer copy survives");
+  assert.equal(store.getById(older.id).archived, true);
+  store.close();
+});
+
+test("#603 auto-resolve: a failed adjudication falls back to the manual queue instead of vanishing", async () => {
+  const { store, service, vectorIndex } = setup();
+  savePair(service, vectorIndex, "回退A", "回退B", { agent: "coder" }, { agent: "coder" });
+
+  // 让 supersede 一定失败：把 applyDecisions 依赖的 update 打断。
+  const realUpdate = service.update.bind(service);
+  let calls = 0;
+  service.update = (...args) => {
+    calls++;
+    throw new Error("write refused");
+  };
+
+  const result = await runSleep(
+    llmCtx(), service,
+    baseConfig({ conflictFreezeEnabled: true, conflictAutoResolveEnabled: true, conflictAutoResolveMinSimilarity: 0.95 }),
+    { warn: () => {}, info: () => {} }, { embedder, vectorIndex }, null
+  );
+  service.update = realUpdate;
+
+  assert.ok(calls > 0, "the auto path did try to apply");
+  // 自动档没落地 → 这一对必须退回人工队列。丢掉它才是真正的静默丢失。
+  assert.equal(store.countConflictPending(), 1, "a failed auto-resolve must land in the manual queue");
+  assert.equal(result.status, "ok", "the run itself is not a failure");
+  store.close();
+});
+
 test("non-freeze with an LLM: cross-scope pair bypasses adjudication; same-scope pair is adjudicated", async () => {
   const { store, service, vectorIndex } = setup();
   const [yNew, yOld] = savePair(service, vectorIndex, "缓存策略A", "缓存策略B", { agent: "coder" }, { agent: "coder" });

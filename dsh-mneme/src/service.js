@@ -532,6 +532,25 @@ export function createService({ store, mirror, config, onWrite, logger, document
     return dot / (Math.sqrt(na) * Math.sqrt(nb));
   }
 
+  // BM25 语料索引缓存（#617 审计 O2）。此前每次渲染都 store.list 500 行 + 重新
+  // tokenize 全语料，实测 4.318ms/次、每个 step 一次；其中 store.list 占 4.318ms
+  // 里的绝大部分，而语料在两次写入之间根本没变。
+  //
+  // 失效键用 mirror_state.generation，不另建计数器：改正文/可见性的写入（insert /
+  // update / remove / setArchived / setForgotten / setContent …）都已经 bump 它，
+  // 而 last_accessed_at 与 embedding 这两类写入**刻意不 bump**（store.js 里写明
+  // reads must not mark the mirror dirty）——这两类恰好也不改 title+content 语料，
+  // 正是我们要的失效粒度，不用额外判断。
+  //
+  // 水位每次从库里现读，不在进程内记本地计数：多宿主共用一个 memoryDir 是支持形态
+  // （busy_timeout + WAL），另一个进程写完 bump 的是库里的 generation，本地计数
+  // 永远看不见，只有现读才收得到。
+  //
+  // 只缓存索引、不缓存查询结果：search() 返回的是 {...row, score} 副本，索引里
+  // 留着的原始行不会被调用方改到；缓存结果则会跨 step 串味（同一 query 在不同
+  // 池子状态下该给不同答案）。
+  let bm25IndexCache = null; // { generation, index } | null
+
   /**
    * BM25 third recall path (v0.5.0 1.1). Scores the query tokens against the
    * live non-archived rows and returns the top `limit` hits with scores
@@ -541,12 +560,38 @@ export function createService({ store, mirror, config, onWrite, logger, document
   function bm25Recall(q, limit) {
     if (config?.bm25SearchEnabled === false) return [];
     try {
-      const docs = store.list({ limit: 500, includeForgotten: false }).filter((m) => !m.archived);
-      if (!docs.length) return [];
-      return createBM25Index(docs).search(q, { limit });
+      const index = bm25CorpusIndex();
+      if (!index) return [];
+      return index.search(q, { limit });
     } catch {
       return [];
     }
+  }
+
+  /**
+   * 取（必要时重建）BM25 语料索引。水位读不到时退化成每次重建而不是报错：这条
+   * 通路是 recall booster，读不到 mirror_state 只该慢一点，不该让词法召回整批消失。
+   */
+  function bm25CorpusIndex() {
+    let generation = null;
+    try {
+      generation = store.getMirrorState().generation;
+    } catch { /* 水位不可读：本次退回重建，且不写缓存 */ }
+    if (bm25IndexCache && generation !== null && bm25IndexCache.generation === generation) {
+      return bm25IndexCache.index;
+    }
+    const docs = store.list({ limit: 500, includeForgotten: false }).filter((m) => !m.archived);
+    if (!docs.length) {
+      bm25IndexCache = null;
+      return null;
+    }
+    const index = createBM25Index(docs);
+    // 水位读不到时**不碰缓存**，保留上一份「已知有效 generation」的条目：读失败
+    // 若只是偶发（库锁、迁移窗口）而期间没有写入，恢复后水位与条目一致，直接命中；
+    // 期间真有写入，水位已经变了，下一轮自然重建。反过来把 null 当键存进去则是纯
+    // 噪声——那样的条目永远命不中，还把有效的那份挤掉了。
+    if (generation !== null) bm25IndexCache = { generation, index };
+    return index;
   }
 
   /**
@@ -922,18 +967,13 @@ export function createService({ store, mirror, config, onWrite, logger, document
       }
     }
 
-    // Mode contract, auto (aligns rrf/minmax with blend): keyword leads, the
-    // recipe fills the remaining slots. blend.auto already front-loads keyword;
-    // rrf/minmax rank across sources, so re-apply the same "keyword first"
-    // ordering here to preserve the pre-fusion auto contract — the keyword
-    // hit list keeps its power, and only slots it couldn't fill go to the
-    // recipe's ranking.
-    if (recipe !== "blend" && mode === "auto" && keyword.length) {
-      const head = keyword.slice(0, lim);
-      const seen = new Set(head.map((m) => m.id));
-      const tail = merged.filter((m) => !seen.has(m.id)).slice(0, Math.max(0, lim - head.length));
-      merged = head.concat(tail);
-    }
+    // #617 第 3 条：这里原本还有一段「recipe !== "blend" 且 mode === "auto" 时用
+    // keyword.slice(0,lim) 覆盖 merged」的收尾，注释自称是「保留 blend 的 auto
+    // 契约」。但 rrf/minmax 的全部意义就是跨源排序——把它们算出来的序整个换成
+    // 「关键词命中先上」，等于配置了 rrf 却在 auto 下拿到 keyword 的顺序，配方
+    // 白选。auto 的「关键词领位」语义只属于 blend（它在 :906-922 里自己实现了，
+    // 且带 seen 去重与容量控制），不该由收尾段替别的配方代劳。删掉后 rrf/minmax
+    // 的 auto 排序就是它们各自算出来的排序。
 
     return { merged, signals };
   }
@@ -1778,62 +1818,60 @@ export function createService({ store, mirror, config, onWrite, logger, document
           (effImportance(a) * qualityWeight(a) * heatOf(a) * scopeMultOf(a));
       });
     let candidates = items;
+    // #617 第 2 条（前半）：向量路与 BM25 路此前是**互斥**的——`if (!semanticItems.length)`
+    // 包住 BM25，于是「有向量」等于「词法命中整批消失」。可两条路测的不是同一件事：
+    // 向量管「意思像」，BM25 管「词面撞上」，专有名词、issue 编号、函数名这类查询
+    // 恰恰是向量最容易糊、词法最准的地方。现在两路都跑，用 RRF（k=60）融合排名：
+    // 某一路的第 1 名恒得 1/(60+1)，两路都靠前的行自然走高，不再由「谁先跑」决定。
+    // 另外先按 fetchLimit 多取再过滤——旧代码先按 poolSize 截断再筛门控，筛掉的
+    // 名额永远补不回来（缩水），池子越脏越明显。
+    let fusedRrf = null; // id -> RRF 原始分；selectiveInject 复用它做二次重排
     if (config.hybridInject !== false && q) {
-      // Bug4: semantic-first recall. Vector hits (queryVector, cached by the
-      // injector's async prefetch) lead when present; otherwise the last
-      // searchMemories recall for the exact same query is reused. Rule-based
-      // items fill + dedupe the remaining slots. Empty query / no vector /
-      // no cached recall → pure legacy rule-based selection.
-      const semanticItems = [];
+      const fetchLimit = Math.max(poolSize * 4, 40);
+      const passesGate = (m) => Boolean(m) && !m.archived && injectTypes.has(m.type) && !m.forgotten &&
+        (m.source !== "narrative" || allowNarrative) &&
+        codingGate(m) &&
+        (m.type === "summary" || m.type === "preference" || m.importance >= threshold);
+      const vectorHits = [];
       if (Array.isArray(queryVector) && queryVector.length && vectorIndex) {
         try {
-          const hits = vectorIndex.search(queryVector, { limit: poolSize, threshold: 0 });
-          for (const m of hits) {
-            if (m && !m.archived && injectTypes.has(m.type) && !m.forgotten &&
-              (m.source !== "narrative" || allowNarrative) &&
-              codingGate(m) &&
-              (m.type === "summary" || m.type === "preference" || m.importance >= threshold)) {
-              semanticItems.push(m);
-            }
+          for (const m of vectorIndex.search(queryVector, { limit: fetchLimit, threshold: 0 })) {
+            if (passesGate(m)) vectorHits.push(m);
           }
         } catch { /* vector unavailable: fall through to the recall cache */ }
       }
-      if (!semanticItems.length && lastSemanticRecall?.query === q && lastSemanticRecall.items?.length) {
-        // CodeRabbit on #404：这条回填分支此前独漏重要度门槛——向量路（上方）与
-        // BM25 路（下方 :1655 注释「门控与向量路径一致（含 importance 阈值）」）
+      if (!vectorHits.length && lastSemanticRecall?.query === q && lastSemanticRecall.items?.length) {
+        // CodeRabbit on #404：这条回填分支此前独漏重要度门槛——向量路与 BM25 路
         // 都带着它。#369 收编 history 后缺口会被放大：库里低于闸门的行（实测
         // history 378 条中有 27 条 i<=2）走一次检索进缓存就能绕开门槛占注入位。
-        for (const m of lastSemanticRecall.items) {
-          if (m && !m.archived && injectTypes.has(m.type) && !m.forgotten &&
-            (m.source !== "narrative" || allowNarrative) && codingGate(m) &&
-            (m.type === "summary" || m.type === "preference" || m.importance >= threshold)) semanticItems.push(m);
-        }
+        for (const m of lastSemanticRecall.items) if (passesGate(m)) vectorHits.push(m);
       }
-      // Issue #198：首轮（无向量、无缓存召回）的同步兜底——BM25 词法召回领位。
-      // 注入渲染是同步的（宿主 systemPrompt 的 contexts 不支持异步 text），
-      // 查询向量只能异步 prefetch 给下一轮，首轮必 miss；此时纯静态排序会让
-      // 老的高重要性 summary/preference 占满槽位，当前话题的 decision/project
-      // 进不来。查询文本本身就在手上，BM25 是纯进程内同步计算，词法相关性
-      // 足以把当前话题顶到前排；门控与向量路径一致（含 importance 阈值）。
-      // 语义向量命中时本分支不参与，行为不变。
-      if (!semanticItems.length) {
-        for (const hit of bm25Recall(q, poolSize)) {
-          if (hit && !hit.archived && injectTypes.has(hit.type) && !hit.forgotten &&
-            (hit.source !== "narrative" || allowNarrative) &&
-            codingGate(hit) &&
-            (hit.type === "summary" || hit.type === "preference" || hit.importance >= threshold)) {
-            semanticItems.push(hit);
-          }
-        }
-        // issue #339（CodeRabbit review on #350）：首轮 BM25 兜底领跑合并池，
-        // 而 selectiveInject 相似度重排要等查询向量就绪才执行——软加权必须
-        // 在这里就位，否则 foreign 命中绕过降权直接占注入位。
-        if (softScopeActive) {
-          semanticItems.sort((a, b) =>
-            (b.score ?? 0) * scopeMultOf(b) - (a.score ?? 0) * scopeMultOf(a));
-        }
-      }
-      if (semanticItems.length) {
+      // Issue #198：BM25 词法路。首轮（无向量、无缓存召回）这是唯一的同步相关性
+      // 信号；有向量时它补上向量糊掉的那一类命中。#617 之后它不再被向量挤掉。
+      const bm25Hits = [];
+      for (const hit of bm25Recall(q, fetchLimit)) if (passesGate(hit)) bm25Hits.push(hit);
+      if (vectorHits.length || bm25Hits.length) {
+        const RRF_K = 60;
+        const rrf = new Map();
+        const rowById = new Map();
+        const addList = (list) => {
+          list.forEach((m, idx) => {
+            rowById.set(m.id, m);
+            rrf.set(m.id, (rrf.get(m.id) ?? 0) + 1 / (RRF_K + idx + 1));
+          });
+        };
+        addList(vectorHits);
+        addList(bm25Hits);
+        fusedRrf = rrf;
+        // 软加权（issue #339 / CodeRabbit on #350）作用在融合分上：foreign 行不再
+        // 靠一路的原始 score 绕过降权，也不需要像旧代码那样单独给 BM25 排一次序。
+        const ranked = [...rrf.entries()]
+          .map(([id, score]) => {
+            const m = rowById.get(id);
+            return { m, score: score * scopeMultOf(m) };
+          })
+          .sort((a, b) => b.score - a.score)
+          .map((row) => row.m);
         const seen = new Set();
         const merged = [];
         const push = (m) => {
@@ -1841,7 +1879,7 @@ export function createService({ store, mirror, config, onWrite, logger, document
           seen.add(m.id);
           merged.push(m);
         };
-        for (const m of semanticItems) {
+        for (const m of ranked) {
           push(m);
           if (merged.length >= poolSize) break;
         }
@@ -1927,16 +1965,29 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // vector, so the injected slots go to memories on the current topic
     // rather than to the rule-based order. Rows the index did not return
     // keep their relative order after the scored ones.
+    //
+    // #617 第 2 条（后半）：这段此前是**纯余弦**全量 sort，于是上游用 RRF 顶上来的
+    // BM25 命中（词面精确、余弦却低）会被重新压到 maxItems 之后，再被 general 槽
+    // 的 `general.length >= maxItems` 丢掉——融合白做。现在余弦只占一半权重，另一半
+    // 给 RRF 分（同一轮融合算出来的那份）：纯余弦命中仍是主体，但词法精确命中
+    // 不会因为「意思不够像」被挤出去。
+    // RRF 归一化：单路第 1 名原始分 1/(60+1)，乘 (60+1)/2 得 0.5，双路都在第 1 名
+    // 得 1.0 —— 与余弦同量纲，且天然落在 [0,1]。
     if (config?.selectiveInjectEnabled !== false && Array.isArray(queryVector) && queryVector.length && vectorIndex) {
       try {
         const hits = vectorIndex.search(queryVector, { limit: 200, threshold: 0 });
         const sim = new Map(hits.map((m) => [m.id, m.score ?? 0]));
         if (sim.size) {
-          // 软加权作用在真实 sim 上；未命中的规则候选保持 -1 沉底（缺失项
-          // 乘乘数会让 foreign 缺失项反而排到自己的缺失项之上，故不乘）。
+          const RRF_NORM = (60 + 1) / 2;
+          // 软加权乘在融合分上（不是乘在某一路的原始分上）；两路都没有的规则
+          // 候选保持 -1 沉底（缺失项乘乘数会让 foreign 缺失项反而排到自己的缺失
+          // 项之上，故不乘）。
           const scopedSim = (m) => {
             const s = sim.get(m.id);
-            return s === undefined ? -1 : s * scopeMultOf(m);
+            const rrf = fusedRrf?.get(m.id);
+            if (s === undefined && rrf === undefined) return -1;
+            const fused = 0.5 * (s ?? 0) + 0.5 * (rrf ?? 0) * RRF_NORM;
+            return fused * scopeMultOf(m);
           };
           candidates = [...candidates].sort((a, b) => scopedSim(b) - scopedSim(a));
         }
@@ -2260,6 +2311,10 @@ export function createService({ store, mirror, config, onWrite, logger, document
       id: r.id,
       run_id: r.run_id ?? null,
       reason: r.reason ?? null,
+      // Issue #603 第 2 层：入队时记下的相似度（0–1）。存量行与 LLM 裁决路径
+      // 没记 → null。面板据此排序与画条，不再从 reason 文本里正则回收；
+      // null 与 0 必须区分开（「没测过」不是「不相似」）。
+      similarity: typeof r.similarity === "number" ? r.similarity : null,
       created_at: r.created_at,
       memory_a: side(r.memory_a),
       memory_b: side(r.memory_b)

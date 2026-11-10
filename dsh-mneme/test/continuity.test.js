@@ -267,8 +267,15 @@ test("#249 N3：队列满的丢弃必须留痕（§8 触发率口径）", async 
 test("#249 N3：门控不调模型（静态锁）与挂载点的父开关在前", () => {
   // §11「门控不调 LLM」：本模块只 import 消息工厂。静态锁而不是运行时断言——真去调模型的
   // 回归不会从返回值露出来，只会让这一步变慢、变贵。
+  //
+  // #611 起多了 src/attachment-text.js：它同样**不调模型**（纯字符串函数、自己不
+  // import 任何东西），只是把图片块读成占位文本。所以锁的口径从「恰好一行 import」
+  // 改成「import 清单恰是这两项」——新增一行仍然转红，仍然要人来看一眼它是不是纯的。
   const src = readFileSync(new URL("../src/continuity.js", import.meta.url), "utf8");
-  assert.deepEqual(src.match(/^import .*$/gm), ['import { createUserMessage } from "@deepseek-ai/dsh-llm";']);
+  assert.deepEqual(src.match(/^import .*$/gm), [
+    'import { createUserMessage } from "@deepseek-ai/dsh-llm";',
+    'import { contentToText } from "./attachment-text.js";'
+  ]);
   // 挂载点（`src/index.js`）是本功能唯一的生产入口：父开关必须在前、子项在后，否则「默认关」
   // 只剩 Config 里的默认值撑着，接线漏一次没人发现。
   const index = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");

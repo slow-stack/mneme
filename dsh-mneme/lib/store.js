@@ -706,6 +706,59 @@ CREATE TABLE IF NOT EXISTS profile_fact_runs (
   finished_at    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_profile_fact_runs_card ON profile_fact_runs(agent_key, started_at);
+
+-- ============================================================
+-- knowledge base（知识库第二层，spec: docs/plans/2026-11-08-kb-qoder-parity.md §3.3）。
+-- 与记忆行物理隔离的硬边界同 choro 那组表：kb 的行永不进 memories /
+-- saveWithDedupe / dream / 质量过滤的任何池子。这里存的是「用户/agent 主动
+-- 收进知识库的资料」——文件、网页、仓库地志页的**副本**与索引，天生属于外来
+-- 原文，让巩固流程够得着它就会把用户刚存的手册自己归档掉。
+-- 幂等键是 (collection_id, rel_key)：同一来源重入库按 sha256 判 no-op，
+-- 变了才替换 chunks（替换语义在 replaceKbDoc 里，事务包住删除与插入）。
+-- rel_key 是来源的稳定相对键（本地文件=绝对路径、网页=URL、地志页=repo#slug），
+-- 不是展示名——展示名在 kb_docs.title。
+CREATE TABLE IF NOT EXISTS kb_collections (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  key         TEXT NOT NULL,
+  title       TEXT NOT NULL,
+  description TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_collections_key ON kb_collections(key);
+
+-- kind 限定三类（§3.3）：file | url | choro_page。sha256 是**正文内容**的哈希，
+-- 不是文件 stat 的指纹——文件 mtime 变了内容没变时重入库必须是 no-op，
+-- 否则每次保存键盘敲一下都全量重切块。
+CREATE TABLE IF NOT EXISTS kb_docs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  collection_id INTEGER NOT NULL,
+  rel_key       TEXT NOT NULL,
+  kind          TEXT NOT NULL,
+  source_path   TEXT,
+  title         TEXT NOT NULL,
+  bytes         INTEGER NOT NULL DEFAULT 0,
+  sha256        TEXT,
+  indexed_at    TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'ok',
+  error         TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_docs_collection_relkey ON kb_docs(collection_id, rel_key);
+
+-- 分块正文。heading 是块所属的二级标题节（无节则空串），ordinal 是块在
+-- 文档内的序号——检索命中要能回指「第几块、哪一节」，面板/工具靠它跳段落。
+-- text 存原文切片（含分块时带的标题行？不含：标题在 heading 里，text 只放正文，
+-- 免得同一条命中把标题算两遍）。
+CREATE TABLE IF NOT EXISTS kb_chunks (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_id     INTEGER NOT NULL,
+  ordinal    INTEGER NOT NULL,
+  heading    TEXT NOT NULL DEFAULT '',
+  text       TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc_ordinal ON kb_chunks(doc_id, ordinal);
+
 `;
 
 // Exported for API-layer type validation (standalone API POST /memories and
@@ -960,6 +1013,10 @@ function toConflictPending(row) {
     memory_a: row.memory_a,
     memory_b: row.memory_b,
     reason: row.reason ?? undefined,
+    // Issue #603 第 2 层：入队时的相似度。存量行与调用方没给的行是 NULL，
+    // 这里如实透出 undefined（条件展开：带 undefined 键会让 in-process schema
+    // 校验判违规，同 toApiList 的处理）。
+    ...(typeof row.similarity === "number" ? { similarity: row.similarity } : {}),
     created_at: row.created_at,
     resolved_at: row.resolved_at ?? undefined,
     resolved_winner: row.resolved_winner ?? undefined
@@ -1492,6 +1549,18 @@ export function createStore(path) {
   // 索引建在加列之后：老库打开时列还不存在（SCHEMA 的 CREATE TABLE 只对新建库生效）。
   addColumn("memory_provenance", "distill_run_id", "ALTER TABLE memory_provenance ADD COLUMN distill_run_id TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS idx_memory_provenance_run ON memory_provenance(distill_run_id);");
+
+  // Issue #603 第 2 层：冲突待审队列此前只能按 created_at 倒序排。一次 sleep 轮次
+  // 里产出的对全部落在同一毫秒（实测 60 条挤在 60ms 内），排序键全同，队列在面板
+  // 上看起来是随机的——而「哪一对最该先看」的唯一客观信号是相似度，此前只存在
+  // reason 文本里（「相似度 0.87」），前端靠正则回收。落成列之后排序键是数据，
+  // 不是解析结果。
+  //
+  // 可空且不带 DEFAULT：存量行没有这个信息，NULL = 「入队时没记」（比填 0 诚实——
+  // 0 会被排到最后，等于替用户断言「这两条毫不相似」）。排序用 NULLS LAST。
+  addColumn("conflict_pending", "similarity", "ALTER TABLE conflict_pending ADD COLUMN similarity REAL");
+  // 索引建在加列之后（同 idx_memory_provenance_run 的理由）：老库打开时列才刚加上。
+  db.exec("CREATE INDEX IF NOT EXISTS idx_conflict_pending_similarity ON conflict_pending(similarity DESC, created_at DESC);");
 
   // Audit peer F: a legacy DB may hold a non-integer generation/applied_generation
   // (pre-v0.3.9 the JS gate truncated with Math.trunc and SQLite's CHECK only
@@ -3736,7 +3805,10 @@ export function createStore(path) {
    * pending once — a re-detection in a later dream run is a no-op, never a
    * duplicate queue entry. Returns the pending row (freshly inserted, or the
    * existing unresolved row when the pair is already pending), or undefined
-   * when the re-detection is suppressed.
+   * when the re-detection is suppressed. The returned row carries `fresh`:
+   * true only when this call actually inserted a row, false when the pair was
+   * already pending (issue #603 — callers used to read "non-null" as "parked",
+   * so a re-detection re-reported the same pair as a new freeze every run).
    *
    * v0.8.1（issue #170 复核项 4）：人工已裁决过的对（resolved_at 非空）不再
    * 反复入队——除非任一侧在裁决之后又被改过（updated_at 晚于 resolved_at）。
@@ -3744,12 +3816,12 @@ export function createStore(path) {
    * updated_at 是宽松代理（任何字段更新都会触发重新评审）——宁可多看一眼，
    * 不静音真冲突。
    */
-  function saveConflictPending({ run_id, memory_a, memory_b, reason }) {
+  function saveConflictPending({ run_id, memory_a, memory_b, reason, similarity }) {
     const [a, b] = [memory_a, memory_b].sort();
     const existing = db.prepare(
       "SELECT * FROM conflict_pending WHERE memory_a = ? AND memory_b = ? AND resolved_at IS NULL LIMIT 1"
     ).get(a, b);
-    if (existing) return toConflictPending(existing);
+    if (existing) return { ...toConflictPending(existing), fresh: false };
     const reviewed = db.prepare(
       "SELECT * FROM conflict_pending WHERE memory_a = ? AND memory_b = ? AND resolved_at IS NOT NULL ORDER BY resolved_at DESC, rowid DESC LIMIT 1"
     ).get(a, b);
@@ -3761,16 +3833,29 @@ export function createStore(path) {
     }
     const id = randomUUID();
     const now = nowIso();
+    // Issue #603 第 2 层：相似度落列。调用方拿不到（LLM 裁决路径只有理由文本）
+    // 就写 NULL，不猜——面板与排序都按「未知」处理，而不是当成 0。
+    const sim = typeof similarity === "number" && Number.isFinite(similarity)
+      && similarity >= 0 && similarity <= 1 ? similarity : null;
     db.prepare(
-      `INSERT INTO conflict_pending (id, run_id, memory_a, memory_b, reason, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(id, run_id ?? null, a, b, reason ?? null, now);
-    return toConflictPending(db.prepare("SELECT * FROM conflict_pending WHERE id = ?").get(id));
+      `INSERT INTO conflict_pending (id, run_id, memory_a, memory_b, reason, similarity, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, run_id ?? null, a, b, reason ?? null, sim, now);
+    return { ...toConflictPending(db.prepare("SELECT * FROM conflict_pending WHERE id = ?").get(id)), fresh: true };
   }
 
   /**
-   * List pending conflicts, newest first. Unresolved rows only by default;
-   * pass includeResolved to include resolved ones (audit view).
+   * List pending conflicts, most-similar first. Unresolved rows only by
+   * default; pass includeResolved to include resolved ones (audit view).
+   *
+   * Issue #603 第 2 层：排序键从「created_at DESC」改成「相似度 DESC → created_at
+   * DESC」。原键在同一次 sleep 轮次里全同（实测 60 条落在 60ms 内），队列在面板
+   * 上等于随机；相似度是「该先看哪对」的唯一客观信号，现在它是一列而不是 reason
+   * 文本里的正则。
+   *
+   * NULL 排最后而不是当 0：存量行与 LLM 裁决路径没记相似度，把它们混进「低相似
+   * 度」会把「未知」伪装成「已测量」。`(similarity IS NULL)` 前缀让这条不依赖
+   * SQLite 的 NULL 排序约定，两个方向都稳。
    */
   function listConflictPending({ limit = 50, offset = 0, includeResolved = false } = {}) {
     const { limit: lim, offset: off } = sanitizePage(limit, offset, 50);
@@ -3779,7 +3864,9 @@ export function createStore(path) {
     if (!includeResolved) clauses.push("resolved_at IS NULL");
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = db.prepare(
-      `SELECT * FROM conflict_pending ${where} ORDER BY created_at DESC, id LIMIT ? OFFSET ?`
+      `SELECT * FROM conflict_pending ${where}
+       ORDER BY (similarity IS NULL), similarity DESC, created_at DESC, id
+       LIMIT ? OFFSET ?`
     ).all(...params, lim, off);
     return rows.map(toConflictPending);
   }
@@ -4525,10 +4612,21 @@ export function createStore(path) {
   /** All entities (optionally name-filtered, newest first). Used by sleep phase 4
    *  orphan detection: an entity with zero relations is a candidate for relation
    *  completion. */
-  function listEntities({ limit = 1000 } = {}) {
+  function listEntities({ limit = 1000, q } = {}) {
+    const needle = typeof q === "string" ? q.trim() : "";
+    if (needle === "") {
+      const rows = db.prepare(
+        "SELECT * FROM entities ORDER BY last_seen DESC, name ASC LIMIT ?"
+      ).all(limit);
+      return rows.map(toEntity);
+    }
+    // 名字过滤放在 SQL 侧：调用方若在 LIMIT 之后过滤，排在 limit 之外的实体
+    // 就永远搜不到（面板按 limit=200 取回再本地过滤，1.6 万实体时命中率约 1%）。
+    // LIKE 的 % / _ 用 ESCAPE 转义，否则用户输入一个 "%" 就会把整库匹配出来。
+    const escaped = needle.replace(/[\\%_]/g, (ch) => `\\${ch}`);
     const rows = db.prepare(
-      "SELECT * FROM entities ORDER BY last_seen DESC, name ASC LIMIT ?"
-    ).all(limit);
+      "SELECT * FROM entities WHERE name LIKE ? ESCAPE '\\' ORDER BY last_seen DESC, name ASC LIMIT ?"
+    ).all(`%${escaped}%`, limit);
     return rows.map(toEntity);
   }
 
@@ -5152,6 +5250,139 @@ export function createStore(path) {
     ).all().map((r) => r.k);
   }
 
+  /* --------------------- knowledge base（知识库第二层，§3.3） --------------------- */
+  // 与 choro 那组表同一套纪律：本域只读写 kb_* 三张表，绝不进 memories /
+  // saveWithDedupe / dream / 质量过滤的任何池子。时间戳由调用方传（一次 ingest
+  // 的所有行共用一个时刻），store 不自取 now()——两处时钟会把「同一次入库」拆成
+  // 两个版本，sha256 幂等判据也会跟着抖。
+
+  function kbCollectionByKey(key) {
+    return db.prepare("SELECT * FROM kb_collections WHERE key = ?").get(String(key)) ?? undefined;
+  }
+
+  /** 集合列表带计数：面板左栏要的不是空壳 key 列表，docs/chunks 是它的主信息。 */
+  function listKbCollections() {
+    return db.prepare(
+      `SELECT c.*,
+              (SELECT COUNT(*) FROM kb_docs d WHERE d.collection_id = c.id) AS doc_count,
+              (SELECT COUNT(*) FROM kb_chunks k JOIN kb_docs d2 ON k.doc_id = d2.id
+                 WHERE d2.collection_id = c.id) AS chunk_count
+         FROM kb_collections c ORDER BY c.key`
+    ).all();
+  }
+
+  // key 是外部键（面板/工具用它寻址），title 是展示名。ON CONFLICT 不动 created_at：
+  // 「这个集合哪天建的」是事实，重命名不该改写它。
+  function upsertKbCollection({ key, title, description = null, at }) {
+    db.prepare(
+      `INSERT INTO kb_collections (key, title, description, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         title = excluded.title,
+         description = excluded.description,
+         updated_at = excluded.updated_at`
+    ).run(String(key), String(title), description ?? null, at, at);
+    return kbCollectionByKey(key);
+  }
+
+  /** 删集合连带删它的文档与分块（三张表是一个整体，留孤儿行等于悄悄占空间）。 */
+  function deleteKbCollection(key) {
+    const row = kbCollectionByKey(key);
+    if (!row) return false;
+    return runAtomically(() => {
+      db.prepare(
+        "DELETE FROM kb_chunks WHERE doc_id IN (SELECT id FROM kb_docs WHERE collection_id = ?)"
+      ).run(row.id);
+      db.prepare("DELETE FROM kb_docs WHERE collection_id = ?").run(row.id);
+      db.prepare("DELETE FROM kb_collections WHERE id = ?").run(row.id);
+      return true;
+    });
+  }
+
+  function listKbDocs(collectionId) {
+    return db.prepare(
+      "SELECT * FROM kb_docs WHERE collection_id = ? ORDER BY rel_key"
+    ).all(collectionId);
+  }
+
+  function kbDocByRelKey(collectionId, relKey) {
+    return db.prepare(
+      "SELECT * FROM kb_docs WHERE collection_id = ? AND rel_key = ?"
+    ).get(collectionId, String(relKey)) ?? undefined;
+  }
+
+  function kbChunksByDoc(docId) {
+    return db.prepare(
+      "SELECT * FROM kb_chunks WHERE doc_id = ? ORDER BY ordinal"
+    ).all(docId);
+  }
+
+  /**
+   * 入库落库的唯一写口。幂等判据是 **正文 sha256**（不是文件 stat）：同 rel_key +
+   * 同 sha256 = 整件事 no-op，回执 skipped 且不动 chunks——否则编辑器保存一次
+   * （mtime 变、内容没变）就要全量重切块，库和索引一起白忙。
+   *
+   * 变了才替换：删旧 chunks 再插新的，事务包住，半截失败整体回滚，库里保持上一版
+   * 完整文档。上一版 status=error 的行不算命中（它没有可分块的正文，重来必须真跑）。
+   */
+  function replaceKbDoc({ collectionId, relKey, kind, sourcePath = null, title, bytes = 0, sha256 = null, at, chunks = [] }) {
+    return runAtomically(() => {
+      const prev = kbDocByRelKey(collectionId, relKey);
+      if (prev && prev.status === "ok" && sha256 && prev.sha256 === sha256) {
+        return { docId: prev.id, chunks: kbChunksByDoc(prev.id).length, skipped: true };
+      }
+      db.prepare("DELETE FROM kb_chunks WHERE doc_id IN (SELECT id FROM kb_docs WHERE collection_id = ? AND rel_key = ?)")
+        .run(collectionId, String(relKey));
+      let docId;
+      if (prev) {
+        db.prepare(
+          `UPDATE kb_docs SET kind = ?, source_path = ?, title = ?, bytes = ?, sha256 = ?,
+                  indexed_at = ?, status = 'ok', error = NULL WHERE id = ?`
+        ).run(kind, sourcePath, String(title), bytes, sha256, at, prev.id);
+        docId = prev.id;
+      } else {
+        const info = db.prepare(
+          `INSERT INTO kb_docs (collection_id, rel_key, kind, source_path, title, bytes, sha256, indexed_at, status, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ok', NULL)`
+        ).run(collectionId, String(relKey), kind, sourcePath, String(title), bytes, sha256, at);
+        docId = Number(info.lastInsertRowid);
+      }
+      const ins = db.prepare(
+        "INSERT INTO kb_chunks (doc_id, ordinal, heading, text, created_at) VALUES (?, ?, ?, ?, ?)"
+      );
+      for (const c of chunks) ins.run(docId, c.ordinal, c.heading ?? "", c.text ?? "", at);
+      return { docId, chunks: chunks.length, skipped: false };
+    });
+  }
+
+  /** 入库失败也要留痕：面板要能显示「这份文档上次为什么没进来」，静默丢来源等于假成功。 */
+  function markKbDocError({ collectionId, relKey, kind, sourcePath = null, title, error, at }) {
+    const prev = kbDocByRelKey(collectionId, relKey);
+    if (prev) {
+      db.prepare(
+        "UPDATE kb_docs SET status = 'error', error = ?, indexed_at = ?, source_path = ?, kind = ?, title = ? WHERE id = ?"
+      ).run(String(error ?? ""), at, sourcePath, kind, String(title ?? prev.title), prev.id);
+      return prev.id;
+    }
+    const info = db.prepare(
+      `INSERT INTO kb_docs (collection_id, rel_key, kind, source_path, title, bytes, sha256, indexed_at, status, error)
+       VALUES (?, ?, ?, ?, ?, 0, NULL, ?, 'error', ?)`
+    ).run(collectionId, String(relKey), kind, sourcePath, String(title ?? relKey), at, String(error ?? ""));
+    return Number(info.lastInsertRowid);
+  }
+
+  /** 检索候选集：跨集合或单集合，一次取全（BM25 需要全语料算 df，不能分页取）。 */
+  function kbChunksForSearch(collectionId = null) {
+    return db.prepare(
+      `SELECT k.id, k.doc_id, k.ordinal, k.heading, k.text,
+              d.rel_key, d.title, d.kind, c.key AS collection_key
+         FROM kb_chunks k
+         JOIN kb_docs d ON k.doc_id = d.id
+         JOIN kb_collections c ON d.collection_id = c.id
+        WHERE d.status = 'ok' AND (? IS NULL OR d.collection_id = ?)`
+    ).all(collectionId, collectionId);
+  }
+
   return {
     db,
     count,
@@ -5328,6 +5559,17 @@ export function createStore(path) {
     getContinuityProposal,
     listContinuityProposals,
     countContinuityProposals,
+    // knowledge base（知识库第二层，§3.3）：三张 kb_* 表，与记忆行物理隔离。
+    kbCollectionByKey,
+    listKbCollections,
+    upsertKbCollection,
+    deleteKbCollection,
+    listKbDocs,
+    kbDocByRelKey,
+    kbChunksByDoc,
+    replaceKbDoc,
+    markKbDocError,
+    kbChunksForSearch,
     // chorography（仓库地志）：M0 只写不读，消费面 M1 接（见上面注释块）。
     choroRepoByRoot,
     upsertChoroRepo,
