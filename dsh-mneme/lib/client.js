@@ -785,7 +785,7 @@ window.__ModuleLoader__.load({
         // 「全部设置」= 第一层折叠（issue #427 建议 1），常显只留 basic + scope
         // 两组；「高级」是它内部的第二层（进阶 7 项）。
         "memory.features.allToggle": "全部设置",
-        "memory.features.advancedToggle": "更少用的 7 个开关",
+        "memory.features.advancedToggle": "更少用的 9 个开关",
         "memory.features.restartHint": "重启 DSH 后生效",
         "memory.features.loadFailed": "加载失败",
         "memory.features.saveFailed": "保存失败",
@@ -836,6 +836,8 @@ window.__ModuleLoader__.load({
         "memory.features.rerankEnabled.hint": "本地重排模型给召回结果重新打分，更准更慢。",
         "memory.features.heatEnabled": "热度衰减",
         "memory.features.heatEnabled.hint": "越久没用的记忆越靠后，像遗忘曲线。",
+        "memory.features.injectHeatEnabled": "注入热度排序",
+        "memory.features.injectHeatEnabled.hint": "注入排序乘上记忆热度；需先开「热度衰减」。",
         "memory.features.documentMemoryEnabled": "文档只存摘要卡",
         "memory.features.documentMemoryEnabled.hint": "长文档记忆只放摘要，正文按需读取。",
         // --- v0.9.0 M.O.（Modus Operandi，beta）---
@@ -971,6 +973,12 @@ window.__ModuleLoader__.load({
         // 三个不相干的并列开关。
         "memory.features.hybridInject": "混合注入",
         "memory.features.hybridInject.hint": "关键词 + 语义两路一起找，召回更全。",
+        // 实体召回（#219）与图谱锚定（#24）：进阶检索轴，默认关、依赖实体抽取
+        // 产出（pipeline 组），收进「高级」第二层折叠。
+        "memory.features.entityRecallEnabled": "实体召回",
+        "memory.features.entityRecallEnabled.hint": "查询命中实体名时，把该实体挂联的记忆一起召回。",
+        "memory.features.graphAnchoringEnabled": "图谱锚定",
+        "memory.features.graphAnchoringEnabled.hint": "以命中实体为种子沿关系表级联扩散，把邻居记忆带进召回池。",
         "memory.features.selectiveInjectEnabled": "选择性注入",
         "memory.features.selectiveInjectEnabled.hint": "按相关性筛一遍再注入，上下文更干净。",
         "memory.features.adaptiveThresholdEnabled": "自适应阈值",
@@ -1868,7 +1876,7 @@ window.__ModuleLoader__.load({
         "memory.features.group.scope": "Session isolation",
         "memory.features.group.advanced": "Advanced",
         "memory.features.allToggle": "All settings",
-        "memory.features.advancedToggle": "7 rarer switches",
+        "memory.features.advancedToggle": "9 rarer switches",
         "memory.features.restartHint": "Takes effect after restarting DSH",
         "memory.features.loadFailed": "Failed to load",
         "memory.features.saveFailed": "Failed to save",
@@ -1913,6 +1921,8 @@ window.__ModuleLoader__.load({
         "memory.features.rerankEnabled.hint": "A local reranker re-scores recall — more accurate, slower.",
         "memory.features.heatEnabled": "Heat decay",
         "memory.features.heatEnabled.hint": "Stale memories rank lower, like a forgetting curve.",
+        "memory.features.injectHeatEnabled": "Heat-aware ranking",
+        "memory.features.injectHeatEnabled.hint": "Injection ordering weighs memory heat; requires heat decay.",
         "memory.features.documentMemoryEnabled": "Docs as summary cards",
         "memory.features.documentMemoryEnabled.hint": "Long documents are stored as summary cards; bodies on demand.",
         // --- v0.9.0 M.O. / Modus Operandi (beta) ---
@@ -2045,6 +2055,10 @@ window.__ModuleLoader__.load({
         // back. Adjacent placement plus a hint that names the other two.
         "memory.features.hybridInject": "Hybrid injection",
         "memory.features.hybridInject.hint": "Keyword + semantic retrieval merged for better recall.",
+        "memory.features.entityRecallEnabled": "Entity recall",
+        "memory.features.entityRecallEnabled.hint": "When the query matches an entity, its linked memories join the recall pool.",
+        "memory.features.graphAnchoringEnabled": "Graph anchoring",
+        "memory.features.graphAnchoringEnabled.hint": "Seeds on matched entities and cascades along relations into the recall pool.",
         "memory.features.selectiveInjectEnabled": "Selective injection",
         "memory.features.selectiveInjectEnabled.hint": "Filters by relevance before injecting — cleaner context.",
         "memory.features.adaptiveThresholdEnabled": "Adaptive threshold",
@@ -4303,7 +4317,15 @@ window.__ModuleLoader__.load({
     // 「重置用户配置」，子项自己勾着的值要留着，也应该能提前设好。同一份关系在
     // 后端 src/config.js 的 INJECT_CHILD_FLAGS（运行时闸门），两侧漂移由
     // test/inject-parent-gate.test.js 钉住。
-    const FEATURE_CHILDREN = { autoInject: ["injectGuidanceEnabled", "continuityRescueEnabled"] };
+    const FEATURE_CHILDREN = {
+      autoInject: ["injectGuidanceEnabled", "continuityRescueEnabled"],
+      // 热度衰减的注入侧乘数（#362）是它的第二口径：数据同源、含义不同
+      // （曲线算没算 vs 排序用没用），缩进子行贴着总闸，父关时标注不生效。
+      heatEnabled: ["injectHeatEnabled"],
+      // 地志的两个子开关贴着总闸（#607 后续）：都是「地志开着才有意义」的
+      // 口径开关——读路径自动重跑 T0、面板按钮能否发起 T1。
+      chorographyEnabled: ["chorographyAutoRefresh", "chorographyT1FromPanel"]
+    };
     // Issue #427 建议 1：折叠线挪到「新手之外」。group.basic 是首屏层，只列新
     // 用户敢动的总开关；group.scope 也在首屏——它回答新用户的第二个必答题
     // 「它记的东西会不会被别的会话看到」。其余组整组收进「全部设置」折叠
@@ -4357,7 +4379,11 @@ window.__ModuleLoader__.load({
       // v0.8.0 A4（issue #17）：作用域隔离组——标注总开关 + 严格硬过滤。
       { key: "group.scope", items: ["scopeEnabled", "strictScope"] }
     ];
-    const FEATURE_ADVANCED_BOOLS = ["hybridInject", "selectiveInjectEnabled", "adaptiveThresholdEnabled", "reflectionUpdateEnabled", "reflectionFailureTracking", "conflictFreezeEnabled", "trustEpistemicWeighting"];
+    // 第二层折叠（「高级」）：更少用的开关。实体召回（#219）与图谱锚定（#24）
+    // 也归这里——默认关、依赖实体抽取产出（pipeline 组），且是进阶检索行为，
+    // 与 retrieve 的常开旋钮不同级。调优类数值键（seedCap/depth/weight* 等）
+    // 刻意不设座位，走配置文件（见 FEATURE_NUMBERS 的同名纪律）。
+    const FEATURE_ADVANCED_BOOLS = ["hybridInject", "selectiveInjectEnabled", "adaptiveThresholdEnabled", "entityRecallEnabled", "graphAnchoringEnabled", "reflectionUpdateEnabled", "reflectionFailureTracking", "conflictFreezeEnabled", "trustEpistemicWeighting"];
     // 字符串键（blur/Enter 提交，空串合法 = 跟随默认）：巩固模型与语义
     // 检索路线。embedProvider 是枚举，用下拉单独渲染。
     const FEATURE_STRINGS = ["dreamProvider", "dreamModel", "sleepProvider", "sleepModel", "entityExtractionProvider", "entityExtractionModel", "localEmbedModel", "ollamaBaseUrl", "ollamaModel",

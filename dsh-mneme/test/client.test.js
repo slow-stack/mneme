@@ -1593,8 +1593,8 @@ test("settings card folds everything beyond the first screen behind All settings
   const allBtn = clientSource.indexOf('t("memory.features.allToggle")');
   const advBtn = clientSource.indexOf('t("memory.features.advancedToggle")');
   assert.ok(allBtn >= 0 && advBtn > allBtn, "the advanced fold must be nested after All settings");
-  assert.equal(clientSource.match(/const FEATURE_ADVANCED_BOOLS = \[([^\]]*)\];/)[1].split(",").filter((s) => s.trim()).length, 7,
-    "the advanced second tier must hold exactly the 7 rarer switches the label promises");
+  assert.equal(clientSource.match(/const FEATURE_ADVANCED_BOOLS = \[([^\]]*)\];/)[1].split(",").filter((s) => s.trim()).length, 9,
+    "the advanced second tier must hold exactly the 9 rarer switches the label promises (entityRecall + graphAnchoring joined in the revamp)");
   // ③ 徽标：两类各一套中英文案；判定读 overrides 本地判，不引入后端字段。
   // #427 revamp：tagDefault 的徽标不再渲染（默认态由开关位置本身表达），i18n
   // 键随之下线——这里锁的是「不再渲染」这件事本身，防止有人把灰字墙加回来。
