@@ -1540,11 +1540,18 @@ test("scope isolation ships panel switches and provenance surfaces (A4)", () => 
 // 继续藏。**v0.13.x 反转**：主人决定把 M.O. 下架，那一组连同首屏位一起摘掉，
 // 预算回到 8，本锁随之收紧回两组。反转是产品决策、不是放宽，注释留档防下次
 // 有人照着旧注释把组加回来。
+// **v0.13.x 第二次产品豁免（#607 后续）**：首屏加 group.ext（仓库地志 / 知识库 /
+// 日记本三个扩展子系统的总闸），可点项预算 8→11（3 总开关 + autoInject 2 子 +
+// 扩展 3 闸 + scope 2 + 「全部设置」按钮）。理由：这三个子系统此前分别散在
+// enhance 组尾（choro/diary）或压根没进 FEATURE_GROUPS（kb），用户「开了才
+// 找得到、找不到就没法开」——#607 报的「知识库没成型」一半是入口问题。它们
+// 是「装不装这个子系统」而非「每轮付多少」，与 enhance 的行为开关不同级，
+// 所以单列一组并提到首屏。**再往首屏塞东西前先问：它是不是同级子系统？**
 test("settings card folds everything beyond the first screen behind All settings (issue #427)", () => {
-  // ① 首屏层组成：两组都要在（basic 总开关 / scope 必答题），
+  // ① 首屏层组成：三组都要在（basic 总开关 / ext 子系统总闸 / scope 必答题），
   // 且 basic 的成员是从 core/dream 移走的。
-  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.scope"\];/.test(clientSource),
-    "the first screen must be exactly the basic and scope groups (M.O. was taken down in v0.13.x)");
+  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.ext", "group\.scope"\];/.test(clientSource),
+    "the first screen must be the basic, ext and scope groups (M.O. taken down in v0.13.x; ext added as the second product exemption)");
   // M.O. 下架锁：组从 FEATURE_GROUPS 摘掉 ≠ 只把首屏位去掉。少了这一条，下次
   // 有人「顺手把组加回来」时会折进「全部设置」，测试照绿而 M.O. 又出现在面板上。
   assert.ok(!/\{ key: "group\.mo", items: \[/.test(clientSource),
@@ -1554,6 +1561,18 @@ test("settings card folds everything beyond the first screen behind All settings
     "the M.O. flags must remain reachable (config + settings whitelist) so the takedown stays reversible");
   assert.ok(/key: "group\.basic", items: \["autoInject", "autoSummarize", "autoDream"\]/.test(clientSource),
     "group.basic must carry exactly the three master switches");
+  // 扩展组必须同时收三个子系统的总闸，且一个都不能漏：漏掉哪个，那个子系统就
+  // 退回 #607 的状态——后端接好了、面板上没有入口，用户只能靠改配置文件打开。
+  assert.ok(/key: "group\.ext", items: \["chorographyEnabled", "kbEnabled", "diaryEnabled"\]/.test(clientSource),
+    "group.ext must carry the three subsystem master switches (chorography / kb / diary)");
+  // 迁移锁：choro/diary 从 enhance 组移出（render-once，同一项只渲染一次）。
+  // 只把首屏位加上而不移成员，会让两个开关同时出现在两组里，状态还可能不同步。
+  const enhanceItems = clientSource.match(/group\.enhance", items: \[([^\]]*)\]/);
+  assert.ok(enhanceItems, "group.enhance must be parseable");
+  for (const moved of ["chorographyEnabled", "diaryEnabled"]) {
+    assert.ok(!enhanceItems[1].includes(`"${moved}"`),
+      `${moved} must be MOVED to group.ext, not duplicated in group.enhance`);
+  }
   assert.ok(!/key: "group\.core", items: \["autoInject/.test(clientSource) && !/key: "group\.dream", items: \["autoDream/.test(clientSource),
     "basic members must be MOVED out of their old groups (render-once), not filtered at render time");
   // ② 两层折叠的接线：restGroups 只在 showAll 展开后渲染；「高级」按钮出现在
