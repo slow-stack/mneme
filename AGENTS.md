@@ -59,6 +59,7 @@ dsh-mneme 是 DSH 宿主的记忆插件（蒸馏 / 注入 / 检索 / 巩固 / sc
 | 绕行与候选 | `src/candidates.js`（+ `<memoryDir>/candidates/<项目键>/`） | M.O. 的出口与草稿层：绕行的分档判定（R0/R1 记账先走、R2/R3 停下问人 + 机械兜底清单 + 闸门保护）、候选的归并/归档/升格（进仓库要人批） |
 | 冷启动 | `src/bootstrap.js` | 从仓库文件反向构建初始记忆（POST /bootstrap） |
 | 配置 | `src/config.js`（schema + lightMode）、`src/settings.js`（feature flags 白名单） | 一切行为开关的家 |
+| 目录归属 | `dsh-mneme/docs/DIRECTORIES.md` | 「哪个目录是什么」总账：`~/.dsh/memory`（数据）/ `~/.dsh/mneme`（模型与运行时缓存）/ `~/.dsh-mneme`（CLI 配置）三根互不相干，谁拥有、删了会怎样（#278） |
 | API 面 | `src/api.js`（宿主内 /api/dsh-mneme/*）、`src/api-standalone.js`（Bearer 数据面）、`bin/dsh-mneme-mcp.mjs`（MCP stdio）、`src/serve.js` + `bin/dsh-mneme-serve.mjs`（独立服务 daemon，无 LLM 数据面） | 对外四张脸 |
 | 面板 | `lib/client.js` | 面板侧产物，无 src 对应物 |
 | 手机面板 | `src/dsh-go/**` + `package.json` 的 `dshGo` | dsh-go 原生面板：进程内派发同一批路由，只有宿主提供 `dshGo` 服务时才加载（[docs/DSH-GO.md](dsh-mneme/docs/DSH-GO.md)） |
