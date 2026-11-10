@@ -65,35 +65,105 @@ export function createVectorIndex({ store, logger }) {
       return store.searchVector(queryVector, { limit, threshold });
     },
 
-    /** Re-embed every row missing an embedding. Returns indexed count. */
+    /**
+     * Re-embed every row whose vector is missing OR came from another model.
+     *
+     * Returns { indexed, failed, skipped, remaining, error? } — three distinct
+     * outcomes instead of one `skipped` bucket that meant "failed", "threw" and
+     * "did not fit in the limit" all at once. #604.
+     */
     async rebuildIndex(embedder, { limit = 1000 } = {}) {
       // The loop needs a single-text embedder. Native embedSingle is preferred;
       // embed-only OpenAI-compatible clients (issue #10) are accepted too via
       // their `embed` single-text interface, so /vector-reindex no longer
       // silently returns 0 for them. An embedder exposing neither is ignored.
+      // #604: prefer the detailed entry point when the embedder has one. The
+      // legacy OpenAI-compatible client drops the failure reason on its normal
+      // path (embedText returns only the vector), so a provider outage and an
+      // unembeddable row both surfaced here as a bare null. The reason is what
+      // tells them apart, and the operator needs it to know whether pressing
+      // the button again is worth anything.
       let embedOne = null;
+      let embedOneDetailed = null;
+      if (embedder && typeof embedder.embedSingleDetailed === "function") {
+        embedOneDetailed = (text) => embedder.embedSingleDetailed(text);
+      }
       if (embedder && typeof embedder.embedSingle === "function") {
         embedOne = (text) => embedder.embedSingle(text);
       } else if (embedder && typeof embedder.embed === "function") {
         embedOne = (text) => Promise.resolve(embedder.embed(text));
       }
-      if (!embedOne) return { indexed: 0, skipped: 0 };
-      const rows = store.needsEmbedding(limit);
+      if (!embedOne && !embedOneDetailed) {
+        return { indexed: 0, failed: 0, skipped: 0, remaining: 0, error: "no-embedder" };
+      }
+      const model = embedder?.modelHash ?? null;
+      // #604: this used to call needsEmbedding(), which only matches empty
+      // vectors. After a model switch every row already has a vector — from the
+      // previous model — so "reindex" selected nothing, embedded nothing, and
+      // reported {indexed: 0, skipped: 0} as if the index were already current.
+      // The boot sweep has always used the model-aware selector; using the same
+      // one here is what makes the button mean what it says.
+      const rows = model && typeof store.needsEmbeddingFor === "function"
+        ? store.needsEmbeddingFor(model, limit)
+        : store.needsEmbedding(limit);
       let indexed = 0;
+      let failed = 0;
+      const failureReasons = {};
+      const noteFailure = (reason) => {
+        failureReasons[reason] = (failureReasons[reason] ?? 0) + 1;
+      };
       for (const row of rows) {
         try {
           const text = [row.title, row.content].filter(Boolean).join("\n");
-          const vector = await embedOne(text);
+          let vector;
+          if (embedOneDetailed) {
+            const detailed = await embedOneDetailed(text);
+            vector = detailed ? detailed.vector : null;
+            if (!vector && detailed?.reason) noteFailure(`error:${detailed.reason}`);
+          } else {
+            vector = await embedOne(text);
+          }
           if (vector && vector.length) {
-            store.setEmbedding(row.id, vector);
+            // #604: the model fingerprint was omitted here, so every rebuilt
+            // row kept embedding_model NULL. needsEmbeddingFor() then treated
+            // it as stale forever: the boot sweep re-embedded it on each start,
+            // the panel counted it as unsearchable, and pressing reindex again
+            // found nothing (the vector was no longer empty). Passing the
+            // fingerprint closes the loop between the write and the selector.
+            store.setEmbedding(row.id, vector, model ?? undefined);
             indexed++;
+          } else {
+            failed++;
+            // A detailed adapter already recorded why; the plain path has no
+            // reason to record, so name the only thing it can mean.
+            if (!embedOneDetailed) noteFailure("empty-vector");
+            logger?.warn?.(`[dsh-mneme] rebuild produced no vector for ${row.id}`);
           }
         } catch (error) {
+          failed++;
+          noteFailure(`error:${String(error)}`);
           logger?.warn?.(`[dsh-mneme] rebuild embed failed for ${row.id}: ${String(error)}`);
         }
       }
       if (indexed > 0 && embedder.modelHash) this.markModel(embedder.modelHash, embedder.dimension);
-      return { indexed, skipped: rows.length - indexed };
+      // remaining = still selected by the same predicate after this run. Rows
+      // that failed stay in it (they were never written), which is exactly the
+      // number the caller needs to decide whether to run again.
+      const remaining = typeof store.countNeedsEmbeddingFor === "function"
+        ? store.countNeedsEmbeddingFor(model)
+        : null;
+      // `skipped` is 0 by definition here, not as a placeholder: every row the
+      // selector returned is attempted in the loop above, so nothing is left
+      // untouched. Rows that produced no vector are `failed`. The remaining
+      // bucket is the selector's own count, which is why a row can be both
+      // failed and remaining — it was tried and it is still stale.
+      //
+      // `failureReasons` mirrors the boot sweep's bucket names so the two paths
+      // read the same: `empty-vector` means this row will never embed, while an
+      // `error:` bucket means the provider or the store failed and the same
+      // press may well succeed next time. A run that only ever reports
+      // empty-vector is not a retry candidate.
+      return { indexed, failed, skipped: 0, remaining, failureReasons };
     },
 
     /** Index stats for the Web panel / debugging. */

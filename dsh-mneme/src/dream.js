@@ -1225,14 +1225,16 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
           // input can be rebuilt offline from the audit row alone — the
           // digest + decisions + outcome triple makes silent errors locatable
           // even after the store has moved on.
-          input: [...snapshot.values()].map((m) => ({
-            id: m.id,
-            type: m.type,
-            title: m.title,
-            content: m.content,
-            importance: m.importance,
-            updated_at: m.updated_at
-          })),
+          // #557（dreamInputSummaryEnabled，opt-in 默认关）：瘦身只动这里的落库
+          // 副本——LLM 输入在下方由内存快照现算、snapshot_hash 在内存里对含
+          // content 的快照计算，两者都不经过这行，prompt 与 receipt 完整性不受
+          // 影响。organize 轮的重放载荷走 organize.js 自己的 saveDreamRun，
+          // 不经过这里，与 reclaim 的 run_type != 'organize' 同一条边界。
+          input: [...snapshot.values()].map((m) => (
+            config.dreamInputSummaryEnabled === true
+              ? { id: m.id, type: m.type, title: m.title, importance: m.importance, updated_at: m.updated_at }
+              : { id: m.id, type: m.type, title: m.title, content: m.content, importance: m.importance, updated_at: m.updated_at }
+          )),
           decisions: result.decisions,
           outcome: result.outcome,
           applied,
