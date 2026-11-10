@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { createSettings } from "../src/settings.js";
+import { createApi } from "../src/api.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { runSleep } from "../src/dream/sleep.js";
 import { supersedeInfoFirstPair } from "../src/dream/decisions.js";
@@ -233,6 +235,28 @@ test("issue#641 注入侧：shadow 档只记账零处置——矛盾对不标注
   assert.equal(candidates.length, 2);
   assert.equal(candidates[0].conflictNote, undefined, "shadow 不标注——只记账零处置");
   assert.equal(candidates[1].conflictNote, undefined);
+  store.close();
+});
+
+test("issue#641 GET /conflicts/ledger：token 门 + 只读面（分诊分布 + 行）", () => {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  const settings = createSettings(store.db);
+  const routes = [];
+  const ctx = { webServer: { register(route) { routes.push(route); return () => {}; } } };
+  createApi(ctx, service, settings, { add: () => {}, remove: () => {}, list: () => [] }, null, undefined, "", {});
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/conflicts/ledger");
+  assert.ok(route, "ledger route must be registered");
+  assert.equal(route.policy, "token", "账本带标题级信息，与 /conflicts 同级（gated read）");
+  service.saveConflictLedgerEntry({ memory_a: "a", memory_b: "b", tier: "dup" });
+  const res = { statusCode: 0, body: "", setHeader() {}, writeHead(code) { this.statusCode = code; }, end(b) { this.body = b || ""; } };
+  route.handler({ method: "GET", url: "/api/dsh-mneme/conflicts/ledger?limit=10", headers: {} }, res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.equal(data.total, 1);
+  assert.equal(data.counts.dup, 1);
+  assert.equal(data.items[0].tier, "dup");
+  assert.equal(data.items[0].status, "open");
   store.close();
 });
 

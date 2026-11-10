@@ -2318,6 +2318,38 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     }
   });
 
+  // GET /conflicts/ledger（issue #641，beta 第三阶段）：矛盾分诊账本的只读面——
+  // 分诊分布（按 tier 计数）+ 最近账本行。conflict_ledger 是 bookkeeping 表，
+  // 这里的行不是待办（处置由 enforce 档自动完成），面板只回答「账本里有什么、
+  // 分布如何」。policy 与 /conflicts 同级（token）：行带标题级信息与检出时间，
+  // 不该对未持 token 的本地进程开放。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/conflicts/ledger",
+    policy: "token",
+    handler(req, res) {
+      try {
+        if (req.method !== "GET") {
+          sendJson(res, 404, { error: "not-found" });
+          return;
+        }
+        const url = new URL(req.url, "http://localhost");
+        const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 50) || 50));
+        const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0) || 0);
+        const items = service.listConflictLedger({ limit, offset });
+        const counts = {
+          dup: service.countConflictLedger({ tier: "dup" }),
+          "cross-scope-dup": service.countConflictLedger({ tier: "cross-scope-dup" }),
+          evolution: service.countConflictLedger({ tier: "evolution" }),
+          conflict: service.countConflictLedger({ tier: "conflict" })
+        };
+        sendJson(res, 200, { items, counts, total: service.countConflictLedger() });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
   register({
     kind: "exact",
     path: "/api/dsh-mneme/conflicts/resolve",
