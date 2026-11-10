@@ -531,7 +531,7 @@ window.__ModuleLoader__.load({
         "memory.features.profileFactsEnabled": "自动事实",
         "memory.features.profileFactsEnabled.hint": "每次 dream（巩固）轮后，把这一窗口里沉淀的新记忆再读一遍，按会话身份卡维护一份「Agent 眼中的你」事实清单（设置 → 个性化 → 自动事实），注入在手填画像之后。事实住独立的表，不会覆盖你自己填的「用户画像」；面板上可逐条修正或删除（删除=归档，可恢复）。轻量档预设关（用户显式勾选仍然赢）。",
         "memory.features.chorographyEnabled": "仓库地志（chorography）",
-        "memory.features.chorographyEnabled.hint": "读一遍仓库写成一份带页码的志书：确定性骨架零模型、可以随时重建；语义段由 CLI 的 headless 会话逐模块补。打开后有四个入口——模型侧三个只读工具、面板「仓库地志」浏览页、每轮的开局提纲注入、/choro 命令。关着时它们全部不存在（模型工具列表里根本没有，注入块不渲染，/choro 不注册）。默认关。",
+        "memory.features.chorographyEnabled.hint": "读一遍仓库写成一份带页码的志书：确定性骨架零模型、可以随时重建；语义段由 CLI 的 headless 会话逐模块补。打开后有四个入口——模型侧三个只读工具、面板「仓库地志」浏览页、每轮的开局提纲注入、/choro 命令。关着时它们全部不存在（模型工具列表里根本没有，注入块不渲染，/choro 与侧栏入口都不注册）。默认关。",
         "memory.features.chorographyInject": "开局注入档位",
         "memory.features.chorographyInject.hint": "每轮往上下文里塞地志提纲的份量：light 只列文件数最多的 6 个模块（约 8 行）、full 列全部模块、off 不注入（工具与面板页仍可用）。只注模块名 / 文件数 / 页状态 / 页相对路径，不含正文；正文要模型自己用 choro_read_page 取。轻量档预设压成 off。",
         "memory.features.chorographyInject.off": "off（不注入）",
@@ -1590,7 +1590,7 @@ window.__ModuleLoader__.load({
         "memory.features.profileFactsEnabled": "Auto facts",
         "memory.features.profileFactsEnabled.hint": "After each dream (consolidation) run, the memories settled in that window are read once more to maintain a per-identity-card list of facts the agent holds about you (Settings → Personalization → Auto facts), injected after the handwritten profile. Facts live in their own tables and never overwrite the User Profile you wrote yourself; any fact can be fixed or removed in the panel (removing = archiving, restorable). Off in the lightweight preset (an explicit choice still wins).",
         "memory.features.chorographyEnabled": "Repo atlas (chorography)",
-        "memory.features.chorographyEnabled.hint": "Reads a repository once and writes it up as a paginated atlas: the deterministic skeleton costs no model and can be rebuilt any time; the semantic sections are added per module by a headless session in the CLI. Turning it on enables four entry points — three read-only tools for the model, the atlas panel page, the per-turn outline injection, and the /choro command. With it off none of them exist (the tools are absent from the model's tool list, the injection block is not rendered, /choro is not registered). Off by default.",
+        "memory.features.chorographyEnabled.hint": "Reads a repository once and writes it up as a paginated atlas: the deterministic skeleton costs no model and can be rebuilt any time; the semantic sections are added per module by a headless session in the CLI. Turning it on enables four entry points — three read-only tools for the model, the atlas panel page, the per-turn outline injection, and the /choro command. With it off none of them exist (the tools are absent from the model's tool list, the injection block is not rendered, neither /choro nor the sidebar entry is registered). Off by default.",
         "memory.features.chorographyInject": "Opening injection tier",
         "memory.features.chorographyInject.hint": "How much of the atlas outline goes into context every turn: light lists the six modules with the most files (about 8 lines), full lists every module, off injects nothing (tools and the panel page still work). Only module name / file count / page status / page path are injected, never page bodies — the model fetches those with choro_read_page. The lightweight preset forces off.",
         "memory.features.chorographyInject.off": "off (no injection)",
@@ -5506,7 +5506,43 @@ window.__ModuleLoader__.load({
         overlayListeners.add(fn);
         return () => { overlayListeners.delete(fn); };
       }, []);
-      return [open, setOverlayOpen];
+      return [open, setOpen];
+    }
+
+    // --- 引导任务在飞态（issue #558，module-level pub/sub）---
+    // better-sidebar 关 tab 会把标签页体（MemoryExplorer 与引导弹层）整个卸载：
+    // keepMounted 覆盖隐藏与切视图、**不含关闭**（它自己的设计文档写明「记录的
+    // 寿命只由原生 tab 关闭与会话消失回收」）。引导 POST 照样跑完、行照样落库
+    // （saveWithDedupe 的 (type,title,scope) 三元组去重 + _overwrite 刷新，重复
+    // 执行是合并更新不写坏数据），但成功/失败提示没地方显示，忙碌态也丢了——
+    // 重开标签页还能再提交一次。把任务状态搬到模块级：弹层挂载时回放快照、订阅
+    // 后续变化，就是上面 overlayListeners 的现成形状。prop 钻孔的 busy 链
+    // （弹层 → explorer → overlay）整条拆掉，三处各自订阅同一份。
+    //
+    // 清理责任有界：terminal 状态只在「人看得见的关闭」时回 idle（MemoryExplorer
+    // 的 onClose、⋯ 菜单的收起、explorer 卸载时**非 running** 的兜底——规则是
+    // 「只存活用户没来得及看的那一份」：卸载发生在 running 时，结果还没人看过，
+    // 留着等重开回放；卸载时已经是 done/failed，说明用户见过它，回 idle 保持
+    // 「重开是干净弹层」的既有行为）。running 状态只有这一条路能跨过卸载，没有
+    // 定时器要跨卸载存活，进程级生命周期随面板 bundle 结束。
+    const bootstrapJob = { phase: "idle", dir: "", result: null, error: null, listeners: new Set() };
+    function setBootstrapJob(patch) {
+      Object.assign(bootstrapJob, patch);
+      for (const fn of bootstrapJob.listeners) fn();
+    }
+    // phase 回 idle 但**保留 dir**：重开弹层带着上次用过的目录，重试同目录是最常见
+    // 的下一步（弹层挂载时从这份 dir 播种输入框）。
+    function resetBootstrapJob() {
+      setBootstrapJob({ phase: "idle", result: null, error: null });
+    }
+    function useBootstrapJob() {
+      const [, bump] = useState(0);
+      useEffect(() => {
+        const fn = () => bump((n) => n + 1);
+        bootstrapJob.listeners.add(fn);
+        return () => { bootstrapJob.listeners.delete(fn); };
+      }, []);
+      return bootstrapJob;
     }
 
     // 居中 sheet 记忆库：任何状态下（含新会话 hero、无 tab 环）都能从侧边栏
@@ -5518,7 +5554,11 @@ window.__ModuleLoader__.load({
       // 关闭路径都要看它：关掉弹层会把 MemoryExplorer 连同引导弹层一起卸载，
       // 而 POST 还在飞，回来那句「新建几条、并入几条」就再没有地方显示——
       // 库写进去了，用户却以为没成功（评审 #4453225573）。
-      const [explorerBusy, setExplorerBusy] = useState(false);
+      // #558 起直接订阅模块级 bootstrapJob：弹层与 explorer 的 prop 钻孔链拆掉后，
+      // 这里不再依赖子组件回报（tab 注册的 explorer 没有 onBusyChange，原本就
+      // 报不上来），在飞守卫对所有挂载路径一致成立。
+      const bootstrapJob = useBootstrapJob();
+      const explorerBusy = bootstrapJob.phase === "running";
       // 用 ref 读而不是进 effect 依赖：那个 effect 在 [open] 变化时会
       // closeBtnRef.current.focus()，若把 explorerBusy 也列进依赖，每次请求
       // 起落都会重跑一次并抢焦点——用户正打字输目录时会被踢出输入框。
@@ -5582,7 +5622,7 @@ window.__ModuleLoader__.load({
               onClick: () => { if (!explorerBusyRef.current) setOpen(false); }
             }, "✕")
           ),
-          h("div", { className: "mneme-overlaybody" }, h(MemoryExplorer, { t, onBusyChange: setExplorerBusy }))
+          h("div", { className: "mneme-overlaybody" }, h(MemoryExplorer, { t }))
         )
       );
       if (reactDom && typeof document !== "undefined") return reactDom.createPortal(tree, document.body);
@@ -7875,40 +7915,58 @@ window.__ModuleLoader__.load({
       );
     }
 
-    // --- 从目录引导弹层（issue #386 第 6 条）---
+    // --- 从目录引导弹层（issue #386 第 6 条；#558 起状态住模块级 bootstrapJob）---
     // 后端能力早在 #220 就实现了（src/bootstrap.js：六类确定性产物，零 LLM，吃
     // saveWithDedupe 的 (type,title,scope) 去重），但只有 Bearer 数据面一条入口，
     // 面板够不着——用户照文档找过来，发现产品界面里没有这个东西。
     //
     // 与 ImportDialog 的两处刻意的不同：
-    // 1. 成功路径**不**重复 setBusy(false)。这里没有「同键再提交一次会追加正文」的
-    //    风险（bootstrap 是 _overwrite 刷新），但 900ms 的提示阅读时间同样成立；
-    //    更要紧的是这一段里组件仍挂着，按钮若重新可点，人会以为「没反应」再点一次。
-    //    定时器句柄存进 ref，卸载时清掉——否则第二次提交的结果会写进已卸载的组件
-    //    （#386 第 6 条评审）。
+    // 1. 成功后保持 900ms 的提示阅读时间再自动收口。定时器句柄存进 ref，卸载时清
+    //    掉——若 tab 在这 900ms 里被关掉，结果已经写进模块级 bootstrapJob（done），
+    //    重开标签页回放这一份；timer 没了就不再自动收口，由人手动关（关 = 确认，
+    //    explorer 会把任务态回 idle）。
     // 2. 错误按服务端的码分开说。「目录不存在」「不是目录」「能力没接线」三种情况下
     //    用户该做的事完全不同，统一成一句「引导失败」等于让他自己猜。
-    function BootstrapDialog({ t, onClose, onImported, onBusyChange }) {
-      const [dir, setDir] = useState("");
-      const [busy, setBusy] = useState(false);
-      const [msg, setMsg] = useState("");
-      const [err, setErr] = useState("");
+    //
+    // busy / msg / err 全部从 store 派生而非本地 state：组件只是任务态的一个视图，
+    // 卸载（tab 关闭）不丢、重挂载回放——这正是 #558 要的「请求与结果活得比标签页
+    // 体长」。唯一的本地态是输入框草稿与「目录没填」这种提交前校验（请求没起飞，
+    // 没有什么需要跨卸载存活）。
+    function BootstrapDialog({ t, onClose, onImported }) {
+      const job = useBootstrapJob();
+      const [dir, setDir] = useState(job.dir || "");
+      const [localErr, setLocalErr] = useState("");
       const timerRef = useRef(null);
       useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
-      // 忙碌状态要让外面也知道：菜单那个「⋯」在请求进行中若把弹层卸掉，等于绕过
-      // 了下面那两个 disabled 的按钮，请求还在飞、界面已经没了（评审 #4452245292）。
-      useEffect(() => { if (onBusyChange) onBusyChange(busy); }, [busy, onBusyChange]);
-      useEffect(() => () => { if (onBusyChange) onBusyChange(false); }, [onBusyChange]);
+      const busy = job.phase === "running";
+      // 「新鲜 done」＝本次提交刚落地的 900ms 阅读窗（timer 还挂着）；重开回放的
+      // done 没有 timer，按钮必须可点——否则旧结果会把弹层锁死。
+      const freshDone = job.phase === "done" && timerRef.current !== null;
+      const submitBlocked = busy || freshDone;
+      // 错误消息从码派生：码是服务端的 error 字段（或 generic 兜底），本地校验的
+      // 「目录没填」不进 store——请求没起飞，无需跨卸载存活。
+      const err = localErr || (job.phase === "failed"
+        ? (() => {
+            const key = "memory.explorer.bootstrapErr." + String(job.error || "generic");
+            const localized = t(key);
+            // t() 对未知键原样返回键名——那就退回通用文案，别把键名甩给用户。
+            return localized === key ? t("memory.explorer.bootstrapFailed") : localized;
+          })()
+        : "");
+      const msg = job.phase === "done"
+        ? t("memory.explorer.bootstrapDone")
+            .replace("{n}", String((job.result && job.result.created) ?? 0))
+            .replace("{m}", String((job.result && job.result.merged) ?? 0))
+        : "";
       const submit = () => {
         if (busy) return;
         const target = String(dir || "").trim();
-        if (!target) { setErr(t("memory.explorer.bootstrapNoDir")); return; }
-        setBusy(true);
-        // 同步告诉父组件，别等下面那个 effect：effect 要等这次渲染提交后才跑，
-        // 中间那一拍父组件的 bootstrapBusy 还是 false，此时点「⋯」仍会把弹层卸掉，
-        // 请求的成功或失败就再没有地方显示（评审 #4452539705）。
-        if (onBusyChange) onBusyChange(true);
-        setErr("");
+        if (!target) { setLocalErr(t("memory.explorer.bootstrapNoDir")); return; }
+        // 任务态同步进 store（running）：父组件的「⋯」守卫与外层 Esc/背板/✕ 守卫
+        // 在同一渲染里就位——旧 prop 链要等渲染提交后才追上，中间那一拍是
+        // #4452539705 的老毛病；现在 setBootstrapJob 的监听者同步被唤醒。
+        setBootstrapJob({ phase: "running", dir, result: null, error: null });
+        setLocalErr("");
         apiFetch("/api/dsh-mneme/bootstrap", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -7919,24 +7977,18 @@ window.__ModuleLoader__.load({
           .then((res) => res.json().then((d) => ({ ok: res.ok, d })))
           .then(({ ok, d }) => {
             if (!ok) {
-              const code = d && d.error;
-              const key = "memory.explorer.bootstrapErr." + String(code || "");
-              const localized = t(key);
-              // t() 对未知键原样返回键名——那就退回通用文案，别把键名甩给用户。
-              setErr(localized === key ? t("memory.explorer.bootstrapFailed") : localized);
-              setBusy(false);
+              // terminal 化只写 store：此刻本组件可能已被 tab 关闭卸载——那正是
+              // 要修的路径，结果留在 store 里等重开回放，而不是写进已卸载的组件。
+              setBootstrapJob({ phase: "failed", error: (d && d.error) || "generic" });
               return;
             }
-            setMsg(t("memory.explorer.bootstrapDone")
-              .replace("{n}", String((d && d.created) ?? 0))
-              .replace("{m}", String((d && d.merged) ?? 0)));
-            // onImported 同步调，只把 onClose 留在定时器里：切视图会卸载本组件并清掉
-            // timerRef，若刷新也排在那 900ms 之后，这一步就静默丢了——库已经写进去了，
-            // 列表却还是旧的（评审 #4452539711）。
+            setBootstrapJob({ phase: "done", result: { created: (d && d.created) ?? 0, merged: (d && d.merged) ?? 0 } });
+            // onImported 只在结果落地那一刻调，回放不重复调：列表刷新要么当时已
+            // 生效，要么重开标签页时挂载 effect 重新取（库已写入，列表不会旧）。
             onImported();
             timerRef.current = setTimeout(() => onClose(), 900);
           })
-          .catch(() => { setBusy(false); setErr(t("memory.explorer.bootstrapFailed")); });
+          .catch(() => { setBootstrapJob({ phase: "failed", error: "generic" }); });
       };
       return h("div", { className: "mneme-impdialog", role: "region", "aria-label": t("memory.explorer.bootstrapTitle") },
         h("div", { className: "mneme-set-title" }, t("memory.explorer.bootstrapTitle")),
@@ -7954,14 +8006,17 @@ window.__ModuleLoader__.load({
             // 请求进行中锁住输入框：否则用户改成 B，回来的提示就贴在 B 旁边，
             // 而它说的是 A 的结果（评审 #4452245279）。
             disabled: busy,
-            onChange: (e) => { setDir(e.target.value); setErr(""); }
+            onChange: (e) => { setDir(e.target.value); setLocalErr(""); }
           })
         ),
         err && h("div", { className: "mneme-featsubhint", style: { color: "var(--mneme-danger)", marginTop: 8 } }, err),
         msg && h("div", { className: "mneme-saved", style: { marginTop: 8 } }, msg),
         h("div", { className: "mneme-improw", style: { justifyContent: "flex-end" } },
+          // 取消在 running 时锁死（既有守卫）；fresh done 的 900ms 窗内**可点**——
+          // 旧实现靠 busy 连 cancel 一起锁，那时 busy 是本地 state、必然随组件活着
+          // 解锁；现在 done 是 store 态、可能被重开回放，锁死会把弹层永久焊住。
           h("button", { type: "button", className: "mneme-btn", disabled: busy, onClick: onClose }, t("memory.explorer.importCancel")),
-          h("button", { type: "button", className: "mneme-btn", disabled: busy, onClick: submit },
+          h("button", { type: "button", className: "mneme-btn", disabled: submitBlocked, onClick: submit },
             busy ? t("memory.explorer.bootstraping") : t("memory.explorer.bootstrapConfirm"))
         )
       );
@@ -8414,6 +8469,9 @@ window.__ModuleLoader__.load({
       const [view, setView] = useState("memory"); // memory | entity | status | settings
       const [items, setItems] = useState([]); // loaded browse pages, chrono desc
       const [total, setTotal] = useState(0); // server count for the current type filter
+      // #597：服务端全库分布（同一份筛选、不带 type）。null = 老服务端没这一格，
+      // 分类栏退回页内现数（降级不炸，只是回到「只数已加载页」的旧行为）。
+      const [typeCounts, setTypeCounts] = useState(null);
       const [loading, setLoading] = useState(true);
       const [loadingMore, setLoadingMore] = useState(false);
       const [type, setType] = useState("all");
@@ -8447,20 +8505,18 @@ window.__ModuleLoader__.load({
       const [menuOpen, setMenuOpen] = useState(false);
       const [importOpen, setImportOpen] = useState(false);
       const [bootstrapOpen, setBootstrapOpen] = useState(false);
-      // 引导请求是否在飞：「⋯」按钮在忙碌时必须不关弹层（评审 #4452245292）。
-      const [bootstrapBusy, setBootstrapBusy] = useState(false);
-      // 一路直接抬到外层 MemoryOverlay：它要在 Esc / 背板 / ✕ 三条关闭路径上一起挡
-      // （评审 #4453225573）。刻意**不**用 useEffect 转报——那要等渲染提交后才跑，
-      // 中间那一拍外层守卫读到的是 false，正是 #4452539705 那条的老毛病。
-      // 走 BootstrapDialog 的回调，它的 submit 里是同步调的。
-      // better-sidebar 那个 tab 注册时不传 onBusyChange，所以这里必须容忍 undefined。
-      // 身份必须稳定：BootstrapDialog 的卸载 effect 依赖 [onBusyChange]，父组件每
-      // 重渲染一次就会先跑 cleanup 调 onBusyChange(false)——而父组件恰好是在
-      // setBootstrapBusy(true) 之后重渲染的，那一抹等于把刚置上的忙碌标记当场抹掉。
-      const reportBootstrapBusy = useCallback((v) => {
-        setBootstrapBusy(v);
-        if (onBusyChange) onBusyChange(v);
-      }, [onBusyChange]);
+      // 引导请求是否在飞（#558）：订阅模块级 bootstrapJob 而不是接弹层的回调。
+      // 「⋯」按钮在忙碌时必须不关弹层（评审 #4452245292）；从 store 派生后这条
+      // 守卫跨 tab 关闭/重开仍然成立——请求在飞时重开标签页，菜单照样锁着。
+      const bootstrapJob = useBootstrapJob();
+      const bootstrapBusy = bootstrapJob.phase === "running";
+      // 卸载兜底：只回「用户没来得及看」之外的状态。卸载发生在 running 时（tab
+      // 关闭 / 覆盖层关闭都算），结果还没人看过——terminal 化发生在卸载之后，
+      // 这份要留给重开回放（本 issue 修的就是它）；卸载时已是 done/failed，
+      // 用户见过它，回 idle 保持「重开是干净弹层」的既有行为。
+      useEffect(() => () => {
+        if (bootstrapJob.phase !== "running") resetBootstrapJob();
+      }, []);
       const [createOpen, setCreateOpen] = useState(false);
       const [shareOpen, setShareOpen] = useState(false);
       const [receiveOpen, setReceiveOpen] = useState(false);
@@ -8528,10 +8584,12 @@ window.__ModuleLoader__.load({
             if (cancelled) return;
             setItems(d.items || []);
             setTotal(d.total || 0);
+            // #597：分布随筛选整体刷新（筛选变了 filterQS 变，本 effect 重跑）。
+            setTypeCounts(d.typeCounts || null);
             setExpandedMonths(null); // 新数据回到「仅最新月展开」
             setLoading(false);
           })
-          .catch(() => { if (!cancelled) { setItems([]); setTotal(0); setLoading(false); } });
+          .catch(() => { if (!cancelled) { setItems([]); setTotal(0); setTypeCounts(null); setLoading(false); } });
         return () => { cancelled = true; };
       }, [reloadKey, filterQS]);
 
@@ -8633,9 +8691,25 @@ window.__ModuleLoader__.load({
         ? remoteItems.filter((m) => type === "all" || m.type === type)
         : items;
 
+      // #597：分类计数的服务端源。页被 type 筛过又分了页，页内现数两头都数不出
+      // 真分布——选中一类后其它类计数为 0 被 filter 整条滤掉，分类栏塌剩两枚。
+      // typeCounts 在场时用全库分布（筛选口径与 total 一致），缺类补 0；
+      // 老服务端没这一格时退回页内现数（旧行为，塌栏仍在但功能不炸）。
       const counts = {};
-      for (const m of items) counts[m.type] = (counts[m.type] || 0) + 1;
+      if (typeCounts) {
+        for (const k of EXPLORER_TYPES) counts[k] = typeCounts[k] || 0;
+        for (const k of Object.keys(typeCounts)) {
+          if (!EXPLORER_TYPES.includes(k)) counts[k] = typeCounts[k];
+        }
+      } else {
+        for (const m of items) counts[m.type] = (counts[m.type] || 0) + 1;
+      }
       const knownTypes = EXPLORER_TYPES.filter((k) => counts[k]);
+      // 「全部」chip：服务端分布合计——total 带着当前 type 筛，合计才是不带 type
+      // 的那个数（选中一类后 chips 不再从 5 跳到 200）。降级回退页内行数。
+      const allCount = typeCounts
+        ? Object.keys(typeCounts).reduce((n, k) => n + (typeCounts[k] || 0), 0)
+        : items.length;
       const extraTypes = Object.keys(counts)
         .filter((k) => !EXPLORER_TYPES.includes(k))
         .sort((a, b) => counts[b] - counts[a]);
@@ -8862,7 +8936,9 @@ window.__ModuleLoader__.load({
                   setImportOpen(false);
                   // 引导弹层只在不忙的时候才关：它内部已经用 busy 禁用了取消与提交，
                   // 这里若照旧卸载，等于给了一条绕过那两道锁的路（评审 #4452245292）。
-                  if (!bootstrapBusy) setBootstrapOpen(false);
+                  // 关的同时把任务态回 idle——用户看得见这个关闭，terminal 状态
+                  // 不该留到下次重开（#558 的存活规则：只留没人看过的那份）。
+                  if (!bootstrapBusy) { resetBootstrapJob(); setBootstrapOpen(false); }
                   setCreateOpen(false);
                   setShareOpen(false);
                   setReceiveOpen(false);
@@ -8894,8 +8970,10 @@ window.__ModuleLoader__.load({
               }),
               bootstrapOpen && h(BootstrapDialog, {
                 t,
-                onClose: () => setBootstrapOpen(false),
-                onBusyChange: reportBootstrapBusy,
+                // 人看得见的关闭（取消 / 自动收口 / 菜单收起）：terminal 状态回 idle，
+                // 重开是干净弹层；tab 关闭不经过这里——running 的任务态留在模块级，
+                // 由重开时回放（#558）。
+                onClose: () => { resetBootstrapJob(); setBootstrapOpen(false); },
                 onImported: () => { setReloadKey((k) => k + 1); broadcastStoreChanged("import"); }
               }),
               shareOpen && h(ShareDialog, { t, onClose: () => setShareOpen(false) }),
@@ -9014,7 +9092,7 @@ window.__ModuleLoader__.load({
               h("button", {
                 className: type === "all" ? "mneme-xtype mneme-active" : "mneme-xtype",
                 onClick: () => setType("all")
-              }, h("span", { className: "mneme-xdot mneme-xdot--all", "aria-hidden": "true" }), h("span", null, t("memory.tab.all")), h("span", { className: "mneme-xcount2" }, String(items.length))),
+              }, h("span", { className: "mneme-xdot mneme-xdot--all", "aria-hidden": "true" }), h("span", null, t("memory.tab.all")), h("span", { className: "mneme-xcount2" }, String(allCount))),
               knownTypes.concat(extraTypes).map((key) =>
                 h("button", {
                   key,
@@ -9025,7 +9103,9 @@ window.__ModuleLoader__.load({
                   h("span", null, typeLabel(t, key)),
                   h("span", { className: "mneme-xcount2" }, String(counts[key]))
                 )),
-              h("span", { className: "mneme-xcount", style: { marginLeft: "auto" } }, t("memory.explorer.count").replace("{n}", String(visible.length))),
+              // #597：页头 = 服务端 total（搜索态的 total 是命中数，同样在 state 里）；
+              // 不再用 visible.length——那只是已加载页的行数，滚动一次就停住。
+              h("span", { className: "mneme-xcount", style: { marginLeft: "auto" } }, t("memory.explorer.count").replace("{n}", String(remoteItems ? visible.length : total))),
               h("button", { className: "mneme-footbtn", onClick: () => setReloadKey((k) => k + 1) },
                 h(Icon, { name: "refresh", size: 12 }), t("memory.explorer.refresh"))
             ),
@@ -13145,15 +13225,14 @@ window.__ModuleLoader__.load({
           name: "main",
           key: "dsh-mneme"
         }, () => h(MnemeMainPanel, { t }));
-        // chorography 第二个座位（M1）：成对规则同上——id 与 key 逐字同为
-        // "dsh-mneme-wiki"。座位无条件注册（P11），内容层自己渲染空态；
-        // D2 拆双 Cordis 条目后这里自然变成可独立禁用的形态。
-        const disposeWikiGlyph = ctx.slots.register({
-          name: "sidebar.panellist",
-          id: "dsh-mneme-wiki",
-          order: 61,
-          label: () => t("wiki.panel.open")
-        }, (props) => h(WikiGlyph, { size: props && props.size }));
+        // chorography 第二个座位（M1）。成对规则只剩一半在这里：main 的 key
+        // 仍是 "dsh-mneme-wiki" 且**无条件注册**——#562 那堵墙（布局里存着
+        // activePanelId="dsh-mneme-wiki" 时少注册 main，宿主 selectPanel 直接
+        // 抛 "main panel … is not registered"）。侧栏那一格不再无条件（#598）：
+        // 默认关的功能不该常驻一个点进去只有「未启用」的入口，glyph 的登记挪进
+        // 下面的座位闸，读 features 按 chorographyEnabled 决定。kb 座位（契约
+        // §3.6）刻意保持无条件——「未启用」空态自己解释去哪儿开，是 #607 的
+        // 另一种写法；两种形态并存是 #598 评论区 §四的拍板。
         const disposeWikiMain = ctx.slots.register({
           name: "main",
           key: "dsh-mneme-wiki"
@@ -13175,7 +13254,8 @@ window.__ModuleLoader__.load({
         return () => {
           disposeGlyph();
           disposeMain();
-          disposeWikiGlyph();
+          // wiki glyph 不在这把扫帚里了：它的登记随座位闸走（#598），
+          // 生命周期归 cordis 上下文，与本回调的成对座位不同源。
           disposeWikiMain();
           disposeKbGlyph();
           disposeKbMain();
@@ -13280,6 +13360,32 @@ window.__ModuleLoader__.load({
           });
         return () => { dead = true; };
       }, "dsh-mneme: diary gate");
+
+      // --- chorography 侧栏座位闸（#598）：与 M.O.（v0.9.0）/日记（v0.13）
+      // 同一形态——features 拉一次、fail-closed（读不到就不注册，不猜）、开关
+      // 改动重启生效。glyph 延迟注册走 diary 右栏页签同一条 inject→register
+      // 路径：宿主每次渲染枚举 entriesOfSlot，晚到的登记下一帧出现。
+      // main 不在这里——它无条件（#562）；kb 座位也不在这里——契约 §3.6
+      // 刻意选了「入口常驻 + 空态自解释」的另一半（见上面 panellist 块注释）。
+      ctx.effect(() => {
+        let dead = false;
+        apiFetch("/api/dsh-mneme/features")
+          .then((res) => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
+          .then((j) => {
+            if (dead) return;
+            if (!((j && j.effective) || {}).chorographyEnabled) return;
+            ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({
+              name: "sidebar.panellist",
+              id: "dsh-mneme-wiki",
+              order: 61,
+              label: () => t("wiki.panel.open")
+            }, (props) => h(WikiGlyph, { size: props && props.size })));
+          })
+          .catch((err) => {
+            console.warn("[dsh-mneme] features fetch failed, chorography seat stays off:", err);
+          });
+        return () => { dead = true; };
+      }, "dsh-mneme: chorography seat gate");
     }
 
     exports.apply = apply;

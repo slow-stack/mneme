@@ -108,6 +108,26 @@ test("count excludes forgotten by default, includeForgotten opts in", () => {
   store.close();
 });
 
+test("countByType: same filters, no type clause — the distribution sums to count(undefined) (#597)", () => {
+  const store = openMemory();
+  const a = store.save({ type: "project", title: "t1", content: "c" });
+  store.save({ type: "project", title: "t2", content: "c" });
+  store.save({ type: "preference", title: "p", content: "c", importance: 5 });
+  store.setForget(a.id, true);
+  const counts = store.countByType();
+  assert.equal(counts.project, 1, "forgotten rows excluded (same口径 as count)");
+  assert.equal(counts.preference, 1);
+  assert.equal(
+    Object.keys(counts).reduce((n, k) => n + counts[k], 0),
+    store.count(),
+    "distribution sums to count(undefined)"
+  );
+  // 筛选同口径：带 minImportance 的分布合计 = 带同筛选的 count
+  const filtered = store.countByType({ minImportance: 5 });
+  assert.deepEqual(filtered, { preference: 1 }, "distribution honors the same filters as count");
+  store.close();
+});
+
 test("search matches title, content and tags", () => {
   const store = openMemory();
   store.save({ type: "project", title: "记忆插件", content: "c1", tags: [] });

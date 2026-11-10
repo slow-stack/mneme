@@ -82,33 +82,45 @@ test("memory entry registers the host panel seats and keeps the footer fallback"
   );
 });
 
-// chorography（仓库地志）第二个座位（M1）：与记忆面板同一个 panellist inject 块
-// 里注册，成对规则逐字相同——id 与 main 的 key 必须同为 "dsh-mneme-wiki"，否则
-// 宿主点面板行直接抛 "main panel … is not registered"（#562 在记忆座位上实测过
-// 的同一堵墙）。座位无条件注册（P11）：inject 同名二次注册的 cordis 语义没验证
-// 过，不赌；开关关时由内容层渲染空态（路由 409 disabled），生效走重启纪律。
-test("chorography wiki entry registers its own seat pair in the same panellist block", () => {
-  assert.ok(
-    clientSource.includes('id: "dsh-mneme-wiki"'),
-    "the wiki sidebar seat must use its own id"
-  );
+// chorography（仓库地志）第二个座位（M1）。#598 起成对规则拆成两半：
+// main 的 key 仍逐字同为 "dsh-mneme-wiki" 且无条件注册——#562 的墙（布局存着
+// activePanelId 时少注册，宿主 selectPanel 直接抛）；侧栏 glyph 改读 features
+// 按 chorographyEnabled 决定，与 M.O.（v0.9.0）/日记（v0.13）的座位闸同一形态，
+// fail-closed。默认关的功能不该常驻一个点进去只有「未启用」的入口。
+test("chorography wiki main stays unconditional; the sidebar glyph is feature-gated (#598)", () => {
   assert.ok(
     clientSource.includes('key: "dsh-mneme-wiki"'),
-    "the wiki main seat key must match the wiki sidebar id verbatim"
+    "the wiki main seat key must stay verbatim and unconditional (#562)"
   );
   assert.ok(
     clientSource.includes("h(WikiMainPanel, { t })"),
     "the wiki main seat must render WikiMainPanel"
   );
   assert.ok(
-    clientSource.includes('phase: "disabled"'),
-    "with chorographyEnabled off the wiki page must render the disabled empty state (409 from /choro/repos)"
+    clientSource.includes('id: "dsh-mneme-wiki"'),
+    "the wiki sidebar seat keeps its own id (now registered by the gate)"
   );
-  // wiki 座位与记忆座位的清理在同一把扫帚下：漏一个就留下一个挂着的 glyph，
-  // 宿主折叠该槽后指向一个死面板。
   assert.ok(
-    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);\s*disposeWikiGlyph\(\);\s*disposeWikiMain\(\);/.test(clientSource),
-    "the panellist cleanup must dispose both seat pairs"
+    clientSource.includes('"dsh-mneme: chorography seat gate"'),
+    "the glyph registration must live behind the features gate"
+  );
+  assert.ok(
+    /if \(!\(\(j && j\.effective\) \|\| \{\}\)\.chorographyEnabled\) return;/.test(clientSource),
+    "the gate must fail-closed on the chorographyEnabled flag"
+  );
+  assert.ok(
+    clientSource.includes("chorography seat stays off"),
+    "a failed features fetch must leave the seat off, not guess"
+  );
+  assert.ok(
+    clientSource.includes('phase: "disabled"'),
+    "the disabled empty state must survive for layouts that still point at the wiki panel (#562 keeps main alive for exactly this)"
+  );
+  // wiki glyph 的清理随登记进了座位闸（cordis 上下文销毁时一并回收）；
+  // panellist 回调的扫帚只剩记忆对 + wiki 的 main + kb 对。
+  assert.ok(
+    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);[\s\S]*?disposeWikiMain\(\);/.test(clientSource),
+    "the panellist cleanup must dispose the memory pair and wiki main, in order"
   );
 });
 
@@ -320,8 +332,8 @@ test("knowledge base entry registers its own seat pair in the same panellist blo
     "the kb glyph takes its size from the host"
   );
   assert.ok(
-    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);\s*disposeWikiGlyph\(\);\s*disposeWikiMain\(\);\s*disposeKbGlyph\(\);\s*disposeKbMain\(\);/.test(clientSource),
-    "the panellist cleanup must dispose all three seat pairs"
+    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);[\s\S]*?disposeWikiMain\(\);\s*disposeKbGlyph\(\);\s*disposeKbMain\(\);/.test(clientSource),
+    "the panellist cleanup must dispose the remaining seat pairs (the wiki glyph moved to the feature gate)"
   );
 });
 
@@ -391,10 +403,10 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
     fire(ctx, "sidebar.footer.action");
     assert.equal(disposes.length, 1);
     const ids = (name) => regs.filter((r) => r.alive && r.opts.name === name).map((r) => r.opts.id ?? r.opts.key).sort();
-    assert.equal(alive(regs, "sidebar.panellist"), 3, "memory + wiki + kb glyphs");
-    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
-    assert.equal(alive(regs, "main"), 3, "memory + wiki + kb pages");
-    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
+    assert.equal(alive(regs, "sidebar.panellist"), 2, "memory + kb glyphs — the wiki glyph is feature-gated (#598), not unconditional");
+    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-kb"], "每对座位各自 id 逐字唯一；wiki glyph 走座位闸，不在无条件集合里");
+    assert.equal(alive(regs, "main"), 3, "memory + wiki + kb pages — wiki main stays unconditional (#562)");
+    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名（wiki 的 main 无条件保留，#562）");
     assert.equal(alive(regs, "sidebar.footer.action"), 0, "the footer fallback must not mount on a host that has the seat");
   }
 
@@ -525,6 +537,33 @@ test("memory library opens as a centered sheet with backdrop", () => {
   assert.ok(
     clientSource.includes('"memory.overlay.close"'),
     "the close affordance keeps its localized label"
+  );
+});
+
+// #597：分类栏与页头的数字源必须来自服务端（typeCounts / total）——浏览页被
+// type 筛过又分了页，页内现数两头都数不出真分布：选中一类后其它类计数为 0 被
+// filter 整条滤掉（分类栏塌剩两枚），页头停在已加载行数（滚动一次后恒 200）。
+// 降级路径必须同时在：老服务端没有 typeCounts 时退回页内现数，功能不炸。
+test("explorer counts read the server distribution with an in-page fallback (#597)", () => {
+  assert.ok(
+    clientSource.includes("setTypeCounts(d.typeCounts || null)"),
+    "the browse fetch must capture the server distribution"
+  );
+  assert.ok(
+    clientSource.includes("for (const k of EXPLORER_TYPES) counts[k] = typeCounts[k] || 0"),
+    "the type rail must read the server distribution (missing types are 0, never collapse)"
+  );
+  assert.ok(
+    clientSource.includes("for (const m of items) counts[m.type] = (counts[m.type] || 0) + 1"),
+    "the in-page fallback must stay for servers without typeCounts"
+  );
+  assert.ok(
+    clientSource.includes("String(allCount)"),
+    "the all chip must use the distribution sum, not the loaded page length"
+  );
+  assert.ok(
+    /String\(remoteItems \? visible\.length : total\)/.test(clientSource),
+    "the header count must use the server total in browse mode (not visible.length)"
   );
 });
 
@@ -3730,27 +3769,21 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
   );
   // 菜单按钮的 onClick 里必须也关掉它，否则点「⋯」会留下上一个弹层。但它现在带一个
   // 条件：引导请求在飞时不关（否则等于绕过弹层里那两道 busy 禁用的锁，评审
-  // #4452245292）。所以这里锁的是「有条件地关」，不是无条件关。
+  // #4452245292）。#558 起关闭同时把任务态回 idle——用户看得见这次关闭，terminal
+  // 状态不留在 store 里（重开弹层要干净，#558 只保留没人看过的那份）。
   assert.ok(
-    /setImportOpen\(false\);\s*\n\s*\/\/[\s\S]{0,200}?if \(!bootstrapBusy\) setBootstrapOpen\(false\);/.test(clientSource),
-    "the overflow toggle must close the bootstrap dialog when it is not busy"
+    /setImportOpen\(false\);\s*\n\s*\/\/[\s\S]{0,300}?if \(!bootstrapBusy\) \{ resetBootstrapJob\(\); setBootstrapOpen\(false\); \}/.test(clientSource),
+    "the overflow toggle must close the bootstrap dialog (and reset the job) when it is not busy"
   );
-  // 父组件必须真的把这个标志接下来，否则上面那句恒为真（undefined → !undefined）。
+  // 父组件的 busy 守卫必须真的有来源：#558 起它订阅模块级 bootstrapJob 派生
+  // （prop 钻孔链拆了——tab 注册的 explorer 没有 onBusyChange，原本就报不上来）。
   assert.ok(
-    /const \[bootstrapBusy, setBootstrapBusy\] = useState\(false\)/.test(clientSource),
-    "the parent needs a bootstrapBusy flag for the guard above to mean anything"
+    /const bootstrapBusy = bootstrapJob\.phase === "running"/.test(clientSource),
+    "the parent derives bootstrapBusy from the module-level job, or the guard above means nothing"
   );
   assert.ok(
-    /onBusyChange: reportBootstrapBusy/.test(clientSource),
-    "the dialog must report its busy state up, or the guard reads a stale false"
-  );
-  // 这个转发函数必须同步调外层、且身份稳定：走 useEffect 转报的话要等渲染提交后
-  // 才跑，中间那一拍外层读到 false（#4452539705 的老毛病）；而若每渲染新建一个，
-  // BootstrapDialog 的卸载 effect（依赖 [onBusyChange]）会在父组件每次重渲染时
-  // 先跑 cleanup 调一次 onBusyChange(false)——而父组件正是在置 busy 之后重渲染的。
-  assert.ok(
-    /const reportBootstrapBusy = useCallback\(\(v\) => \{[\s\S]{0,200}?setBootstrapBusy\(v\);[\s\S]{0,200}?onBusyChange\(v\);/.test(clientSource),
-    "the forwarder must set both levels synchronously and keep a stable identity"
+    /function BootstrapDialog\(\{ t, onClose, onImported \}\)/.test(clientSource),
+    "the dialog no longer takes onBusyChange: busy lives in the store, not in prop drilling"
   );
   // 会挂弹层的菜单项在忙碌时必须禁用（评审 #4452539738）：新建 / 导入 / 引导 / 分享 /
   // 接收共五处，加上「⋯」按钮自己（见下），再加上四个视图标签（评审 #4453639221，
@@ -3793,12 +3826,13 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
   const bsEnd = clientSource.indexOf("// --- 分享包弹层 ---", bsIdx);
   const bsBody = clientSource.slice(bsIdx, bsEnd > bsIdx ? bsEnd : bsIdx + 4200);
   assert.ok(bsIdx > 0, "BootstrapDialog must exist");
-  // 忙碌状态必须**同步**报上去（评审 #4452539705）：只靠上面那个 useEffect 的话，
-  // 它要等这次渲染提交后才跑，中间那一拍父组件的 bootstrapBusy 还是 false，此时点
-  // 「⋯」仍会把弹层卸掉，请求的成功或失败就再没有地方显示。
+  // 任务态必须**同步**进 store（评审 #4452539705 的结构化解法）：#558 起三处守卫
+  // （explorer 的「⋯」、overlay 的 Esc/背板/✕）都订阅同一份 bootstrapJob，submit
+  // 里 setBootstrapJob(running) 一落，监听者同步被唤醒——不再有「等渲染提交后才
+  // 追上」的那一拍。
   assert.ok(
-    /setBusy\(true\);[\s\S]{0,400}?onBusyChange\(true\);/.test(bsBody),
-    "busy must be reported up synchronously, not only through the effect"
+    /setBootstrapJob\(\{ phase: "running"[\s\S]{0,200}?apiFetch\("\/api\/dsh-mneme\/bootstrap"/.test(bsBody),
+    "running must hit the store synchronously before the fetch leaves"
   );
   assert.ok(
     /apiFetch\("\/api\/dsh-mneme\/bootstrap"/.test(bsBody),
@@ -3815,14 +3849,16 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
     /type: "text",[\s\S]{0,400}?disabled: busy,[\s\S]{0,400}?onChange: \(e\) => \{ setDir/.test(bsBody),
     "the dir input must be disabled while the request is in flight"
   );
-  // 成功路径不再复位 busy（900ms 提示期间按钮不该重新变得可点），且定时器句柄要能清：
-  // 否则第二次提交的结果会写进已经卸载的组件（评审 #4452245256）。断言窗口只取
-  // 「setMsg…到 setTimeout」之间——再往后就是 catch 里的网络错误兜底，那一处复位是对的。
+  // 成功路径把 done 写进 store 并保持 900ms 阅读窗（fresh done 期间提交钮锁住），
+  // 且定时器句柄要能清：否则第二次提交的结果会写进已经卸载的组件（评审
+  // #4452245256）。断言窗口取「onImported…到 setTimeout」之间——再往后就是 catch
+  // 的网络错误兜底，那一处写 failed 是对的。
   const doneIdx = bsBody.indexOf("memory.explorer.bootstrapDone");
   const timerIdx = bsBody.indexOf("timerRef.current = setTimeout(");
   assert.ok(timerIdx > doneIdx, "the success branch must schedule its close through the stored ref");
   const successTail = bsBody.slice(doneIdx, timerIdx);
-  assert.ok(!/setBusy\(false\)/.test(successTail), "the success path must not re-enable the button");
+  assert.ok(/phase: "done"/.test(successTail), "the success path must land done in the store (survives tab close)");
+  assert.ok(!/resetBootstrapJob\(\)/.test(successTail), "the success path must not reset the job during the reading window");
   assert.ok(/clearTimeout\(timerRef\.current\)/.test(bsBody), "the stored timer must actually be cleared on unmount");
   // 刷新必须同步调、不能排进定时器（评审 #4452539711）：切视图会卸载本组件并把
   // timerRef 清掉，若刷新也挂在那 900ms 后面，它就静默丢了——库已经写进去了，
@@ -3840,8 +3876,8 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
   // 错误按服务端的码分开说（missing-dir / dir-not-found / not-a-directory /
   // bootstrap-unavailable），不能一律「引导失败」——三种情况下用户该做的事不同。
   assert.ok(
-    /"memory\.explorer\.bootstrapErr\." \+ String\(code/.test(bsBody),
-    "error codes must be mapped to distinct messages"
+    /"memory\.explorer\.bootstrapErr\." \+ String\(job\.error/.test(bsBody),
+    "error codes must be mapped to distinct messages (code lives in the store, derived at render)"
   );
   for (const key of [
     "memory.explorer.bootstrap",
@@ -3861,6 +3897,7 @@ test("panel exposes the bootstrap entry and the config-key coverage card (issue 
       `i18n key ${key} must exist in both dictionaries`
     );
   }
+  // #558 的存活规则锁（在原测试内追加）：见文件尾的 issue #558 专项测试。
 
   // 第 7 条：配置键覆盖面只读卡。
   const ckIdx = clientSource.indexOf("function ConfigKeysCard");
@@ -3921,14 +3958,16 @@ test("the memory overlay refuses to close while a library request is in flight (
   const ovEnd = clientSource.indexOf("const EXPLORER_TYPES", ovIdx);
   const ovBody = clientSource.slice(ovIdx, ovEnd > ovIdx ? ovEnd : ovIdx + 2600);
 
-  // 忙碌标志必须从 Explorer 上得来：MemoryOverlay 自己不知道有没有请求在飞。
+  // 忙碌标志必须与 Explorer 同源：#558 起两处各自订阅模块级 bootstrapJob——
+  // overlay 不再依赖子组件回报（tab 注册的 explorer 没有 onBusyChange，原本就
+  // 报不上来，守卫对那条路径是空的）。
   assert.ok(
-    /useState\(false\)/.test(ovBody) && /explorerBusy/.test(ovBody),
-    "the overlay needs its own busy flag"
+    /useBootstrapJob\(\)/.test(ovBody) && /explorerBusy = bootstrapJob\.phase === "running"/.test(ovBody),
+    "the overlay derives its busy flag from the module-level job store"
   );
   assert.ok(
-    /h\(MemoryExplorer, \{ t, onBusyChange: setExplorerBusy \}\)/.test(ovBody),
-    "the explorer must report its busy state up to the overlay"
+    /h\(MemoryExplorer, \{ t \}\)/.test(ovBody),
+    "the explorer no longer reports busy up: both sides subscribe to the same store"
   );
   // 用 ref 读、不把 busy 列进那个 effect 的依赖：effect 每次重跑都会
   // closeBtnRef.current.focus()，请求一起一落就把正在输目录的用户踢出输入框。
@@ -4108,4 +4147,38 @@ test("peak hours observability: invalid-spec hint renders from server field, nev
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
+});
+
+// --- issue #558：引导任务在飞态活得比标签页体长 ---
+// better-sidebar 关 tab 会把 MemoryExplorer 与引导弹层整个卸载（keepMounted 覆盖
+// 隐藏与切视图、不含关闭）。POST 照样跑完、行照样落库，但旧实现的成功/失败提示
+// 写进已卸载组件的 setState（无处显示）、忙碌态也丢——重开还能再提交一次。锁四
+// 件事：状态住模块级 store；弹层是 store 的视图（busy/msg/err 派生而非本地 state）；
+// 只有「人看得见的关闭」才把 terminal 态回 idle；卸载发生在 running 时的那一份
+// 留给重开回放（本 issue 修的就是它）。
+test("bootstrap job outlives the tab body: store in module scope, replay on remount (issue #558)", () => {
+  // store 是模块级的（apply 作用域、所有面板组件共享），带订阅者集合与读写口
+  assert.ok(/const bootstrapJob = \{ phase: "idle"/.test(clientSource), "the job store must be module-level, not component state");
+  assert.ok(/function setBootstrapJob\(/.test(clientSource) && /function useBootstrapJob\(/.test(clientSource), "store needs its setter and subscription hook");
+  // 弹层从 store 派生三态；重放挂载时输入框播种上次的目录（重试同目录是最常见的下一步）
+  const bs558Idx = clientSource.indexOf("function BootstrapDialog");
+  const bs558End = clientSource.indexOf("// --- 分享包弹层 ---", bs558Idx);
+  const bs558Body = clientSource.slice(bs558Idx, bs558End > bs558Idx ? bs558End : bs558Idx + 5000);
+  assert.ok(/const job = useBootstrapJob\(\)/.test(bs558Body), "the dialog must be a view over the job store");
+  assert.ok(/const busy = job\.phase === "running"/.test(bs558Body), "busy derives from the store");
+  assert.ok(/useState\(job\.dir \|\| ""\)/.test(bs558Body), "the dir input seeds from the last job's dir on replay");
+  // 存活规则：卸载发生在 running 时 → 结果留给重开；非 running 卸载 → 回 idle
+  // （保持「重开是干净弹层」的既有行为）。
+  assert.ok(
+    /useEffect\(\(\) => \(\) => \{\s*\n\s*if \(bootstrapJob\.phase !== "running"\) resetBootstrapJob\(\);/.test(clientSource),
+    "unmount keeps a running job for replay and resets a seen terminal one"
+  );
+  // fresh done 的 900ms 阅读窗锁提交钮，但不锁取消（done 是 store 态、可能被重开
+  // 回放——取消若也锁死，旧结果会把弹层永久焊住）。
+  assert.ok(/const freshDone = job\.phase === "done" && timerRef\.current !== null/.test(bs558Body), "the reading window must be distinguished from a replayed result");
+  assert.ok(/disabled: submitBlocked, onClick: submit/.test(bs558Body), "submit is locked during the fresh-done window");
+  assert.ok(/disabled: busy, onClick: onClose/.test(bs558Body), "cancel stays available for a replayed result");
+  // terminal 化只写 store（组件可能已被 tab 关闭卸载——那正是要修的路径）
+  assert.ok(/setBootstrapJob\(\{ phase: "failed", error:/.test(bs558Body), "failure must land in the store, not in unmounted component state");
+  assert.ok(/setBootstrapJob\(\{ phase: "done", result:/.test(bs558Body), "success must land in the store too");
 });

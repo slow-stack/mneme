@@ -473,10 +473,15 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         // Total honors the same filters as the rows, or the pager's
         // has-more math breaks whenever minImportance/source/updated-at
         // bounds are active. 按 id 取单条时总数就是命中的行数。
+        const listCountFilters = { minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly };
         const total = idFilter === ""
-          ? service.count(type, { minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly })
+          ? service.count(type, listCountFilters)
           : rows.length;
-        sendJson(res, 200, { items, total });
+        // #597：全库分布（同一份筛选、**不带 type**——带 type 的页数不出其它类）。
+        // 面板分类栏的数字源；按 id 取单条时 total 就是行数、分布无意义，这一格
+        // 缺省（客户端据此降级回退到页内数）。
+        const typeCounts = idFilter === "" ? service.countByType(listCountFilters) : undefined;
+        sendJson(res, 200, { items, total, ...(typeCounts ? { typeCounts } : {}) });
       } catch {
         sendJson(res, 500, { error: "internal" });
       }

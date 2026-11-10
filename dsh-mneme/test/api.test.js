@@ -121,6 +121,29 @@ test("list total excludes forgotten entries", async () => {
   assert.equal(data.total, 1, "total matches visible items, forgotten excluded");
 });
 
+test("list carries typeCounts: the full distribution without the type filter (#597)", async () => {
+  const { routes, service } = setup();
+  service.saveWithDedupe({ type: "preference", title: "p", content: "c" });
+  service.saveWithDedupe({ type: "project", title: "j1", content: "c" });
+  service.saveWithDedupe({ type: "project", title: "j2", content: "c" });
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/list");
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/list?type=project"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.equal(data.total, 2, "total honors the type filter");
+  assert.deepEqual(data.typeCounts, { preference: 1, project: 2 }, "distribution ignores the type filter — other classes survive a selection");
+
+  const resAll = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/list"), resAll);
+  const all = JSON.parse(resAll.body);
+  assert.equal(
+    Object.keys(all.typeCounts).reduce((n, k) => n + all.typeCounts[k], 0),
+    all.total,
+    "distribution sums to the unfiltered total"
+  );
+});
+
 test("list?id= also excludes forgotten entries", async () => {
   // getById 是裸 SELECT，不套 list 的 forgotten 谓词；这条路由是 open 的，
   // 漏掉过滤等于让本机任意进程按 id 读到遗忘记忆的全文（评审 #1）。

@@ -531,6 +531,30 @@ test("GET /memories supports include_archived and the occurred_at window", async
   }
 });
 
+test("GET /memories carries typeCounts: the full distribution without the type filter (#597)", async () => {
+  const { base, auth, service, close } = await setup();
+  try {
+    service.saveWithDedupe({ type: "preference", title: "p", content: "c" });
+    service.saveWithDedupe({ type: "project", title: "j1", content: "c" });
+    service.saveWithDedupe({ type: "project", title: "j2", content: "c" });
+
+    // total 跟着 type 筛；typeCounts 是同一份筛选、**不带 type** 的分布——
+    // 选中一类时其它类的数字仍在（面板分类栏不再塌剩两枚）。
+    const filtered = await (await fetch(`${base}/memories?type=project`, { headers: auth })).json();
+    assert.equal(filtered.total, 2, "total honors the type filter");
+    assert.deepEqual(filtered.typeCounts, { preference: 1, project: 2 }, "distribution ignores the type filter");
+
+    const all = await (await fetch(`${base}/memories`, { headers: auth })).json();
+    assert.equal(
+      Object.keys(all.typeCounts).reduce((n, k) => n + all.typeCounts[k], 0),
+      all.total,
+      "distribution sums to the unfiltered total"
+    );
+  } finally {
+    close();
+  }
+});
+
 test("GET /search honors the occurred_at window", async () => {
   const { base, auth, close } = await setup();
   try {
