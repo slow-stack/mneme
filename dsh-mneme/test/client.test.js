@@ -4182,3 +4182,39 @@ test("bootstrap job outlives the tab body: store in module scope, replay on remo
   assert.ok(/setBootstrapJob\(\{ phase: "failed", error:/.test(bs558Body), "failure must land in the store, not in unmounted component state");
   assert.ok(/setBootstrapJob\(\{ phase: "done", result:/.test(bs558Body), "success must land in the store too");
 });
+
+// #619 可见化 C：情绪一栏的「三种状态不许互相冒充」。
+// 界面在这里最容易犯的错是把「请求失败」渲染成「没有数据」——两者对用户的
+// 含义完全相反（前者是系统坏了，后者是功能没用），而空列表长得一模一样。
+test("affective panel keeps loading, error and empty apart (#619)", () => {
+  const start = clientSource.indexOf("function AffectivePanel({ t })");
+  assert.ok(start > 0, "AffectivePanel must exist");
+  const end = clientSource.indexOf("function StatusPanel({ t, onBrowse })", start);
+  assert.ok(end > start, "panel body must be bounded");
+  const body = clientSource.slice(start, end);
+
+  // 失败分支必须 role=alert 且用 error 文案，不能掉进空态文案。
+  assert.ok(/state\.error\)\s*\{[\s\S]*?memory\.affective\.error/.test(body),
+    "失败时要显式说「这是取失败」，不能用空态文案顶替");
+  assert.ok(/memory\.affective\.empty/.test(body), "真的一条都没有时才有空态文案");
+
+  // catch 里不许把 items 落在 []，否则「上游挂了」与「还没记过情绪」同形。
+  const catchBlock = body.slice(body.indexOf(".catch("));
+  assert.ok(/error:\s*true/.test(catchBlock), "catch 必须立 error 标记");
+  assert.ok(!/items:\s*\[\]/.test(catchBlock.split("\n").slice(0, 3).join("\n")) ||
+            /error:\s*true/.test(catchBlock),
+    "catch 分支不能只留空列表而丢掉失败");
+
+  // 截断与跳过都要显式说出来，不能静默截断。
+  assert.ok(/memory\.affective\.truncated/.test(body), "截断要说出来");
+  assert.ok(/memory\.affective\.skipped/.test(body), "没情绪名的边要报出来");
+
+  // trait 与 occasion 必须用不同文案，否则「这次」被读成「一贯」。
+  assert.ok(/memory\.affective\.trait/.test(body) && /memory\.affective\.occasion/.test(body),
+    "trait 与 occasion 两档文案都要在");
+
+  // 页签要注册，不然这一栏根本没有入口。
+  assert.ok(clientSource.includes('{ key: "affective", label: t("memory.explorer.tabAffective") }'),
+    "情绪页签必须注册");
+  assert.ok(clientSource.includes('view === "affective"'), "视图分支必须存在");
+});
