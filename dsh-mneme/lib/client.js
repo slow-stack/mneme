@@ -569,6 +569,7 @@ window.__ModuleLoader__.load({
         "memory.explorer.tabSettings": "设置",
         "memory.explorer.tabStatus": "状态",
         "memory.explorer.tabPersona": "人格",
+        "memory.explorer.tabAffective": "情绪",
         "memory.entities.count": "{n} 个实体",
       "memory.entities.countSampled": "列表只列最近 {shown} 个；上方总数是全库",
         "memory.entities.pick": "从左侧选择一个实体，查看它的属性与关系",
@@ -618,6 +619,18 @@ window.__ModuleLoader__.load({
         "memory.time.minutes": "{n}分钟前",
         "memory.time.hours": "{n}小时前",
         "memory.time.days": "{n}天前",
+        "memory.affective.title": "情绪归因",
+        "memory.affective.sub": "按「谁 · 对什么 · 什么情绪」汇总，稳定倾向与单独一次分开列。",
+        "memory.affective.loading": "读取中…",
+        "memory.affective.error": "没读到数据 —— 这不等于「没有记录」，是这次请求失败了。",
+        "memory.affective.empty": "库里还没有情绪边。开了情感相位并跑过一轮夜间巩固，这里才会有内容。",
+        "memory.affective.occasion": "一次场合",
+        "memory.affective.trait": "稳定倾向",
+        "memory.affective.sessions": "跨 {n} 个独立会话",
+        "memory.affective.evidence": "{n} 条证据",
+        "memory.affective.lastSeen": "最近 {time}",
+        "memory.affective.truncated": "只列了最近 {n} 条边，更早的没进这一页",
+        "memory.affective.skipped": "{n} 条边没有情绪名，未计入",
         "memory.graph.title": "记忆图谱",
         "memory.graph.aria": "记忆图谱",
         "memory.graph.placeholder": "输入实体名，查看关联网络…",
@@ -650,6 +663,16 @@ window.__ModuleLoader__.load({
         "memory.graph.src.confirmed": "人工确认",
         "memory.graph.src.tag": "标签共现",
         "memory.graph.src.llm": "模型抽取",
+        // #619 可见化 B：情感边（affective_context）在侧卡上要能不点进去就看懂。
+        // 两档必须用不同的词：occasion 是「这一次场合观察到的情绪」，trait 是
+        // 「跨若干独立场合反复出现、已被铸成稳定倾向」。只显示「焦虑」会让两者
+        // 看起来一样，而它们回答的是完全不同的问题（这次怎么了 / 这个人是什么样）。
+        "memory.graph.emotion": "情绪 {e}",
+        "memory.graph.affectiveOccasion": "这一次的场合",
+        "memory.graph.affectiveOccasions": "已跨 {n} 个场合",
+        "memory.graph.affectiveTrait": "稳定倾向 · 跨 {n} 个独立场合",
+        "memory.graph.affectiveEvidence": "{n} 条证据",
+        "memory.graph.affectiveLegacy": "旧版情感边（没有场合记录）",
         "memory.settings.vectorTitle": "向量搜索",
         "memory.settings.vectorHint": "搜索不再只认字面：接入任意 OpenAI 兼容的 embedding 接口后，意思相近的记忆也能被召回。",
         "memory.settings.vectorEnabled": "启用向量搜索",
@@ -1641,6 +1664,7 @@ window.__ModuleLoader__.load({
         "memory.explorer.tabSettings": "Settings",
         "memory.explorer.tabStatus": "Status",
         "memory.explorer.tabPersona": "Persona",
+        "memory.explorer.tabAffective": "Affective",
         "memory.entities.count": "{n} entities",
       "memory.entities.countSampled": "The list shows the newest {shown} only; the total above is the whole library",
         "memory.entities.pick": "Select an entity to see its attributes and relations",
@@ -1688,6 +1712,18 @@ window.__ModuleLoader__.load({
         "memory.time.minutes": "{n}m ago",
         "memory.time.hours": "{n}h ago",
         "memory.time.days": "{n}d ago",
+        "memory.affective.title": "Affective attributions",
+        "memory.affective.sub": "Grouped by who · toward what · which emotion; lasting tendencies are listed apart from single occasions.",
+        "memory.affective.loading": "Loading…",
+        "memory.affective.error": "Could not load — that is not the same as having nothing recorded; this request failed.",
+        "memory.affective.empty": "No affective edges yet. Turn on the affective phase and let one nightly pass run.",
+        "memory.affective.occasion": "Single occasion",
+        "memory.affective.trait": "Lasting tendency",
+        "memory.affective.sessions": "across {n} independent sessions",
+        "memory.affective.evidence": "{n} pieces of evidence",
+        "memory.affective.lastSeen": "last {time}",
+        "memory.affective.truncated": "Showing the newest {n} edges only; older ones are not on this page",
+        "memory.affective.skipped": "{n} edges carried no emotion name and were left out",
         "memory.graph.title": "Memory Graph",
         "memory.graph.aria": "Memory graph",
         "memory.graph.placeholder": "Type an entity name to see its network…",
@@ -1720,6 +1756,12 @@ window.__ModuleLoader__.load({
         "memory.graph.src.confirmed": "confirmed",
         "memory.graph.src.tag": "tag overlap",
         "memory.graph.src.llm": "model-extracted",
+        "memory.graph.emotion": "emotion {e}",
+        "memory.graph.affectiveOccasion": "this occasion",
+        "memory.graph.affectiveOccasions": "{n} occasions so far",
+        "memory.graph.affectiveTrait": "lasting tendency · across {n} independent occasions",
+        "memory.graph.affectiveEvidence": "{n} pieces of evidence",
+        "memory.graph.affectiveLegacy": "older affective edge (no occasion record)",
         "memory.settings.vectorTitle": "Vector Search",
         "memory.settings.vectorHint": "Match by meaning, not just wording — connect any OpenAI-compatible embeddings API.",
         "memory.settings.vectorEnabled": "Enable vector search",
@@ -2675,6 +2717,32 @@ window.__ModuleLoader__.load({
       ".mneme-relrow:hover{background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-reltype{flex:none;font-size:11px;line-height:16px;color:var(--mneme-accent);border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary) 35%,transparent);border-radius:6px;padding:0 6px}",
       ".mneme-relname{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      // #619 可见化 B：情感边上的情绪词。刻意不加新色相——沿用 accent 的淡色调，
+      // 因为它是「同一条边上的附加信息」，不是新的边类别；加色相会让人以为
+      // affective_context 是第三种关系。trait 档只把字号/字重提一档，用来区分
+      // 「一次场合」和「一贯倾向」，两档仍然同色。
+      ".mneme-relaffect{flex:none;font-size:11px;line-height:16px;color:var(--mneme-fg-dim);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:0 6px;max-width:9em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".mneme-relaffect--trait{color:var(--mneme-accent);font-weight:600}",
+      // #619 可见化 C：情绪归因一览。沿用面板既有色，不引入新色相——
+      // trait 用 accent 加重，其余靠灰阶分层，跟关系行那颗小标签是同一套语汇。
+      ".mneme-affective-head{margin-bottom:10px}",
+      ".mneme-affective-title{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary)}",
+      ".mneme-affective-sub{font-size:12px;color:var(--mneme-fg-dim);margin-top:2px;line-height:1.5}",
+      ".mneme-affective-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}",
+      ".mneme-affective-row{border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:7px 10px}",
+      ".mneme-affective-row--trait{border-color:var(--mneme-accent)}",
+      ".mneme-affective-main{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px}",
+      ".mneme-affective-emotion{font-weight:600;color:var(--dsw-alias-label-primary)}",
+      ".mneme-affective-row--trait .mneme-affective-emotion{color:var(--mneme-accent)}",
+      ".mneme-affective-arrow{color:var(--mneme-fg-dim)}",
+      ".mneme-affective-target{color:var(--dsw-alias-label-primary)}",
+      ".mneme-affective-tag{flex:none;font-size:11px;line-height:16px;color:var(--mneme-fg-dim);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:0 6px}",
+      ".mneme-affective-tag--trait{color:var(--mneme-accent);border-color:var(--mneme-accent);font-weight:600}",
+      ".mneme-affective-meta{font-size:11px;color:var(--mneme-fg-dim);margin-top:3px}",
+      ".mneme-affective-empty{font-size:12px;color:var(--mneme-fg-dim);line-height:1.6;padding:10px 0}",
+      ".mneme-affective-empty--error{color:var(--mneme-danger)}",
+      ".mneme-affective-note{font-size:11px;color:var(--mneme-fg-dim);margin-top:8px}",
+      ".mneme-gs-affective{margin-top:2px}",
       // issue #24 块4 复核面：抬过的边。用虚线边色（--mneme-graphic-dim 同层）
       // 而不是新增颜色——它表达的是「同一条边，只是被用过」，不是新类别。
       ".mneme-boosted{margin-top:6px;padding-top:6px;border-top:1px dashed var(--dsw-alias-border-l2)}",
@@ -3986,6 +4054,46 @@ window.__ModuleLoader__.load({
                 selected.edge.source
                   ? t("memory.graph.source").replace("{s}", t(`memory.graph.src.${selected.edge.source}`) || selected.edge.source)
                   : null),
+              // #619 可见化 B：情感边单独一行，形状与上面两行（关系时间 / 权重来源）
+              // 区分开——它答的是「这是什么情绪、算一次还是算一类」，不是权重问题。
+              //
+              // 三种形态必须分得清，否则界面上会出现两种假话：
+              //  · metadata 为空 → 这是抽取器写的老边（或人工边），本来就没有情绪，
+              //    不显示任何情绪行。显示「情绪 —」等于说「有边但情绪丢了」。
+              //  · metadata.emotion 有值、promotedToTrait !== true → 一次具体场合。
+              //  · promotedToTrait === true → 已升格为稳定倾向，必须带上跨几个独立
+              //    场合，否则用户会把「一次情绪」和「一贯倾向」读成同一件事。
+              (() => {
+                const meta = selected.edge.metadata;
+                if (!meta || typeof meta !== "object") return null;
+                const emotion = typeof meta.emotion === "string" ? meta.emotion.trim() : "";
+                if (!emotion) return null;
+                const attrs = [];
+                if (meta.promotedToTrait === true) {
+                  const n = Number(meta.traitSessionCount);
+                  attrs.push(Number.isFinite(n) && n > 0
+                    ? t("memory.graph.affectiveTrait").replace("{n}", String(n))
+                    : t("memory.graph.affectiveTrait").replace("{n}", "?"));
+                } else {
+                  // 场合档：说「这一次」。sessionCount > 1 时不能借用 trait 的文案
+                  // ——那会把这批边说成「稳定倾向」，而升格是另一回事（判据是跨
+                  // 独立会话数达到阈值并铸出 pattern，标记在 promotedToTrait 上）。
+                  const sessions = Number(meta.sessionCount);
+                  attrs.push(Number.isFinite(sessions) && sessions > 1
+                    ? t("memory.graph.affectiveOccasions").replace("{n}", String(sessions))
+                    : t("memory.graph.affectiveOccasion"));
+                }
+                if (typeof meta.attribution === "string" && meta.attribution.trim()) {
+                  attrs.push(meta.attribution.trim());
+                }
+                // 证据条数用带标签的短语，不裸放一个数字——裸数字读起来像权重或 id。
+                if (Array.isArray(meta.evidence) && meta.evidence.length > 0) {
+                  attrs.push(t("memory.graph.affectiveEvidence").replace("{n}", String(meta.evidence.length)));
+                }
+                return h("div", { className: "mneme-gs-meta mneme-gs-affective" },
+                  t("memory.graph.emotion").replace("{e}", emotion),
+                  attrs.length > 0 ? ` · ${attrs.join(" · ")}` : null);
+              })(),
               selected.edge.memory_id && h("button", {
                 className: "mneme-footbtn",
                 onClick: () => onJumpMemory && onJumpMemory({ id: selected.edge.memory_id })
@@ -4080,6 +4188,14 @@ window.__ModuleLoader__.load({
                       const out = e.from === data.root.id;
                       const other = nodeById.get(out ? e.to : e.from);
                       const otherName = other?.name ?? (out ? e.to : e.from);
+                      // #619 可见化 B：情感边在列表里也要认得出。只列
+                      // `affective_context` 这个类型名，用户读不出「什么情绪、算一类
+                      // 还是一次」——而这两件事正是这条边的全部信息量。非情感边不受
+                      // 影响（meta.emotion 为空），列表宽度也不变。
+                      const emo = e.metadata && typeof e.metadata === "object"
+                        ? (typeof e.metadata.emotion === "string" ? e.metadata.emotion.trim() : "")
+                        : "";
+                      const isTrait = e.metadata?.promotedToTrait === true;
                       return h("button", {
                         key: e.id,
                         className: "mneme-relrow",
@@ -4088,6 +4204,7 @@ window.__ModuleLoader__.load({
                       },
                         h("span", { className: "mneme-relname", style: { textAlign: "right", flex: 1 } }, entity.name),
                         h("span", { className: "mneme-reltype" }, e.relation_type),
+                        emo ? h("span", { className: isTrait ? "mneme-relaffect mneme-relaffect--trait" : "mneme-relaffect" }, emo) : null,
                         h("span", { className: "mneme-relname", style: { flex: 1 } }, otherName)
                       );
                     }),
@@ -7473,6 +7590,97 @@ window.__ModuleLoader__.load({
       });
     }
 
+    // #619 可见化 C：情绪归因一览。
+    // 为什么单开一栏而不是塞进实体页：实体页是「从这个人往外看」，而这里要回答的是
+    // 「这个库一共记住了我哪些情绪」——反向、全局的一眼。塞进实体页得先选一个实体，
+    // 用户心里还没那个人。
+    //
+    // 三种状态严格分开，别让任何一种冒充另一种：
+    //   loading  还没回来
+    //   error    请求失败（500 / 网络），面板明说「不等于没有记录」
+    //   empty    真的一条都没有，并且说清要怎么才会有
+    // 这三件事在用户眼里完全不同，混成一个空列表是最容易犯也最伤人的糊弄。
+    function AffectivePanel({ t }) {
+      const [state, setState] = useState({ loading: true, error: false, items: [], totalEdges: 0, skippedEdges: 0, truncated: false });
+      useEffect(() => {
+        let cancelled = false;
+        apiFetch("/api/dsh-mneme/semantic/graph/affective?limit=200")
+          .then((res) => {
+            if (!res.ok) throw new Error(`http ${res.status}`);
+            return res.json();
+          })
+          .then((j) => {
+            if (cancelled) return;
+            setState({
+              loading: false,
+              error: false,
+              items: Array.isArray(j.items) ? j.items : [],
+              totalEdges: j.totalEdges || 0,
+              skippedEdges: j.skippedEdges || 0,
+              truncated: j.truncated === true
+            });
+          })
+          .catch(() => {
+            // 失败就报失败。这里绝不能退化成空 items —— 那会让「上游挂了」
+            // 长得和「你还没记过情绪」一模一样，用户会以为功能没用。
+            if (!cancelled) setState({ loading: true, error: true, items: [], totalEdges: 0, skippedEdges: 0, truncated: false });
+          });
+        return () => { cancelled = true; };
+      }, []);
+
+      if (state.loading && !state.error) {
+        return h("div", { className: "mneme-set" },
+          h("div", { className: "mneme-set-inner" }, h("div", { className: "mneme-affective-empty", role: "status" }, t("memory.affective.loading"))));
+      }
+      if (state.error) {
+        // role=alert：这是需要用户知道的一次失败，不是背景噪声。
+        return h("div", { className: "mneme-set" },
+          h("div", { className: "mneme-set-inner" },
+            h("div", { className: "mneme-affective-empty mneme-affective-empty--error", role: "alert" }, t("memory.affective.error"))));
+      }
+
+      const rows = state.items.map((it, i) => {
+        const isTrait = it.attribution === "trait";
+        const bits = [];
+        if (isTrait) {
+          const n = it.traitSessionCount ?? it.sessionCount;
+          if (Number.isFinite(n)) bits.push(t("memory.affective.sessions").replace("{n}", String(n)));
+        } else if (Number.isFinite(it.sessionCount) && it.sessionCount > 1) {
+          bits.push(t("memory.affective.sessions").replace("{n}", String(it.sessionCount)));
+        }
+        if (Number.isFinite(it.evidenceCount) && it.evidenceCount > 0) {
+          bits.push(t("memory.affective.evidence").replace("{n}", String(it.evidenceCount)));
+        }
+        if (it.lastSeen) bits.push(t("memory.affective.lastSeen").replace("{time}", formatRelativeTime(it.lastSeen)));
+        return h("div", { className: isTrait ? "mneme-affective-row mneme-affective-row--trait" : "mneme-affective-row", key: `${it.personId}-${it.targetId}-${it.emotion}-${it.attribution}-${i}` },
+          h("div", { className: "mneme-affective-main" },
+            h("span", { className: "mneme-affective-emotion" }, it.emotion),
+            h("span", { className: "mneme-affective-arrow" }, "·"),
+            h("span", { className: "mneme-affective-target" }, it.target ?? "?"),
+            h("span", { className: isTrait ? "mneme-affective-tag mneme-affective-tag--trait" : "mneme-affective-tag" },
+              isTrait ? t("memory.affective.trait") : t("memory.affective.occasion"))
+          ),
+          bits.length ? h("div", { className: "mneme-affective-meta" }, bits.join(" · ")) : null
+        );
+      });
+
+      return h("div", { className: "mneme-set" },
+        h("div", { className: "mneme-set-inner" },
+          h("div", { className: "mneme-affective-head" },
+            h("div", { className: "mneme-affective-title" }, t("memory.affective.title")),
+            h("div", { className: "mneme-affective-sub" }, t("memory.affective.sub"))
+          ),
+          state.items.length === 0
+            ? h("div", { className: "mneme-affective-empty", role: "status" }, t("memory.affective.empty"))
+            : h("div", { className: "mneme-affective-list" }, rows),
+          // 截断与跳过都要说出来：读者看到「就这些」时，得知道是自己没记够，
+          // 还是这一页只放了这么多。
+          state.truncated ? h("div", { className: "mneme-affective-note" }, t("memory.affective.truncated").replace("{n}", String(state.totalEdges))) : null,
+          state.skippedEdges > 0 ? h("div", { className: "mneme-affective-note" }, t("memory.affective.skipped").replace("{n}", String(state.skippedEdges))) : null
+        )
+      );
+    }
+
     function StatusPanel({ t, onBrowse }) {
       // #178：冲突卡键盘直达——激活后把焦点与视口带到队列块。
       const queueRef = useRef(null);
@@ -8922,6 +9130,7 @@ window.__ModuleLoader__.load({
         { key: "status", label: t("memory.explorer.tabStatus") },
         { key: "settings", label: t("memory.explorer.tabSettings") },
         { key: "persona", label: t("memory.explorer.tabPersona") },
+        { key: "affective", label: t("memory.explorer.tabAffective") },
         { key: "diary", label: t("memory.diary.title") }
       ];
 
@@ -9288,6 +9497,7 @@ window.__ModuleLoader__.load({
         view === "settings" && h("div", { className: "mneme-set" },
           h("div", { className: "mneme-set-inner" }, h(SettingsContent, { t }))
         ),
+        view === "affective" && h(AffectivePanel, { t }),
         view === "persona" && h("div", { className: "mneme-set" },
           h("div", { className: "mneme-set-inner" }, h(PersonaMainPanel, { t }))
         ),

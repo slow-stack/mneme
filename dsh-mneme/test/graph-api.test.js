@@ -207,3 +207,127 @@ test("ego 2-hop traversal work is bounded by limit, not by graph size (#409)", a
   // 250ms（≈4× 实测最坏值）只为兜住数量级级别的性能崩塌（#409）。
   assert.ok(ms < 250, `2-hop query took ${ms.toFixed(1)}ms — the work bound above is the lock; 250ms is only an outlier guard`);
 });
+
+// #619 可见化 B：情感边的 metadata 必须原样出 API。
+// 这条边上的全部信息量（情绪 / 谁对谁 / 几个场合 / 几条证据）都只存在 metadata 里，
+// 上一版这里只映射 id/from/to/relation_type/memory_id/created_at/weight/source，于是
+// 数据在库里有、在 store.toRelation 里也有，却在最后一跳被丢掉——面板上看起来就是
+// 「这个功能没做」。所以这里钉的不是「字段存在」，而是「一个不认识的字段也能穿过去」。
+test("#619 ego edges carry relation metadata through untouched", async () => {
+  const { routes, service } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const target = service.createEntity({ name: "答辩", type: "concept" });
+  const meta = {
+    emotion: "焦虑",
+    attribution: "occasion",
+    why: "答辩前一晚睡不着",
+    evidence: ["m-1", "m-2"],
+    sessionCount: 2,
+    model: "mock:affective-model",
+    runId: "run-1",
+    // 故意塞一个现在没人认识的字段：API 层不许按白名单裁剪，否则下一个新字段
+    // 又会「写进去了但看不见」，这正是这一轮要修的那类静默。
+    futureField: { nested: [1, 2, 3] }
+  };
+  service.saveRelation({
+    from_entity: person.id,
+    to_entity: target.id,
+    relation_type: "affective_context",
+    memory_id: "m-1",
+    source: "llm",
+    metadata: meta
+  });
+
+  const res = new FakeRes();
+  await graphRoute(routes, "/api/dsh-mneme/semantic/graph/ego")
+    .handler(req("/api/dsh-mneme/semantic/graph/ego?entity=桉桉&depth=1"), res);
+  assert.equal(res.statusCode, 200);
+  const edge = JSON.parse(res.body).edges.find((e) => e.relation_type === "affective_context");
+  assert.ok(edge, "the affective edge is on the ego graph");
+  assert.deepEqual(edge.metadata, meta, "metadata passes through field for field, including unknown ones");
+});
+
+// 反方向同样要钉：没有 metadata 的边给 null，不给 {}。
+// 前端要靠这个区分「老边本来就没有情绪」和「有 metadata 但情绪字段丢了」——
+// 给空对象会让两种情形在界面上长得一模一样。
+test("#619 ego edges without metadata report null, not an empty object", async () => {
+  const { routes, service } = setup();
+  const map = buildChain(service, ["A", "B"]);
+  assert.ok(map.size === 2);
+  const res = new FakeRes();
+  await graphRoute(routes, "/api/dsh-mneme/semantic/graph/ego")
+    .handler(req("/api/dsh-mneme/semantic/graph/ego?entity=A&depth=1"), res);
+  assert.equal(res.statusCode, 200);
+  const edge = JSON.parse(res.body).edges[0];
+  assert.equal(edge.metadata, null, "absent metadata is null so the UI can tell it apart from a populated one");
+});
+
+// #619 可见化 C：情绪归因一览。ego 只能从某个实体往外看，回答不了「库里有
+// 哪些情绪」。这条路由是全局的反向视角，三条断言各自钉一件会骗人的事。
+test("#619 affective overview groups by person, target, emotion and keeps occasion apart from trait", async () => {
+  const { routes, service } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const defense = service.createEntity({ name: "答辩", type: "concept" });
+  const interview = service.createEntity({ name: "面试", type: "concept" });
+  // 同一情绪、两个对象、两个归属档：四组，不能被合掉任何一组。
+  service.saveRelation({
+    from_entity: person.id, to_entity: defense.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", sessionCount: 1, evidence: ["m-1"] }
+  });
+  service.saveRelation({
+    from_entity: person.id, to_entity: interview.id, relation_type: "affective_context",
+    memory_id: "m-2", source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", sessionCount: 1, evidence: ["m-2"] }
+  });
+  service.saveRelation({
+    from_entity: person.id, to_entity: defense.id, relation_type: "affective_context",
+    memory_id: "m-3", source: "llm",
+    metadata: {
+      emotion: "焦虑", attribution: "trait", sessionCount: 1, traitSessionCount: 3,
+      promotedToTrait: true, evidence: ["m-1", "m-3", "m-4"]
+    }
+  });
+  // 没有情绪名的边：不进聚合，但要被计入 skippedEdges 而不是消失。
+  service.saveRelation({
+    from_entity: person.id, to_entity: defense.id, relation_type: "affective_context",
+    memory_id: "m-5", source: "llm", metadata: { attribution: "occasion" }
+  });
+  // 别的类型不受影响。
+  service.saveRelation({ from_entity: person.id, to_entity: defense.id, relation_type: "uses" });
+
+  const res = new FakeRes();
+  await graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective")
+    .handler(req("/api/dsh-mneme/semantic/graph/affective"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.equal(data.items.length, 3, "两个对象 × occasion + 一个 trait = 三组");
+  assert.equal(data.skippedEdges, 1, "没有情绪名的边要单独计数，不能静默消失");
+
+  const trait = data.items.find((i) => i.attribution === "trait");
+  assert.ok(trait, "trait 组必须存在");
+  assert.equal(trait.person, "桉桉");
+  assert.equal(trait.target, "答辩");
+  assert.equal(trait.traitSessionCount, 3, "trait 要能说出跨了几个独立会话");
+  assert.equal(trait.promotedToTrait, true);
+  assert.equal(data.items[0].attribution, "trait", "trait 排在 occasion 前面");
+
+  const occasions = data.items.filter((i) => i.attribution === "occasion");
+  assert.equal(occasions.length, 2);
+  assert.deepEqual(occasions.map((o) => o.target).sort(), ["答辩", "面试"],
+    "同一情绪对不同对象是两组，不能被合并");
+});
+
+// 读不到的时候必须是 500，不能给空列表——空列表在面板上跟「你从没记过情绪」
+// 长得一模一样，而这两件事对用户的含义正好相反。
+test("#619 affective overview reports 500 when the store cannot answer", async () => {
+  const { routes, service } = setup();
+  const original = service.relationsByType;
+  service.relationsByType = undefined;
+  const res = new FakeRes();
+  await graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective")
+    .handler(req("/api/dsh-mneme/semantic/graph/affective"), res);
+  assert.equal(res.statusCode, 500, "取不到就是取不到，不能假装是空的");
+  assert.equal(JSON.parse(res.body).error, "unavailable");
+  service.relationsByType = original;
+});

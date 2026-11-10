@@ -1416,3 +1416,40 @@ test("sleep: trait candidates pushed out by the cap are recorded as dropped", as
   assert.ok(capped.every((d) => typeof d.target === "string" && d.target), "每条都要能看出是哪条结论被截");
   store.close();
 });
+
+test("sleep: an affective stream failure keeps its cause on the phase", async () => {
+  // #619 可见化 A。这条与 conflict 相位那条同源：只写 "llm failed" 的话，
+  // 事后看 dream_runs 完全分不清是上下文超限、模型拒收、还是上游 502。
+  // 实测出处 2026-11-10T16:09 那一轮：outcome.affective 只有
+  // {"status":"failed","error":"llm failed"}，真正的 502 原文只能去
+  // llm_audit_logs 里捞，而那张表不是给人看面板用的。
+  // 所以这里钉两件事：失败原因必须写进返回值的 failure；同时必须打 warn。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  linkSession(service, mem.id, "session-A");
+
+  const warnings = [];
+  const ctx = affectiveCtx([]);
+  ctx.logger = { warn: (line) => warnings.push(String(line)), info: () => {} };
+  // 只让 affective 这一路失败，别的相位照常回 "[]"——否则测的是整轮，不是这一路。
+  ctx.llm.stream = async function* (options) {
+    if (options.purpose === "sleep-affective") {
+      yield { type: "finish", reason: { kind: "error", failure: { code: "SERVER", message: "502: upstream fetch failed" } } };
+      return;
+    }
+    yield { type: "text-delta", index: 0, text: "[]" };
+    yield { type: "finish", reason: { kind: "stop" } };
+  };
+
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  const phase = result.phases.affective;
+  assert.equal(phase.status, "failed");
+  assert.equal(phase.error, "llm failed", "粗粒度分类保持不变，面板与审计都依赖它");
+  assert.ok(String(phase.failure ?? "").includes("502"),
+    `失败原因要带上游原文，实际拿到 ${JSON.stringify(phase.failure)}`);
+  assert.ok(warnings.some((w) => w.includes("affective stream aborted or errored")),
+    "同一份原因也要进日志，光靠返回值救不了已经过去的运行");
+  store.close();
+});
