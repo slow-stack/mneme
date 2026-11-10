@@ -4,6 +4,12 @@
 
 ## 🆕 新增
 
+- **记忆面板的「共 N 条」与分类 chip 改读服务端真分布（#597）**。浏览页被 type 筛过又分了页，页内现数两头都数不出真分布：页头「共 N 条」用 `visible.length`（滚动一次后恒停在 200），分类 chip 从已加载页现数——选中任一类后其它类计数为 0 被整条滤掉，分类栏塌剩两枚、数字从 5 跳到 200。
+
+  - **服务端**：`store.count()` 的 WHERE 构造抽成共用的 `pushCountFilters`，新增 `countByType(opts)`（同一份筛选、**不带 type**，一次 GROUP BY 拿全库分布）；宿主内 `/api/dsh-mneme/list` 与 Bearer `/memories` 两张面同口径补 `typeCounts` 格（按 id 取单条的答复不带——分布无意义，客户端据此降级）。
+  - **客户端**：页头 = 服务端 `total`（搜索态的 total 本就是命中数）；chips = `typeCounts` 全库分布、缺类补 0（选中一类后分类栏恒定不塌）；「全部」chip = 分布合计（不再从 5 跳到 200）。老服务端没有 `typeCounts` 时退回页内现数——功能不炸，只是回到旧的「只数已加载页」行为。
+  - **验证**：`test/store.test.js` +1（分布合计恒等于 `count(undefined)`、筛选同口径）；`test/api.test.js` / `test/standalone-api.test.js` 各 +1（带 type 请求下分布仍全量、合计 = total）；`test/client.test.js` +1 源码断言（服务端源 + 降级路径同时在）。顺带一提：状态页 `MemoriesStatusCard` 的每类一次请求（N+1）是同一痛点的另一处，可后续切到 `typeCounts`，不在本 PR。
+
 - **仓库地志侧栏入口改旗标门控：`chorographyEnabled` 关着（默认）时侧栏不再常驻那一格（#598）**。此前侧栏座位无条件注册（P11），从没用过地志的用户侧栏永久多一个图标、点进去只有一句「未启用」。
 
   - **成对规则拆成两半**：`main`（key `"dsh-mneme-wiki"`）**无条件保留**——#562 那堵墙（布局存着 `activePanelId="dsh-mneme-wiki"` 时少注册 main，宿主 selectPanel 直接抛）；侧栏 glyph 的登记挪进座位闸，与 M.O.（v0.9.0）/日记（v0.13）同一形态——读一次 `/features`、fail-closed（读不到就不注册，不猜）、开关改动重启生效。

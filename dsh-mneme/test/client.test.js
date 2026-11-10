@@ -540,6 +540,33 @@ test("memory library opens as a centered sheet with backdrop", () => {
   );
 });
 
+// #597：分类栏与页头的数字源必须来自服务端（typeCounts / total）——浏览页被
+// type 筛过又分了页，页内现数两头都数不出真分布：选中一类后其它类计数为 0 被
+// filter 整条滤掉（分类栏塌剩两枚），页头停在已加载行数（滚动一次后恒 200）。
+// 降级路径必须同时在：老服务端没有 typeCounts 时退回页内现数，功能不炸。
+test("explorer counts read the server distribution with an in-page fallback (#597)", () => {
+  assert.ok(
+    clientSource.includes("setTypeCounts(d.typeCounts || null)"),
+    "the browse fetch must capture the server distribution"
+  );
+  assert.ok(
+    clientSource.includes("for (const k of EXPLORER_TYPES) counts[k] = typeCounts[k] || 0"),
+    "the type rail must read the server distribution (missing types are 0, never collapse)"
+  );
+  assert.ok(
+    clientSource.includes("for (const m of items) counts[m.type] = (counts[m.type] || 0) + 1"),
+    "the in-page fallback must stay for servers without typeCounts"
+  );
+  assert.ok(
+    clientSource.includes("String(allCount)"),
+    "the all chip must use the distribution sum, not the loaded page length"
+  );
+  assert.ok(
+    /String\(remoteItems \? visible\.length : total\)/.test(clientSource),
+    "the header count must use the server total in browse mode (not visible.length)"
+  );
+});
+
 // The sidebar hands each entry only its column state: a wide row (icon +
 // label) when expanded, a bare rail icon when collapsed — for both the
 // portalled top button and the footer fallback.

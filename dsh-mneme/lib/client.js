@@ -8453,6 +8453,9 @@ window.__ModuleLoader__.load({
       const [view, setView] = useState("memory"); // memory | entity | status | settings
       const [items, setItems] = useState([]); // loaded browse pages, chrono desc
       const [total, setTotal] = useState(0); // server count for the current type filter
+      // #597：服务端全库分布（同一份筛选、不带 type）。null = 老服务端没这一格，
+      // 分类栏退回页内现数（降级不炸，只是回到「只数已加载页」的旧行为）。
+      const [typeCounts, setTypeCounts] = useState(null);
       const [loading, setLoading] = useState(true);
       const [loadingMore, setLoadingMore] = useState(false);
       const [type, setType] = useState("all");
@@ -8565,10 +8568,12 @@ window.__ModuleLoader__.load({
             if (cancelled) return;
             setItems(d.items || []);
             setTotal(d.total || 0);
+            // #597：分布随筛选整体刷新（筛选变了 filterQS 变，本 effect 重跑）。
+            setTypeCounts(d.typeCounts || null);
             setExpandedMonths(null); // 新数据回到「仅最新月展开」
             setLoading(false);
           })
-          .catch(() => { if (!cancelled) { setItems([]); setTotal(0); setLoading(false); } });
+          .catch(() => { if (!cancelled) { setItems([]); setTotal(0); setTypeCounts(null); setLoading(false); } });
         return () => { cancelled = true; };
       }, [reloadKey, filterQS]);
 
@@ -8670,9 +8675,25 @@ window.__ModuleLoader__.load({
         ? remoteItems.filter((m) => type === "all" || m.type === type)
         : items;
 
+      // #597：分类计数的服务端源。页被 type 筛过又分了页，页内现数两头都数不出
+      // 真分布——选中一类后其它类计数为 0 被 filter 整条滤掉，分类栏塌剩两枚。
+      // typeCounts 在场时用全库分布（筛选口径与 total 一致），缺类补 0；
+      // 老服务端没这一格时退回页内现数（旧行为，塌栏仍在但功能不炸）。
       const counts = {};
-      for (const m of items) counts[m.type] = (counts[m.type] || 0) + 1;
+      if (typeCounts) {
+        for (const k of EXPLORER_TYPES) counts[k] = typeCounts[k] || 0;
+        for (const k of Object.keys(typeCounts)) {
+          if (!EXPLORER_TYPES.includes(k)) counts[k] = typeCounts[k];
+        }
+      } else {
+        for (const m of items) counts[m.type] = (counts[m.type] || 0) + 1;
+      }
       const knownTypes = EXPLORER_TYPES.filter((k) => counts[k]);
+      // 「全部」chip：服务端分布合计——total 带着当前 type 筛，合计才是不带 type
+      // 的那个数（选中一类后 chips 不再从 5 跳到 200）。降级回退页内行数。
+      const allCount = typeCounts
+        ? Object.keys(typeCounts).reduce((n, k) => n + (typeCounts[k] || 0), 0)
+        : items.length;
       const extraTypes = Object.keys(counts)
         .filter((k) => !EXPLORER_TYPES.includes(k))
         .sort((a, b) => counts[b] - counts[a]);
@@ -9055,7 +9076,7 @@ window.__ModuleLoader__.load({
               h("button", {
                 className: type === "all" ? "mneme-xtype mneme-active" : "mneme-xtype",
                 onClick: () => setType("all")
-              }, h("span", { className: "mneme-xdot mneme-xdot--all", "aria-hidden": "true" }), h("span", null, t("memory.tab.all")), h("span", { className: "mneme-xcount2" }, String(items.length))),
+              }, h("span", { className: "mneme-xdot mneme-xdot--all", "aria-hidden": "true" }), h("span", null, t("memory.tab.all")), h("span", { className: "mneme-xcount2" }, String(allCount))),
               knownTypes.concat(extraTypes).map((key) =>
                 h("button", {
                   key,
@@ -9066,7 +9087,9 @@ window.__ModuleLoader__.load({
                   h("span", null, typeLabel(t, key)),
                   h("span", { className: "mneme-xcount2" }, String(counts[key]))
                 )),
-              h("span", { className: "mneme-xcount", style: { marginLeft: "auto" } }, t("memory.explorer.count").replace("{n}", String(visible.length))),
+              // #597：页头 = 服务端 total（搜索态的 total 是命中数，同样在 state 里）；
+              // 不再用 visible.length——那只是已加载页的行数，滚动一次就停住。
+              h("span", { className: "mneme-xcount", style: { marginLeft: "auto" } }, t("memory.explorer.count").replace("{n}", String(remoteItems ? visible.length : total))),
               h("button", { className: "mneme-footbtn", onClick: () => setReloadKey((k) => k + 1) },
                 h(Icon, { name: "refresh", size: 12 }), t("memory.explorer.refresh"))
             ),

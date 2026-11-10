@@ -1783,13 +1783,12 @@ export function createStore(path) {
     return db.prepare("DELETE FROM distill_parse_failures WHERE session_id = ?").run(sessionId).changes;
   }
 
-  function count(type, { minImportance = null, source = null, includeForgotten = false, includeArchived = false, onlyArchived = false, depositedOnly = false, updatedFrom = null, updatedTo = null, occurredFrom = null, occurredTo = null, visibility = null } = {}) {
-    const clauses = [];
-    const params = [];
-    if (type !== undefined) {
-      clauses.push("type = ?");
-      params.push(type);
-    }
+  // #597：count() 与 countByType() 共用的 WHERE 构造——两张 HTTP 面（宿主内 /list
+  // 与 Bearer /memories）的 total 与 typeCounts 必须同口径，分布的合计才等于总数。
+  // type 刻意不在这里：count() 按调用方带，countByType() 刻意不带（它要的就是
+  // 同一份筛选下、**不带类型**的全库分布——面板分类栏被 type 筛过的页上数不出它）。
+  function pushCountFilters(opts, clauses, params) {
+    const { minImportance = null, source = null, includeForgotten = false, includeArchived = false, onlyArchived = false, depositedOnly = false, updatedFrom = null, updatedTo = null, occurredFrom = null, occurredTo = null, visibility = null } = opts ?? {};
     // Same filters as list() so a paged caller's total matches its rows.
     if (minImportance != null) {
       clauses.push("importance >= ?");
@@ -1855,8 +1854,30 @@ export function createStore(path) {
         "(id IN (SELECT record_id FROM receipt_chain WHERE kind IN ('merge', 'update') AND verdict = 'live') OR source = 'dream')"
       );
     }
+  }
+
+  function count(type, opts = {}) {
+    const clauses = [];
+    const params = [];
+    if (type !== undefined) {
+      clauses.push("type = ?");
+      params.push(type);
+    }
+    pushCountFilters(opts, clauses, params);
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     return db.prepare(`SELECT count(*) AS c FROM memories ${where}`).get(...params).c;
+  }
+
+  // #597（/list 的 typeCounts）：同一份筛选、不带 type，一次 GROUP BY 拿全库分布。
+  // 面板分类栏的数字源：被 type 筛过又分过页的已加载行上数不出真分布。GROUP BY
+  // 只回存在的类，缺类即 0；分布合计恒等于同筛选的 count(undefined)。
+  function countByType(opts = {}) {
+    const clauses = [];
+    const params = [];
+    pushCountFilters(opts, clauses, params);
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = db.prepare(`SELECT type, count(*) AS c FROM memories ${where} GROUP BY type`).all(...params);
+    return Object.fromEntries(rows.map((r) => [r.type, r.c]));
   }
 
   function getById(id) {
@@ -5398,6 +5419,7 @@ export function createStore(path) {
   return {
     db,
     count,
+    countByType,
     getById,
     // 车道 C：外来行身份的两个读口（幂等键 / 整包清点）。
     getByShareExternalId,
