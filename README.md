@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3E63DD?style=flat-square" alt="license"></a>
   <a href="https://github.com/slow-stack/mneme/actions"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI" alt="CI"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22%2B-3E63DD?style=flat-square&logo=nodedotjs&logoColor=white" alt="node"></a>
-  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-2881%20total-3E63DD?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-3154%20total-3E63DD?style=flat-square" alt="tests"></a>
   <a href="https://codecov.io/gh/slow-stack/mneme"><img src="https://img.shields.io/codecov/c/github/slow-stack/mneme/main?style=flat-square" alt="coverage"></a>
   <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
@@ -241,6 +241,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 | stdio MCP server——Claude Code / Cursor 等任意 MCP 客户端接入记忆六件套 | [dsh-mneme/README.md · MCP Server](dsh-mneme/README.md#mcp-server任意-mcp-客户端接入) |
 | 独立服务 daemon（不开 DSH 常驻数据面） | [dsh-mneme/docs/DAEMON.md](dsh-mneme/docs/DAEMON.md) |
 | 配置说明（全键参考） | [dsh-mneme/docs/CONFIGURATION.md](dsh-mneme/docs/CONFIGURATION.md) |
+| 目录归属：哪个目录是什么（`~/.dsh/memory` ≠ `~/.dsh/mneme` ≠ `~/.dsh-mneme`） | [dsh-mneme/docs/DIRECTORIES.md](dsh-mneme/docs/DIRECTORIES.md) |
 | 蒸馏原文留存与记忆级溯源（#399） | [dsh-mneme/docs/DISTILL.md](dsh-mneme/docs/DISTILL.md) |
 | 记忆分享包：出包与收包（`dsh-mneme share` / `receive` / `undo-share`） | [dsh-mneme/docs/SHARE.md](dsh-mneme/docs/SHARE.md) |
 | 实体结构化设计 | [dsh-mneme/docs/ENTITIES.md](dsh-mneme/docs/ENTITIES.md) |
@@ -276,7 +277,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 
 ```bash
 cd dsh-mneme && npm install
-npm test        # 2881 个测试
+npm test        # 3154 个测试
 npm run stress  # 三轴线压测
 npm run sync    # src → lib 同步
 ```
@@ -527,6 +528,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 | stdio MCP server — plug the six memory tools into any MCP client (Claude Code / Cursor / …) | [dsh-mneme/README.md · MCP Server](dsh-mneme/README.md#mcp-server任意-mcp-客户端接入)（中文） |
 | Standalone daemon (serve memories without DSH) | [dsh-mneme/docs/DAEMON.md](dsh-mneme/docs/DAEMON.md)（中文） |
 | Configuration reference (all keys) | [dsh-mneme/docs/CONFIGURATION.md](dsh-mneme/docs/CONFIGURATION.md)（中文） |
+| Directory ownership: which directory is what (`~/.dsh/memory` ≠ `~/.dsh/mneme` ≠ `~/.dsh-mneme`) | [dsh-mneme/docs/DIRECTORIES.md](dsh-mneme/docs/DIRECTORIES.md)（中文） |
 | Distill record retention & memory-level provenance (#399) | [dsh-mneme/docs/DISTILL.md](dsh-mneme/docs/DISTILL.md)（中文） |
 | Memory share pack: export and import (`dsh-mneme share` / `receive` / `undo-share`) | [dsh-mneme/docs/SHARE.md](dsh-mneme/docs/SHARE.md)（中文） |
 | Entity structure design | [dsh-mneme/docs/ENTITIES.md](dsh-mneme/docs/ENTITIES.md) |
@@ -562,7 +564,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 
 ```bash
 cd dsh-mneme && npm install
-npm test        # 2881 tests
+npm test        # 3154 tests
 npm run stress  # three-axis stress test
 npm run sync    # src → lib sync
 ```

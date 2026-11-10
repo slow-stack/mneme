@@ -17,7 +17,7 @@ function setup() {
 
 test("persona defaults to empty store; default card round-trips via single-object form", () => {
   const { store, settings } = setup();
-  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {} });
+  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {}, bySession: {} });
   const input = {
     name: "Amarre",
     personality: "轻松幽默，讲解用类比",
@@ -46,25 +46,25 @@ test("persona read of corrupt JSON returns empty store without throwing", () => 
   settings.setPersona({ name: "seed" });
   // 直改底层键模拟损坏（面板口径：坏值显示为空、可重写，不抛错）
   store.db.prepare("UPDATE user_settings SET value = ? WHERE key = 'persona'").run("not json at all");
-  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {} });
+  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {}, bySession: {} });
   store.close();
 });
 
 test("persona read of non-object JSON (array/number) returns empty store", () => {
   const { store, settings } = setup();
   store.db.prepare("INSERT INTO user_settings (key, value) VALUES ('persona', '[1,2]')").run();
-  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {} });
+  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {}, bySession: {} });
   store.db.prepare("UPDATE user_settings SET value = '42' WHERE key = 'persona'").run();
-  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {} });
+  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {}, bySession: {} });
   store.close();
 });
 
 test("setPersona tolerates non-object input (writes empty persona)", () => {
   const { store, settings } = setup();
   settings.setPersona(null);
-  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {} });
+  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {}, bySession: {} });
   settings.setPersona("nope");
-  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {} });
+  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {}, bySession: {} });
   store.close();
 });
 
@@ -152,7 +152,7 @@ test("corrupt multi-card JSON reads as empty store without throwing", () => {
   const { store, settings } = setup();
   settings.setPersona({ name: "seed" });
   store.db.prepare("UPDATE user_settings SET value = ? WHERE key = 'persona'").run("broken {");
-  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {} });
+  assert.deepEqual(settings.getPersona(), { default: {}, byAgent: {}, bySession: {} });
   store.close();
 });
 

@@ -1,4 +1,6 @@
 import { safeSlice } from "./safe-slice.js";
+// Issue #611：图片块改用占位文本，不再落进空串（见 roundsFromEvents 里的注释）。
+import { contentToText } from "./attachment-text.js";
 
 // Session-scoped hot memory (v0.5.0 召回率优化 1.3): a short-term buffer of
 // the latest dialogue rounds, kept strictly apart from the long-term memory
@@ -73,15 +75,12 @@ export function roundsFromEvents(events, maxRounds, visibleSeqs = null) {
     // reasoning 里出现 Go template / Vue / Handlebars / 正则 / 日志原文的概率远高于
     // 正文，把它带进 hot memory 会让 `{{...}}` 模板片段注入 prompt。旧的扁平形状
     // （字符串 part）照旧取用，无 type 字段的兜底视为正文。
-    return parts
-      .map((p) => {
-        if (typeof p === "string") return p;
-        if (p?.type && p.type !== "text") return "";
-        return p?.text ?? "";
-      })
-      .filter(Boolean)
-      .join("\n")
-      .trim();
+    //
+    // Issue #611：图片 part 原先在这里也落进空串分支，于是「用户发了截图」这件事
+    // 在 hot memory 里完全消失。改走 attachment-text 的占位口径：`[图: 名称 宽x高]`。
+    // hot memory 每轮都进 prompt，占位刻意保持短——它不是描述，只是「这里有过一张
+    // 图」的坐标。
+    return contentToText(parts).trim();
   };
   for (const event of events) {
     // surface 投影：不在「模型可见面」上的事件（被 rewind 撤回、被 compact 替换）

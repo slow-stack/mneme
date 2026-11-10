@@ -18,6 +18,8 @@
   那里还会单独列出「白名单登记了、但 schema 没给默认值」的键——这类键在面板上有输入框，
   留空时却不会进「当前生效值」。
 
+路径键改完落点，见 [DIRECTORIES.md](DIRECTORIES.md)（注意各路径键的 `~` 展开规则不一致）。
+
 ## 全局与存储
 
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |
@@ -114,7 +116,7 @@
 | `summarizeMinWindowChars` | `0` | 窗口可蒸馏文本下限（字符），不足直接跳过 LLM（#239） | 被挡窗口照常消费游标并留 skip 审计 |
 | `summarizeMaxRunsPerSession` | `0` | 每会话蒸馏次数预算，只计真实发起的调用（≤1000） | 0 = 不限；进程内计数，重启清零 |
 | `summarizeParseFailureMaxRetries` | `0` | 连续解析失败几次后放弃当前窗口（0–10，0 = 关，#493） | 达到阈值强制消费游标跳过该窗口；失败行 metadata 恒带 `raw_head`/`raw_has_bracket`/`streak` |
-| `summarizePeakHours` | `""` | 高峰时段串（`"09:00-18:00"` / `"mon-fri 08:00-12:00,14:00-18:00"`，支持跨零点） | 命中高峰不调 LLM、顺延补跑；任一写法非法整串按未配置处理 |
+| `summarizePeakHours` | `""` | 高峰时段串（`"09:00-18:00"` / `"mon-fri 08:00-12:00,14:00-18:00"`，支持跨零点；全角逗号/冒号/数字自动归一，#424） | 命中高峰不调 LLM、顺延补跑；任一写法非法整串按未配置处理 |
 | `summarizePeakMaxDeferMinutes` | `120` | 高峰顺延上限（分钟，≤1440） | 0 = 不设上限；到点仍处高峰照跑（bypassPeak） |
 | `summarizeDedupeMode` | `off` | 落库前去重档位：`off` / `title`（拦完全同名）/ `vector`（同会话语义近邻） | `vector` 复用已有 embedding 列，无 LLM 调用 |
 | `summarizeDedupeMinSim` | `0.92` | `vector` 档并入阈值（0.5–0.99） | 仅 `vector` 档生效 |
@@ -179,7 +181,7 @@
 | `dreamDelayMs` | `2000` | 触发后的延迟（毫秒） | — |
 | `dreamMinIntervalMinutes` | `0` | 两次开跑最小间隔（分钟，≤10080，#89） | 失败/degraded run 也占用；0 = 不限 |
 | `autoDreamFailureBackoff` | `false` | 连续失败指数退避：有效间隔 = 基数 × 2^连败，封顶 30 分钟（#292） | opt-in；基数取 `dreamMinIntervalMinutes`（0 = 无闸可翻倍）；成功一次清零；重启归零 |
-| `dreamPeakHours` | `""` | 巩固错峰，与 `summarizePeakHours` 同一份时段语法（#239） | 命中高峰不做梦、阈值继续累积、留 skip 审计；非法写法按未配置 |
+| `dreamPeakHours` | `""` | 巩固错峰，与 `summarizePeakHours` 同一份时段语法（#239，全角等价符号同样归一） | 命中高峰不做梦、阈值继续累积、留 skip 审计；非法写法按未配置 |
 | `dreamPeakMaxDeferMinutes` | `120` | 巩固顺延上限（分钟） | 0 = 不设上限；到点仍处高峰照跑 |
 | `dreamProvider` / `dreamModel` | 空 | 巩固专用路由（settings「巩固模型」） | 建议非思考模型——思考模型易烧光预算返回空体（#135） |
 | `dreamMaxTokens` | `131072` | 巩固输出预算（256–131072） | 流式计费按实际用量，调大不增加成本；**调小则相反**——撞顶 → 无完整 JSON → 整轮失败 → baseline 不刷新 → 同输入重跑（#135 实测 cap=16384 净成本 +54%） |
@@ -203,6 +205,19 @@
 | `documentInjectBudget` | `2` | document 摘要行的注入预算（1–5） | 只约束注入，不约束检索 |
 | `documentDir` | `""` | managed 落盘目录（#296） | 空 = `<memoryDir>/documents/`；目录之外只登记指针、正文零读零写 |
 | `policyEpoch` | `0` | 裁决规则版本号 | bump 后旧 dream_runs 降为历史证据（receipt 不再驱动现行决策） |
+
+## 日记本（diary，v0.13）
+
+| 键 | 默认 | 作用 | 开启后果 / 冲突 |
+|---|---|---|---|
+| `diaryEnabled` **light** | `false` | QQ 日记本总闸：跨天判定 + 手写入口 + 面板页 | opt-in；与 `documentMemoryEnabled` **成对但不相依**——关着也能写正文文件，只是不铸造 `document` 指针行（回执里如实标 `pointer.skipped`） |
+| `diaryDir` | `""` | 日记正文根目录 | 空 = `<memoryDir>/diaries/<项目键>/`；`~` 展开到 home，绝对路径原样，相对路径落 memoryDir 下。**与 `memoryDir` 一样是路径配置，不是行为开关**，故不进 `settings.js` 白名单、也不上面板 |
+| `diaryWriteEveryMinutes` | `0` | 日记自动写的定时唤醒间隔（分钟） | `0` = 只在 turn/end 与插件启动时判定（此前行为）；`>0` 时每隔这么多分钟扫一遍已知项目再判定。**不是 cron**：定时器只负责唤醒「该不该写」的判定，写不写仍由 compose 按落盘日期去重——一天最多一篇，填 5 也不会多写。跑完一篇再排下一次，所以不会与上一次的模型调用重叠。opt-in、可热改（走 `INT_RANGES` 表，0–1440）|
+| `diaryInboxDir` | `""` | QQ 入站素材目录（只读） | 空 = 从 `memoryDir` 推 `<memoryDir>/../media/onebot`（onebot 的默认落点）。本模块**不 import `dsh-onebot-qq` 任何模块**，边界只靠这份「目录 + 文件形状」约定 |
+
+日记不落用户绑定的项目目录：那目录实测非 git、无 `.gitignore`、混着探针脚本，
+写进去没有版本也没有回滚；mneme 成文的写盘面只有 `memoryDir` 与 `documentDir` 两处。
+「入库到项目」是面板上一个**人主动点**的导出动作（复制而非移动）。
 
 ## 睡眠模式（sleep，空闲深维护）
 
@@ -236,6 +251,8 @@
 | `reflectionFailureRetentionDays` | `90` | `failure_memories`（失败/纠正记录）的启动期清理保留天数（1–3650） | 只读 bundle 配置：未进 feature_flags 白名单，面板改不了。`dsh-mneme reclaim` 不读这个键（它对三个表用同一条 `--older-than`，本表不在其中）。此前这个 90 天是写死的（#275 伞下的欠账） |
 | `conflictFreezeEnabled` | `false` | 冲突不自动合并、冻结待人工复核 | opt-in |
 | `conflictFreezeMaxPending` | `100` | 冻结队列上限（≤1000） | — |
+| `conflictAutoResolveEnabled` | `false` | 相似度极高的**同 scope** 重复对自动裁决（保留新条、归档旧条），不进人工队列 | opt-in。会归档记忆，所以默认关；跨 scope 对永不自动（归属是用户的决定，#170）。用 supersede 而非 conflict：注记写在被归档侧，幸存记忆正文不动 |
+| `conflictAutoResolveMinSimilarity` | `0.95` | 自动裁决的相似度门槛（0.85–1） | 实测 live 库 345 条有相似度的历史行里 ≥0.95 只占 5.8%、≥0.94 占 8.1%——这一档减的是峰值，不是把队列清零。低于 0.85 就不是「重复」而是「相似」，不该自动归档任何一条 |
 
 ## 实体
 
@@ -318,9 +335,14 @@
 | `organizeEnabled` | `false` | 对模型开放 `memory_organize` 工具（#231：先 dryRun 出比对报告，agent 判断后 apply 落库） | 与上面两个**反向**：那两个藏默认在场的工具，本键开默认不在场的能力。关 = 工具根本不注册（模型看不到就不会调）。dryRun→apply 是两步协议，弱模型容易漏 `run_id` 或跳过报告，所以 `LIGHT_MODE_OFF` 里有它；apply 只能引用一次真实报告、且一份报告只许落地一次 |
 | `chorographyEnabled` | `false` | chorography（仓库地志，spec 见 docs/specs/）暴露闸：对模型开放三个只读工具（`choro_search` / `choro_read_page` / `choro_module_map`）+ 面板「仓库地志」浏览页 + 每轮的开局提纲注入 + `/choro` 命令 | 与 `organizeEnabled` 同款反向语义：关 = 工具根本不注册、面板页空态、注入块不渲染、命令不注册，行为与旧版逐字节一致。本键是「是否启用这个子系统」，不是「每轮付多少」——所以它仍**不进 `LIGHT_MODE_OFF`**，轻量档要压的是下面那条 `chorographyInject`。检索是关键词子串（M1）；生成走 `dsh-mneme-choro` CLI（T0 确定性骨架 + `--t1` headless 语义富化） |
 | `chorographyInject` | `"light"` | 开局注入档位：`light` 只列文件数最多的 6 个模块（约 8 行）、`full` 列全部模块、`off` 不注入 | 只注模块名 / 文件数 / 页状态 / 页相对路径，**不含正文**（正文由模型 `choro_read_page` 取）；注入块折进既有 memory context，不新开 context（spec §7「合并成一次拼装」）。`lightMode: true` 时在消费侧压成 `off`（见 `wiki/inject.js` 的 `resolveInjectTier`）——它**不进 `LIGHT_MODE_OFF` 表**，因为那张表对平铺键一律赋 `false`，枚举值塞进去会与 schema 不符 |
+| `chorographyAutoRefresh` | `false` | 重建骨架后是否顺手把「过期」标记也刷掉：`POST /choro/run` 带 `refresh: true` 时，面板发起的一次重建会同时重算 `choro_repos` 的 git 基线与 plan 指纹 | opt-in 默认关。它与 `chorographyEnabled` 同属「谁按下按钮」而非「每轮付多少」，故不进 `LIGHT_MODE_OFF`；关着时重建照常跑，只是过期判据留旧基线，面板会继续显示「代码已变更」 |
+| `chorographyT1FromPanel` | `true` | 面板「补语义正文（T1）」按钮的暴露闸：开 = 地志页能发起 `POST /choro/t1`，后台 spawn 一次 `dsh-mneme-choro --t1 --apply` 并轮询 `/choro/t1/status` | 默认**开**（只在 `chorographyEnabled` 已开时才有意义；关整个子系统仍然全灭）。它管的是「面板能不能点这一下」，T1 花的是模型额度但每次都是人的显式动作，所以不设第二道默认关；T1 有模块数/时长/重试三重上限（`src/wiki/t1.js`） |
+| `kbEnabled` | `false` | 知识库第二层（AI-Native 知识库，对标 Qoder Knowledge）暴露闸：对模型开放三个只读工具（`kb_list_collections` / `kb_search` / `kb_read_doc`）+ 面板「知识库」页 + `/api/dsh-mneme/kb/*` 路由 | 与 `chorographyEnabled` 同款反向语义：关 = 工具不注册、面板页空态、路由 409。知识库收的是外来原文副本，真源在 `kb_*` 三张表（不是磁盘 MD），**只碰 kb_* 绝不写 `memories`**、不进巩固/质量过滤任何池子。检索是 BM25 + 可选向量；单文档上限 2 MB，超限/不可读落 `status='error'` 行并回人话，不静默截断。不进 `LIGHT_MODE_OFF`：它没有每轮注入物，模型只在被问到时才调用 |
 | `actionPipelineEnabled` | `false` | M.O. 只读视图的门控：做法图谱 + 对话行结算卡 | opt-in beta；只是纯 UI 入口、不引入重型后台路径，故不进 `LIGHT_MODE_OFF`。写账另有独立的执行记账键（`/mo-run`），看图 ≠ 写账 |
 | `actionRunEnabled` | `false` | M.O. 执行记账：`/mo-run` 开一次执行窗口，窗口内命令执行才可能被记成一条 run | opt-in beta；挂在热路径（每个会话事件都过一次监听），故 `LIGHT_MODE_OFF` 里有它 |
 | `actionNudgeEnabled` | `false` | M.O. 自动沉淀：每轮结束（`turn/end`）后挖一次「这个项目重复走的动作」，结果落成 `memoryDir/proposals/<项目键>/` 里的提议，等人确认 | opt-in beta；三个 M.O. 键里最重的一条——挂 `session/event` 且要**同步解压 zstd 会话日志**（本机 118 份实测 16.2s，单次预算 `budgetMs`=4s 兜底），故 `LIGHT_MODE_OFF` 里有它。**永不自动落草稿**：`materialize` 恒 false，进仓库必须是人的显式动作 |
+
+> **M.O. 已下架（v0.13.x）**：上面三个键仍留在 schema 与设置白名单里、语义不变，但面板不再渲染 `group.mo` 那一组（从 `FEATURE_GROUPS` 摘掉，首屏位一并收回）。想恢复：把该组加回 `FEATURE_GROUPS` 与 `FEATURE_FIRST_SCREEN` 即可，旗标与座位注册逻辑零改动。设置只能走配置文件。
 
 ## 运行时与本地模型
 
@@ -357,7 +379,8 @@
 `organizeEnabled`（#231） ·
 `profileExtractEnabled`（#497） ·
 `profileFactsEnabled`（2026-11-06） ·
-`preInjectGate.enabled`（#380） · `distillRecords.enabled`（#399）
+`preInjectGate.enabled`（#380） · `distillRecords.enabled`（#399） ·
+`diaryEnabled`（v0.13，每天一篇 = 一次 LLM 调用，属重型）
 
 预设只是默认值而非强制：用户显式写进 feature_flags 的值在装配顺序上后展开、仍然生效
 （「用户开关 > 轻量预设 > bundle 配置」）。

@@ -335,6 +335,26 @@ export const Config = z.object({
   // （= #230 的「管线对正文零读零写」）；与 memoryDir 一样是路径配置，不是
   // 行为开关，故不进 settings.js 的 feature flags 白名单、也不上面板。
   documentDir: z.string().default(""),
+  // 日记本（QQ 机器人写日记）：跨天惰性判定 + 启动补写，正文落
+  // `<memoryDir>/diaries/<项目键>/YYYY-MM-DD.md`，记忆库里留一条 document 指针行。
+  // 默认关=行为与此前一致；lightMode 强制关闭（它要调模型，与低资源档互斥）。
+  // 与 documentMemoryEnabled **成对但不相依**：关掉文档记忆只影响「能不能被检索到」，
+  // 正文照样写——那是用户自己的日记，不该被一个检索开关收走。
+  diaryEnabled: z.boolean().default(false),
+  // 日记根目录：空串 = 跟随 `<memoryDir>/diaries/`。与 documentDir 同一套路径规则
+  // （`~` 展开、绝对路径原样、相对路径落 memoryDir 下），同样是**路径配置不是行为
+  // 开关**，故不进 settings.js 白名单、也不上面板。
+  diaryDir: z.string().default(""),
+  // QQ 收件箱目录：空串 = 从 memoryDir 推（`<memoryDir>/../media/onebot`，本机即
+  // `D:\DSH\.dsh\media\onebot`）。推出不来就报 no-inbox-dir，绝不猜别的盘。
+  diaryInboxDir: z.string().default(""),
+  // 定时写（v0.13，桉桉 2026-11-09「日记本按理来说应该需要定时写，这个要存设置中」）：
+  // 每隔 N 分钟主动检查一次「今天是否还没写」，0 = 关（只在 turn/end 与启动时判，
+  // 即此前行为）。为什么要这一项：auto.js 原来只在回合结束时判跨天，用户整天不说话
+  // 就整天不写——日记不该取决于谁先开口。它仍然**不是 cron**：定时器只负责唤醒判定，
+  // 写不写在 compose 里按落盘日期去重，所以一天最多一篇，失败也只是 warn。
+  // 上限 1440（一天）：比一天更长的间隔没有意义，因为判定单位就是「天」。
+  diaryWriteEveryMinutes: z.natural().min(0).max(1440).default(0),
   // 隐式 keep（v0.4.4）：LLM 未提及的 snapshot 记忆自动补 {action:"keep"}，
   // 避免"未覆盖即全拒"白白浪费整轮 run。设为 false 时保留旧的严格校验
   // （未覆盖即拒绝整单）。
@@ -525,6 +545,33 @@ export const Config = z.object({
   conflictFreezeEnabled: z.boolean().default(false),
   // Maximum number of frozen conflicts to keep pending for manual review.
   conflictFreezeMaxPending: z.natural().min(1).max(1000).default(100),
+  // Issue #603 第 4 层（自动裁决档）：freeze 模式里相似度极高的同 scope 对直接
+  // 裁决（保留信息量更大的那条、归档另一条），不进人工队列——人只看模糊地带。
+  // 默认关：这是会归档记忆的自动动作，必须显式打开。
+  //
+  // ⚠️ Issue #616：这一档有三个已知边界，打开前先读，别当成「开了就清净」。
+  //
+  //  1) 阈值论证用的是早期快照，当前库上 0.95 等于不生效。
+  //     注释此前写「345 条有相似度、>=0.95 有 20 条（5.8%）」——2026-11-09 在
+  //     live 库重跑同口径：conflict_pending 全表 748 行，similarity 非 NULL 只有
+  //     11 行，其中 >=0.95 是 0 行，最高一对 0.914。这不是说阈值错了，是说
+  //     按 0.95 打开今晚一对都不会被判，用户会以为功能坏了。真要开，先按当前
+  //     分布重定阈值（配置下限 0.85），别沿用这两个数。
+  //
+  //  2) 它不是独立开关，是 freeze 分支的子节点。整段自动裁决都在
+  //     sleep.js 的 `if (config.conflictFreezeEnabled === true)` 里；关掉 freeze
+  //     会连它一起静默消失。面板上两个键看着平行，实际是父子。
+  //
+  //  3) 未标注 scope 会被判成同 scope。isCrossScopePair 走 scopeKeyOf，NULL 归一
+  //     成 null，null !== null 为 false，于是「归属未知」被当成「归属相同」。
+  //     live 库活跃 8259 行里 2710 行（32.8%）两个 scope 全 NULL，这批因此绕过了
+  //     「归属是用户的决定、永不自动」（v0.8.1 #170）这条守卫。改判据前不要打开。
+  //
+  // 另外 autoResolved/autoFailed 目前没有任何消费者（dream.js 只取 frozen），
+  // conflict_reviewed 台账也不记赢家、无 API 暴露——自动裁决了什么是看不见的。
+  // 可见性补齐之前，这一档只适合在能盯日志的前提下短时打开。
+  conflictAutoResolveEnabled: z.boolean().default(false),
+  conflictAutoResolveMinSimilarity: z.number().min(0.85).max(1).default(0.95),
 
   // --- entity gene (v0.3.0) -----------------------------------------------
   // Opt-in: when false (default) nothing in the pipeline extracts entities.
@@ -1049,6 +1096,25 @@ export const Config = z.object({
   // 占用轻量档预算的考量见键注释末句。
   profileFactsEnabled: z.boolean().default(false),
 
+  // chorography 面板闭环（2026-11-08 kb-qoder parity，契约见
+  // docs/plans/2026-11-08-kb-qoder-parity.md §3.1）。三个键都是「面板能不能替人
+  // 动手」的授权闸，与上面的 chorographyEnabled（子系统总闸）分层：总闸关着时
+  // 它们一律不生效，所以不必再进 LIGHT_MODE_OFF —— 轻量档要压的是「每轮付多少」，
+  // 而这三个键管的是「谁按下了重跑按钮」，关了也省不下一次调用，反倒让面板在
+  // 轻量档里静默少一块可操作区（同 chorographyEnabled 的定性与理由）。
+  //
+  // 过期的仓库在面板上直接刷新（POST /choro/run 的 refresh）。默认关：一次 T0 重跑
+  // 会扫整个仓库并重写 .chorography/ 下的页面，属于「改动工作区」的动作，不该在
+  // 没人要求时被面板顺手触发。
+  chorographyAutoRefresh: z.boolean().default(false),
+  // 面板发起 T1（POST /choro/t1）。默认**开**：这是面板闭环的主路径，关掉等于面板
+  // 上那个按钮永远是死的；真花钱的那一步仍由用户点按钮触发，且有
+  // chorographyEnabled 总闸在前面。需要「只读面板」的部署可以单独关它。
+  chorographyT1FromPanel: z.boolean().default(true),
+  // kb 子系统（知识库问答，B 线实现）的总闸。本车道只登记键与白名单，接线由后续
+  // 车道做——先有键才能让 /features 稳定暴露 false，客户端不至于静默少键。
+  kbEnabled: z.boolean().default(false),
+
   // #539 逐会话无痕：总开关默认关，保持旧用户行为；子代理选择器默认开，但总开关
   // 未开时不生效。手动名单是精确的 session id 匹配。
   sessionGateEnabled: z.boolean().default(false),
@@ -1120,7 +1186,11 @@ const LIGHT_MODE_OFF = [
   // M.O. 自动沉淀：同样挂在 session/event 热路径上，而且解压会话日志是同步 I/O。
   // 轻量档的取向（小模型 / 小上下文 / 少常驻路径）与它直接冲突，预设里关掉；
   // 用户显式勾选仍然赢（合并顺序同上面几条）。
-  "actionNudgeEnabled"
+  "actionNudgeEnabled",
+  // 日记本：一次要调模型写一整段散文，且挂 session/event 热路径做跨天判定。
+  // 与低资源档（小模型 / 小上下文 / 少常驻路径）直接冲突，预设里关掉；
+  // 用户显式勾选仍然赢（合并顺序同上面几条）。
+  "diaryEnabled"
 ];
 
 /**

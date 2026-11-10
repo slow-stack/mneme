@@ -34,7 +34,9 @@ function parseList(raw) {
 // persona 对象的字段白名单：写入时只挑这些键，未知字段丢弃（设计稿①：字段从简，
 // beta 收到真实反馈再加；provenance 是 v1.5 协作式人格的预留位，v1 不写管道）。
 // 读侧损坏即回空对象——同一容错口径照 parseList（坏值不抛错、面板显示为空可重写）。
-const PERSONA_FIELDS = ["name", "personality", "replyStyle", "enabled", "provenance"];
+// scenario / mesExample（#606）：对标 Character Card V2 的同名字段，是「人格卡能装
+// 下完整角色」所需的最小补充。两者都可选、都不写时渲染零输出（老用户逐字节不变）。
+const PERSONA_FIELDS = ["name", "personality", "replyStyle", "scenario", "mesExample", "enabled", "provenance"];
 
 function parsePersona(raw) {
   try {
@@ -54,14 +56,20 @@ function parsePersona(raw) {
 // 兼容层：v1 存的是单对象（有 PERSONA_FIELDS 键、无 default/byAgent 键），读侧
 // 判形状——单对象原样落 default 位，旧数据零迁移。byAgent 的键是 agent 身份
 // id（注入时按会话身份寻址，取不到落 default）。default 卡不可删（兜底位）。
+//
+// 绑会话（v1.3，#606）：加第三维 bySession: { <sessionId>: <卡> }。为什么需要它——
+// byAgent 的键来自 session.header.agentPreset，而 DS Bot 这类宿主把它写成常量
+// （所有 bot 会话都是 "standard"，实测 43/50），按 bot 名字建卡永远不命中。会话 id
+// 才是那个「一个 bot 一张卡」真正能分开的键。bySession 同样是纯加法：没有这个键
+// 的老数据读成 {}，注入文本逐字节不变。
 function parsePersonaStore(raw) {
   try {
     const value = JSON.parse(raw);
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      return { default: {}, byAgent: {} };
+      return { default: {}, byAgent: {}, bySession: {} };
     }
-    // 新形：含 default 或 byAgent 键 → 按多卡解析
-    if ("default" in value || "byAgent" in value) {
+    // 新形：含 default / byAgent / bySession 任一键 → 按多卡解析
+    if ("default" in value || "byAgent" in value || "bySession" in value) {
       const byAgent = {};
       if (value.byAgent && typeof value.byAgent === "object" && !Array.isArray(value.byAgent)) {
         for (const [agentId, card] of Object.entries(value.byAgent)) {
@@ -69,24 +77,38 @@ function parsePersonaStore(raw) {
           if (Object.keys(parsed).length) byAgent[String(agentId)] = parsed;
         }
       }
-      return { default: parsePersona(JSON.stringify(value.default ?? {})), byAgent };
+      const bySession = {};
+      if (value.bySession && typeof value.bySession === "object" && !Array.isArray(value.bySession)) {
+        for (const [sessionId, card] of Object.entries(value.bySession)) {
+          const parsed = parsePersona(JSON.stringify(card ?? {}));
+          if (Object.keys(parsed).length) bySession[String(sessionId)] = parsed;
+        }
+      }
+      return { default: parsePersona(JSON.stringify(value.default ?? {})), byAgent, bySession };
     }
     // 旧形：v1 单对象 → 整体作 default（字段白名单在 parsePersona 内裁）
-    return { default: parsePersona(raw), byAgent: {} };
+    return { default: parsePersona(raw), byAgent: {}, bySession: {} };
   } catch {
-    return { default: {}, byAgent: {} };
+    return { default: {}, byAgent: {}, bySession: {} };
   }
 }
 
 function serializePersonaStore(store) {
   const out = {
     default: parsePersona(JSON.stringify(store?.default ?? {})),
-    byAgent: {}
+    byAgent: {},
+    bySession: {}
   };
   if (store?.byAgent && typeof store.byAgent === "object") {
     for (const [agentId, card] of Object.entries(store.byAgent)) {
       const parsed = parsePersona(JSON.stringify(card ?? {}));
       if (Object.keys(parsed).length) out.byAgent[String(agentId)] = parsed;
+    }
+  }
+  if (store?.bySession && typeof store.bySession === "object") {
+    for (const [sessionId, card] of Object.entries(store.bySession)) {
+      const parsed = parsePersona(JSON.stringify(card ?? {}));
+      if (Object.keys(parsed).length) out.bySession[String(sessionId)] = parsed;
     }
   }
   return JSON.stringify(out);
@@ -137,6 +159,10 @@ const FEATURE_FLAG_BOOLEANS = [
   // Issue #230：document 型记忆——agent 产长文档的指针行（注册校验/摘要+
   // doc_path 落库/C2 去重/supersede 记账；全文归 agent；默认关，lightMode 强制关）。
   "documentMemoryEnabled",
+  // 日记本：跨天惰性判定 + 启动补写，正文落 <memoryDir>/diaries/<项目键>/。
+  // 默认关，进 LIGHT_MODE_OFF（要调模型，与低资源档互斥）。与 documentMemoryEnabled
+  // 成对但不相依：关掉文档记忆只影响检索，正文照样写。
+  "diaryEnabled",
   "codingRetrospect",
   "autoDream",
   // Issue #292：autoDream 连续失败退避（默认关）。基数是 dreamMinIntervalMinutes，
@@ -159,6 +185,11 @@ const FEATURE_FLAG_BOOLEANS = [
   "reflectionFailureTracking",
   "bm25SearchEnabled",
   "conflictFreezeEnabled",
+  // Issue #603 第 4 层：自动裁决档（默认关）。相似度极高的同 scope 重复对直接
+  // 保留新条、归档旧条，不进人工队列；模糊地带照旧留给人。会归档记忆，所以必须
+  // 显式打开，面板可启停。阈值见 FEATURE_FLAG_NUMBER_RANGES 的
+  // conflictAutoResolveMinSimilarity。
+  "conflictAutoResolveEnabled",
   "trustEpistemicWeighting",
   // Plan #2: attach per-source {keyword, vector, bm25, final} signals to each
   // search result for transparency/debugging. Default off, purely decorative.
@@ -255,7 +286,14 @@ const FEATURE_FLAG_BOOLEANS = [
   // #539：逐会话无痕默认关闭；子代理开关受总开关约束。手动 session id 名单留在配置，
   // 不进入只支持标量的 feature_flags 白名单。
   "sessionGateEnabled",
-  "sessionGateSubagents"
+  "sessionGateSubagents",
+  // 2026-11-08 kb-qoder parity（契约 §3.1）：chorography 面板闭环的两个授权闸 +
+  // kb 子系统总闸。三条都与 config.js schema 成对出现，计数锁 test/api.test.js 钉住。
+  // 不进 LIGHT_MODE_OFF —— 它们是「谁按下了按钮」而不是「每轮付多少」，理由写在
+  // config.js 那三个键的注释里。kbEnabled 本车道只登记、不接线（B 线做子系统）。
+  "chorographyAutoRefresh",
+  "chorographyT1FromPanel",
+  "kbEnabled"
 ];
 // 整数开关的闭区间，与 config.js 里 z.natural().min().max() 对齐。
 const FEATURE_FLAG_INT_RANGES = {
@@ -280,6 +318,9 @@ const FEATURE_FLAG_INT_RANGES = {
   summarizePeakMaxDeferMinutes: [0, 1440],
   // Issue #239 第 4 项镜像到巩固：同一口径（分钟，0 = 不设上限）。
   dreamPeakMaxDeferMinutes: [0, 1440],
+  // v0.13 日记定时写：每隔 N 分钟唤醒一次跨天判定（0 = 关，只在 turn/end 与
+  // 启动时判）。上限一天——判定单位是天，更长的间隔没有意义。
+  diaryWriteEveryMinutes: [0, 1440],
   // Issue #125：hybrid 候选量上限（0 = 复用 dreamMaxSnapshotSize）。
   dreamCandidateMax: [0, 5000],
   // #135 成本审计派生：单轮 merge 决策上限（merge 是唯一回吐正文的动作，默认 40
@@ -319,7 +360,10 @@ const FEATURE_FLAG_NUMBER_RANGES = {
   // Issue #125：hybrid 判"高相似"的阈值。
   dreamCandidateMinSim: [0.5, 0.99],
   // Issue #24 块2：单次有效触达的边权抬升幅度（与 config.js 的闭区间对齐）。
-  graphWeightDelta: [0, 1]
+  graphWeightDelta: [0, 1],
+  // Issue #603 第 4 层：自动裁决的相似度门槛。下界 0.85 与冲突检测阈值同源——
+  // 低于它就不是「重复」而是「相似」，不该自动归档任何一条。
+  conflictAutoResolveMinSimilarity: [0.85, 1]
 };
 // 自由字符串开关（与 config.js 的 z.string() 同名同型）：trim 后 ≤200 字符，
 // 空串合法（= 跟随主对话模型/默认路径，面板显示 placeholder）。
@@ -534,10 +578,10 @@ export function createSettings(db) {
       return parsePersonaStore(getSetting("persona") ?? "{}");
     },
     setPersona(input) {
-      // 双形兼容：单对象形 = 只更新 default、byAgent 保留（旧面板/旧调用方合并语义）；
-      // 多卡形 = 全量替换。坏体（非对象）在此不落库不抛错，保值由调用方守卫。
+      // 双形兼容：单对象形 = 只更新 default、byAgent/bySession 保留（旧面板/旧调用方
+      // 合并语义）；多卡形 = 全量替换。坏体（非对象）在此不落库不抛错，保值由调用方守卫。
       if (typeof input !== "object" || input === null || Array.isArray(input)) return;
-      if ("default" in input || "byAgent" in input) {
+      if ("default" in input || "byAgent" in input || "bySession" in input) {
         setSetting("persona", serializePersonaStore(input));
         return;
       }
@@ -569,6 +613,38 @@ export function createSettings(db) {
       const store = parsePersonaStore(getSetting("persona") ?? "{}");
       if (!(id in store.byAgent)) return false;
       delete store.byAgent[id];
+      setSetting("persona", serializePersonaStore(store));
+      return true;
+    },
+
+    /**
+     * 绑会话卡（#606）：按 sessionId 存/删/列。形状与 setPersonaFor 一族逐一对应，
+     * 只是换了一个维度——为什么需要第二维见 parsePersonaStore 的注释。
+     * sessionId 为空或 "default" 拒绝（与 byAgent 同一条纪律：兜底位不可被顶替）。
+     */
+    setPersonaForSession(sessionId, card) {
+      const id = typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : "";
+      if (!id || id === "default") return false;
+      const store = parsePersonaStore(getSetting("persona") ?? "{}");
+      const clean = parsePersona(JSON.stringify(
+        typeof card === "object" && card !== null && !Array.isArray(card) ? card : {}
+      ));
+      if (Object.keys(clean).length) store.bySession[id] = clean;
+      else delete store.bySession[id];
+      setSetting("persona", serializePersonaStore(store));
+      return true;
+    },
+    /** bySession 键列表（面板「按会话建的卡」用，default 不在其中）。 */
+    listPersonaSessions() {
+      return Object.keys(parsePersonaStore(getSetting("persona") ?? "{}").bySession);
+    },
+    /** 删一张 bySession 卡；不存在返回 false。 */
+    removePersonaForSession(sessionId) {
+      const id = typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : "";
+      if (!id || id === "default") return false;
+      const store = parsePersonaStore(getSetting("persona") ?? "{}");
+      if (!(id in store.bySession)) return false;
+      delete store.bySession[id];
       setSetting("persona", serializePersonaStore(store));
       return true;
     },

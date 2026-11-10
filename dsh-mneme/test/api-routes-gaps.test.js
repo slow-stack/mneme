@@ -271,6 +271,52 @@ test("external-api PUT applies valid config and echoes it", async () => {
   assert.ok(typeof cfg.token === "string");
 });
 
+// 名字过滤必须下推到 store：面板的「搜索实体」此前是自己取回 limit 条再本地
+// 过滤，排在 limit 之外的实体永远搜不到。q 走 SQL LIKE，% 与 _ 要转义，否则
+// 用户输入一个 "%" 就把整库匹配出来。
+test("entities q filters by name in the store, not after the limit", async () => {
+  const { routes, service } = setup();
+  service.createEntity({ name: "SQLite", type: "technology" });
+  service.createEntity({ name: "记忆", type: "concept" });
+  service.createEntity({ name: "postgres", type: "technology" });
+  const route = handler(routes, "/api/dsh-mneme/entities");
+
+  let res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/entities?q=lite"), res);
+  let data = JSON.parse(res.body);
+  assert.deepEqual(data.entities.map((e) => e.name), ["SQLite"], "substring match");
+
+  // q 命中排在 limit 之外的那一条：这正是本地过滤拿不到的情形
+  res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/entities?limit=1&q=postgres"), res);
+  data = JSON.parse(res.body);
+  assert.deepEqual(data.entities.map((e) => e.name), ["postgres"]);
+
+  // 通配符必须被转义，不能变成「匹配一切」
+  res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/entities?q=%25"), res);
+  assert.equal(JSON.parse(res.body).entities.length, 0, "% must not match everything");
+});
+
+// 手机面板只需要 enabled/port/host 来渲染表单，但默认的 GET 会顺手 materialize
+// 一个 Bearer 写进 user_settings —— 纯读变成写路径。?token=omit 让它只读。
+test("external-api GET with token=omit neither materializes nor returns a token", async () => {
+  const { routes, settings } = setup();
+  const route = handler(routes, "/api/dsh-mneme/external-api");
+
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/external-api?token=omit"), res);
+  assert.equal(res.statusCode, 200);
+  const cfg = JSON.parse(res.body).config;
+  assert.equal(cfg.token, "", "no plaintext token on a read-only call");
+  assert.equal(settings.getExternalApi()?.token ?? "", "", "nothing persisted either");
+
+  // 不带参数的老客户端行为不变：仍然发 token 并落库
+  const res2 = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/external-api"), res2);
+  assert.ok(JSON.parse(res2.body).config.token.length >= 16);
+});
+
 // ---------------------------------------------------------------------------
 // /api/dsh-mneme/create（#386 第 5 条：面板手动新增记忆）
 // ---------------------------------------------------------------------------
