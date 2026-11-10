@@ -27,10 +27,13 @@ test("invalidPeakSpecs: 只报非空且解析失败的键；空串/未配置/合
   // 合法串：不报
   assert.deepEqual(invalidPeakSpecs({ summarizePeakHours: "09:00-18:00" }), {});
   assert.deepEqual(invalidPeakSpecs({ dreamPeakHours: "mon-fri 08:00-12:00,14:00-18:00" }), {});
-  // 全角等价写法：本批基于未含 #621 归一的主线，parsePeakSpec 现在确实解析失败，
-  // 所以「报」是当前真话——helper 只转述解析器，绝不自带第二套对错标准。PR #621
-  // 落地后解析成功，本断言随之翻转为不报（两批共存无需联动改动，这正是转述的意义）。
-  assert.deepEqual(invalidPeakSpecs({ summarizePeakHours: "０９:００-１８:００" }), { summarizePeakHours: "０９:００-１８:００" });
+  // 全角等价写法：本批原基于未含 #621 归一的主线，当时 parsePeakSpec 解析失败、
+  // 「报」是真话。**#621 已并入 main**（全角逗号/冒号/数字归一），解析现在成功，
+  // 本断言随之翻转为不报——这正是 helper「只转述解析器、不自带第二套对错标准」
+  // 的意义：判据翻转由解析器驱动，本文件不需要改任何逻辑。
+  // ⚠️ 原注释里「两批共存无需联动改动」这句是错的：判据确实会翻，只是翻的位置
+  // 在这里而不在 src/。合并 #621 后必须同步翻这一行，否则就是假红。
+  assert.deepEqual(invalidPeakSpecs({ summarizePeakHours: "０９:００-１８:００" }), {});
   // 非法串：报，且带原串（告警要对得上配置文件里那一行）
   assert.deepEqual(invalidPeakSpecs({ summarizePeakHours: "24:00-08:00" }), { summarizePeakHours: "24:00-08:00" });
   assert.deepEqual(invalidPeakSpecs({ dreamPeakHours: "09.00-18.00" }), { dreamPeakHours: "09.00-18.00" });
