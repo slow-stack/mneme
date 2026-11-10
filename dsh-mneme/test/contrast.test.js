@@ -308,6 +308,58 @@ test("图形色（热度/打卡/连线）在浅深两主题下都达到 3:1", ()
   assert.deepEqual(problems, [], "图形色对比度不足：\n" + problems.join("\n"));
 });
 
+// 色槽的归属是全局的：--mneme-chart-* 只服侍 donut（弧 + 图例点），--mneme-heat-* 只服侍
+// 热力格，--mneme-sink-* 只服侍沉淀图那两根柱。三种回退都在这条锁上：
+//   ① 沉淀图借 donut 的 chart-3 / chart-2——同一页里一根琥珀柱在 donut 是「实体抽取」、
+//      在沉淀图是「新增」，用户会把两个无关的量读成同一类；
+//   ② 上一版把第 6 个色槽内联成了三份（令牌 + 弧 + 图例点），改一处漏两处，死令牌还
+//      没人发现——所以要求每一格都真的由令牌供给，不许内联字面量；
+//   ③ 令牌之间互相继承（`--mneme-sink-added:var(--mneme-chart-3)`）——看着解耦了，实际
+//      一动 donut 的色盘就跟着改，语义层里出现别的图的 var() 一律拦。
+// 它不锁色值：调色是设计决定，该靠截图给人看。与上面 GRAPHICS 的分工是「值 vs 名字」——
+// 那条按值算 3:1、不看名字，所以换语义名也放宽不了对比度，新令牌照样被它咬住。
+test("色槽各有其主：只被自己的图引用，且每格都由令牌供给", () => {
+  const FAMILIES = [
+    { name: "chart", re: /var\(\s*--mneme-chart-/, owns: /^\.mneme-(seg|dot)--[1-6]$/ },
+    { name: "heat", re: /var\(\s*--mneme-heat-/, owns: /^\.mneme-heatcell\.l[1-4]$/ },
+    { name: "sink", re: /var\(\s*--mneme-sink-/, owns: /^\.mneme-sinkbar--(added|merged)$/ }
+  ];
+  const problems = [];
+  // 语义层自己的声明也要查：`--mneme-sink-added:var(--mneme-chart-3)` 这种「继承式解耦」
+  // 看着分了家，实际上 donut 一动色盘它就跟着变。注意语义层那条规则是字符串拼出来的，
+  // **不在 rules 里**（rules 只收能整条匹配单个字面量的规则），所以必须单独扫 layer.body
+  // ——第一版写成了 `if (r.sel === layer.sel)`，那条分支永远进不去，等于没锁。
+  for (const f of FAMILIES) {
+    if (f.re.test(layer.body)) problems.push(`语义层里出现 ${f.name} 色槽的 var() 引用：色值要写成独立一份，不能继承别的图`);
+  }
+  for (const r of rules) {
+    for (const f of FAMILIES) {
+      if (f.re.test(r.body) && !f.owns.test(r.sel)) problems.push(`${r.sel} 借用了 ${f.name} 的色槽`);
+    }
+  }
+  const bySel = new Map(rules.map((r) => [r.sel, r]));
+  for (let i = 1; i <= 6; i++) {
+    for (const kind of ["seg", "dot"]) {
+      const sel = `.mneme-${kind}--${i}`;
+      const r = bySel.get(sel);
+      if (!r) { problems.push(`${sel} 规则没了`); continue; }
+      if (!r.body.includes(`var(--mneme-chart-${i})`)) problems.push(`${sel} 没按 --mneme-chart-${i} 取色（内联颜色会变成第二份源）`);
+    }
+  }
+  for (const [sel, tok] of [
+    ...Array.from({ length: 4 }, (_, i) => [`.mneme-heatcell.l${i + 1}`, null]),
+    [".mneme-sinkbar--added", "--mneme-sink-added"],
+    [".mneme-sinkbar--merged", "--mneme-sink-merged"]
+  ]) {
+    const r = bySel.get(sel);
+    if (!r) { problems.push(`${sel} 规则没了`); continue; }
+    if (tok ? !r.body.includes(`var(${tok})`) : !/var\(\s*--mneme-heat-/.test(r.body)) {
+      problems.push(`${sel} 的填充色不是从语义层的令牌取的`);
+    }
+  }
+  assert.deepEqual(problems, [], "色槽归属或取色来源不对：\n" + problems.join("\n"));
+});
+
 // 虚线关系边曾经在 .mneme-gedge-dashed 上再叠一层 opacity:.7，把已经只有 50% 的
 // 描边压到浅色 2.28（低于图形 3:1）。上面那条图形锁只读单条规则自己的 stroke，
 // 看不到「同一条边同时命中两条规则、其中一条在降透明度」这种叠加，所以单独锁一层：

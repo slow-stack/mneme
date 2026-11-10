@@ -2566,8 +2566,16 @@ window.__ModuleLoader__.load({
         "--mneme-chart-3:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 60%,var(--dsw-alias-label-primary));" +
         "--mneme-chart-4:color-mix(in srgb,var(--dsw-alias-state-error-primary) 65%,var(--dsw-alias-label-primary));" +
         "--mneme-chart-5:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 45%,var(--dsw-alias-state-business-primary));" +
-        // chart-6 与 graphic-dim 同款但内联写：对比度解析器不递归 --mneme-* 变量。
+        // 第 6 槽是半透明灰（「其他」那一类）。它曾同时以「令牌 + 弧 + 图例点」三份
+        // 内联副本存在过，改一处漏两处；现在弧与点都直接 var 引用这一份。
         "--mneme-chart-6:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent);" +
+        // 沉淀图（8 周「进来 vs 稳住」）与 donut（token 都去哪了）是两套分类，原先共用
+        // chart-3 / chart-2：同一页里那根琥珀柱在 donut 是「实体抽取」、在沉淀图是「新增」，
+        // 同色两义。这里给沉淀图独立语义名，取值与今天的 chart-3 / chart-2 逐字相同
+        // （只换语义，视觉零变化），但**刻意不写 var(--mneme-chart-N)**——那是继承，
+        // 以后调 donut 的六色盘会顺手改掉「库在膨胀还是稳住了」这张结论图的颜色。
+        "--mneme-sink-added:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 60%,var(--dsw-alias-label-primary));" +
+        "--mneme-sink-merged:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 55%,var(--dsw-alias-label-primary));" +
         // 热力档位用 label 补余而非 transparent：transparent 混色在浅色主题下
         // 低档位对白底不足 3:1；label 补余两套主题各档都过线且单调。
         "--mneme-heat-1:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
@@ -3167,7 +3175,7 @@ window.__ModuleLoader__.load({
       ".mneme-seg--3{stroke:var(--mneme-chart-3)}",
       ".mneme-seg--4{stroke:var(--mneme-chart-4)}",
       ".mneme-seg--5{stroke:var(--mneme-chart-5)}",
-      ".mneme-seg--6{stroke:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent)}",
+      ".mneme-seg--6{stroke:var(--mneme-chart-6)}",
       ".mneme-legend{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}",
       ".mneme-legendrow{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;cursor:default;font-size:12.5px;line-height:18px;color:var(--dsw-alias-label-primary)}",
       ".mneme-legendrow:hover,.mneme-legendrow.focused{background:var(--dsw-alias-interactive-bg-hover)}",
@@ -3178,7 +3186,7 @@ window.__ModuleLoader__.load({
       ".mneme-dot--3{background:var(--mneme-chart-3)}",
       ".mneme-dot--4{background:var(--mneme-chart-4)}",
       ".mneme-dot--5{background:var(--mneme-chart-5)}",
-      ".mneme-dot--6{background:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent)}",
+      ".mneme-dot--6{background:var(--mneme-chart-6)}",
       ".mneme-legendname{color:var(--dsw-alias-label-primary);white-space:nowrap}",
       ".mneme-legendsub{color:var(--mneme-fg-dim);font-size:11px}",
       ".mneme-legendval{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary);white-space:nowrap}",
@@ -3220,8 +3228,8 @@ window.__ModuleLoader__.load({
       ".mneme-sinkchart{display:flex;align-items:flex-end;gap:var(--mneme-space-4);height:96px;margin-top:var(--mneme-space-12)}",
       ".mneme-sinkcol{flex:1;min-width:0;display:flex;align-items:flex-end;gap:var(--mneme-space-2);height:100%}",
       ".mneme-sinkbar{flex:1;min-width:0;border-radius:var(--mneme-radius-4) var(--mneme-radius-4) 0 0;min-height:1px}",
-      ".mneme-sinkbar--added{background:var(--mneme-chart-3)}",
-      ".mneme-sinkbar--merged{background:var(--mneme-chart-2)}",
+      ".mneme-sinkbar--added{background:var(--mneme-sink-added)}",
+      ".mneme-sinkbar--merged{background:var(--mneme-sink-merged)}",
       ".mneme-sinklabels{display:flex;gap:var(--mneme-space-4);margin-top:var(--mneme-space-4);font-size:9.5px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums}",
       ".mneme-sinklabels span{flex:1;min-width:0;text-align:center;white-space:nowrap}",
       ".mneme-sinklegend{display:flex;flex-wrap:wrap;align-items:center;gap:var(--mneme-space-4) var(--mneme-space-10);margin-top:var(--mneme-space-8);font-size:10.5px;color:var(--mneme-fg-dim)}",

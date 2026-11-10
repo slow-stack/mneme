@@ -1220,8 +1220,8 @@ test("consolidation chart: own 56-day window, null-vs-empty split, and a narrow-
     "two columns must collapse to one in a narrow container"
   );
   // 两根柱的语义色必须走语义层，不能直接拿宿主 label token 当填充色（#178）。
-  assert.ok(clientSource.includes(".mneme-sinkbar--added{background:var(--mneme-chart-3)}"));
-  assert.ok(clientSource.includes(".mneme-sinkbar--merged{background:var(--mneme-chart-2)}"));
+  assert.ok(clientSource.includes(".mneme-sinkbar--added{background:var(--mneme-sink-added)}"));
+  assert.ok(clientSource.includes(".mneme-sinkbar--merged{background:var(--mneme-sink-merged)}"));
 });
 
 // 巩固/睡眠模型路由 UI：下拉数据来自宿主侧已注册适配器（/llm-providers，

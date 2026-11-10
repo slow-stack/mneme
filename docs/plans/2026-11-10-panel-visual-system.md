@@ -300,13 +300,82 @@ M6d 是刻意留的：它证明第 6 条源级守卫不是摆设——去掉它�
 `C:/Users/石晴/AppData/Local/Temp/kb-preview/cmp-chart-light.png`（上=改前 / 中=改后 / 下=空态）、
 `cmp-chart-dark.png`。改前实测轴就是 `1M / 1M / 1M / 0M`，改后 `100K / 75K / 50K / 25K`。
 
-**看见但没动的两处**（都不是 bug，且都要改视觉）：
+**看见但没动的**（都不是 bug，且都要改视觉）：
 
-- **同页撞色**：沉淀图用 `--mneme-chart-3`（amber）= 新增、`--mneme-chart-2`（green）= 巩固，
-  而同一页 donut 里 chart-3 = 实体抽取、chart-2 = 会话蒸馏——**同色两义**。建议给沉淀图两个独立语义
-  令牌（`--mneme-sink-added` / `--mneme-sink-merged`），等桉桉点头；
+- **同页撞色**（沉淀图借 donut 的色槽）→ 当天夜里就做了，见 §5.G；
 - **donut 只有 6 个色槽**：第 7 种 operation 起会全部落灰。现在服务端正好 6 个（`TOKEN_OPS`），
   够用；真加第 7 种再改成「前 6 + 其他」。
+
+### 5.G 落地记录（色槽各有其主，2026-11-11 已实现）
+
+§5.F 记下的那处同页撞色，夜里接着做了（桉桉 m06131「你做吧你做吧，我去睡觉了」）。
+动手时顺手扫了一圈同页的色槽，发现同一类问题还有第二处，于是一起收了。
+
+**一、沉淀图不再借 donut 的色槽**
+
+- 语义层新增 `--mneme-sink-added` / `--mneme-sink-merged`，取值与 `--mneme-chart-3` /
+  `--mneme-chart-2` **逐字相同**——只换语义，视觉零变化。刻意**不写成 `var(--mneme-chart-3)`**：
+  那仍是继承，以后调 donut 的六色盘会顺手改掉沉淀图的颜色，而这两张图回答的是不同问题
+  （「token 都去哪了」 vs 「库在膨胀还是稳住了」）。
+- `.mneme-sinkbar--added/merged` 改指新令牌；donut 的 `mneme-seg--N` / `mneme-dot--N` 一个不动。
+- `test/client.test.js` 那两条 #178 断言改指 `sink-*`：原意是「不许直接拿宿主 label token
+  当填充色」，换名后仍成立。
+
+**二、第 6 个色槽收回单一来源**
+
+- 改之前 `--mneme-chart-6` 是**死令牌**：`.mneme-seg--6` 与 `.mneme-dot--6` 各自内联了一份
+  同样的 `color-mix(...50%,transparent)`——三份值一样，却互为独立源，改一处漏两处。
+  现在弧与点都 `var(--mneme-chart-6)`。
+- 定义旁那句「对比度解析器不递归 `--mneme-*` 变量」是过时的：`test/contrast.test.js` 的
+  `resolveValue` 会从 `TOKENS` 里连 `--mneme-*` 一起折，内联没有技术理由。
+
+**三、锁的形状：从「一对」改成「三家族」**
+
+新锁不是只为沉淀图写的，而是把「色槽各有其主」当作一条全局约束：
+
+| 家族 | 只服侍 |
+|---|---|
+| `--mneme-chart-*` | `.mneme-seg--N` / `.mneme-dot--N`（donut 的弧与图例点） |
+| `--mneme-heat-*` | `.mneme-heatcell.l1..l4` |
+| `--mneme-sink-*` | `.mneme-sinkbar--added/merged` |
+
+它同时拦三种回退：① 别的图借道这些色槽（`.mneme-sinkbar--added` 用 `chart-3`）；
+② 每格色内联成字面量、令牌沦为死码（上一版 chart-6 就是这样）；③ 令牌之间互相继承
+（`--mneme-sink-added:var(--mneme-chart-3)`——看着解耦，实际一动 donut 色盘就跟着变）。
+原有 GRAPHICS 3:1 锁**照旧咬新令牌**——它按**值**解析、不看名字，所以「换个语义名顺手
+放宽对比度」这条路被堵死。
+
+**变异自证**（五条，前四条该红、第五条**该绿**）：
+
+| 变异 | 结果 |
+|---|---|
+| `.mneme-sinkbar--added` 改回 `var(--mneme-chart-3)` | 红（借用 + 取色来源两条） |
+| `--mneme-sink-added: var(--mneme-chart-3)`（继承式解耦） | 红（语义层里出现 chart 色槽） |
+| `--mneme-chart-2: var(--mneme-sink-merged)`（反向继承） | 红（语义层里出现 sink 色槽） |
+| `.mneme-dot--6` 退回内联 `color-mix` | 红（没按 `--mneme-chart-6` 取色） |
+| 两个新令牌的混色比例各调 1%（60→61、55→54） | **绿** |
+
+最后一条是刻意的：**这条锁守归属，不守色值**。谁想把沉淀图调成另一种颜色，那是设计决定、
+该靠截图给人看，不该被测试钉死；锁只拦上面那三种回退。
+
+**踩到的坑（写下来免得重犯）**
+
+第一版把「语义层别借色槽」写成 `if (r.sel === layer.sel)`，这条分支**永远进不去**：语义层
+那条规则是多个字符串拼出来的，`rules` 只收能整条匹配单个字面量的规则，它根本不在里面。
+变异 M2 当场暴露（该红却绿），改成直接扫 `layer.body` 才咬得住。**没有变异自证，这条锁会以
+「全绿」的形式一直假存在。**
+
+另有一个环境坑：`node -e "..." "$1" "$2"` 传以 `--` 开头的字符串会被当成 node 选项
+（`bad option: --mneme-...`），替换根本没发生、测试假绿。变异脚本改走环境变量才可靠。
+
+**视觉复核**（Edge headless，同一 mock）
+
+- 沉淀区裁图 743×205：深浅两主题像素差**都是 0.00%**；浏览器算出的 computed style 逐字相同
+  （浅色 `color(srgb 0.543529 0.341961 0.129412)`，改前改后一致）。
+- donut 区裁图 152×152：像素差**都是 0.00%**；`.mneme-dot--6` 的 computed 值改前改后一致
+  （浅色 `color(srgb 0.0588235 0.0666667 0.0823529 / 0.5)`）。
+- 图：`C:/Users/石晴/AppData/Local/Temp/kb-preview/cmp-sink-light.png` / `cmp-sink-dark.png`
+  （上=改前，下=改后）、`cmp-donut-light.png` / `cmp-donut-dark.png`。
 
 ---
 
@@ -366,6 +435,13 @@ P1b 已达成（2026-11-10，见 §5.E）：
 - ✅ 三条变异（含两条"令牌拼错"专门用例）按预期红。
 - ✅ 全量 `npm test` **3,269 / 3,268 pass / 1 skip**；`check-sync` ✓（119 个文件）。
 - ✅ 深浅两主题全高截图对比，变化像素 4.15% / 5.78% / 6.38%，**零颜色/字号/结构变化**。
+
+图表与色槽两片已达成（2026-11-10 夜 – 11-11 凌晨，见 §5.F / §5.G）：
+
+- ✅ 7 天柱状图三处绘制 bug 修复，新增 `panel-chart-scale.test.js`（6 例），四条变异按预期红。
+- ✅ 色槽各有其主：三家族锁 1 例（`contrast.test.js` 共 6 例），五条变异（四条红、一条刻意绿）。
+- ✅ `chart-6` 从三份内联收回单一令牌；沉淀图与 donut 视觉像素差 **0.00%**（深浅两主题）。
+- ✅ 全量 `npm test` **3,276 / 3,275 pass / 1 skip**；`check-sync` ✓（119 个文件）。
 
 仍在 P1c–P1d（每片做完再定下一片）：
 
