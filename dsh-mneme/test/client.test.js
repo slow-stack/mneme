@@ -255,6 +255,76 @@ test("choro page wires the two feature toggles, the T1 job and the stale marker"
   );
 });
 
+// 证据复核（Grounded Claims）：用 git diff 判「哪条结论被改动碰到了」。
+// 这条锁的是三件在屏幕上看不见但一错就骗人的事：
+//  · 三种结局（干净 / 基线找不到 / 比对失败）必须走三条分支，不能并成一句；
+//  · 四种命中原因各自有文案，尤其 touched 与 shifted 不许混成一个「失效」；
+//  · 「没算」不许长得像「没事」——#607 的病根就是把没做成说成做成了。
+test("claim evidence check reports three distinct outcomes instead of one reassuring blob", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(fn.includes("/api/dsh-mneme/choro/claims?repo="), "the check must read the /choro/claims route");
+  // 手动触发，不进 useEffect：每次切页都跑 git diff 会把浏览拖慢，而且这个面板
+  // 第一次就自动跑的话，「没点过」和「点过没事」在屏幕上就长一个样了。
+  assert.ok(
+    !/useEffect\(\(\) => \{[^}]*checkDrift/.test(fn),
+    "the check must not run automatically on mount — an unasked check cannot be told apart from an unrun one"
+  );
+  for (const key of ["wiki.drift.clean", "wiki.drift.anchorStale", "wiki.drift.blocked", "wiki.drift.summary"]) {
+    assert.ok(fn.includes(`t("${key}")`), `each outcome needs its own sentence, missing ${key}`);
+  }
+  for (const key of ["wiki.drift.touched", "wiki.drift.shifted", "wiki.drift.deleted", "wiki.drift.unverifiable"]) {
+    assert.ok(fn.includes(`t("${key}")`), `each hit reason needs its own sentence, missing ${key}`);
+  }
+  // touched 与 shifted 分家：混成「失效」会让只是行号挪了的结论也被喊去重写。
+  assert.ok(
+    fn.includes('c.reason === "touched"') && fn.includes('c.reason === "shifted"'),
+    "touched and shifted must stay two verdicts"
+  );
+  // 正文有语义段、库里零条结论（T1 落盘非原子留下的残局）要单独说出来，
+  // 否则这页会永远显示成干净。
+  assert.ok(fn.includes('t("wiki.drift.inconsistent")'), "a page with prose but no claims must say so");
+  // 每页的条数挂在树里，用户不用先点开才知道哪页被改动碰到。
+  assert.ok(fn.includes("mneme-wikidriftn"), "the tree must carry a per-page count badge");
+
+  // 文案本身也要能区分「没算」与「没事」：干净那句必须提到 HEAD/基线，
+  // 失败那句必须提到失败——两者措辞相同就等于没区分。
+  const clean = [...clientSource.matchAll(/"wiki\.drift\.clean":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  const blocked = [...clientSource.matchAll(/"wiki\.drift\.blocked":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  assert.equal(clean.length, 2, "wiki.drift.clean must exist in both dictionaries");
+  assert.equal(blocked.length, 2, "wiki.drift.blocked must exist in both dictionaries");
+  for (const line of clean) {
+    assert.ok(/HEAD|基线|baseline/.test(line), "the clean copy must say what it compared against");
+  }
+  for (const line of blocked) {
+    assert.ok(/失败|failed/i.test(line), "the blocked copy must admit the comparison did not happen");
+  }
+  assert.notEqual(clean[0], blocked[0], "the two outcomes must not share copy");
+});
+
+// 自动刷新被主动跳过（仓库里有富化页）。这条锁的是「拒绝不许长得像失败」：
+// 服务端已经把 autoRefreshSkipped 与 autoRefreshError 分成两个字段，面板必须
+// 跟着分——合成一句「刷新失败」就是在报一个没发生过的故障，而真正的后果
+// （语义段还在、快照还是旧的）反而没人说。
+test("auto-refresh skip is shown as a standing reason, not as a failure toast", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(fn.includes("autoRefreshSkipped"), "the panel must read the skip signal");
+  assert.ok(fn.includes("autoRefreshNote"), "the skip reason needs a visible home");
+  assert.ok(
+    !/autoRefreshError[^\n]*autoRefreshSkipped|autoRefreshSkipped[^\n]*autoRefreshError/.test(fn),
+    "skipped and error must not be merged into one branch"
+  );
+  // 提示条不能只在 toast 里：toast 2.5 秒就没了，而「为什么没刷」是一个
+  // 仍然成立的状态（库里还有富化页），用户回头还要能看到。
+  assert.ok(fn.includes("mneme-wikidriftbar") && fn.includes("state.autoRefreshNote"),
+    "the skip note must render as a bar, not a self-clearing toast");
+  const zh = [...clientSource.matchAll(/"wiki\.autoRefresh\.skipped":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  const en = zh.length;
+  assert.equal(en, 2, "wiki.autoRefresh.skipped must exist in both dictionaries");
+  assert.ok(/没.*做|没有做/.test(zh[0]), "the Chinese copy must say it did not happen");
+  assert.ok(!/失败/.test(zh[0]), "the skip copy must not claim a failure");
+  assert.ok(/skipped/i.test(zh[1]), "the English copy must say skipped");
+});
+
 // 知识库页（契约 §3.6）。这条锁的是「路由与就近文案都在」，不是布局：
 //  · 409/503 各有自己的空态，不把裸状态码丢屏幕上；
 //  · disabled 那句必须说清去哪儿开（#607 的教训：只说「未启用」等于没说）；

@@ -257,12 +257,86 @@ test("重跑 T0 覆盖已富化的页：必须先出声（t1Loss 清点 + warnin
   }
 });
 
+// 读不出来 ≠ 没有：清点靠读盘，读失败就先不知道那页有没有语义段。旧实现在 catch 里
+// 直接当「没有」，guard 于是放行，replaceChoroGraph 把读不到的页连同它可能有的语义段
+// 一起退回骨架、claims 清空——一次权限错误就能静默抹掉一整页富化成果。
+// 这条锁的是：读失败必须进 unreadable、必须拒绝刷新、必须在 receipt 里说出来。
+test("collectT1Loss 读页失败：进 unreadable，guard 拒绝刷新，绝不静默放行", () => {
+  const root = makeFixture();
+  const store = createStore(":memory:");
+  try {
+    runChoroT0({ repoRoot: root, store, apply: true, now: FIXED_NOW });
+    const pagePath = join(root, ".chorography", "modules", "src.md");
+    writeFileSync(pagePath,
+      `${readFileSync(pagePath, "utf8")}\n${T1_SECTION_START}\n## 架构\n\na.js 是入口。\n${T1_SECTION_END}\n`,
+      "utf8");
+    // 用「同名目录顶掉文件」制造真实的读失败：existsSync 为真（目录存在），
+    // readFileSync 抛 EISDIR。比 chmod 稳（Windows 上 chmod 不生效），也不依赖权限。
+    rmSync(pagePath, { force: true });
+    mkdirSync(pagePath, { recursive: true });
+
+    const dry = runChoroT0({ repoRoot: root, store, now: FIXED_NOW });
+    assert.ok(Array.isArray(dry.t1Loss.unreadable) && dry.t1Loss.unreadable.length > 0,
+      "读不出来的页必须被点名，不能当成「没有 T1 段」");
+    assert.equal(dry.t1Loss.unreadable[0].reason, "EISDIR", "记下读失败的原因，便于归因");
+    assert.ok(dry.warnings.some((w) => w.includes("读不出来")), "dry-run 也要如实说一声");
+
+    assert.throws(
+      () => runChoroT0({ repoRoot: root, store, apply: true, guardT1Loss: true, now: () => "2026-11-09T00:00:00.000Z" }),
+      (err) => err instanceof ChoroRefusal && err.code === "would-drop-t1" && /读不出来/.test(err.message),
+      "读不出内容时无法证明它没有语义段 → 拒绝刷新，而不是赌一把"
+    );
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
+// guardT1Loss（自动刷新专用）：读侧「顺手」重跑 T0 会在用户只点开一页的时候
+// 替他丢掉语义段与 claims——那是破坏性写盘，不是刷新。这条锁三件事：
+// ① 有 T1 段时 apply 整轮拒绝（would-drop-t1），一个字节都不写、claims 一条不少；
+// ② 拒绝发生在写盘之前，页里 T1 段还在（拒绝不能只拒一半）；
+// ③ 不传 guardT1Loss 的老路径行为不变（手动重建就是用户明确要的那次写）。
+test("guardT1Loss：自动刷新遇到已富化的页就整轮拒绝，不写字节也不清 claims", () => {
+  const root = makeFixture();
+  const store = createStore(":memory:");
+  try {
+    runChoroT0({ repoRoot: root, store, apply: true, now: FIXED_NOW });
+    const pagePath = join(root, ".chorography", "modules", "src.md");
+    writeFileSync(pagePath,
+      `${readFileSync(pagePath, "utf8")}\n${T1_SECTION_START}\n## 架构\n\na.js 是入口。\n${T1_SECTION_END}\n`,
+      "utf8");
+    // 库里也造一条 claim：拒绝必须让它原样躺着。
+    const repoRow = store.choroRepoByRoot(root);
+    const pageRow = store.choroPageBySlug(repoRow.id, "src");
+    store.saveChoroPageClaims(pageRow.id, [{ statement: "a.js 是入口", kind: "architecture", sourcePath: "src/a.js", startLine: 1, endLine: 4, createdAt: FIXED_NOW() }]);
+    const beforeBytes = readFileSync(pagePath, "utf8");
+
+    assert.throws(
+      () => runChoroT0({ repoRoot: root, store, apply: true, guardT1Loss: true, now: () => "2026-11-09T00:00:00.000Z" }),
+      (err) => err instanceof ChoroRefusal && err.code === "would-drop-t1" && /src/.test(err.message),
+      "有富化页时拒绝，且点名是哪一页"
+    );
+    assert.equal(readFileSync(pagePath, "utf8"), beforeBytes, "拒绝发生在写盘之前：页一字节未动");
+    assert.equal(store.db.prepare("SELECT COUNT(*) AS c FROM choro_claims").get().c, 1, "claims 一条不少");
+    assert.notEqual(store.choroPageBySlug(repoRow.id, "src").status, "enriched", "拒绝时不该顺手把页标成富化");
+
+    // 老路径（手动重建）行为不变：它照样退回骨架，只是回执里会说一声。
+    const manual = runChoroT0({ repoRoot: root, store, apply: true, now: () => "2026-11-10T00:00:00.000Z" });
+    assert.deepEqual(manual.t1Loss.pages, [".chorography/modules/src.md"], "手动路径仍按设计丢弃并清点");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
 // CLI 的 --timeout 是「秒」，一路乘 1000 变成 spawn 的 timeoutMs。NaN 混进去不会
 // 报错，只会让墙钟上限静默失效——用户以为设了 60 秒，实际跑到 4 分钟默认值。
 test("CLI 解析：--t1 相关旗标取到值，--timeout 只收正数秒", () => {
   const { flags } = parseArgv([
     "D:/repo", "--t1", "--apply", "--module", "src", "--model", "xdpool/m",
-    "--timeout", "60", "--retry-failed", "--dsh-exe", "D:/Harness.exe", "--json",
+    "--timeout", "60", "--retry-failed", "--dsh-exe", "D:/Harness.exe",
+    "--dsh-cli", "D:/cli.js", "--json",
   ]);
   assert.equal(flags.t1, true);
   assert.equal(flags.apply, true);
@@ -271,6 +345,8 @@ test("CLI 解析：--t1 相关旗标取到值，--timeout 只收正数秒", () =
   assert.equal(flags.timeout, 60, "解析出来就是数字，接线处不再二次转换");
   assert.equal(flags.retryFailed, true);
   assert.equal(flags["dsh-exe"], "D:/Harness.exe");
+  // --dsh-cli 是 issue #578 的人工出口（探测不进 asar 时的唯一办法），必须能取到值
+  assert.equal(flags["dsh-cli"], "D:/cli.js");
   assert.throws(() => parseArgv(["--t1", "--timeout", "abc"]), /正数秒/);
   assert.throws(() => parseArgv(["--t1", "--timeout", "0"]), /正数秒/);
   assert.throws(() => parseArgv(["--t1", "--timeout"]), /需要一个秒数/);

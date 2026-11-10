@@ -610,7 +610,12 @@ CREATE TABLE IF NOT EXISTS choro_pages (
   git_baseline      TEXT,
   template_version  TEXT,
   generated_at      TEXT,
-  human_block_count INTEGER NOT NULL DEFAULT 0
+  human_block_count INTEGER NOT NULL DEFAULT 0,
+  -- 语义段的「对着哪个提交验证的」（openwiki/deepwiki-rs 式的锚点溯源）：只有 T1 写，
+  -- T0 重建整页时随 T1 正文一起归 NULL。全仓 git_baseline 是 T0 的时点，拿它当 claims
+  -- 的比对起点会把「T1 之前就发生、claim 早已算进去」的改动误报成 touched。
+  verified_baseline TEXT,
+  verified_at       TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_pages_module ON choro_pages(module_id);
 
@@ -1292,6 +1297,10 @@ export function createStore(path) {
   // chorography（M2，实现计划 P17）：T1 生成轮的页级失败计数。T0 建的表没有它
   // （M0 只写 skeleton），存量库经 PRAGMA 检查后补列，幂等。
   addColumn("choro_pages", "fail_count", "ALTER TABLE choro_pages ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0");
+  // chorography ①（语义段 provenance）：页级验证基线 + 验证时刻。可空不带 DEFAULT——
+  // 存量行的 NULL 就是事实（那批页富化时还没记这个），不要伪造一个提交号。
+  addColumn("choro_pages", "verified_baseline", "ALTER TABLE choro_pages ADD COLUMN verified_baseline TEXT");
+  addColumn("choro_pages", "verified_at", "ALTER TABLE choro_pages ADD COLUMN verified_at TEXT");
   // chorography 收尾档（P36）：v0.11.0 的 choro_vectors 是空壳表（spec §5 漏了
   // 向量本体列），存量库经 PRAGMA 检查补列。
   addColumn("choro_vectors", "vector", "ALTER TABLE choro_vectors ADD COLUMN vector TEXT");
@@ -5126,7 +5135,8 @@ export function createStore(path) {
   function choroPageBySlug(repoId, slug) {
     return db.prepare(
       `SELECT p.id, p.module_id, p.rel_path, p.status, p.git_baseline, p.template_version,
-              p.generated_at, p.human_block_count, p.fail_count, m.slug
+              p.generated_at, p.human_block_count, p.fail_count,
+              p.verified_baseline, p.verified_at, m.slug
          FROM choro_pages p JOIN choro_modules m ON p.module_id = m.id
         WHERE m.repo_id = ? AND m.slug = ?`
     ).get(repoId, String(slug));
@@ -5147,10 +5157,17 @@ export function createStore(path) {
 
   // 富化成功：skeleton → enriched，generatedAt 推进、失败计数清零（成功重置的是
   // 「连续失败」的连续性，不是历史）。
-  function markChoroPageEnriched(pageId, generatedAt) {
+  //
+  // verifiedBaseline 是 T1 那一刻的 HEAD：claims 的行号取自那个提交的代码，之后判失效
+  // 只能从它起算（传 null 表示拿不到 HEAD——那时 diff 判不了，面板要说「不知道」，
+  // 而不是退回全仓 git_baseline 假装知道）。
+  function markChoroPageEnriched(pageId, generatedAt, verifiedBaseline = null) {
     db.prepare(
-      "UPDATE choro_pages SET status = 'enriched', generated_at = ?, fail_count = 0 WHERE id = ?"
-    ).run(generatedAt, pageId);
+      `UPDATE choro_pages
+          SET status = 'enriched', generated_at = ?, fail_count = 0,
+              verified_baseline = ?, verified_at = ?
+        WHERE id = ?`
+    ).run(generatedAt, verifiedBaseline, generatedAt, pageId);
   }
 
   // 单页 claims 整页替换（P20 的表侧）：T1 一轮产出的 claims 删旧插新；evidence/
