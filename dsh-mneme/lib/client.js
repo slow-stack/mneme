@@ -352,6 +352,35 @@ window.__ModuleLoader__.load({
         "wiki.t1.failedCount": "失败",
         "wiki.stale": "代码已变",
         "wiki.stale.hint": "上次生成之后仓库代码变过，页面可能和现状对不上：点「重建骨架」刷新。",
+        // 证据复核（Grounded Claims）：不重跑 T1 也能知道「哪几条结论被改动碰到了」。
+        // 文案刻意把「算不出来」和「一条都没事」写成两句不同的话——这两种状态在
+        // 屏幕上长得一样的话，用户会把「没算」当成「没问题」，那正是 #607 的病。
+        "wiki.drift": "证据复核",
+        "wiki.drift.hint": "用 git diff 比对每条结论记下的文件与行号：只有被改动碰到的才标出来，不重跑模型。",
+        "wiki.drift.loading": "正在比对…",
+        "wiki.drift.summary": "{pages} 页 · {claims} 条结论 · {risk} 条需要复核",
+        "wiki.drift.clean": "基线就是当前 HEAD：所有结论的锚点都还对得上。",
+        "wiki.drift.none": "这次改动没碰到任何结论的锚点。",
+        "wiki.drift.gitUnreadable": "读不到这个仓库的 git 信息（不是 git 目录或不可读），没法比对。",
+        "wiki.drift.anchorStale": "上次生成记下的基线提交在 git 里已经找不到了（可能被 force-push 或浅克隆截断）：无法比对，建议重建骨架。",
+        "wiki.drift.blocked": "比对失败",
+        "wiki.drift.touched": "改动碰到这行",
+        "wiki.drift.shifted": "上方有增删，行号挪了 {n}",
+        "wiki.drift.deleted": "文件已删",
+        "wiki.drift.unverifiable": "这条没记行号，无法定位",
+        "wiki.drift.inconsistent": "正文有语义段、库里却没有结论记录（上次 T1 没写完），这页证据无法核对。",
+        // 语义段 provenance（①）：每页的结论是「对着哪个提交」读出来的。不说清这一点，
+        // 「证据复核」就只是在和某个不明时点比——页越晚富化，误报越多。
+        "wiki.drift.verified": "对着 {sha} 验证",
+        "wiki.drift.verifiedUnknown": "这页没记下是哪个提交验证的（早期富化没有记录），所以判不出它有没有过时。重跑一次 T1 就会记上。",
+        "wiki.drift.verifiedApprox": "这页是早期富化的，没记下自己的验证点；下面按全仓基线 {sha} 比对（起点比实际更早，只会多报不会漏报）。",
+        "wiki.drift.anchorStalePage": "这页记下的验证提交在 git 里已经找不到了（force-push 或浅克隆截断），这页没法比对。",
+        "wiki.drift.undecidable": "{n} 页的验证基线不可用，没有参与比对",
+        // 自动刷新被主动跳过（仓库里有已富化的页）。这句话必须说的是「我没做，因为
+        // 做了会丢东西」，而不是「刷新失败」——失败是另一种情况，另一种文案。
+        "wiki.autoRefresh.skipped": "自动刷新这次没有做：这仓库有 {n} 页已经富化过，重跑骨架会把语义段和结论一起清掉。要新快照请手动点「重建骨架」（会先告诉你丢哪几页）。",
+        "wiki.autoRefresh.skippedGeneric": "自动刷新这次没有做：这仓库已有富化过的页，重跑骨架会把语义段和结论一起清掉。要新快照请手动点「重建骨架」。",
+        "wiki.autoRefresh.failed": "自动刷新试过但失败了",
         "wiki.run.pathRequired": "先填仓库目录的绝对路径",
         "wiki.run.failed": "生成失败",
         "wiki.run.notAbsolute": "要给绝对路径（例如 D:\\code\\my-repo）：相对路径会按服务端进程的当前目录解析，同一个请求换个启动位置就落到别的目录。",
@@ -766,6 +795,12 @@ window.__ModuleLoader__.load({
         // group.basic 是首屏层：新用户不读文档就该答得出「会不会自动记」；
         // 「别的会话能不能看到」由同在首屏的 scope 组回答。
         "memory.features.group.basic": "常用（先动这几个）",
+        // group.ext 是 v0.13.x 起的独立分组：mneme 本体只做记忆，仓库地志 /
+        // 知识库 / 日记本是三个可选子系统。它们是「装不装这个子系统」而不是
+        // 「每轮付多少」，所以不跟 enhance 的行为开关混在一起——混在一起时
+        // 用户「开了才找得到、找不到就没法开」（#607 的「知识库没成型」一半是
+        // 这个入口问题），故提到首屏单列一组。
+        "memory.features.group.ext": "扩展功能（按需开启）",
         "memory.features.group.core": "它会记住什么",
         // group.mo 是 v0.9.0 的独立分组（座位闸门，不是行为开关），现已随 M.O.
         // 下架从 FEATURE_GROUPS 摘掉；这条文案留着是为了恢复时不必再想措辞。
@@ -1445,6 +1480,36 @@ window.__ModuleLoader__.load({
         "wiki.t1.failedCount": "failed",
         "wiki.stale": "Code changed",
         "wiki.stale.hint": "The repository's code changed since the last run, so these pages may be out of date — press \"Rebuild skeleton\" to refresh.",
+        // Evidence review (Grounded Claims): which claims a change touched, without
+        // re-running T1. "Could not compare" and "nothing touched" must read as two
+        // different sentences — if they look the same on screen, an uncomputed check
+        // passes for a clean bill of health, which is exactly what #607 was about.
+        "wiki.drift": "Evidence check",
+        "wiki.drift.hint": "Diffs each claim's recorded file and line range against git: only the ones a change actually touched are flagged. No model call.",
+        "wiki.drift.loading": "Comparing…",
+        "wiki.drift.summary": "{pages} pages · {claims} claims · {risk} need review",
+        "wiki.drift.clean": "The baseline is the current HEAD: every claim still points where it did.",
+        "wiki.drift.none": "This change did not touch any claim anchor.",
+        "wiki.drift.gitUnreadable": "Cannot read git for this repository (not a git directory, or unreadable), so nothing can be compared.",
+        "wiki.drift.anchorStale": "The baseline commit recorded at generation time no longer exists in git (force-push or a shallow clone cut it off): nothing to compare against — rebuild the skeleton.",
+        "wiki.drift.blocked": "Comparison failed",
+        "wiki.drift.touched": "A change touched this line",
+        "wiki.drift.shifted": "Insertions above moved it {n} lines",
+        "wiki.drift.deleted": "File deleted",
+        "wiki.drift.unverifiable": "No line number recorded — cannot locate",
+        "wiki.drift.inconsistent": "This page has prose in the file but no claims on record (the last T1 run did not finish), so its evidence cannot be checked.",
+        // Claim provenance: each page's claims were read from one specific commit. Without
+        // saying which, "evidence check" compares against an unknown point in time.
+        "wiki.drift.verified": "Verified at {sha}",
+        "wiki.drift.verifiedUnknown": "This page did not record which commit its claims were verified against (earlier enrichment did not store one), so staleness cannot be decided. Re-running T1 will record it.",
+        "wiki.drift.verifiedApprox": "This page was enriched before provenance was recorded; the comparison below starts from the repository baseline {sha} (earlier than the real one, so it can over-report but never miss).",
+        "wiki.drift.anchorStalePage": "The commit this page was verified against no longer exists in git (force-push or a shallow clone cut it off), so this page cannot be compared.",
+        "wiki.drift.undecidable": "{n} page(s) have no usable verification baseline and were left out of the comparison",
+        // Auto-refresh was deliberately skipped. This must read as "I did not do it,
+        // because doing it would lose something", never as "refresh failed".
+        "wiki.autoRefresh.skipped": "Auto-refresh was skipped: {n} page(s) in this repository are already enriched, and rebuilding the skeleton would wipe their prose and claims. Click Rebuild skeleton yourself if you want a new snapshot (it tells you which pages it drops).",
+        "wiki.autoRefresh.skippedGeneric": "Auto-refresh was skipped: this repository already has enriched pages, and rebuilding the skeleton would wipe their prose and claims. Click Rebuild skeleton yourself if you want a new snapshot.",
+        "wiki.autoRefresh.failed": "Auto-refresh was attempted but failed",
         "wiki.run.pathRequired": "Enter the repository's absolute path first",
         "wiki.run.failed": "Generate failed",
         "wiki.run.notAbsolute": "Give an absolute path (for example /home/me/code/my-repo): relative paths resolve against the server process's working directory, so the same request can land somewhere else depending on how the host was started.",
@@ -1846,6 +1911,13 @@ window.__ModuleLoader__.load({
         // group.basic is the first-screen tier; the scope group sits there too so
         // "can other sessions see this?" is answerable without opening anything.
         "memory.features.group.basic": "Common (start here)",
+        // group.ext: mneme proper is memory only; chorography, the knowledge base
+        // and the diary are three optional subsystems. Each switch decides whether
+        // the subsystem exists at all, not how much it costs per turn — mixing them
+        // into the behaviour groups is why "you can only find it once it is already
+        // on" (#607's "the knowledge base never took shape" was half an entry-point
+        // problem), so they get their own first-screen group.
+        "memory.features.group.ext": "Extensions (turn on as needed)",
         "memory.features.group.core": "What gets remembered",
         "memory.features.group.mo": "Its workflow (M.O.)",
         "memory.features.group.enhance": "When it gets written",
@@ -2893,6 +2965,26 @@ window.__ModuleLoader__.load({
       ".mneme-wikitoggle.mneme-on{border-color:var(--dsw-alias-state-business-primary)}",
       ".mneme-wikistale{margin-inline-end:2px}",
       ".mneme-wikit1bar{flex:none;padding:6px 16px;border-top:1px solid var(--dsw-alias-border-l2);font-size:11.5px;line-height:16px;color:var(--mneme-fg-dim);background:var(--dsw-alias-bg-layer-1)}",
+      // --- 证据复核（Grounded Claims）---
+      // 回执条压在顶栏下面一条，三种结局共用同一块位置：位置固定，用户扫一眼
+      // 就知道「这次点完是什么」。warn 档只换左边框颜色，不改正文色——正文色
+      // 一动就得过 contrast.test.js 的重算，而这里没必要冒那个险。
+      ".mneme-wikidriftbar{flex:none;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;padding:6px 16px;border-bottom:1px solid var(--dsw-alias-border-l1);font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-base,transparent)}",
+      ".mneme-wikidriftbar--warn{border-left:3px solid var(--dsw-alias-state-business-primary);padding-left:13px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-wikidriftnone{color:var(--mneme-fg-dim)}",
+      // 树里的条数徽章：复用 pending 徽章的视觉，只压窄一点，避免挤掉模块名。
+      ".mneme-wikidriftn{margin-inline-start:6px;font-size:10.5px;line-height:14px}",
+      ".mneme-wikidriftn--flat{margin-inline-start:6px;color:var(--mneme-fg-dim)}",
+      // 「这页比不了」和「这页没事」必须是两种视觉：前者是空心问号，后者什么都不挂。
+      ".mneme-wikidriftn--unknown{margin-inline-start:6px;color:var(--mneme-fg-dim);font-size:11px}",
+      ".mneme-wikidriftverified{font-size:11px;line-height:16px;color:var(--mneme-fg-dim);margin-bottom:10px}",
+      // 当前这页的明细：读之前先给出「哪条、在哪、为什么」，不给判断（判断是人的）。
+      ".mneme-wikidriftpage{margin:0 0 14px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}",
+      ".mneme-wikidriftpagehead{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary);margin-bottom:6px}",
+      ".mneme-wikidriftrow{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;padding:5px 0;border-top:1px solid var(--dsw-alias-border-l1)}",
+      ".mneme-wikidriftwhy{font-size:11.5px;line-height:16px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-wikidriftpath{font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
+      ".mneme-wikidriftstmt{flex-basis:100%;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}",
       // --- 知识库页（契约 §3.6）---
       // 左列复用 wikitree 的宽度与分隔线，只是树项改成了集合行；右边沿用
       // wikipage 的阅读排版。颜色全部走语义层，不新增任何宿主 token。
@@ -4476,14 +4568,29 @@ window.__ModuleLoader__.load({
     // 用户敢动的总开关；group.scope 也在首屏——它回答新用户的第二个必答题
     // 「它记的东西会不会被别的会话看到」。其余组整组收进「全部设置」折叠
     // （showAll）。成员从原组里移走而不是渲染时过滤：同一项永远只渲染一次。
-    // 首屏可点项 = 3 总开关 + autoInject 的 2 个子开关 + scope 2 开关 +
-    // 「全部设置」按钮 = 8。v0.9.0 曾按产品主人点名把 M.O. 独立成组并提进
-    // 首屏（当时豁免 ≤8 软预算，理由记在 test/client.test.js 的同名用例里）；
-    // 本轮主人决定把 M.O. 下架，那一组连同首屏位一起摘掉，预算回到 8。
+    // 首屏可点项 = 3 总开关 + autoInject 的 2 个子开关 + 扩展功能 3 个闸门 +
+    // scope 2 开关 + 「全部设置」按钮 = 11。v0.9.0 曾按产品主人点名把 M.O.
+    // 独立成组并提进首屏（当时豁免 ≤8 软预算，理由记在 test/client.test.js 的
+    // 同名用例里）；v0.13.x 主人决定把 M.O. 下架，预算回到 8。
+    // v0.13.x 第二次豁免（#607 后续）：主人要「一眼看见」仓库地志与知识库这两个
+    // 扩展子系统的总闸——此前一个埋在「全部设置 → 它什么时候写进去」的组尾、
+    // 一个连 FEATURE_GROUPS 都没进（后端全通、面板只有文案没有勾选框），等于
+    // 有功能没入口。为此新开 group.ext 并进首屏，预算 8→11。豁免的是「一眼看见」
+    // 这条产品要求，不是把预算取消：再往首屏塞东西前先问它是不是和这三个闸门
+    // 同级的子系统，不是就留在折叠层。
     // RuntimeProvisionBlock 配好即消失，常态首屏更少。
-    const FEATURE_FIRST_SCREEN = ["group.basic", "group.scope"];
+    const FEATURE_FIRST_SCREEN = ["group.basic", "group.ext", "group.scope"];
     const FEATURE_GROUPS = [
       { key: "group.basic", items: ["autoInject", "autoSummarize", "autoDream"] },
+      // 扩展功能（v0.13.x）：mneme 本体只做记忆，仓库地志 / 知识库 / 日记本是
+      // 三个可选子系统，各自的总闸决定「座位、工具、注入块存不存在」。它们此前
+      // 散在 enhance 组尾（choro / diary）或压根不在 FEATURE_GROUPS 里（kb），
+      // 结果是开了才找得到、找不到就没法开——#607 报的「知识库没成型」有一半
+      // 是这个入口问题。单独成组并进首屏，一眼能看见。
+      // 子块（choroSub 档位 / diarySub 定时写）不走「组尾追加」那条老路：ext 组的
+      // 子块紧贴自己那个总闸渲染（见下方 renderGroup 的 subAfter），否则地志的档位
+      // 下拉会隔着「知识库」「日记本」两行出现，读起来像在问知识库每轮付多少。
+      { key: "group.ext", items: ["chorographyEnabled", "kbEnabled", "diaryEnabled"] },
       { key: "group.core", items: ["hotMemoryEnabled", "injectTimePrefix", "memoryQualityFilter.enabled", "llmAudit.enabled", "writeAdmission.enabled", "writeAdmission.enforce", "preInjectGate.enabled", "preInjectGate.enforce", "sensitiveScanEnabled",
         // #399 的留存总闸（见下方 distillSub：天数行是它的子块）。放在组末，
         // 子块才能紧跟在它后面展开——items.map 之后的子块是按组尾渲染的。
@@ -4502,15 +4609,7 @@ window.__ModuleLoader__.load({
         // 自动事实（profile_facts）：dream 后的自动维护闸。展示与人工修正不受它管
         // （GET/apply 在 flag 关时照常放行，存量事实要能看能改），它只决定「自动做梦
         // 维护」与面板「立即更新」这两条 LLM 路径开不开。
-        "profileFactsEnabled",
-        // chorography（仓库地志）的暴露闸（M1 就有的键，M3 才上 UI）：它是「是否
-        // 启用这个子系统」而不是「每轮付多少」，所以和上面这些行为开关同组；
-        // 每轮付出多少由紧随组尾的 choroSub 档位管。放组末是因为子块按组尾渲染
-        // ——档位下拉要贴着它的总闸。
-        "chorographyEnabled",
-        // 日记本（v0.13）：右栏座位的闸门。和 M.O. 一样是「开关=座位注册与否」，
-        // 但它属于「它在替你写字」这一类行为开关，所以归 enhance 而不是单开一组。
-        "diaryEnabled"] },
+        "profileFactsEnabled"] },
       { key: "group.dream", items: ["sleepModeEnabled", "sleepAffectiveEnabled"] },
       // v0.8.0 A4（issue #17）：作用域隔离组——标注总开关 + 严格硬过滤。
       { key: "group.scope", items: ["scopeEnabled", "strictScope"] }
@@ -5030,13 +5129,20 @@ window.__ModuleLoader__.load({
               // 哪里」。renderGroup 是唯一的组渲染路径（含组尾子块），首屏层与
               // 「全部设置」共用它，保证 g.items.map(flagRow) 只写一次、子项
               // 只可能经 flagRow 渲染（test/inject-parent-gate.test.js 的门）。
+              // 扩展组例外：它的子块必须紧贴**自己那个**总闸，不能攒到组尾。
+              // 攒到组尾时，仓库地志的档位下拉会隔着「知识库」「日记本」两行出现，
+              // 读起来像在问知识库每轮付多少。别的组没有这个问题（core/dream 的
+              // 子块本来就只挂在组里最后一行那个总闸上）。
+              const subAfter = { chorographyEnabled: choroSub, diaryEnabled: diarySub };
               const renderGroup = (g) => h(react.Fragment, { key: g.key },
                 h("div", { className: "mneme-featgroup" }, t(`memory.features.${g.key}`)),
-                g.items.map(flagRow),
+                g.key === "group.ext"
+                  ? g.items.map((k) => h(react.Fragment, { key: k }, flagRow(k), subAfter[k]))
+                  : g.items.map(flagRow),
                 // 子块按组尾追加。distillSub 紧跟在 core 组最后一行
                 // （distillRecords.enabled）之后，天数行才贴着它的总闸。
                 g.key === "group.core" && h(react.Fragment, null, distillSub, summarizeSub),
-                g.key === "group.enhance" && h(react.Fragment, null, embedSub, entitySub, diarySub, choroSub),
+                g.key === "group.enhance" && h(react.Fragment, null, embedSub, entitySub),
                 g.key === "group.dream" && h(react.Fragment, null, dreamSub, sleepSub)
               );
               const firstScreen = FEATURE_GROUPS.filter((g) => FEATURE_FIRST_SCREEN.includes(g.key));
@@ -12775,11 +12881,26 @@ window.__ModuleLoader__.load({
           phase: "loading", repos: [], repo: null, modules: [], edges: [], page: null,
           hits: [], q: "", selected: null, disabled: false, error: null,
           rebuilding: false, rebuildNote: null, path: "", flags: null, t1: null, toast: "",
-          cliCommand: null, copied: false
+          cliCommand: null, copied: false,
+          // autoRefreshNote：读页时服务端说「这次自动刷新我主动没做」。它不是错误，
+          // 所以不塞进 error、也不进 toast（toast 2.5s 就没了，用户看不到原因）。
+          autoRefreshNote: null,
+          // autoRefreshError：服务端**真的**试过刷新但失败了。与上面那条严格分开：
+          // 把「主动没做」和「做了没成」合成一句，面板就会把一次正确的拒绝说成故障，
+          // 也会把一次真故障说成没事（src/api.js 两个字段分开就是为了这个）。
+          autoRefreshError: null,
+          // 证据复核（Grounded Claims）的两样状态：drift 是 /choro/claims 的
+          // 回体，driftPhase 区分「还没查」「查着」「查出三种结局」。
+          drift: null, driftPhase: "idle"
         });
         // T1 跑完要重读当前仓库的模块树，但轮询的闭包里拿不到最新的 state.repo：
         // 用 ref 记住加载成功的仓库 id，避免把整棵树塞进 effect 依赖里。
         const repoIdRef = useRef(null);
+        // 证据复核的请求代次：切仓库 / 重新 load 时 +1。checkDrift 发出前记下当时的
+        // 代次，回来时代次已经变了就直接丢弃结果——否则「在甲仓库上发的 diff，在切到
+        // 乙仓库之后才回来」会把甲仓库的「需要复核」写到乙仓库的页签下，而用户看到的
+        // 是一个根本不属于当前页面的判定（比不显示更糟）。
+        const driftGenRef = useRef(0);
         // apiFetch 是裸 fetch：非 2xx 不抛错，返回 Response。这里统一解 JSON 并把
         // 状态码带回来——409 disabled（用户没开）/ 503 unavailable（装配缺件）
         // 各有各的空态文案（#497 的语义分叉在这里接住）。
@@ -12826,12 +12947,38 @@ window.__ModuleLoader__.load({
             // （/choro/modules 的 repo 只有 id/name，没有 stale）。
             const loaded = mod.data.repo;
             repoIdRef.current = loaded && loaded.id != null ? loaded.id : ref;
-            setState((s) => ({ ...s, phase: "ready", repos, repo: loaded, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null }));
+            // 切仓库时证据复核的旧结果必须清掉：它是按上一个仓库的 diff 算的，
+            // 留着就会把甲仓库的「需要复核」挂在乙仓库的页签下。
+            // 代次 +1 之后，任何在途的 checkDrift 结果都会被丢弃（见 driftGenRef）。
+            driftGenRef.current += 1;
+            setState((s) => ({ ...s, phase: "ready", repos, repo: loaded, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null, drift: null, driftPhase: "idle", autoRefreshNote: null, autoRefreshError: null }));
           } catch (err) {
             setState((s) => ({ ...s, phase: "error", error: String(err?.message ?? err) }));
           }
         }, []);
         useEffect(() => { load(); loadFlags(); }, [load, loadFlags]);
+        // 证据复核：手动触发、不自动跑。理由是它要跑一次 git diff（大仓库几十
+        // 毫秒到几秒），每切一页就重算会把浏览拖慢；而「上次生成之后代码变没变」
+        // 这件事用户自己知道什么时候关心。三种结局各自渲染，绝不让「没算出来」
+        // 长得像「一条都没事」（#607 的病根）。
+        const checkDrift = useCallback(async () => {
+          const ref = repoIdRef.current;
+          if (ref == null) return;
+          const gen = driftGenRef.current;
+          const writeIfCurrent = (patch) => setState((s) => (driftGenRef.current === gen ? { ...s, ...patch } : s));
+          writeIfCurrent({ driftPhase: "loading" });
+          // 只写「还是同一次请求、还是同一个仓库」的结果。
+          try {
+            const { status, data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/claims?repo=${encodeURIComponent(ref)}`));
+            if (status !== 200 || data.error) {
+              writeIfCurrent({ driftPhase: "failed", drift: { error: data.error ?? `claims ${status}` } });
+              return;
+            }
+            writeIfCurrent({ driftPhase: "done", drift: data });
+          } catch (err) {
+            writeIfCurrent({ driftPhase: "failed", drift: { error: String(err?.message ?? err) } });
+          }
+        }, []);
         const openPage = useCallback(async (slug) => {
           const repo = state.repo;
           if (!repo) return;
@@ -12839,7 +12986,21 @@ window.__ModuleLoader__.load({
           try {
             const { status, data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/page?repo=${encodeURIComponent(repo.id)}&slug=${encodeURIComponent(slug)}`));
             if (status !== 200 || data.error) { setState((s) => ({ ...s, page: { error: data.error ?? `page ${status}` } })); return; }
-            setState((s) => ({ ...s, page: data.page }));
+            // 自动刷新被主动跳过：这条要说出来。不说的话，用户看到的是「代码已变」
+            // 徽章一直亮着、页面还是旧的，只会以为刷新坏了（#607 那类假成功的反面）。
+            // 文案自己拼而不直接用服务端那句：那句话是中文的，进不了英文界面；
+            // 页数用服务端算出的 enrichedPages，只有它缺的时候才退回服务端原话。
+            const skipped = data.autoRefreshSkipped === "t1-loss"
+              ? (Number(data.repo?.enrichedPages ?? 0) > 0
+                ? t("wiki.autoRefresh.skipped").replace("{n}", String(data.repo.enrichedPages))
+                : (data.autoRefreshSkipNote || t("wiki.autoRefresh.skippedGeneric")))
+              : null;
+            // 真失败要单独带上：刷新没成时页面还是旧的、徽章还亮着，不说出来
+            // 就是「点了、看起来正常、其实是上次的内容」。
+            const refreshError = typeof data.autoRefreshError === "string" && data.autoRefreshError
+              ? data.autoRefreshError
+              : null;
+            setState((s) => ({ ...s, page: data.page, autoRefreshNote: skipped, autoRefreshError: refreshError }));
           } catch (err) {
             setState((s) => ({ ...s, page: { error: String(err?.message ?? err) } }));
           }
@@ -12875,6 +13036,9 @@ window.__ModuleLoader__.load({
             setState((s) => ({
               ...s,
               rebuilding: false,
+              // 重建已经真的发生了，那条「自动刷新没做」的提示就该退场。
+              autoRefreshNote: null,
+              autoRefreshError: null,
               rebuildNote: `${t("wiki.rebuild.done")}: ${r.moduleCount ?? "?"} ${t("wiki.rebuild.modules")} / ${r.pageCount ?? "?"} ${t("wiki.rebuild.pages")}${loss ? ` — ${loss}` : ""}`
             }));
             await load(repo.id);
@@ -13079,9 +13243,48 @@ window.__ModuleLoader__.load({
               onClick: () => load(r.id)
             }, `${r.name}`)));
         }
+        // 证据复核的三种结局在这里一次性判完，渲染层不再现算：
+        // 「基线就是 HEAD」和「算不出来」必须走两条不同的分支，屏幕上也要是两句
+        // 不同的话——把两者显示成同一个样子，等于把「没算」当成「没事」。
+        const drift = state.drift;
+        const driftBySlug = new Map();
+        if (drift && Array.isArray(drift.pages)) {
+          for (const dp of drift.pages) driftBySlug.set(dp.slug, dp);
+        }
+        const driftDone = state.driftPhase === "done" && drift && !drift.error;
+        const driftClean = driftDone && drift.clean === true;
+        const driftAnchorStale = driftDone && drift.anchorStale === true;
+        // 「git 读不到」与「基线提交没了」是两种完全不同的处境：前者是仓库不是 git 目录
+        // 或不可读（去修环境），后者是 force-push/浅克隆把起点截断了（去重建骨架）。
+        // 两句 i18n 早就写好了，只是原来没接上，一律说成后者。
+        const driftGitUnreadable = driftAnchorStale && drift.reason === "git-unreadable";
+        const driftTotals = (driftDone && drift.totals) || null;
+        const driftRisk = driftTotals ? driftTotals.atRiskClaims : 0;
+        // 「比不了」的页数（验证基线认不出 + 从来没记过 + 有语义段却没 claims）单独计数：
+        // 它们一条都不判，不能混进「0 条需要复核」里当成没事。inconsistentPages 原来
+        // 完全没进这个汇总，于是「所有页都是残局」也会显示成「这次改动没碰到任何结论」。
+        const driftUndecidable = driftTotals
+          ? (driftTotals.baselineUnknownPages || 0)
+            + (driftTotals.anchorStalePages || 0)
+            + (driftTotals.inconsistentPages || 0)
+          : 0;
+        // 提交号显示前 7 位就够认，长 sha 会把这一行挤爆（完整值仍在 title 里）。
+        const shortSha = (sha) => String(sha ?? "").slice(0, 7);
+        // 四种命中原因各自一句：混成「失效」会让只是行号挪了的结论也被喊去重写，
+        // 喊几次就没人信这个标记了。
+        const driftReasonText = (c) => {
+          if (c.reason === "touched") return t("wiki.drift.touched");
+          if (c.reason === "shifted") return t("wiki.drift.shifted").replace("{n}", String(c.shift ?? 0));
+          if (c.reason === "deleted") return t("wiki.drift.deleted");
+          if (c.reason === "unverifiable") return t("wiki.drift.unverifiable");
+          return String(c.reason ?? "");
+        };
         const tree = [];
         for (const mod of state.modules) {
           const depth = (mod.slug.match(/-/g) || []).length;
+          // 树里直接挂「这页有几条要复核」：用户不用先点开才知道哪页被改动碰到。
+          const dp = driftBySlug.get(mod.slug);
+          const riskN = dp && dp.atRisk ? dp.atRisk.length : 0;
           tree.push(h("button", {
             key: mod.slug,
             type: "button",
@@ -13089,13 +13292,49 @@ window.__ModuleLoader__.load({
             style: { paddingLeft: `${8 + Math.min(depth, 4) * 14}px` },
             title: mod.title,
             onClick: () => openPage(mod.slug)
-          }, mod.slug));
+          }, mod.slug,
+            riskN > 0 && h("span", { className: "mneme-badge mneme-badge--pending mneme-wikidriftn" }, String(riskN)),
+            !riskN && dp && dp.inconsistent && h("span", { className: "mneme-wikidriftn mneme-wikidriftn--flat" }, "!"),
+            // 这页比不了时挂个问号：什么都不挂会让它和「比过、干净」长得一样。
+            !riskN && dp && !dp.inconsistent && (dp.baselineUnknown || dp.anchorStale) &&
+              h("span", {
+                className: "mneme-wikidriftn mneme-wikidriftn--unknown",
+                title: dp.baselineUnknown ? t("wiki.drift.verifiedUnknown") : t("wiki.drift.anchorStalePage")
+              }, "?")));
         }
         const pageBody = state.page
           ? (state.page.error
             ? h("div", { className: "mneme-wikiempty" }, state.page.error === "page-missing" ? t("wiki.state.pageMissing") : state.page.error)
             : renderWikiMarkdown(state.page.content))
           : h("div", { className: "mneme-wikiempty" }, t("wiki.state.pickPage"));
+        // 当前这页的证据复核结果：放在正文上方而不是塞进正文，因为它是「关于
+        // 正文的事实」，不是正文本身——混进 MD 渲染里会被下次重建覆盖掉。
+        const selectedDrift = state.selected ? driftBySlug.get(state.selected) : null;
+        // 「这页对着哪个提交验证的」是常驻信息（不论有没有风险都该看到），所以它是
+        // 正文上方单独一行，而不是塞进下面那张「有风险才出现」的卡里。
+        const pageProvenance = driftDone && selectedDrift
+          ? (selectedDrift.verifiedBaseline
+            ? h("div", { className: "mneme-wikidriftverified", title: selectedDrift.verifiedBaseline },
+              t("wiki.drift.verified").replace("{sha}", shortSha(selectedDrift.verifiedBaseline)))
+            // 老数据：没有逐页验证点，退到全仓基线比对。必须说清这是**保底起点**，
+            // 不能长成「对着 xxxx 验证」——那是把近似值冒充成真值。
+            : (selectedDrift.baselineApprox && selectedDrift.diffBaseline
+              ? h("div", { className: "mneme-wikidriftverified", title: selectedDrift.diffBaseline },
+                t("wiki.drift.verifiedApprox").replace("{sha}", shortSha(selectedDrift.diffBaseline)))
+              : (selectedDrift.claims > 0
+                ? h("div", { className: "mneme-wikidriftverified" }, t("wiki.drift.verifiedUnknown"))
+                : null)))
+          : null;
+        const pageDrift = selectedDrift && selectedDrift.atRisk && selectedDrift.atRisk.length > 0
+          ? h("div", { className: "mneme-wikidriftpage", role: "note" },
+            h("div", { className: "mneme-wikidriftpagehead" },
+              `${t("wiki.drift")} · ${selectedDrift.atRisk.length}`),
+            selectedDrift.atRisk.map((c) => h("div", { key: String(c.claimId ?? c.statement), className: "mneme-wikidriftrow" },
+              h("span", { className: "mneme-wikidriftwhy" }, driftReasonText(c)),
+              h("span", { className: "mneme-wikidriftpath" },
+                `${c.sourcePath}${c.startLine ? `:${c.startLine}${c.endLine && c.endLine !== c.startLine ? `-${c.endLine}` : ""}` : ""}`),
+              h("div", { className: "mneme-wikidriftstmt" }, c.statement))))
+          : null;
         const flags = state.flags || {};
         const t1Running = !!(state.t1 && state.t1.state === "running");
         return h("div", { className: "mneme-panel" },
@@ -13149,7 +13388,41 @@ window.__ModuleLoader__.load({
               title: t("memory.features.chorographyT1FromPanel.hint"),
               onClick: startT1
             }, t1Running ? t("wiki.t1.running") : t("wiki.t1")),
+            // 证据复核是只读动作（一次 git diff + 库内比对，不调模型），所以它
+            // 和「重建骨架」并列、不用二次确认；但绝不自动跑，见 checkDrift。
+            h("button", {
+              type: "button",
+              className: "mneme-wikibtn",
+              disabled: state.driftPhase === "loading",
+              title: t("wiki.drift.hint"),
+              onClick: checkDrift
+            }, state.driftPhase === "loading" ? t("wiki.drift.loading") : t("wiki.drift")),
             state.rebuildNote && h("span", { className: "mneme-wikirebuildnote" }, state.rebuildNote)),
+          // 「自动刷新我主动没做」的提示条。放在顶栏下面而不是 toast 里：它描述的
+          // 是一个仍然成立的状态（库里还有富化页），不是一次性的动作回执。
+          state.autoRefreshNote && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            state.autoRefreshNote),
+          // 「试过刷新但失败了」单独一条：它不是无事发生，也不是「主动没做」。
+          // 旧实现在这里整段丢字段，用户的感受就是「点了没反应」。
+          state.autoRefreshError && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            `${t("wiki.autoRefresh.failed")}: ${state.autoRefreshError}`),
+          // 证据复核回执条：三种结局三种说法，「比对失败」单独一条 --
+          // 它既不是「没事」也不是「有风险」，混进任何一边都是撒谎。
+          state.driftPhase === "failed" && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            `${t("wiki.drift.blocked")}: ${(state.drift && state.drift.error) || ""}`),
+          driftDone && driftAnchorStale && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            driftGitUnreadable ? t("wiki.drift.gitUnreadable") : t("wiki.drift.anchorStale")),
+          driftDone && !driftAnchorStale && driftClean && h("div", { className: "mneme-wikidriftbar", role: "status" },
+            t("wiki.drift.clean")),
+          driftDone && !driftAnchorStale && !driftClean && h("div", { className: "mneme-wikidriftbar", role: "status" },
+            t("wiki.drift.summary")
+              .replace("{pages}", String(driftTotals.pages))
+              .replace("{claims}", String(driftTotals.claims))
+              .replace("{risk}", String(driftRisk)),
+            driftRisk === 0 && driftUndecidable === 0 && h("span", { className: "mneme-wikidriftnone" }, ` · ${t("wiki.drift.none")}`),
+            // 有页比不了时，回执条必须自己说出来：否则「0 条需要复核」会被读成没事。
+            driftUndecidable > 0 && h("span", { className: "mneme-wikidriftnone" },
+              ` · ${t("wiki.drift.undecidable").replace("{n}", String(driftUndecidable))}`)),
           h("div", { className: "mneme-wikibody" },
             h("nav", { className: "mneme-wikitree", "aria-label": t("wiki.tree.title") }, tree),
             h("div", { className: "mneme-wikipage" },
@@ -13161,6 +13434,12 @@ window.__ModuleLoader__.load({
                   onClick: () => { setState((s) => ({ ...s, hits: [] })); openPage(hit.slug); }
                 }, `${hit.slug} · ${hit.section} · L${hit.line}: ${hit.excerpt}`)),
                 h("button", { type: "button", className: "mneme-wikihitsclose", onClick: () => setState((s) => ({ ...s, hits: [] })) }, "×")),
+              pageProvenance,
+              pageDrift,
+              // 正文有语义段、库里零条结论：这页的证据根本无从核对，必须自己说
+              // 出来，否则它会永远显示成「干净」——那是最坏的一种假成功。
+              selectedDrift && selectedDrift.inconsistent && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "note" },
+                t("wiki.drift.inconsistent")),
               pageBody)),
           // T1 进度：只在一个 job 活着时出现。数字来自 /choro/t1/status 的
           // modules 汇总，不再由面板自己数模块——那是任务侧的真相。
