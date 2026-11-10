@@ -23,7 +23,11 @@ import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync, mkdirSync
 import { join, dirname, sep, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { realpathSync } from "node:fs";
-import { extractHumanBlocks, injectHumanBlocks, T1_SECTION_START, T1_SECTION_END } from "./render.js";
+import {
+  extractHumanBlocks, injectHumanBlocks, T1_SECTION_START, T1_SECTION_END,
+  FM_VERIFIED_AT, FM_VERIFIED_BASELINE, setFrontmatterKeys,
+} from "./render.js";
+import { gitHead } from "./t0.js";
 // issue #607：拒绝文案里的 CLI 命令要给绝对路径入口（profile 装的插件没有全局
 // shim，光写 `dsh-mneme-choro` 用户照抄只会 command not found）。
 import { choroCliCommandFrom } from "./cli-hint.js";
@@ -64,9 +68,18 @@ export function isEnvironmentFailure(result) {
 // 模型路由走 --patch 临时 overlay 指池模型（bili-scroll 同款，零配置改动）。
 // exe 定位：env DSH_EXE > process.execPath（本身是 Harness exe，即已在宿主 CLI 内）>
 // 标准安装位。定位不到 → environment 失败（降级表第一行），不猜测。
-export function makeHeadlessRunner({ profile = "headless", onOverlay = null } = {}) {
+//
+// 三种定位（exe / cli.js / 失败诊断）都做成可注入的纯函数：issue #578 的病根全在
+// 「按一种安装布局写死」，而布局差异只有真机上才看得见——不能测的东西迟早会错。
+export function makeHeadlessRunner({
+  profile = "headless",
+  onOverlay = null,
+  spawn: spawnFn = spawn,
+  locateExe = locateDshExe,
+  resolveCli = resolveCliJs,
+} = {}) {
   return async function runSession({ cwd, task, model, timeoutMs, maxToolCalls, maxOutputBytes }) {
-    const exe = locateDshExe();
+    const exe = locateExe();
     if (!exe) {
       return {
         ok: false,
@@ -74,10 +87,16 @@ export function makeHeadlessRunner({ profile = "headless", onOverlay = null } = 
         reason: "找不到 DeepSeek Harness 主程序（设 DSH_EXE 环境变量，或用 --dsh-exe 显式指定）",
       };
     }
-    const cliJs = locateCliJs(exe);
-    if (!cliJs) {
-      return { ok: false, kind: "environment", reason: `在 ${dirname(exe)} 下找不到 dsh-desktop-host 的 cli.js` };
+    const cli = resolveCli(exe);
+    if (!cli.path) {
+      // 显式指定（DSH_CLI_JS / --dsh-cli）但路径不存在，与「哪种布局都找不到」是两件
+      // 事：前者是人写错了一个字符，后者是布局没覆盖。分开说，否则用户会去改布局。
+      const reason = cli.explicitMissing
+        ? `DSH_CLI_JS 指定的 headless CLI 不存在：${cli.explicitMissing}（这是显式指定，不会回退到其它候选；改正它或取消指定）`
+        : `在 ${dirname(exe)} 下找不到 headless CLI。试过：${cli.candidates.join("、") || "(无候选)"}。DSH NEXT 布局可用环境变量 DSH_CLI_JS 直接指定 cli 路径`;
+      return { ok: false, kind: "environment", reason };
     }
+    const cliJs = cli.path;
     const [provider, modelName] = String(model).split("/");
     const overlayPath = writeModelOverlay(provider ?? "xdpool", modelName ?? "deepseek-v4.1-flash", onOverlay);
     let proc = null;
@@ -90,12 +109,21 @@ export function makeHeadlessRunner({ profile = "headless", onOverlay = null } = 
         "headless",
         task,
       ];
-      proc = spawn(exe, args, {
+      proc = spawnFn(exe, args, {
         cwd,
         env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
         stdio: ["ignore", "pipe", "pipe"],
       });
-      return await consumeHeadlessStream(proc, { timeoutMs, maxToolCalls, maxOutputBytes });
+      const result = await consumeHeadlessStream(proc, { timeoutMs, maxToolCalls, maxOutputBytes });
+      // 探测不可用时（普通 node 看不进 asar）走的是旧布局的老路径，这条提示只在真失败时
+      // 附上——成功时多说一句只会让人以为哪里没配好。
+      if (!result.ok && !cli.verified && result.kind === "environment") {
+        // 候选清单一起带上：只说「未经探测」等于让人重新猜一遍布局，而这轮已经把
+        // 探测过哪些路径算出来了（#578 那位用户当初只能靠读源码猜）。
+        result.reason += `（CLI 路径未经探测：当前进程看不进 asar，按旧布局 ${cliJs} 处理；`
+          + `已探测：${(cli.candidates ?? []).join("、") || "(无候选)"}。若是 DSH NEXT 请设 DSH_CLI_JS）`;
+      }
+      return result;
     } catch (err) {
       return { ok: false, kind: "environment", reason: String(err?.message ?? err) };
     } finally {
@@ -105,19 +133,60 @@ export function makeHeadlessRunner({ profile = "headless", onOverlay = null } = 
   };
 }
 
-function locateDshExe() {
-  if (process.env.DSH_EXE && existsSync(process.env.DSH_EXE)) return process.env.DSH_EXE;
-  const exePath = process.execPath ?? "";
-  if (basename(exePath).toLowerCase() === "deepseek harness.exe") return exePath;
-  const standard = join(process.env["ProgramFiles"] ?? "C:\\Program Files", "DeepSeek Harness", "DeepSeek Harness.exe");
-  return existsSync(standard) ? standard : null;
+// exe 名白名单：不认「同目录任意 exe」——那只会在装了两套宿主时挑中错的那个。
+// 前两个是现行两种安装布局的名字（DSH NEXT 的 exe 就叫 DSH NEXT.exe），第三个是
+// 历史名字，留着只为不打断已经在用旧版的人。
+const DSH_EXE_NAMES = ["deepseek harness.exe", "dsh next.exe", "dsh.exe"];
+
+export function locateDshExe(env = process.env, execPath = process.execPath) {
+  if (env.DSH_EXE && existsSync(env.DSH_EXE)) return env.DSH_EXE;
+  const exePath = execPath ?? "";
+  if (DSH_EXE_NAMES.includes(basename(exePath).toLowerCase())) return exePath;
+  // 标准安装位按「两种布局 × 两种名字」逐个试。issue #578：DSH NEXT 装在别处、
+  // exe 也不叫 DeepSeek Harness.exe，旧实现两个条件同时不满足 → 直接 environment 失败。
+  const roots = [env["ProgramFiles"] ?? "C:\\Program Files", env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)"].filter(Boolean);
+  for (const root of roots) {
+    for (const name of ["DeepSeek Harness", "DSH NEXT"]) {
+      const candidate = join(root, name, `${name}.exe`);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
 }
 
-function locateCliJs(exe) {
-  // cli.js 固定在 exe 相对路径的 app.asar 内部。**不能 existsSync 校验**：CLI 进程
-  // 是普通 node，没有 asar 支持 stat 不进包内——而 exe 自己（V1 实测）加载这个
-  // 路径没问题。位置是安装器定的，直接给出去。
-  return join(dirname(exe), "resources", "app.asar", "dsh", "node_modules", "@deepseek-ai", "dsh-desktop-host", "lib", "cli.js");
+// cli.js 在 app.asar 内部，位置随安装布局变（issue #578 的核心）：旧布局多一层
+// `dsh/`，DSH NEXT 直接放在 `lib/desktop-cli.js`。所以这里是**按优先级探测**，
+// 不再硬编码单一路径。
+//
+// 关于「不能 existsSync」那条旧注释：它对 CLI 子进程成立（普通 node 没有 asar
+// 补丁），但**探测发生在插件进程里**（Electron 主进程 / ELECTRON_RUN_AS_NODE 子
+// 进程，两者都给 fs 打了 asar 补丁）——本机实测 statSync/readFileSync 对 asar 内
+// 路径都正常工作。探测不到时（比如被测进程是裸 node）退回旧布局那条老路径并标记
+// verified:false，让失败信息自己说明「这次没探测」。
+export function resolveCliJs(exe, env = process.env) {
+  const base = dirname(exe);
+  const asar = join(base, "resources", "app.asar");
+  // DSH_CLI_JS 是**人明确指定**的答案，不是一条待排序的候选：指定了就不许再猜。
+  // 回退到别的候选会让人以为自己的设置生效了——实际跑的却是另一份 CLI，症状是
+  // 「我明明指了 NEXT 的 cli，报错里还是旧布局路径」。指定了但不存在 → 直接失败，
+  // 让错误信息如实指向他写的那个路径。
+  const explicit = typeof env.DSH_CLI_JS === "string" && env.DSH_CLI_JS !== "" ? env.DSH_CLI_JS : null;
+  const candidates = [
+    explicit,
+    join(asar, "lib", "desktop-cli.js"),
+    join(asar, "dsh", "node_modules", "@deepseek-ai", "dsh-desktop-host", "lib", "cli.js"),
+    join(asar, "node_modules", "@deepseek-ai", "dsh-desktop-host", "lib", "cli.js"),
+  ].filter((c) => typeof c === "string" && c !== "");
+  if (explicit !== null) {
+    if (existsSync(explicit)) return { path: explicit, candidates, verified: true };
+    return { path: null, candidates, verified: false, explicitMissing: explicit };
+  }
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return { path: candidate, candidates, verified: true };
+  }
+  // 全部探测失败：把**旧布局**那条老路径交出去（它曾是唯一答案，老真机上大概率还是
+  // 它），但如实带上 verified:false 与完整候选清单——猜错时失败信息里得看得见试过什么。
+  return { path: join(asar, "dsh", "node_modules", "@deepseek-ai", "dsh-desktop-host", "lib", "cli.js"), candidates, verified: false };
 }
 
 // overlay 只含 provider/model 名（红线 4：不落 key）；一次性临时目录，finally 里删。
@@ -137,6 +206,9 @@ function writeModelOverlay(provider, model, onOverlay) {
   return p;
 }
 
+// stderr 尾巴上限：够装下一条栈顶报错，又不至于把几万行 usage 全端上来。
+const STDERR_TAIL_LIMIT = 4096;
+
 // NDJSON 事件流消费：三重上限在读取循环里计数，超限 kill。headless --json 的事件
 // 形状以宿主实现为准——工具调用按「事件名含 tool_call/tool_use」的宽匹配计数，
 // 计不出就退化为只用 timeout/bytes 两道上限（如实降级，不假装第三道存在）。
@@ -147,6 +219,7 @@ function consumeHeadlessStream(proc, { timeoutMs, maxToolCalls, maxOutputBytes }
     let toolCalls = 0;
     let scannedLines = 0; // 已计过数的完整行数——每块只扫新增部分，否则事件被平方级重复计数（实测 11s 撞 40 上限的假象就是这么来的）
     let timedOut = false;
+    let stderrTail = "";
     const timer = setTimeout(() => {
       timedOut = true;
       proc.kill();
@@ -183,15 +256,22 @@ function consumeHeadlessStream(proc, { timeoutMs, maxToolCalls, maxOutputBytes }
       }
       scannedLines = complete;
     });
-    proc.stderr.on("data", () => { /* 诊断进 stderr，不影响结果 */ });
+    // stderr 必须收：headless 起不来时真正的原因（缺 credential、NO_ADAPTER、模块解析
+    // 失败、CLI 路径不存在）全在这里，而 stdout 一个字都没有——issue #578 的「(无输出)」
+    // 就是这么来的。只留尾巴（4 KiB）且不参与成败判定，纯诊断。
+    proc.stderr.on("data", (chunk) => {
+      stderrTail = (stderrTail + chunk.toString("utf8")).slice(-STDERR_TAIL_LIMIT);
+    });
     proc.on("error", (err) => finish({ ok: false, kind: "environment", reason: `spawn 失败：${String(err?.message ?? err)}` }));
     proc.on("close", (code) => {
       if (timedOut) { finish({ ok: false, kind: "module", reason: `超过 ${timeoutMs}ms 墙钟上限` }); return; }
       // 最终答案：--json 流里最后一个非事件行；流解析失败就取 stdout 去掉事件行后的文本。
       const text = extractFinalText(out);
       if (code !== 0) {
-        const envHint = /MISSING_CREDENTIAL|NO_ADAPTER|UNKNOWN_MODEL|EADDR|cannot find/i.test(out) ? "environment" : "module";
-        finish({ ok: false, kind: envHint, reason: `headless 退出码 ${code}：${(text || "").slice(0, 200) || "(无输出)"}` });
+        const envHint = /MISSING_CREDENTIAL|NO_ADAPTER|UNKNOWN_MODEL|EADDR|cannot find/i.test(out + stderrTail) ? "environment" : "module";
+        // 诊断优先取 stderr 尾巴：失败时 stdout 常常是空的，而原因都在 stderr。
+        const detail = (text || "").slice(0, 200) || stderrTail.trim().slice(-400) || "(无输出)";
+        finish({ ok: false, kind: envHint, reason: `headless 退出码 ${code}：${detail}` });
         return;
       }
       if (!text.trim()) { finish({ ok: false, kind: "module", reason: "headless 没有产出可解析的最终回答" }); return; }
@@ -286,10 +366,18 @@ export function createT1({ store, runSession = null, limits = DEFAULT_LIMITS, no
       skipped,
       t1Unavailable: null,
     };
+    // --dsh-exe 只影响这一轮：原来写进 process.env 就不还了，同一进程里后续任何一次
+    // 定位都会继承它（面板里切仓库、换个布局都还是旧值），属于会记很久的脏状态。
     const runnerWithExe = dshExe
       ? async (call) => {
+          const saved = process.env.DSH_EXE;
           process.env.DSH_EXE = dshExe;
-          return runner(call);
+          try {
+            return await runner(call);
+          } finally {
+            if (saved === undefined) delete process.env.DSH_EXE;
+            else process.env.DSH_EXE = saved;
+          }
         }
       : runner;
 
@@ -345,12 +433,18 @@ export function createT1({ store, runSession = null, limits = DEFAULT_LIMITS, no
 
       // 富化 + 双落（P19/P20）。写路径断言复用 t0 的机械面语义：只许动
       // .chorography/** 下的页面与 evidence。
+      //
+      // verifiedBaseline 必须是**这一刻**的 HEAD：claims 的行号是从这棵代码树上读出来
+      // 的，之后判失效只能从它起算。拿不到 HEAD（不是 git 仓库 / git 不在）就记 null，
+      // 面板据此说「这一页哪次验证的，不知道」——不退回全仓 git_baseline，那会把
+      // 「T1 之前就发生、claim 早已算进去」的改动误报成 touched。
       const generatedAt = now();
-      enrichPageFile(pageFile, parsed.sections);
-      writeEvidenceFile(rootPath, slug, parsed.claims, generatedAt);
+      const verifiedBaseline = gitHead(rootPath);
+      enrichPageFile(pageFile, parsed.sections, { verifiedBaseline, verifiedAt: generatedAt });
+      writeEvidenceFile(rootPath, slug, parsed.claims, generatedAt, verifiedBaseline);
       store.saveChoroPageClaims(pageRow.id, parsed.claims.map((c) => ({ ...c, createdAt: generatedAt })));
-      store.markChoroPageEnriched(pageRow.id, generatedAt);
-      receipt.enriched.push({ slug, sections: Object.keys(parsed.sections), claims: parsed.claims.length });
+      store.markChoroPageEnriched(pageRow.id, generatedAt, verifiedBaseline);
+      receipt.enriched.push({ slug, sections: Object.keys(parsed.sections), claims: parsed.claims.length, verifiedBaseline });
     }
     return receipt;
   }
@@ -430,7 +524,11 @@ function parseT1Output(text) {
 }
 
 // 富化（P19）：剥掉旧 T1 段 → 新段插在「## 生成说明」之前 → 保留区照旧页尾回填。
-function enrichPageFile(pageFile, sections) {
+//
+// 顺带把「对着哪个提交验证的」写进 frontmatter（① provenance）：这两个键**只有 T1
+// 写**，T0 渲染一个字节都不产出。因此 T0 重跑整页重建时它们随语义段一起消失，
+// 与「T0 丢弃 T1 正文」是同一件事，不新增语义，也不碰 T0 的逐字节确定性。
+function enrichPageFile(pageFile, sections, { verifiedBaseline = null, verifiedAt = null } = {}) {
   let content = readFileSync(pageFile, "utf8");
   // 剥旧 T1 段（含标记本身）
   const wrap = new RegExp(`${escapeRe(T1_SECTION_START)}[\\s\\S]*?${escapeRe(T1_SECTION_END)}\\n?`, "g");
@@ -462,7 +560,13 @@ function enrichPageFile(pageFile, sections) {
     ? `${content.replace(/\n*$/, "\n")}\n${block}`
     : content.slice(0, anchor) + block.replace(/^\n/, "") + content.slice(anchor);
   const { blocks } = extractHumanBlocks(base);
-  const finalContent = blocks.length > 0 ? injectHumanBlocks(stripHumanBlocks(base), blocks) : base;
+  const withHuman = blocks.length > 0 ? injectHumanBlocks(stripHumanBlocks(base), blocks) : base;
+  // HUMAN 块是页尾整块，frontmatter 在页首，两者互不干扰；顺序仍按「先回填保留区、
+  // 再收尾 frontmatter」，避免 fronts 里的键名与保留区正文同名时被误改。
+  const finalContent = setFrontmatterKeys(withHuman, [
+    [FM_VERIFIED_BASELINE, verifiedBaseline],
+    [FM_VERIFIED_AT, verifiedAt],
+  ]);
   writeFileSync(pageFile, finalContent, "utf8");
 }
 
@@ -472,11 +576,14 @@ function stripHumanBlocks(text) {
   return text.replace(re, "");
 }
 
-function writeEvidenceFile(repoRoot, slug, claims, generatedAt) {
+function writeEvidenceFile(repoRoot, slug, claims, generatedAt, verifiedBaseline = null) {
   const rel = `${".chorography"}/evidence/${slug}.json`;
   const abs = insideChoro(repoRoot, rel);
   mkdirp(dirname(abs));
-  writeFileSync(abs, `${JSON.stringify({ slug, generatedAt, claims }, null, 2)}\n`, "utf8");
+  // verifiedBaseline 与页面 frontmatter 同源同写：evidence 是给人核的旁证，光有 claims
+  // 没有「对着哪个提交」的，事后同样无从复核。
+  const body = { slug, generatedAt, verifiedBaseline, claims };
+  writeFileSync(abs, `${JSON.stringify(body, null, 2)}\n`, "utf8");
 }
 
 function insideChoro(rootPath, relPath) {

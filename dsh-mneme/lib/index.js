@@ -723,7 +723,9 @@ export const apply = (ctx, config) => {
     const choro = {
       ...createChoroQueries({ store }),
       embedder,
-      runT0Apply: ({ repoRoot }) => runChoroT0({ repoRoot, store, apply: true }),
+      // guardT1Loss 只给「读侧顺手刷新」用：那条路不是用户的明确指令，不能替他
+      // 丢掉花模型调用换来的语义段。手动重建（面板按钮 / CLI）不传，行为不变。
+      runT0Apply: ({ repoRoot, guardT1Loss = false }) => runChoroT0({ repoRoot, store, apply: true, guardT1Loss }),
       startT1Job: (args) => t1Jobs.start(args),
       t1JobStatus: (jobId) => t1Jobs.status(jobId),
     };

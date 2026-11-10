@@ -255,6 +255,76 @@ test("choro page wires the two feature toggles, the T1 job and the stale marker"
   );
 });
 
+// 证据复核（Grounded Claims）：用 git diff 判「哪条结论被改动碰到了」。
+// 这条锁的是三件在屏幕上看不见但一错就骗人的事：
+//  · 三种结局（干净 / 基线找不到 / 比对失败）必须走三条分支，不能并成一句；
+//  · 四种命中原因各自有文案，尤其 touched 与 shifted 不许混成一个「失效」；
+//  · 「没算」不许长得像「没事」——#607 的病根就是把没做成说成做成了。
+test("claim evidence check reports three distinct outcomes instead of one reassuring blob", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(fn.includes("/api/dsh-mneme/choro/claims?repo="), "the check must read the /choro/claims route");
+  // 手动触发，不进 useEffect：每次切页都跑 git diff 会把浏览拖慢，而且这个面板
+  // 第一次就自动跑的话，「没点过」和「点过没事」在屏幕上就长一个样了。
+  assert.ok(
+    !/useEffect\(\(\) => \{[^}]*checkDrift/.test(fn),
+    "the check must not run automatically on mount — an unasked check cannot be told apart from an unrun one"
+  );
+  for (const key of ["wiki.drift.clean", "wiki.drift.anchorStale", "wiki.drift.blocked", "wiki.drift.summary"]) {
+    assert.ok(fn.includes(`t("${key}")`), `each outcome needs its own sentence, missing ${key}`);
+  }
+  for (const key of ["wiki.drift.touched", "wiki.drift.shifted", "wiki.drift.deleted", "wiki.drift.unverifiable"]) {
+    assert.ok(fn.includes(`t("${key}")`), `each hit reason needs its own sentence, missing ${key}`);
+  }
+  // touched 与 shifted 分家：混成「失效」会让只是行号挪了的结论也被喊去重写。
+  assert.ok(
+    fn.includes('c.reason === "touched"') && fn.includes('c.reason === "shifted"'),
+    "touched and shifted must stay two verdicts"
+  );
+  // 正文有语义段、库里零条结论（T1 落盘非原子留下的残局）要单独说出来，
+  // 否则这页会永远显示成干净。
+  assert.ok(fn.includes('t("wiki.drift.inconsistent")'), "a page with prose but no claims must say so");
+  // 每页的条数挂在树里，用户不用先点开才知道哪页被改动碰到。
+  assert.ok(fn.includes("mneme-wikidriftn"), "the tree must carry a per-page count badge");
+
+  // 文案本身也要能区分「没算」与「没事」：干净那句必须提到 HEAD/基线，
+  // 失败那句必须提到失败——两者措辞相同就等于没区分。
+  const clean = [...clientSource.matchAll(/"wiki\.drift\.clean":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  const blocked = [...clientSource.matchAll(/"wiki\.drift\.blocked":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  assert.equal(clean.length, 2, "wiki.drift.clean must exist in both dictionaries");
+  assert.equal(blocked.length, 2, "wiki.drift.blocked must exist in both dictionaries");
+  for (const line of clean) {
+    assert.ok(/HEAD|基线|baseline/.test(line), "the clean copy must say what it compared against");
+  }
+  for (const line of blocked) {
+    assert.ok(/失败|failed/i.test(line), "the blocked copy must admit the comparison did not happen");
+  }
+  assert.notEqual(clean[0], blocked[0], "the two outcomes must not share copy");
+});
+
+// 自动刷新被主动跳过（仓库里有富化页）。这条锁的是「拒绝不许长得像失败」：
+// 服务端已经把 autoRefreshSkipped 与 autoRefreshError 分成两个字段，面板必须
+// 跟着分——合成一句「刷新失败」就是在报一个没发生过的故障，而真正的后果
+// （语义段还在、快照还是旧的）反而没人说。
+test("auto-refresh skip is shown as a standing reason, not as a failure toast", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(fn.includes("autoRefreshSkipped"), "the panel must read the skip signal");
+  assert.ok(fn.includes("autoRefreshNote"), "the skip reason needs a visible home");
+  assert.ok(
+    !/autoRefreshError[^\n]*autoRefreshSkipped|autoRefreshSkipped[^\n]*autoRefreshError/.test(fn),
+    "skipped and error must not be merged into one branch"
+  );
+  // 提示条不能只在 toast 里：toast 2.5 秒就没了，而「为什么没刷」是一个
+  // 仍然成立的状态（库里还有富化页），用户回头还要能看到。
+  assert.ok(fn.includes("mneme-wikidriftbar") && fn.includes("state.autoRefreshNote"),
+    "the skip note must render as a bar, not a self-clearing toast");
+  const zh = [...clientSource.matchAll(/"wiki\.autoRefresh\.skipped":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  const en = zh.length;
+  assert.equal(en, 2, "wiki.autoRefresh.skipped must exist in both dictionaries");
+  assert.ok(/没.*做|没有做/.test(zh[0]), "the Chinese copy must say it did not happen");
+  assert.ok(!/失败/.test(zh[0]), "the skip copy must not claim a failure");
+  assert.ok(/skipped/i.test(zh[1]), "the English copy must say skipped");
+});
+
 // 知识库页（契约 §3.6）。这条锁的是「路由与就近文案都在」，不是布局：
 //  · 409/503 各有自己的空态，不把裸状态码丢屏幕上；
 //  · disabled 那句必须说清去哪儿开（#607 的教训：只说「未启用」等于没说）；
@@ -1220,8 +1290,8 @@ test("consolidation chart: own 56-day window, null-vs-empty split, and a narrow-
     "two columns must collapse to one in a narrow container"
   );
   // 两根柱的语义色必须走语义层，不能直接拿宿主 label token 当填充色（#178）。
-  assert.ok(clientSource.includes(".mneme-sinkbar--added{background:var(--mneme-chart-3)}"));
-  assert.ok(clientSource.includes(".mneme-sinkbar--merged{background:var(--mneme-chart-2)}"));
+  assert.ok(clientSource.includes(".mneme-sinkbar--added{background:var(--mneme-sink-added)}"));
+  assert.ok(clientSource.includes(".mneme-sinkbar--merged{background:var(--mneme-sink-merged)}"));
 });
 
 // 巩固/睡眠模型路由 UI：下拉数据来自宿主侧已注册适配器（/llm-providers，
@@ -2679,9 +2749,10 @@ test("diary book: paper choice is one shared setting across both entries", () =>
     "a same-page change must be broadcast, storage events never fire in the same document");
   assert.ok(clientSource.includes('addEventListener("mneme:diary-book-changed"'),
     "the other entry must listen for that broadcast");
-  // 四种纸都要有文案，否则按钮上是裸 key。
+  // 三种纸都要有文案，否则按钮上是裸 key（牛皮已删：它只是同一层上色的换色相，
+  // 与素纸差 1.01:1，且是这块唯一硬编码 hex）。
   for (const key of ["memory.diary.bookLabel", "memory.diary.book.plain", "memory.diary.book.ruled",
-    "memory.diary.book.grid", "memory.diary.book.kraft"]) {
+    "memory.diary.book.grid"]) {
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
@@ -2692,6 +2763,51 @@ test("diary book: paper choice is one shared setting across both entries", () =>
     "the diary body needs a serif typeface to read like a notebook");
   assert.ok(clientSource.includes("background-size:100% 26px"),
     "the ruled texture must be locked to the 26px line height");
+});
+
+// 2026-11-11 查出来的真 bug：四条纸面风格（--ruled/--grid/--kraft/--plain）与基础规则
+// `.mneme-diary-paper` 同为 (0,1,0)、基础规则在数组里更靠后、且用 background 简写——
+// 前四条设的 background-image/color 被整条重置，四种纸实测全是 background-image:none，
+// 所以「几种风格毫无变化」不是没做完。修法两层：纹理挪到 .mneme-diary-text（后代选择器，
+// 结构上不再和基础规则抢同一个元素），基础规则只用 background-color。
+test("diary paper: 纹理挂在正文元素上，基础规则不许退回 background 简写", () => {
+  const at = clientSource.indexOf('".mneme-diary-paper{');
+  assert.ok(at > -1, "the base paper rule must exist");
+  const rule = clientSource.slice(at + 1, clientSource.indexOf('",', at));
+  assert.ok(rule.includes("background-color:"),
+    "the base rule must paint its tint with background-color");
+  assert.ok(!/(^|;|\s)background:/.test(rule),
+    "the base rule must not use the background shorthand — it resets every texture above it");
+  for (const key of ["--ruled", "--grid"]) {
+    assert.ok(clientSource.includes(".mneme-diary-paper" + key + " .mneme-diary-text{"),
+      "the " + key + " texture must hang off .mneme-diary-text, not off the base class");
+  }
+  assert.ok(clientSource.includes("--mneme-rule:"),
+    "the rule colour needs its own token (border-l1 is 1.09:1 on paper — invisible)");
+  assert.ok(!clientSource.includes("memory.diary.book.kraft"),
+    "kraft was removed; it only differed from plain by hue (1.01:1) and carried the block's only hardcoded hex");
+});
+
+// 走查发现：savedAt 只写不清 —— 保存成功后再改字段仍显示「已保存」，先成功后失败会
+// 「已保存」+「保存失败」两行并存。三处清零缺一处就会复现，所以按处数锁。
+test("persona save: 改任何字段都把「已保存」收回去（假成功回归锁）", () => {
+  const zeros = (clientSource.match(/setSavedAt\(0\)/g) || []).length;
+  assert.ok(zeros >= 3, "save 开头 / setField / toggleEnabled 三处都要清零（现有 " + zeros + " 处）");
+  assert.ok(clientSource.includes("setSavedAt(Date.now())"), "the success path still stamps the time");
+});
+
+// 窄侧栏（约 400px）下日记与人格原来是横向分栏：正文纸被挤到 250px、人格编辑区
+// 只剩 180px；六个页签还会各自折成两行。这两条都在 480 档容器查询里修，锁住防回退。
+test("窄容器：日记与人格上下堆叠，页签不折行", () => {
+  const at = clientSource.indexOf('"@container (max-width: 480px){');
+  assert.ok(at > -1, "the 480 container query must exist");
+  const block = clientSource.slice(at, clientSource.indexOf('"', at + 2));
+  assert.ok(block.includes(".mneme-diary-body{flex-direction:column}"),
+    "the diary list + paper must stack in a narrow panel");
+  assert.ok(block.includes(".mneme-persona-body{flex-direction:column}"),
+    "the persona card rail + editor must stack in a narrow panel");
+  assert.ok(block.includes("white-space:nowrap}"),
+    "panel tabs must not wrap their label onto two lines");
 });
 
 // 日记本不再占侧边栏座位（2026-11-09 桉桉：还保留旧版本的侧边栏打开，这个要去掉）。

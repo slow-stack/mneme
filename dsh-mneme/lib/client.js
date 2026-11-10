@@ -352,6 +352,35 @@ window.__ModuleLoader__.load({
         "wiki.t1.failedCount": "失败",
         "wiki.stale": "代码已变",
         "wiki.stale.hint": "上次生成之后仓库代码变过，页面可能和现状对不上：点「重建骨架」刷新。",
+        // 证据复核（Grounded Claims）：不重跑 T1 也能知道「哪几条结论被改动碰到了」。
+        // 文案刻意把「算不出来」和「一条都没事」写成两句不同的话——这两种状态在
+        // 屏幕上长得一样的话，用户会把「没算」当成「没问题」，那正是 #607 的病。
+        "wiki.drift": "证据复核",
+        "wiki.drift.hint": "用 git diff 比对每条结论记下的文件与行号：只有被改动碰到的才标出来，不重跑模型。",
+        "wiki.drift.loading": "正在比对…",
+        "wiki.drift.summary": "{pages} 页 · {claims} 条结论 · {risk} 条需要复核",
+        "wiki.drift.clean": "基线就是当前 HEAD：所有结论的锚点都还对得上。",
+        "wiki.drift.none": "这次改动没碰到任何结论的锚点。",
+        "wiki.drift.gitUnreadable": "读不到这个仓库的 git 信息（不是 git 目录或不可读），没法比对。",
+        "wiki.drift.anchorStale": "上次生成记下的基线提交在 git 里已经找不到了（可能被 force-push 或浅克隆截断）：无法比对，建议重建骨架。",
+        "wiki.drift.blocked": "比对失败",
+        "wiki.drift.touched": "改动碰到这行",
+        "wiki.drift.shifted": "上方有增删，行号挪了 {n}",
+        "wiki.drift.deleted": "文件已删",
+        "wiki.drift.unverifiable": "这条没记行号，无法定位",
+        "wiki.drift.inconsistent": "正文有语义段、库里却没有结论记录（上次 T1 没写完），这页证据无法核对。",
+        // 语义段 provenance（①）：每页的结论是「对着哪个提交」读出来的。不说清这一点，
+        // 「证据复核」就只是在和某个不明时点比——页越晚富化，误报越多。
+        "wiki.drift.verified": "对着 {sha} 验证",
+        "wiki.drift.verifiedUnknown": "这页没记下是哪个提交验证的（早期富化没有记录），所以判不出它有没有过时。重跑一次 T1 就会记上。",
+        "wiki.drift.verifiedApprox": "这页是早期富化的，没记下自己的验证点；下面按全仓基线 {sha} 比对（起点比实际更早，只会多报不会漏报）。",
+        "wiki.drift.anchorStalePage": "这页记下的验证提交在 git 里已经找不到了（force-push 或浅克隆截断），这页没法比对。",
+        "wiki.drift.undecidable": "{n} 页的验证基线不可用，没有参与比对",
+        // 自动刷新被主动跳过（仓库里有已富化的页）。这句话必须说的是「我没做，因为
+        // 做了会丢东西」，而不是「刷新失败」——失败是另一种情况，另一种文案。
+        "wiki.autoRefresh.skipped": "自动刷新这次没有做：这仓库有 {n} 页已经富化过，重跑骨架会把语义段和结论一起清掉。要新快照请手动点「重建骨架」（会先告诉你丢哪几页）。",
+        "wiki.autoRefresh.skippedGeneric": "自动刷新这次没有做：这仓库已有富化过的页，重跑骨架会把语义段和结论一起清掉。要新快照请手动点「重建骨架」。",
+        "wiki.autoRefresh.failed": "自动刷新试过但失败了",
         "wiki.run.pathRequired": "先填仓库目录的绝对路径",
         "wiki.run.failed": "生成失败",
         "wiki.run.notAbsolute": "要给绝对路径（例如 D:\\code\\my-repo）：相对路径会按服务端进程的当前目录解析，同一个请求换个启动位置就落到别的目录。",
@@ -942,8 +971,7 @@ window.__ModuleLoader__.load({
         "memory.diary.bookLabel": "纸和字",
         "memory.diary.book.plain": "素纸",
         "memory.diary.book.ruled": "横线",
-        "memory.diary.book.grid": "方格",
-        "memory.diary.book.kraft": "牛皮",
+        "memory.diary.book.grid": "点阵",
         "memory.diary.count": "共 {n} 篇",
         "memory.diary.writtenOk": "写好了：{path}",
   "memory.diary.exportOk": "已存到 {path}",
@@ -1401,6 +1429,7 @@ window.__ModuleLoader__.load({
         "memory.status.token.conflictsFoot": "来自 /dream-status · 实时",
         "memory.status.token.donut": "按组件 · 谁花了这些 token",
         "memory.status.token.days": "按天 · 7 天趋势",
+        "memory.status.token.daysEmpty": "最近 7 天没有 token 记录",
         "memory.status.token.heat": "8 周热力 · 每天花了多少",
         "memory.status.token.heatLess": "少",
         "memory.status.token.heatMore": "多",
@@ -1459,6 +1488,36 @@ window.__ModuleLoader__.load({
         "wiki.t1.failedCount": "failed",
         "wiki.stale": "Code changed",
         "wiki.stale.hint": "The repository's code changed since the last run, so these pages may be out of date — press \"Rebuild skeleton\" to refresh.",
+        // Evidence review (Grounded Claims): which claims a change touched, without
+        // re-running T1. "Could not compare" and "nothing touched" must read as two
+        // different sentences — if they look the same on screen, an uncomputed check
+        // passes for a clean bill of health, which is exactly what #607 was about.
+        "wiki.drift": "Evidence check",
+        "wiki.drift.hint": "Diffs each claim's recorded file and line range against git: only the ones a change actually touched are flagged. No model call.",
+        "wiki.drift.loading": "Comparing…",
+        "wiki.drift.summary": "{pages} pages · {claims} claims · {risk} need review",
+        "wiki.drift.clean": "The baseline is the current HEAD: every claim still points where it did.",
+        "wiki.drift.none": "This change did not touch any claim anchor.",
+        "wiki.drift.gitUnreadable": "Cannot read git for this repository (not a git directory, or unreadable), so nothing can be compared.",
+        "wiki.drift.anchorStale": "The baseline commit recorded at generation time no longer exists in git (force-push or a shallow clone cut it off): nothing to compare against — rebuild the skeleton.",
+        "wiki.drift.blocked": "Comparison failed",
+        "wiki.drift.touched": "A change touched this line",
+        "wiki.drift.shifted": "Insertions above moved it {n} lines",
+        "wiki.drift.deleted": "File deleted",
+        "wiki.drift.unverifiable": "No line number recorded — cannot locate",
+        "wiki.drift.inconsistent": "This page has prose in the file but no claims on record (the last T1 run did not finish), so its evidence cannot be checked.",
+        // Claim provenance: each page's claims were read from one specific commit. Without
+        // saying which, "evidence check" compares against an unknown point in time.
+        "wiki.drift.verified": "Verified at {sha}",
+        "wiki.drift.verifiedUnknown": "This page did not record which commit its claims were verified against (earlier enrichment did not store one), so staleness cannot be decided. Re-running T1 will record it.",
+        "wiki.drift.verifiedApprox": "This page was enriched before provenance was recorded; the comparison below starts from the repository baseline {sha} (earlier than the real one, so it can over-report but never miss).",
+        "wiki.drift.anchorStalePage": "The commit this page was verified against no longer exists in git (force-push or a shallow clone cut it off), so this page cannot be compared.",
+        "wiki.drift.undecidable": "{n} page(s) have no usable verification baseline and were left out of the comparison",
+        // Auto-refresh was deliberately skipped. This must read as "I did not do it,
+        // because doing it would lose something", never as "refresh failed".
+        "wiki.autoRefresh.skipped": "Auto-refresh was skipped: {n} page(s) in this repository are already enriched, and rebuilding the skeleton would wipe their prose and claims. Click Rebuild skeleton yourself if you want a new snapshot (it tells you which pages it drops).",
+        "wiki.autoRefresh.skippedGeneric": "Auto-refresh was skipped: this repository already has enriched pages, and rebuilding the skeleton would wipe their prose and claims. Click Rebuild skeleton yourself if you want a new snapshot.",
+        "wiki.autoRefresh.failed": "Auto-refresh was attempted but failed",
         "wiki.run.pathRequired": "Enter the repository's absolute path first",
         "wiki.run.failed": "Generate failed",
         "wiki.run.notAbsolute": "Give an absolute path (for example /home/me/code/my-repo): relative paths resolve against the server process's working directory, so the same request can land somewhere else depending on how the host was started.",
@@ -2023,8 +2082,7 @@ window.__ModuleLoader__.load({
         "memory.diary.bookLabel": "Paper and type",
         "memory.diary.book.plain": "Plain",
         "memory.diary.book.ruled": "Ruled",
-        "memory.diary.book.grid": "Grid",
-        "memory.diary.book.kraft": "Kraft",
+        "memory.diary.book.grid": "Dots",
         "memory.diary.count": "{n} entries",
         "memory.diary.writtenOk": "Written: {path}",
   "memory.diary.exportOk": "Saved to {path}",
@@ -2475,6 +2533,7 @@ window.__ModuleLoader__.load({
         "memory.status.token.conflictsFoot": "From /dream-status · live",
         "memory.status.token.donut": "By component · who spent these tokens",
         "memory.status.token.days": "By day · 7-day trend",
+        "memory.status.token.daysEmpty": "no token usage in the last 7 days",
         "memory.status.token.heat": "8-week heat · daily spend",
         "memory.status.token.heatLess": "less",
         "memory.status.token.heatMore": "more",
@@ -2583,22 +2642,73 @@ window.__ModuleLoader__.load({
         "--mneme-danger:color-mix(in srgb,var(--dsw-alias-state-error-primary) 80%,var(--dsw-alias-label-primary));" +
         "--mneme-warn:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 65%,var(--dsw-alias-label-primary));" +
         "--mneme-ok:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 65%,var(--dsw-alias-label-primary));" +
-        // Token 去向三屏（2026-10 可观测性改造）：图表六色全部单层 color-mix、
-        // 基准只用宿主 token，test/contrast.test.js GRAPHICS 逐 selector 锁浅/深
-        // ≥3:1。配比按 2026-10 审计数据校准（巩固 37% 是最大弧，占最深主色）。
-        "--mneme-chart-1:color-mix(in srgb,var(--dsw-alias-state-business-primary) 70%,var(--dsw-alias-label-primary));" +
-        "--mneme-chart-2:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 55%,var(--dsw-alias-label-primary));" +
-        "--mneme-chart-3:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 60%,var(--dsw-alias-label-primary));" +
-        "--mneme-chart-4:color-mix(in srgb,var(--dsw-alias-state-error-primary) 65%,var(--dsw-alias-label-primary));" +
-        "--mneme-chart-5:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 45%,var(--dsw-alias-state-business-primary));" +
-        // chart-6 与 graphic-dim 同款但内联写：对比度解析器不递归 --mneme-* 变量。
+        // 图表六色（2026-11 重调，代号 E）：每个槽两步混色。第一步把静态色与中性灰
+        // 混掉一部分彩度（62%，紫用 74% 才不至于读成灰），第二步按各槽自己的比例混
+        // label——label 随主题反向，深浅两套色阶因此自动成立，不用写第二份深色值。
+        // 旧口径的四个毛病都是「各槽自己调、没有共同尺度」：彩度 0.065–0.172 差两倍
+        // （红最刺眼）、chart-2 与 chart-5 都是绿（深色下 H 只差 4，分不出）、amber-600
+        // 再压 40% 黑读成土褐、channel-5 的 L* 0.633 而 chart-4 只有 0.449（一条浮一条沉）。
+        // 五色相固定为 blue / green / amber / red / violet，灰槽（chart-6）留给「其他」。
+        // **刻意用 --dsw-static-* 而不是 --dsw-alias-state-***：别名是宿主状态的语义色，
+        // 宿主调一次状态色就会连带换掉图表色盘，而图表色盘该是设计决定。
+        // 实测浅色 L* 0.47–0.51、深色 0.72–0.81，彩度 0.065–0.095，最低对比 5.6:1（图形只要 3:1）。
+        "--mneme-chart-1:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-blue-500,#3b82f6) 62%,var(--dsw-static-neutral-500,#7f8287)) 70%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-2:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 62%,var(--dsw-static-neutral-500,#7f8287)) 64%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-3:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-amber-500,#f59e0b) 62%,var(--dsw-static-neutral-500,#7f8287)) 74%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-4:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-red-500,#ef4444) 62%,var(--dsw-static-neutral-500,#7f8287)) 67%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-5:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-violet-400,#a78bfa) 74%,var(--dsw-static-neutral-500,#7f8287)) 62%,var(--dsw-alias-label-primary));" +
+        // 第 6 槽是半透明灰（「其他」那一类）。它曾同时以「令牌 + 弧 + 图例点」三份
+        // 内联副本存在过，改一处漏两处；现在弧与点都直接 var 引用这一份。
         "--mneme-chart-6:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent);" +
+        // 沉淀图（8 周「进来 vs 稳住」）与 donut（token 都去哪了）是两套分类，原先共用
+        // chart-3 / chart-2：同一页里那根琥珀柱在 donut 是「实体抽取」、在沉淀图是「新增」，
+        // 同色两义。这里给沉淀图独立语义名，取值与今天的 chart-3 / chart-2 逐字相同
+        // （只换语义，视觉零变化），但**刻意不写 var(--mneme-chart-N)**——那是继承，
+        // 以后调 donut 的六色盘会顺手改掉「库在膨胀还是稳住了」这张结论图的颜色。
+        // 取色与 chart-3 同一套配方，但**逐字重写一份、不写 var 引用**：视觉跟着 donut 走，
+        // 归属不跟着走（以后单独调沉淀图不必先改 donut）。
+        "--mneme-sink-added:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-amber-500,#f59e0b) 62%,var(--dsw-static-neutral-500,#7f8287)) 74%,var(--dsw-alias-label-primary));" +
+        "--mneme-sink-merged:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 62%,var(--dsw-static-neutral-500,#7f8287)) 64%,var(--dsw-alias-label-primary));" +
         // 热力档位用 label 补余而非 transparent：transparent 混色在浅色主题下
         // 低档位对白底不足 3:1；label 补余两套主题各档都过线且单调。
         "--mneme-heat-1:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
         "--mneme-heat-2:color-mix(in srgb,var(--dsw-alias-state-business-primary) 70%,var(--dsw-alias-label-primary));" +
         "--mneme-heat-3:color-mix(in srgb,var(--dsw-alias-state-business-primary) 55%,var(--dsw-alias-label-primary));" +
-        "--mneme-heat-4:color-mix(in srgb,var(--dsw-alias-state-business-primary) 40%,var(--dsw-alias-label-primary))" +
+        "--mneme-heat-4:color-mix(in srgb,var(--dsw-alias-state-business-primary) 40%,var(--dsw-alias-label-primary));" +
+        // 几何刻度层（视觉系统 P0，docs/plans/2026-11-10-panel-visual-system.md）：
+        // 颜色有 16 个 token 兜住，空间此前一个都没有——于是 padding 长出 107 种
+        // 取值、只有 41.7% 落在 4 网格上、29% 是奇数像素。刻度按**像素值命名**
+        // （--mneme-space-8 就是 8px），而不是 0..8 的档位号：
+        // 档位号会让 gap:"4" 等于 8px，写的人要背一张表，读的人没法核对；
+        // 值命名让调用点自解释，也让 test/panel-tokens.test.js 能用「允许的 px 集」
+        // 直接校验，不需要第二份映射表。2/6/10 是半档（图标与文字之间、标题与卡之间），
+        // 40 是滚动区末端的留白：24 之后一格跨度太窄，装不下滚到底时需要的呼吸。
+        "--mneme-space-0:0;" +
+        "--mneme-space-2:2px;" +
+        "--mneme-space-4:4px;" +
+        "--mneme-space-6:6px;" +
+        "--mneme-space-8:8px;" +
+        "--mneme-space-10:10px;" +
+        "--mneme-space-12:12px;" +
+        "--mneme-space-16:16px;" +
+        "--mneme-space-20:20px;" +
+        "--mneme-space-24:24px;" +
+        "--mneme-space-40:40px;" +
+        // 圆角：全文件此前 borderRadius 声明 0 处（圆角全靠宿主，各页不统一）。
+        // 留两档是因为用途不同：8 是列表里的小卡，12 是仪表盘大卡（容器大、信息
+        // 密度低，8 会让四角显得太紧）。
+        "--mneme-radius-4:4px;" +
+        "--mneme-radius-8:8px;" +
+        "--mneme-radius-12:12px;" +
+        "--mneme-radius-pill:999px;" +
+        // 字号：现有 12/13/15 三种覆盖了绝大多数文本，把既有事实写成 token；
+        // 10/14/18 仍散落在 133/61/52 处，属待迁移，不在此列（迁移要逐页视觉复核，
+        // 全局替换会把紧凑列表撑开）。
+        "--mneme-type-12:12px;" +
+        "--mneme-type-13:13px;" +
+        "--mneme-type-15:15px;" +
+        "--mneme-weight-400:400;" +
+        "--mneme-weight-600:600" +
       "}",
       ".mneme-x{flex:1;min-height:0;height:100%;width:100%;box-sizing:border-box;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);container-type:inline-size}",
       // 窄容器（better-sidebar 工作台 ~500px）下中央 vtabs 会与右缘悬浮的
@@ -2779,11 +2889,13 @@ window.__ModuleLoader__.load({
       ".mneme-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-btn:disabled{opacity:.5;cursor:default}",
       ".mneme-saved{font-size:12px;color:var(--mneme-ok)}",
-      // rule rows: numbered chips + hover-revealed delete
-      ".mneme-set-row{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;margin-bottom:8px;background:var(--dsw-alias-bg-base,transparent)}",
+      // rule rows: numbered chips + 常显的淡删除键（悬停/聚焦才满不透明）。
+      // 曾经彻底 opacity:0，只有鼠标扫过才出现——在窄侧栏和触摸设备上等于没有删除入口，
+      // 用户只能靠猜。留 .45 的常显态，噪声换可发现性。
+      ".mneme-set-row{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-8);margin-bottom:8px;background:var(--dsw-alias-bg-base,transparent)}",
       ".mneme-set-idx{flex:none;width:20px;height:20px;border-radius:50%;border:1px solid var(--dsw-alias-border-l2);color:var(--mneme-fg-dim);font-size:11px;line-height:18px;display:inline-flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}",
       ".mneme-set-ruletext{flex:1;min-width:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);word-break:break-word}",
-      ".mneme-set-del{flex:none;opacity:0;transition:opacity .12s;border:none;background:none;color:var(--mneme-fg-dim);cursor:pointer;font-size:14px;line-height:20px;padding:0 4px;border-radius:6px}",
+      ".mneme-set-del{flex:none;opacity:.45;transition:opacity .12s;border:none;background:none;color:var(--mneme-fg-dim);cursor:pointer;font-size:14px;line-height:20px;padding:0 4px;border-radius:6px}",
       ".mneme-set-row:hover .mneme-set-del,.mneme-set-row:focus-within .mneme-set-del{opacity:1}",
       ".mneme-set-del:hover{color:var(--mneme-danger);background:var(--dsw-alias-interactive-bg-hover)}",
       // 人格卡删除 × 独立类：不复用 mneme-set-del——其 opacity:0 仅在
@@ -2797,7 +2909,6 @@ window.__ModuleLoader__.load({
       ".mneme-set-cmdname{font-size:13px;font-weight:600;color:var(--mneme-accent)}",
       ".mneme-set-cmddesc{font-size:12px;line-height:17px;color:var(--mneme-fg-dim);margin-top:1px;word-break:break-word}",
       // --- settings sub-view ---
-      ".mneme-set{flex:1;min-height:0;overflow-y:auto;padding:8px 24px 48px;box-sizing:border-box}",
       // --- 宿主中列整页面板（sidebar.panellist + main 成对座位）---
       // 宿主把 main 槽渲染在三列 grid 的中列里，那一层只给了 min-width:0 与
       // overflow:hidden，没有任何尺寸约束——注册者必须自己铺满并自管滚动，
@@ -2868,6 +2979,26 @@ window.__ModuleLoader__.load({
       ".mneme-wikitoggle.mneme-on{border-color:var(--dsw-alias-state-business-primary)}",
       ".mneme-wikistale{margin-inline-end:2px}",
       ".mneme-wikit1bar{flex:none;padding:6px 16px;border-top:1px solid var(--dsw-alias-border-l2);font-size:11.5px;line-height:16px;color:var(--mneme-fg-dim);background:var(--dsw-alias-bg-layer-1)}",
+      // --- 证据复核（Grounded Claims）---
+      // 回执条压在顶栏下面一条，三种结局共用同一块位置：位置固定，用户扫一眼
+      // 就知道「这次点完是什么」。warn 档只换左边框颜色，不改正文色——正文色
+      // 一动就得过 contrast.test.js 的重算，而这里没必要冒那个险。
+      ".mneme-wikidriftbar{flex:none;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;padding:6px 16px;border-bottom:1px solid var(--dsw-alias-border-l1);font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-base,transparent)}",
+      ".mneme-wikidriftbar--warn{border-left:3px solid var(--dsw-alias-state-business-primary);padding-left:13px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-wikidriftnone{color:var(--mneme-fg-dim)}",
+      // 树里的条数徽章：复用 pending 徽章的视觉，只压窄一点，避免挤掉模块名。
+      ".mneme-wikidriftn{margin-inline-start:6px;font-size:10.5px;line-height:14px}",
+      ".mneme-wikidriftn--flat{margin-inline-start:6px;color:var(--mneme-fg-dim)}",
+      // 「这页比不了」和「这页没事」必须是两种视觉：前者是空心问号，后者什么都不挂。
+      ".mneme-wikidriftn--unknown{margin-inline-start:6px;color:var(--mneme-fg-dim);font-size:11px}",
+      ".mneme-wikidriftverified{font-size:11px;line-height:16px;color:var(--mneme-fg-dim);margin-bottom:10px}",
+      // 当前这页的明细：读之前先给出「哪条、在哪、为什么」，不给判断（判断是人的）。
+      ".mneme-wikidriftpage{margin:0 0 14px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}",
+      ".mneme-wikidriftpagehead{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary);margin-bottom:6px}",
+      ".mneme-wikidriftrow{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;padding:5px 0;border-top:1px solid var(--dsw-alias-border-l1)}",
+      ".mneme-wikidriftwhy{font-size:11.5px;line-height:16px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-wikidriftpath{font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
+      ".mneme-wikidriftstmt{flex-basis:100%;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}",
       // --- 知识库页（契约 §3.6）---
       // 左列复用 wikitree 的宽度与分隔线，只是树项改成了集合行；右边沿用
       // wikipage 的阅读排版。颜色全部走语义层，不新增任何宿主 token。
@@ -2992,27 +3123,27 @@ window.__ModuleLoader__.load({
       ".mneme-badge--default{color:var(--mneme-fg-dim);background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-badge--changed{color:var(--mneme-accent);background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 10%,transparent);border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary) 30%,transparent)}",
       // 冲突集中处理队列（v0.8.0）：状态页的待确认冲突列表
-      ".mneme-conflictq{display:flex;flex-direction:column;gap:10px}",
-      ".mneme-conflictq-head{display:flex;align-items:center;gap:8px}",
+      ".mneme-conflictq{display:flex;flex-direction:column;gap:var(--mneme-space-10)}",
+      ".mneme-conflictq-head{display:flex;align-items:center;gap:var(--mneme-space-8)}",
 ".mneme-conflictq-truncated{flex:1;font-size:12px;line-height:16px;color:var(--mneme-fg-dim);text-align:right}",
-      ".mneme-conflict-item{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px}",
+      ".mneme-conflict-item{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:var(--mneme-radius-8);padding:var(--mneme-space-10);display:flex;flex-direction:column;gap:var(--mneme-space-8)}",
       ".mneme-conflict-reason{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary)}",
-      ".mneme-conflict-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}",
-      ".mneme-conflict-side{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:4px;min-width:0}",
+      ".mneme-conflict-pair{display:grid;grid-template-columns:1fr 1fr;gap:var(--mneme-space-8)}",
+      ".mneme-conflict-side{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:var(--mneme-radius-8);padding:var(--mneme-space-8);display:flex;flex-direction:column;gap:var(--mneme-space-4);min-width:0}",
       ".mneme-conflict-sidelabel{font-size:11px;color:var(--mneme-fg-dim)}",
       ".mneme-conflict-sidetitle{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".mneme-conflict-snippet{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}",
       ".mneme-conflict-missing{font-size:12px;color:var(--mneme-fg-dim)}",
-      ".mneme-conflict-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}",
+      ".mneme-conflict-actions{display:flex;align-items:center;gap:var(--mneme-space-6);flex-wrap:wrap}",
       ".mneme-conflict-hint{font-size:11px;color:var(--mneme-fg-dim);margin-right:auto}",
       // #177 冲突队列视觉批次：A/B 侧色、相似度条、词级 diff、主色按钮、空态
       ".mneme-conflict-side--a{border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary) 35%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 4%,transparent)}",
       ".mneme-conflict-side--a .mneme-conflict-sidelabel{color:var(--mneme-accent);font-weight:600}",
       ".mneme-conflict-side--b{border-color:color-mix(in srgb,var(--mneme-warn) 45%,transparent);background:color-mix(in srgb,var(--mneme-warn) 5%,transparent)}",
       ".mneme-conflict-side--b .mneme-conflict-sidelabel{color:var(--mneme-warn);font-weight:600}",
-      ".mneme-conflict-simrow{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dsw-alias-label-secondary)}",
-      ".mneme-conflict-simbar{position:relative;flex:1;height:5px;border-radius:3px;background:var(--dsw-alias-interactive-bg-hover);overflow:hidden}",
-      ".mneme-conflict-simfill{position:absolute;top:0;bottom:0;left:0;border-radius:3px;background:var(--dsw-alias-state-business-primary)}",
+      ".mneme-conflict-simrow{display:flex;align-items:center;gap:var(--mneme-space-8);font-size:11px;color:var(--dsw-alias-label-secondary)}",
+      ".mneme-conflict-simbar{position:relative;flex:1;height:5px;border-radius:var(--mneme-radius-pill);background:var(--dsw-alias-interactive-bg-hover);overflow:hidden}",
+      ".mneme-conflict-simfill{position:absolute;top:0;bottom:0;left:0;border-radius:var(--mneme-radius-pill);background:var(--dsw-alias-state-business-primary)}",
       ".mneme-conflict-diff{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}",
       // 展开全文：取消行数钳制并给一个内部滚动区——报障点是「窗口太小又不能
       // 放大，完全对比不了内容」，所以展开态必须能容纳长文本且不撑破面板。
@@ -3020,25 +3151,25 @@ window.__ModuleLoader__.load({
       // 页），那时 46vh 会算成 0px，展开态直接看不见字——实测踩过。
       ".mneme-conflict-diff--full{display:block;-webkit-line-clamp:unset;max-height:28em;overflow-y:auto}",
       ".mneme-conflict-text{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;overflow-wrap:anywhere;max-height:28em;overflow-y:auto}",
-      ".mneme-conflict-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
+      ".mneme-conflict-meta{display:flex;align-items:center;gap:var(--mneme-space-6);flex-wrap:wrap;font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
       ".mneme-conflict-metaval{color:var(--dsw-alias-label-secondary)}",
       // 窄面板下并排会把每侧挤到无法阅读，退成单列（容器查询按面板实际宽度判）
       "@container (max-width:560px){.mneme-conflict-pair{grid-template-columns:1fr}}",
-      ".mneme-conflict-mark{text-decoration:none;border-radius:3px;padding:0 1px}",
+      ".mneme-conflict-mark{text-decoration:none;border-radius:var(--mneme-radius-4);padding:0 1px}",
       ".mneme-conflict-mark--del{background:color-mix(in srgb,var(--mneme-danger) 16%,transparent);text-decoration:line-through}",
       ".mneme-conflict-mark--ins{background:color-mix(in srgb,var(--mneme-ok) 18%,transparent)}",
-      ".mneme-conflict-primary{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 10px;border-radius:8px;border:none;background:var(--mneme-accent);color:var(--dsw-alias-bg-layer-1);cursor:pointer;font-family:inherit;font-size:12px;line-height:16px}",
+      ".mneme-conflict-primary{display:inline-flex;align-items:center;gap:var(--mneme-space-4);height:24px;padding:0 var(--mneme-space-10);border-radius:var(--mneme-radius-8);border:none;background:var(--mneme-accent);color:var(--dsw-alias-bg-layer-1);cursor:pointer;font-family:inherit;font-size:12px;line-height:16px}",
       ".mneme-conflict-primary:disabled{opacity:.55;cursor:default}",
       ".mneme-conflict-primary:hover:not(:disabled){background:color-mix(in srgb,var(--mneme-accent) 85%,var(--dsw-alias-label-primary))}",
       ".mneme-badge--frozen{color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 12%,transparent)}",
       // 「待重启」徽标：沿用 frozen 的 warn 语义（都是「现状不是你刚设的样子」），
       // 但加边框把它和只读冻结态区分开——它需要用户动手，不是终态。
       ".mneme-badge--pending{color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 12%,transparent);border:1px solid color-mix(in srgb,var(--mneme-warn) 30%,transparent)}",
-      ".mneme-pending{display:flex;align-items:flex-start;gap:8px;margin:8px 0 0;padding:8px 10px;border-radius:8px;font-size:12.5px;line-height:18px;color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 10%,transparent);border:1px solid color-mix(in srgb,var(--mneme-warn) 28%,transparent)}",
+      ".mneme-pending{display:flex;align-items:flex-start;gap:var(--mneme-space-8);margin:var(--mneme-space-8) 0 0;padding:var(--mneme-space-8) var(--mneme-space-12);border-radius:var(--mneme-radius-8);font-size:12.5px;line-height:18px;color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 10%,transparent);border:1px solid color-mix(in srgb,var(--mneme-warn) 28%,transparent)}",
       // 圆点用当前色（currentColor）而不是再引一次 --mneme-warn：色值只有一个真源，
       // 改主题时提示行与圆点不会走散。
-      ".mneme-pending-dot{flex:none;width:6px;height:6px;margin-top:6px;border-radius:50%;background:currentColor}",
-      ".mneme-conflict-empty{border:1px dashed var(--dsw-alias-border-l2);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px}",
+      ".mneme-pending-dot{flex:none;width:6px;height:6px;margin-top:var(--mneme-space-6);border-radius:50%;background:currentColor}",
+      ".mneme-conflict-empty{border:1px dashed var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-8);padding:var(--mneme-space-12);display:flex;flex-direction:column;gap:var(--mneme-space-4)}",
       ".mneme-conflict-empty-title{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-secondary)}",
       ".mneme-conflict-empty-body{font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
       ".mneme-statuscard--actionable{border-color:color-mix(in srgb,var(--mneme-warn) 55%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--mneme-warn) 35%,transparent)}",
@@ -3046,7 +3177,7 @@ window.__ModuleLoader__.load({
       ".mneme-triggerwrap{position:relative;pointer-events:none}",
       ".mneme-triggerwrap .mneme-trigger{pointer-events:auto}",
       ".mneme-conflict-jump .mneme-statuscard{border-color:color-mix(in srgb,var(--mneme-warn) 55%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--mneme-warn) 35%,transparent)}",
-      ".mneme-conflict-jump:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px;border-radius:12px}",
+      ".mneme-conflict-jump:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px;border-radius:var(--mneme-radius-12)}",
       // 详情抽屉：sheet 内右侧滑出，覆盖在浏览区之上
       ".mneme-xmain{position:relative}",
       "@keyframes mneme-slidein{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:translateX(0)}}",
@@ -3102,8 +3233,8 @@ window.__ModuleLoader__.load({
       ".mneme-xmore{display:flex;justify-content:center;align-items:center;padding:10px 0 24px;min-height:20px}",
       ".mneme-xemptyico{display:block;margin:0 auto 6px;opacity:.7}",
       // --- status sub-view: responsive stat-card grid (auto-fill, ~220px min) ---
-      ".mneme-status{flex:1;min-height:0;overflow-y:auto;padding:20px 24px 40px;box-sizing:border-box}",
-      ".mneme-statusgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;max-width:1000px;margin:0 auto 12px}",
+      ".mneme-status{flex:1;min-height:0;overflow-y:auto;padding:var(--mneme-space-20) var(--mneme-space-24) var(--mneme-space-40);box-sizing:border-box}",
+      ".mneme-statusgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:var(--mneme-space-12);max-width:1000px;margin:0 auto var(--mneme-space-12)}",
       ".mneme-statusgrid:last-of-type{margin-bottom:0}",
       // 概览区是单行三卡：auto-fit 让不满的轨道塌缩，三张卡恒等宽铺满、行尾不留洞
       ".mneme-statusgrid--overview{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}",
@@ -3112,13 +3243,13 @@ window.__ModuleLoader__.load({
       "@container (min-width:452px) and (max-width:683px){.mneme-statuscard--vectorwide{grid-column:span 2}}",
       "@container (min-width:452px){.mneme-statuscard--wide{grid-column:span 2}}",
       // 状态页分组标题（库内一览 / 后台运转）：只做扫读锚点，压得比卡片标题低
-      ".mneme-statushead{max-width:1000px;margin:0 auto 10px;font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim)}",
-      ".mneme-statusgrid+.mneme-statushead{margin-top:26px}",
-      ".mneme-statuscard{min-width:0;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px 16px 14px}",
+      ".mneme-statushead{max-width:1000px;margin:0 auto var(--mneme-space-10);font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim)}",
+      ".mneme-statusgrid+.mneme-statushead{margin-top:var(--mneme-space-24)}",
+      ".mneme-statuscard{min-width:0;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:var(--mneme-space-16) var(--mneme-space-16) var(--mneme-space-12)}",
       // 指标行：一行一指标（label 左 / 数值右），取代「·」串联的说明长句——
       // 拥挤感的根源是把多指标压进一段会换行的散文
-      ".mneme-statrows{margin-top:10px;display:flex;flex-direction:column;gap:4px}",
-      ".mneme-statrow{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
+      ".mneme-statrows{margin-top:var(--mneme-space-10);display:flex;flex-direction:column;gap:var(--mneme-space-4)}",
+      ".mneme-statrow{display:flex;align-items:baseline;justify-content:space-between;gap:var(--mneme-space-12);font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
       ".mneme-statrow>span:first-child{flex:none;white-space:nowrap}",
       ".mneme-statrow .mneme-heatdot{align-self:center}",
       // 预警行（#275 库体积卡）：行与值都要落预警色——.mneme-statrowval 自带
@@ -3126,9 +3257,9 @@ window.__ModuleLoader__.load({
       ".mneme-statrow--warn{color:var(--mneme-warn)}",
       ".mneme-statrow--warn .mneme-statrowval{color:var(--mneme-warn)}",
       ".mneme-statrowval{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}",
-      ".mneme-statfoot{margin-top:8px;font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
+      ".mneme-statfoot{margin-top:var(--mneme-space-8);font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
       // 热度分布条：三档占比一图看清，行标只补数字（类名带双横线，与 heatdot 同款）
-      ".mneme-heatbar{display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:12px;background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-heatbar{display:flex;height:6px;border-radius:var(--mneme-radius-pill);overflow:hidden;margin-top:var(--mneme-space-12);background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-heatbar-seg{min-width:2px}",
       ".mneme-heatbar--hot{background:var(--mneme-warn)}",
       ".mneme-heatbar--warm{background:var(--mneme-fg-dim)}",
@@ -3140,10 +3271,10 @@ window.__ModuleLoader__.load({
       // --- Token 去向三屏（2026-10 可观测性改造）：KPI 带 / donut / 7 天柱状 / 8 周热力 ---
       // KPI 带固定 4 列、容器收窄降 2 列：用 @container 不用 @media——面板同时长在
       // 宿主侧栏（~500px）与 sheet（1240px）里，决定布局的是容器宽度而非视口。
-      ".mneme-kpiband{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;max-width:1000px;margin:0 auto 12px}",
+      ".mneme-kpiband{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--mneme-space-12);max-width:1000px;margin:0 auto var(--mneme-space-12)}",
       "@container (max-width:560px){.mneme-kpiband{grid-template-columns:repeat(2,minmax(0,1fr))}}",
-      ".mneme-tokenflow{max-width:1000px;margin:0 auto 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px 16px 14px}",
-      ".mneme-donutwrap{display:flex;gap:20px;align-items:center;margin-top:12px}",
+      ".mneme-tokenflow{max-width:1000px;margin:0 auto var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:var(--mneme-space-16) var(--mneme-space-16) var(--mneme-space-12)}",
+      ".mneme-donutwrap{display:flex;gap:var(--mneme-space-20);align-items:center;margin-top:var(--mneme-space-12)}",
       "@container (max-width:480px){.mneme-donutwrap{flex-direction:column;align-items:stretch}.mneme-donutbox{align-self:center}}",
       ".mneme-donutbox{position:relative;flex:none;width:148px;height:148px}",
       ".mneme-donutbox svg{width:100%;height:100%;display:block}",
@@ -3158,7 +3289,7 @@ window.__ModuleLoader__.load({
       ".mneme-seg--3{stroke:var(--mneme-chart-3)}",
       ".mneme-seg--4{stroke:var(--mneme-chart-4)}",
       ".mneme-seg--5{stroke:var(--mneme-chart-5)}",
-      ".mneme-seg--6{stroke:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent)}",
+      ".mneme-seg--6{stroke:var(--mneme-chart-6)}",
       ".mneme-legend{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}",
       ".mneme-legendrow{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;cursor:default;font-size:12.5px;line-height:18px;color:var(--dsw-alias-label-primary)}",
       ".mneme-legendrow:hover,.mneme-legendrow.focused{background:var(--dsw-alias-interactive-bg-hover)}",
@@ -3169,7 +3300,7 @@ window.__ModuleLoader__.load({
       ".mneme-dot--3{background:var(--mneme-chart-3)}",
       ".mneme-dot--4{background:var(--mneme-chart-4)}",
       ".mneme-dot--5{background:var(--mneme-chart-5)}",
-      ".mneme-dot--6{background:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent)}",
+      ".mneme-dot--6{background:var(--mneme-chart-6)}",
       ".mneme-legendname{color:var(--dsw-alias-label-primary);white-space:nowrap}",
       ".mneme-legendsub{color:var(--mneme-fg-dim);font-size:11px}",
       ".mneme-legendval{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary);white-space:nowrap}",
@@ -3208,35 +3339,35 @@ window.__ModuleLoader__.load({
       ".mneme-flowsink{min-width:0;display:flex;flex-direction:column}",
       // 8 周沉淀只画两条（进来的 / 稳住的）：220px 宽里三序列会细到看不清，
       // 归档数改在下方图例里给总量。
-      ".mneme-sinkchart{display:flex;align-items:flex-end;gap:4px;height:96px;margin-top:12px}",
-      ".mneme-sinkcol{flex:1;min-width:0;display:flex;align-items:flex-end;gap:2px;height:100%}",
-      ".mneme-sinkbar{flex:1;min-width:0;border-radius:2px 2px 0 0;min-height:1px}",
-      ".mneme-sinkbar--added{background:var(--mneme-chart-3)}",
-      ".mneme-sinkbar--merged{background:var(--mneme-chart-2)}",
-      ".mneme-sinklabels{display:flex;gap:4px;margin-top:4px;font-size:9.5px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums}",
+      ".mneme-sinkchart{display:flex;align-items:flex-end;gap:var(--mneme-space-4);height:96px;margin-top:var(--mneme-space-12)}",
+      ".mneme-sinkcol{flex:1;min-width:0;display:flex;align-items:flex-end;gap:var(--mneme-space-2);height:100%}",
+      ".mneme-sinkbar{flex:1;min-width:0;border-radius:var(--mneme-radius-4) var(--mneme-radius-4) 0 0;min-height:1px}",
+      ".mneme-sinkbar--added{background:var(--mneme-sink-added)}",
+      ".mneme-sinkbar--merged{background:var(--mneme-sink-merged)}",
+      ".mneme-sinklabels{display:flex;gap:var(--mneme-space-4);margin-top:var(--mneme-space-4);font-size:9.5px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums}",
       ".mneme-sinklabels span{flex:1;min-width:0;text-align:center;white-space:nowrap}",
-      ".mneme-sinklegend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:8px;font-size:10.5px;color:var(--mneme-fg-dim)}",
+      ".mneme-sinklegend{display:flex;flex-wrap:wrap;align-items:center;gap:var(--mneme-space-4) var(--mneme-space-10);margin-top:var(--mneme-space-8);font-size:10.5px;color:var(--mneme-fg-dim)}",
       ".mneme-sinklegend b{font-weight:600;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}",
       // 原 9 卡降级折叠区：默认收起，展开才挂载子卡（见 TokenFlowSection 注释）。
-      ".mneme-legacy{max-width:1000px;margin:0 auto 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:12px 16px}",
+      ".mneme-legacy{max-width:1000px;margin:0 auto var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:var(--mneme-space-12) var(--mneme-space-16)}",
       ".mneme-legacy summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}",
       // --- 状态页工作台：让用户看见插件在干活（动态/沉淀/归档） ---
-      ".mneme-wbhead{margin:28px auto 10px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);max-width:1000px;display:flex;align-items:baseline;justify-content:space-between;gap:8px}",
-      ".mneme-wblist{max-width:1000px;display:flex;flex-direction:column;gap:6px}",
-      ".mneme-wbrow{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px}",
-      ".mneme-wbdot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:6px;background:var(--mneme-ok)}",
+      ".mneme-wbhead{margin:var(--mneme-space-24) auto var(--mneme-space-10);font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);max-width:1000px;display:flex;align-items:baseline;justify-content:space-between;gap:var(--mneme-space-8)}",
+      ".mneme-wblist{max-width:1000px;display:flex;flex-direction:column;gap:var(--mneme-space-6)}",
+      ".mneme-wbrow{display:flex;gap:var(--mneme-space-10);align-items:flex-start;padding:var(--mneme-space-10) var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l1);border-radius:var(--mneme-radius-8)}",
+      ".mneme-wbdot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:var(--mneme-space-6);background:var(--mneme-ok)}",
       ".mneme-wbdot--err{background:var(--mneme-danger)}",
       ".mneme-wbmain{min-width:0;flex:1}",
       ".mneme-wbtitle{font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
       ".mneme-wbsub{font-size:12px;line-height:17px;color:var(--mneme-fg-dim);margin-top:1px}",
-      ".mneme-wbmemo{display:flex;gap:10px;align-items:center;padding:10px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px}",
+      ".mneme-wbmemo{display:flex;gap:var(--mneme-space-10);align-items:center;padding:var(--mneme-space-10) var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l1);border-radius:var(--mneme-radius-8)}",
       ".mneme-wbmemo .mneme-xdot{flex:none}",
       ".mneme-wbmemo-main{min-width:0;flex:1}",
       ".mneme-statusnum{font-size:24px;font-weight:600;line-height:32px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}",
       // 大数字预警色（#275 库体积卡）：状态卡都走 StatusCard，只有传 numWarn 的
       // 卡会挂这个类。
       ".mneme-statusnum--warn{color:var(--mneme-warn)}",
-      ".mneme-statuscap{margin-top:4px;font-size:13px;line-height:19px;color:var(--mneme-fg-dim);word-break:break-word}",
+      ".mneme-statuscap{margin-top:var(--mneme-space-4);font-size:13px;line-height:19px;color:var(--mneme-fg-dim);word-break:break-word}",
       // --- destructive actions: red outline = delete, solid red = confirm ---
       ".mneme-btndanger{color:var(--mneme-danger);border-color:var(--mneme-danger)}",
       ".mneme-btndanger:hover{background:color-mix(in srgb,var(--mneme-danger) 12%,transparent)}",
@@ -3245,7 +3376,7 @@ window.__ModuleLoader__.load({
       // --- settings cards: boxed cards for the runtime-mode and external-API
       // sections — each card owns its fetch/PUT state, so it renders as a
       // self-contained unit inside the stacked settings view ---
-      ".mneme-set-card{border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px;margin-bottom:10px}",
+      ".mneme-set-card{border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:16px;margin-bottom:10px}",
       // 设置页分组标题（个性化 / 记忆引擎 / 搜索 / 连接与安全 / 帮助）：
       // 先给「这一段在管什么」，卡片才是具体选项；scroll-margin-top 是给 #518 的粘顶目录（实测约 74px 高）留的跳转余量
       // ——没有它，点 chip 滚过去的标题就停在目录背面
@@ -3258,7 +3389,7 @@ window.__ModuleLoader__.load({
       ".mneme-set-toc{position:sticky;top:0;z-index:2;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1));padding:8px 0 10px;margin-bottom:4px;border-bottom:1px solid var(--dsw-alias-border-l2)}",
       ".mneme-set-toclabel{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin-bottom:6px}",
       ".mneme-set-toclist{display:flex;gap:6px;overflow-x:auto;padding:3px}", // 不 wrap：chip flex:none，窄屏横向滚；3px 给 focus ring 留位（滚动容器会裁掉描边）
-      ".mneme-set-tocchip{flex:none;height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--dsw-alias-border-l2);background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:12px;line-height:24px;transition:border-color .12s,color .12s}",
+      ".mneme-set-tocchip{flex:none;height:26px;padding:0 10px;border-radius:var(--mneme-radius-pill);border:1px solid var(--dsw-alias-border-l2);background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:12px;line-height:24px;transition:border-color .12s,color .12s}",
       ".mneme-set-tocchip:hover{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary)}",
       ".mneme-set-tocchip:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
       ".mneme-set-token{font-family:monospace;font-size:12px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);word-break:break-all;user-select:all}",
@@ -3467,14 +3598,18 @@ window.__ModuleLoader__.load({
         "--mneme-accent:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
         "--mneme-danger:color-mix(in srgb,var(--dsw-alias-state-error-primary) 80%,var(--dsw-alias-label-primary));" +
         "--mneme-warn:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 65%,var(--dsw-alias-label-primary));" +
-        "--mneme-ok:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 65%,var(--dsw-alias-label-primary))" +
+        "--mneme-ok:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 65%,var(--dsw-alias-label-primary));" +
+        // 格线专用：纸面合成色上 1px 线要看得见但不抢字。宿主 border-l1 只有 3.9%/5.9%，
+        // 与纸的对比 1.09:1（浅）/1.20:1（深），1px 线在这个量级等于没有；20% 是
+        // 1.55:1 / 1.88:1，14% 偏淡（1.35/1.55），26% 开始压字。深浅各开一支不值。
+        "--mneme-rule:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent)" +
       "}",
       // 手绘风只靠**形状**做，不靠颜色：四角不对称的圆角（每边一个数会写成
       // 「横向/纵向」两组百分比）、比常规粗一点的 1.5px 描边、虚线分隔、以及
       // 正负 0.3deg 的轻微歪斜——这些都不碰对比度，深浅主题下一样成立。
       // 想加纸纹就用 repeating-linear-gradient：它不是 color 声明，主锁不看；
       // 反过来**别在这里加 color**，任何新色值都要先过 #178 的 AA 主锁。
-      ".mneme-diary{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;padding:10px 12px;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary);box-sizing:border-box}",
+      ".mneme-diary{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary);box-sizing:border-box}",
       ".mneme-diary-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}",
       ".mneme-diary-title{font-size:15px;line-height:21px;font-weight:700;letter-spacing:.3px;color:var(--dsw-alias-label-primary)}",
       ".mneme-diary-note{font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
@@ -3511,29 +3646,43 @@ window.__ModuleLoader__.load({
       // 不另起弹层——面板里已经有纸张在动，再多一层浮层会盖住正文。
       ".mneme-diary-notice{flex:none;font-size:12px;line-height:18px;padding:5px 9px;border-radius:6px;border-left:3px solid var(--mneme-accent);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);word-break:break-word}",
       ".mneme-diary-notice--bad{border-left-color:var(--mneme-danger);color:var(--mneme-danger)}",
-      ".mneme-diary-paperhead{display:flex;align-items:baseline;gap:8px;padding-bottom:6px;margin-bottom:6px;border-bottom:1px solid var(--dsw-alias-border-l1)}",
+      ".mneme-diary-paperhead{display:flex;align-items:baseline;gap:8px;padding-bottom:6px;margin-bottom:6px;border-bottom:1px dashed var(--dsw-alias-border-l1)}",
       ".mneme-diary-papername{font-size:13px;line-height:19px;font-weight:600;color:var(--mneme-accent);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".mneme-diary-paperdate{font-size:11px;line-height:16px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums;flex:none}",
-      // 纸地：素纸 / 横线 / 方格 / 牛皮。横线与方格用 background-size 让格线正好
-      // 落在 26px 行高上，行距一改就得同步改这两个数，否则字会压在线上。
-      ".mneme-diary-paper--ruled{background-image:repeating-linear-gradient(to bottom,transparent 0 25px,var(--dsw-alias-border-l1) 25px 26px);background-size:100% 26px;background-position:0 0}",
-      ".mneme-diary-paper--grid{background-image:repeating-linear-gradient(to bottom,transparent 0 25px,var(--dsw-alias-border-l1) 25px 26px),repeating-linear-gradient(to right,transparent 0 25px,var(--dsw-alias-border-l1) 25px 26px);background-size:100% 26px,26px 100%;background-position:0 0,0 0}",
-      ".mneme-diary-paper--kraft{background:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 8%,transparent)}",
-      ".mneme-diary-paper--plain{background:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
-      ".mneme-diary-paper{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.18deg);background:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
+      // 纸地：素纸 / 横线 / 点阵。（牛皮已删：它只是「给纸面上 3%→8% 同一层色」，
+      // 与素纸平均通道差 5.7 级、浅色下只差 1.01:1，且是这块唯一硬编码 hex。）
+      //
+      // 纹路挂在**正文元素**上而不是纸上，这是这段唯一的非常规处，两个理由：
+      // ① 挂在纸上时，这几条与下面那条基础规则是**同一个类选择器**、特异性打平，
+      //    基础规则在数组里更靠后且用的是 background 简写，会把 background-image 与
+      //    background-color 一起复位——「四种纸面一模一样」就是这么来的，注释里
+      //    「格线正好落在 26px 行高上」的好意从来没生效过。换成后代选择器后两者
+      //    不再是同一个元素，冲突从结构上消失，不靠源码顺序。
+      // ② 纸面在两处渲染：右栏 pane 里纸内第一个孩子直接是 .mneme-diary-text，面板
+      //    tab 里纸内先是 .mneme-diary-paperhead——同一个 background-position 一处要
+      //    12px、另一处要 32px，挂在纸上永远对不齐一处；挂在拥有 26px 行高的元素上，
+      //    纹路跟着行盒走，两处天然对齐。行高若改，这里的 25px/26px 要同步。
+      ".mneme-diary-paper--ruled .mneme-diary-text{background-image:repeating-linear-gradient(to bottom,transparent 0 25px,var(--mneme-rule) 25px 26px);background-size:100% 26px;background-repeat:repeat}",
+      // 点阵：横竖都 26px 一个点，点落在行盒正中。选点阵不选方格，是因为 14px 中文
+      // 衬线正文里竖线会从字中间穿过去（20% 时尤其明显），点只占一个行盒中心，
+      // 二维结构还在，正文不受干扰。点半径用 em 而不是 px：随字号走，也不进 px 棘轮。
+      ".mneme-diary-paper--grid .mneme-diary-text{background-image:radial-gradient(circle at 50% 50%,var(--mneme-rule) 0 .08em,transparent .1em);background-size:26px 26px;background-repeat:repeat}",
+      // 素纸没有纹路，只靠这层 3% 纸色。**必须写 background-color**：简写会把上面两条
+      // 的 background-image 清掉，这正是这个 bug 的形状，别再写回去。
+      ".mneme-diary-paper{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.18deg);background-color:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
       // 日记正文用衬线：本子上写字不该像聊天记录。四套纸共用一套字，行高 26px
       // 与 --ruled/--grid 的格线对齐；行高一改必须同步上面两条 background-size。
-      ".mneme-diary-text{margin:0;word-break:break-word;font-family:Georgia,\"Times New Roman\",\"Songti SC\",\"Noto Serif SC\",serif;font-size:14px;line-height:26px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-diary-text{margin:0;min-height:100%;box-sizing:border-box;word-break:break-word;font-family:Georgia,\"Times New Roman\",\"Songti SC\",\"Noto Serif SC\",serif;font-size:14px;line-height:26px;color:var(--dsw-alias-label-primary)}",
       // 正文是渲染过的排版（renderDiaryBody），不再是 <pre> 原文：段落、小标题、
       // 列表各归各位。行高 26px 必须贯穿所有块级元素，否则格线会和字错开。
-      ".mneme-diary-text p{margin:0 0 13px}",
+      ".mneme-diary-text p{margin:0 0 1lh}",
       ".mneme-diary-text p:last-child{margin-bottom:0}",
-      ".mneme-diary-text h2,.mneme-diary-text h3,.mneme-diary-text h4,.mneme-diary-text h5{margin:13px 0 6px;font-family:inherit;font-weight:600;line-height:26px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-diary-text h2,.mneme-diary-text h3,.mneme-diary-text h4,.mneme-diary-text h5{margin:1lh 0 0;font-family:inherit;font-weight:600;line-height:26px;color:var(--dsw-alias-label-primary)}",
       ".mneme-diary-text h2{font-size:16px}",
       ".mneme-diary-text h3{font-size:15px}",
-      ".mneme-diary-text ul,.mneme-diary-text ol{margin:0 0 13px;padding-left:22px}",
+      ".mneme-diary-text ul,.mneme-diary-text ol{margin:0 0 1lh;padding-left:22px}",
       ".mneme-diary-text li{margin:0;line-height:26px}",
-      ".mneme-diary-text blockquote{margin:0 0 13px;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2);color:var(--mneme-fg-dim)}",
+      ".mneme-diary-text blockquote{margin:0 0 1lh;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2);color:var(--mneme-fg-dim)}",
       ".mneme-diary-text code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;background:var(--dsw-alias-interactive-bg-active);border-radius:4px;padding:1px 4px}",
       ".mneme-diary-sheet{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
       ".mneme-diary-empty{padding:14px 0;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
@@ -3548,7 +3697,7 @@ window.__ModuleLoader__.load({
       // 刻意**不新开一份 --mneme-* 语义色层**：contrast.test.js 按首次出现的
       // 「--mneme-fg-dim」定义解析色值（:118），再来一份就得保证顺序，收益却为零。
       // 这一页只用第一份色层已经覆盖到的宿主 token 与既有 -dim 类名，靠形状做手绘感。
-      ".mneme-persona{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;padding:10px 12px;box-sizing:border-box;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-persona{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;box-sizing:border-box;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
       ".mneme-persona-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none}",
       ".mneme-persona-title{font-size:15px;line-height:21px;font-weight:700;letter-spacing:.3px;color:var(--dsw-alias-label-primary)}",
       ".mneme-persona-spacer{flex:1 1 auto;min-width:0}",
@@ -3558,10 +3707,10 @@ window.__ModuleLoader__.load({
       // 左列身份卡：宽度固定，卡片是「贴纸」而不是菜单行。
       ".mneme-persona-col{flex:0 0 190px;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;padding-right:2px;border-right:1px dashed var(--dsw-alias-border-l2)}",
       ".mneme-persona-card{display:flex;align-items:center;gap:2px}",
-      ".mneme-persona-pick{flex:1 1 auto;min-width:0;text-align:left;border:1.5px solid transparent;background:0 0;cursor:pointer;font-family:inherit;font-size:12.5px;line-height:18px;padding:5px 10px;border-radius:12px 8px 13px 9px;color:var(--mneme-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".mneme-persona-pick{flex:1 1 auto;min-width:0;text-align:left;border:1.5px solid transparent;background:0 0;cursor:pointer;font-family:inherit;font-size:12px;line-height:18px;padding:5px 10px;border-radius:12px 8px 13px 9px;color:var(--mneme-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".mneme-persona-pick:hover{background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-persona-pick:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
-      ".mneme-persona-pick--on{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
+      ".mneme-persona-pick--on{border-color:var(--mneme-accent);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
       ".mneme-persona-del{flex:none;border:0;background:0 0;cursor:pointer;font-family:inherit;font-size:13px;line-height:18px;padding:2px 6px;border-radius:8px;color:var(--mneme-fg-dim)}",
       ".mneme-persona-del:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--mneme-danger)}",
       ".mneme-persona-del:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
@@ -3610,7 +3759,7 @@ window.__ModuleLoader__.load({
       // sharedialog 自己不带 padding：它和 impdialog 同挂一条 div（见 JSX 里的
       // `className:"mneme-impdialog mneme-sharedialog"`），盒模型由 impdialog 带过来，
       // 所以它同样 +30px；宽度取哪一条由源码顺序决定，故两条都得是 border-box。
-      "@container (max-width: 480px){.mneme-xbar{justify-content:flex-start;padding:0 52px 0 10px}.mneme-vtab{padding:0 10px}.mneme-vtabs{min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.mneme-vtabs::-webkit-scrollbar{height:0}.mneme-xmain{flex-direction:column}.mneme-xside{width:100%;flex:0 1 auto;min-height:0;max-height:min(42vh,300px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2);overscroll-behavior:contain}.mneme-xbrowsebar{padding:8px 12px}.mneme-filterbar{padding:8px 12px}.mneme-drawer{width:100%}.mneme-drawerbody{padding:16px 14px 24px}.mneme-cards{padding:14px 12px 24px;overscroll-behavior:contain}.mneme-ent{flex-direction:column}.mneme-entrail{width:100%;flex:0 1 auto;min-height:0;max-height:min(40vh,280px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2)}.mneme-entrailbody{overscroll-behavior:contain}.mneme-entdetail{padding:16px 14px 24px}.mneme-set{padding:8px 14px 40px}.mneme-status{padding:16px 14px 32px}.mneme-menu{box-sizing:border-box;min-width:0;width:min(200px,calc(100cqw - 32px))}.mneme-impdialog{box-sizing:border-box;width:min(300px,calc(100cqw - 32px))}.mneme-sharedialog{box-sizing:border-box;width:min(340px,calc(100cqw - 32px))}.mneme-graph{padding:10px 12px 12px}.mneme-graphsvg{max-height:min(320px,52vh);touch-action:pan-y}.mneme-glabel{font-size:14px}.mneme-graphside{position:static;width:auto;max-width:100%;max-height:min(200px,30vh);margin-top:8px}}",
+      "@container (max-width: 480px){.mneme-xbar{justify-content:flex-start;padding:0 52px 0 10px}.mneme-vtab{padding:0 10px;flex:none;white-space:nowrap}.mneme-vtabs{min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.mneme-vtabs::-webkit-scrollbar{height:0}.mneme-xmain{flex-direction:column}.mneme-xside{width:100%;flex:0 1 auto;min-height:0;max-height:min(42vh,300px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2);overscroll-behavior:contain}.mneme-xbrowsebar{padding:8px 12px}.mneme-filterbar{padding:8px 12px}.mneme-drawer{width:100%}.mneme-drawerbody{padding:16px 14px 24px}.mneme-cards{padding:14px 12px 24px;overscroll-behavior:contain}.mneme-ent{flex-direction:column}.mneme-entrail{width:100%;flex:0 1 auto;min-height:0;max-height:min(40vh,280px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2)}.mneme-entrailbody{overscroll-behavior:contain}.mneme-entdetail{padding:16px 14px 24px}.mneme-set{padding:8px 14px 40px}.mneme-diary-body{flex-direction:column}.mneme-diary-list{flex:none;flex-direction:row;flex-wrap:wrap;gap:var(--mneme-space-4);overflow:visible;padding:0 0 var(--mneme-space-6);border-right:0}.mneme-persona-body{flex-direction:column}.mneme-persona-col{flex:none;overflow:visible;padding:0 0 var(--mneme-space-6);border-right:0}.mneme-persona-about{max-height:none}.mneme-status{padding:16px 14px 32px}.mneme-menu{box-sizing:border-box;min-width:0;width:min(200px,calc(100cqw - 32px))}.mneme-impdialog{box-sizing:border-box;width:min(300px,calc(100cqw - 32px))}.mneme-sharedialog{box-sizing:border-box;width:min(340px,calc(100cqw - 32px))}.mneme-graph{padding:10px 12px 12px}.mneme-graphsvg{max-height:min(320px,52vh);touch-action:pan-y}.mneme-glabel{font-size:14px}.mneme-graphside{position:static;width:auto;max-width:100%;max-height:min(200px,30vh);margin-top:8px}}",
       // 360 档只做两件事：隐掉 14px 的 tab 图标（.mneme-vtab 带图标时约 109px/个、
       // 4 个约 436px，320px 容器原地就横向溢出），再把正文 padding 收到 12–14px。
       // 页签横向滚动不在这一档、属于 480 主断点，理由见 480 档那条算式。
@@ -3625,6 +3774,117 @@ window.__ModuleLoader__.load({
     }
 
     const h = react.createElement;
+
+    /* panel-geometry:begin
+     * 几何原语层（视觉系统 P1a，docs/plans/2026-11-10-panel-visual-system.md）。
+     * 面板此前没有组件层：每张卡片、每一行都手写 div + 行内 style，同一件事写 180 次、
+     * 180 次各自算间距，于是 padding 长出 107 种取值。这一层只做一件事：把
+     * 「间距/圆角/字号」收成 Token，并让调用点无法绕过它。
+     *
+     * 约定（写代码的人只需要记这一条）：所有几何参数只收 GEOMETRY 表里的键，
+     * 传表外的值（9、10、14、16.5、「8px」）当场抛错。宁可渲染炸掉，也不要
+     * 悄悄画出一个第 108 种间距——后者没人会发现，前者一进测试就红。
+     *
+     * 标记注释不是装饰：test/panel-tokens.test.js 把 begin/end 之间这段抽出来
+     * 直接跑（注入一个假的 createElement），所以这段必须保持纯函数、不许 require。
+     */
+    const GEOMETRY = {
+      space: [0, 2, 4, 6, 8, 10, 12, 16, 20, 24, 40],
+      radius: [4, 8, 12, "pill"],
+      type: [12, 13, 15],
+      weight: [400, 600]
+    };
+    function geometryVar(group, key) {
+      const table = GEOMETRY[group];
+      if (!table) throw new Error("mneme panel: 未知刻度组 " + group);
+      if (!table.includes(key)) {
+        throw new Error(
+          "mneme panel: " + group + " 不接受 " + JSON.stringify(key) +
+          "——只收刻度 " + table.join("/") + "（见 lib/client.js 的 GEOMETRY）"
+        );
+      }
+      return "var(--mneme-" + group + "-" + key + ")";
+    }
+    const space = (key) => geometryVar("space", key);
+    const radius = (key) => geometryVar("radius", key);
+    const fontOf = (key) => geometryVar("type", key);
+    const weightOf = (key) => geometryVar("weight", key);
+
+    function Stack(o) {
+      const p = o || {};
+      const style = Object.assign(
+        { display: "flex", flexDirection: p.direction || "column", gap: space(p.gap == null ? 0 : p.gap), padding: space(p.pad == null ? 0 : p.pad) },
+        p.align ? { alignItems: p.align } : null,
+        p.justify ? { justifyContent: p.justify } : null,
+        p.wrap ? { flexWrap: "wrap" } : null,
+        p.grow ? { flexGrow: 1, minWidth: 0 } : null,
+        p.style || null
+      );
+      return h("div", { className: p.className, style }, p.children);
+    }
+    function Inline(o) {
+      const p = o || {};
+      return Stack(Object.assign({}, p, { direction: "row", align: p.align || "center", gap: p.gap == null ? 6 : p.gap }));
+    }
+    // 唯一允许自己写内距的壳：卡片内距只有两档，dense 给紧凑列表用。
+    function Card(o) {
+      const p = o || {};
+      const head = p.title == null && p.actions == null ? null : h(
+        "div",
+        { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: space(8), marginBottom: space(8) } },
+        h("div", { style: { fontSize: fontOf(13), fontWeight: weightOf(600), color: "var(--dsw-alias-label-primary)", minWidth: 0 } }, p.title),
+        p.actions == null ? null : h("div", { style: { display: "flex", alignItems: "center", gap: space(6), flex: "none" } }, p.actions)
+      );
+      return h(
+        "div",
+        {
+          className: p.className,
+          style: Object.assign(
+            {
+              boxSizing: "border-box",
+              border: "1px solid var(--dsw-alias-border-l2)",
+              borderRadius: radius(8),
+              padding: p.dense ? space(8) : space(12),
+              background: "transparent",
+              minWidth: 0
+            },
+            p.style || null
+          )
+        },
+        head,
+        p.children
+      );
+    }
+    function Section(o) {
+      const p = o || {};
+      return h(
+        "section",
+        { style: Object.assign({ display: "flex", flexDirection: "column", gap: space(8), marginBottom: space(16) }, p.style || null) },
+        p.title == null && p.hint == null ? null : h(
+          "div",
+          { style: { display: "flex", flexDirection: "column", gap: space(2) } },
+          p.title == null ? null : h("h3", { style: { margin: 0, fontSize: fontOf(13), fontWeight: weightOf(600), color: "var(--dsw-alias-label-primary)" } }, p.title),
+          p.hint == null ? null : h("p", { style: { margin: 0, fontSize: fontOf(12), lineHeight: 1.5, color: "var(--mneme-fg-dim)" } }, p.hint)
+        ),
+        p.children
+      );
+    }
+    // 仪表盘栅格：auto-fill 而不是断点，容器宽度变化时自己重排。
+    function Grid(o) {
+      const p = o || {};
+      return h(
+        "div",
+        {
+          style: Object.assign(
+            { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(" + (p.min || 220) + "px,1fr))", gap: space(p.gap == null ? 12 : p.gap) },
+            p.style || null
+          )
+        },
+        p.children
+      );
+    }
+    /* panel-geometry:end */
+
 
     // --- graph view constants ---
     // Entity type → node fill. The host has no palette token for categorical
@@ -6589,6 +6849,40 @@ window.__ModuleLoader__.load({
       if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
       return String(n);
     };
+    /* panel-chart-scale:begin
+       7 天柱状的纵轴（2026-11 修）。原实现两处错：标签写死 (v/1e6).toFixed(0)+"M"
+       ——750K / 500K / 250K 全变 1M，小库永远看到「1M / 1M / 1M / 0M」；上限又被
+       1e6 的地板钉死，日用量 7 万时柱子只有 7% 高。等于用量越大越正常，反了。
+       这里按 1 / 2 / 2.5 / 5 × 10^n 挑步长，四格刚好盖住峰值、不浪费超过一半高度；
+       标签按 K / M 分档，整百万不带小数（toFixed(1) 会写成「1.0M」）。抽成纯函数并
+       留标记，测试用 new Function 直接跑（同 panel-geometry 的先例）。 */
+    function chartScale(dayMax) {
+      const d = Number(dayMax);
+      // 全零 / 未加载 → null：调用方画空态或骨架，不画一条假轴。
+      if (!Number.isFinite(d) || d <= 0) return null;
+      const exp = Math.pow(10, Math.floor(Math.log10(d / 4)));
+      // 只收整数步长：2.5×10^0 = 2.5 会把整 token 轴切成小数（exp >= 10 时仍是整数）。
+      const steps = [1, 2, 2.5, 5, 10].map((m) => m * exp).filter((s) => Number.isInteger(s));
+      let step = steps[steps.length - 1];
+      for (const s of steps) {
+        if (s * 4 >= d) { step = s; break; }
+      }
+      return { step, max: step * 4, labels: [4, 3, 2, 1].map((k) => k * step) };
+    }
+    function chartAxisLabel(n) {
+      const v = Number(n);
+      if (!Number.isFinite(v)) return "";
+      if (Math.abs(v) >= 1e6) {
+        const m = v / 1e6;
+        return m % 1 === 0 ? `${m}M` : `${m.toFixed(1)}M`;
+      }
+      if (Math.abs(v) >= 1e3) {
+        const k = v / 1e3;
+        return k % 1 === 0 ? `${k}K` : `${k.toFixed(1)}K`;
+      }
+      return String(v);
+    }
+    /* panel-chart-scale:end */
     // 热力分档：固定阈值（75万/150万/250万）在低用量库里整片落在 l1，档位失真
     // （复验第三轮「颜色不怎么明显」）。改按 56 天窗口内的非零日做三分位切四档
     // ——GitHub 贡献图同思路，档次随库的实际用量自适应拉开；全零/无数据退化
@@ -6721,9 +7015,10 @@ window.__ModuleLoader__.load({
             return { day: key, total: rawDayMap.get(key) ?? 0 };
           })
         : [];
-      const dayMax = Math.max(1, ...days.map((d) => d.total));
-      const niceMax = Math.max(1e6, Math.ceil(dayMax / 1e6) * 1e6);
-      const gridVals = [niceMax, niceMax * 0.75, niceMax * 0.5, niceMax * 0.25];
+      const dayMax = Math.max(0, ...days.map((d) => d.total));
+      // scale 为 null 有两种来源：还没加载（rawDays 为 null，画骨架）与已知为空
+      // （七天全零，画空态文案）。两者不能混——加载中先说「没有记录」就是撒谎。
+      const scale = rawDays ? chartScale(dayMax) : null;
       // 8 周热力：数据必须来自 56 天窗口（heatStats），右缘对齐该窗口最后一天
       // （UTC），左侧补齐到周一；数据窗口之外的格子隐藏留形。日期一律走 UTC——
       // by_day 的 day 就是 UTC 日期。用 heatStats 而非 stats：否则 56 格里
@@ -6882,23 +7177,33 @@ window.__ModuleLoader__.load({
                 )
               ),
           h("h3", { className: "mneme-xcolhead" }, t("memory.status.token.days")),
-          h("div", { className: "mneme-bars" },
-            gridVals.map((v, i) => h("div", { key: v, className: "mneme-gridline", style: { top: `${i * 25}%` } },
-              h("span", { className: "mneme-gridlabel" }, `${(v / 1e6).toFixed(0)}M`)
-            )),
-            h("div", { className: "mneme-barcols" },
-              days.map((d) => h("div", { className: "mneme-barcol", key: d.day },
-                h("div", {
-                  className: "mneme-bar",
-                  style: { height: `${Math.max((d.total / niceMax) * 100, 0.4)}%` },
-                  title: `${d.day} · ${d.total.toLocaleString()}`
-                })
-              ))
-            )
-          ),
-          h("div", { className: "mneme-barlabels" },
-            days.map((d) => h("span", { key: d.day }, d.day.slice(5)))
-          ),
+          statsError
+            ? h("div", { className: "mneme-statuscap", style: { color: "var(--mneme-danger)" } }, t("memory.status.error"))
+            : rawDays === null
+              // 未加载：留空骨架，不画柱也不刷文案（stats 与 statsError 都不作数时）。
+              ? h("div", { className: "mneme-bars" }, h("div", { className: "mneme-barcols" }))
+              : scale
+                ? h("div", { className: "mneme-bars" },
+                    scale.labels.map((v, i) => h("div", { key: v, className: "mneme-gridline", style: { top: `${i * 25}%` } },
+                      h("span", { className: "mneme-gridlabel" }, chartAxisLabel(v))
+                    )),
+                    h("div", { className: "mneme-barcols" },
+                      days.map((d) => h("div", { className: "mneme-barcol", key: d.day },
+                        h("div", {
+                          className: "mneme-bar",
+                          style: { height: `${Math.max((d.total / scale.max) * 100, 0.4)}%` },
+                          title: `${d.day} · ${d.total.toLocaleString()}`
+                        })
+                      ))
+                    )
+                  )
+                // 已知为空（rawDays 有值、七天全零）：明确说没有，不留七根贴地柱。
+                : h("div", { className: "mneme-statuscap", style: { marginTop: "12px" } }, t("memory.status.token.daysEmpty")),
+          scale && !statsError
+            ? h("div", { className: "mneme-barlabels" },
+                days.map((d) => h("span", { key: d.day }, d.day.slice(5)))
+              )
+            : null,
           // 热力与沉淀并排两列：热力只有约 745px，右侧原本整块空着。两列
           // 在窄容器里回落单列（见 .mneme-flowrow 的 @container）。
           h("div", { className: "mneme-flowrow" },
@@ -6986,7 +7291,7 @@ window.__ModuleLoader__.load({
         h("div", { className: "mneme-statusnum", style: { fontSize: "16px", lineHeight: "24px" } },
           t("memory.status.skippedTitle").replace("{n}", String(total))),
         h("div", { className: "mneme-statuscap", style: { marginBottom: "6px" } }, t("memory.status.skippedHint")),
-        h("ul", { style: { margin: 0, paddingLeft: "18px", fontSize: "12px", lineHeight: "18px" } },
+        h("ul", { style: { margin: 0, paddingLeft: space(16), fontSize: "12px", lineHeight: "18px" } },
           list.slice(0, 4).map((bucket, i) =>
             h("li", { key: i, style: { color: "var(--mneme-fg-dim)" } },
               (bucket.action ? bucket.action + " · " : "") + bucket.reason + " ×" + String(bucket.count)))),
@@ -7142,10 +7447,10 @@ window.__ModuleLoader__.load({
             h("span", null, r.label),
             h("span", { className: "mneme-statrowval", title: String(r.value) }, String(r.value))))),
         foot ? h("div", { className: "mneme-statfoot" }, foot) : null,
-        h("div", { style: { marginTop: 10 } },
+        h("div", { style: { marginTop: space(10) } },
           (snap.entries || []).length === 0
             ? h("div", { className: "mneme-statuscap" }, t("memory.status.injectPreview.empty"))
-            : (snap.entries || []).map((m) => h("div", { key: m.id, style: { display: "flex", gap: 8, alignItems: "baseline", fontSize: 12, padding: "2px 0" } },
+            : (snap.entries || []).map((m) => h("div", { key: m.id, style: { display: "flex", gap: space(8), alignItems: "baseline", fontSize: 12, padding: space(2) + " 0" } },
                 h("span", { className: "mneme-xcolhead" }, typeLabel(t, m.type)),
                 h("span", { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title || "—"),
                 h("span", { className: "mneme-xcolhead" },
@@ -7545,7 +7850,7 @@ window.__ModuleLoader__.load({
                 }))),
               h("div", { className: "mneme-statrows" },
                 tiers.map(([tier, n, label]) => h("div", { className: "mneme-statrow", key: tier },
-                  h("span", { style: { display: "flex", alignItems: "center", gap: 6 } },
+                  h("span", { style: { display: "flex", alignItems: "center", gap: space(6) } },
                     h("span", { className: `mneme-heatdot mneme-heatdot${tier}`, "aria-hidden": "true" }),
                     label),
                   h("span", { className: "mneme-statrowval" }, String(n))))),
@@ -11373,8 +11678,7 @@ window.__ModuleLoader__.load({
     const DIARY_BOOKS = [
       { key: "plain", label: "memory.diary.book.plain" },
       { key: "ruled", label: "memory.diary.book.ruled" },
-      { key: "grid", label: "memory.diary.book.grid" },
-      { key: "kraft", label: "memory.diary.book.kraft" }
+      { key: "grid", label: "memory.diary.book.grid" }
     ];
     const DIARY_BOOK_KEY = "dsh-mneme-diary-book";
 
@@ -12130,6 +12434,9 @@ window.__ModuleLoader__.load({
           : draft.byAgent[editing] || emptyPersonaCard();
 
       const save = async (next) => {
+        // 每次保存前先把上一次的「已保存」收回去：否则改完字段它仍挂着，
+        // 先成功后失败时还会与「保存失败」并存——两种都是假成功。
+        setSavedAt(0);
         try {
           const res = await apiFetch("/api/dsh-mneme/persona", {
             method: "PUT",
@@ -12148,6 +12455,7 @@ window.__ModuleLoader__.load({
 
       const setField = (key, value) => {
         if (!ready) return;
+        setSavedAt(0);
         if (editing === "default") {
           setDraft({ ...draft, default: { ...draft.default, [key]: value } });
           return;
@@ -12166,6 +12474,7 @@ window.__ModuleLoader__.load({
       // 开关即存（与设置页同语义），但仍走三维全量：只换自己这一维。
       const toggleEnabled = (checked) => {
         if (!ready) return;
+        setSavedAt(0);
         const nextCard = { ...current, enabled: checked };
         const next = editing === "default"
           ? { ...draft, default: nextCard }
@@ -12612,11 +12921,26 @@ window.__ModuleLoader__.load({
           phase: "loading", repos: [], repo: null, modules: [], edges: [], page: null,
           hits: [], q: "", selected: null, disabled: false, error: null,
           rebuilding: false, rebuildNote: null, path: "", flags: null, t1: null, toast: "",
-          cliCommand: null, copied: false
+          cliCommand: null, copied: false,
+          // autoRefreshNote：读页时服务端说「这次自动刷新我主动没做」。它不是错误，
+          // 所以不塞进 error、也不进 toast（toast 2.5s 就没了，用户看不到原因）。
+          autoRefreshNote: null,
+          // autoRefreshError：服务端**真的**试过刷新但失败了。与上面那条严格分开：
+          // 把「主动没做」和「做了没成」合成一句，面板就会把一次正确的拒绝说成故障，
+          // 也会把一次真故障说成没事（src/api.js 两个字段分开就是为了这个）。
+          autoRefreshError: null,
+          // 证据复核（Grounded Claims）的两样状态：drift 是 /choro/claims 的
+          // 回体，driftPhase 区分「还没查」「查着」「查出三种结局」。
+          drift: null, driftPhase: "idle"
         });
         // T1 跑完要重读当前仓库的模块树，但轮询的闭包里拿不到最新的 state.repo：
         // 用 ref 记住加载成功的仓库 id，避免把整棵树塞进 effect 依赖里。
         const repoIdRef = useRef(null);
+        // 证据复核的请求代次：切仓库 / 重新 load 时 +1。checkDrift 发出前记下当时的
+        // 代次，回来时代次已经变了就直接丢弃结果——否则「在甲仓库上发的 diff，在切到
+        // 乙仓库之后才回来」会把甲仓库的「需要复核」写到乙仓库的页签下，而用户看到的
+        // 是一个根本不属于当前页面的判定（比不显示更糟）。
+        const driftGenRef = useRef(0);
         // apiFetch 是裸 fetch：非 2xx 不抛错，返回 Response。这里统一解 JSON 并把
         // 状态码带回来——409 disabled（用户没开）/ 503 unavailable（装配缺件）
         // 各有各的空态文案（#497 的语义分叉在这里接住）。
@@ -12663,12 +12987,38 @@ window.__ModuleLoader__.load({
             // （/choro/modules 的 repo 只有 id/name，没有 stale）。
             const loaded = mod.data.repo;
             repoIdRef.current = loaded && loaded.id != null ? loaded.id : ref;
-            setState((s) => ({ ...s, phase: "ready", repos, repo: loaded, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null }));
+            // 切仓库时证据复核的旧结果必须清掉：它是按上一个仓库的 diff 算的，
+            // 留着就会把甲仓库的「需要复核」挂在乙仓库的页签下。
+            // 代次 +1 之后，任何在途的 checkDrift 结果都会被丢弃（见 driftGenRef）。
+            driftGenRef.current += 1;
+            setState((s) => ({ ...s, phase: "ready", repos, repo: loaded, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null, drift: null, driftPhase: "idle", autoRefreshNote: null, autoRefreshError: null }));
           } catch (err) {
             setState((s) => ({ ...s, phase: "error", error: String(err?.message ?? err) }));
           }
         }, []);
         useEffect(() => { load(); loadFlags(); }, [load, loadFlags]);
+        // 证据复核：手动触发、不自动跑。理由是它要跑一次 git diff（大仓库几十
+        // 毫秒到几秒），每切一页就重算会把浏览拖慢；而「上次生成之后代码变没变」
+        // 这件事用户自己知道什么时候关心。三种结局各自渲染，绝不让「没算出来」
+        // 长得像「一条都没事」（#607 的病根）。
+        const checkDrift = useCallback(async () => {
+          const ref = repoIdRef.current;
+          if (ref == null) return;
+          const gen = driftGenRef.current;
+          const writeIfCurrent = (patch) => setState((s) => (driftGenRef.current === gen ? { ...s, ...patch } : s));
+          writeIfCurrent({ driftPhase: "loading" });
+          // 只写「还是同一次请求、还是同一个仓库」的结果。
+          try {
+            const { status, data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/claims?repo=${encodeURIComponent(ref)}`));
+            if (status !== 200 || data.error) {
+              writeIfCurrent({ driftPhase: "failed", drift: { error: data.error ?? `claims ${status}` } });
+              return;
+            }
+            writeIfCurrent({ driftPhase: "done", drift: data });
+          } catch (err) {
+            writeIfCurrent({ driftPhase: "failed", drift: { error: String(err?.message ?? err) } });
+          }
+        }, []);
         const openPage = useCallback(async (slug) => {
           const repo = state.repo;
           if (!repo) return;
@@ -12676,7 +13026,21 @@ window.__ModuleLoader__.load({
           try {
             const { status, data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/page?repo=${encodeURIComponent(repo.id)}&slug=${encodeURIComponent(slug)}`));
             if (status !== 200 || data.error) { setState((s) => ({ ...s, page: { error: data.error ?? `page ${status}` } })); return; }
-            setState((s) => ({ ...s, page: data.page }));
+            // 自动刷新被主动跳过：这条要说出来。不说的话，用户看到的是「代码已变」
+            // 徽章一直亮着、页面还是旧的，只会以为刷新坏了（#607 那类假成功的反面）。
+            // 文案自己拼而不直接用服务端那句：那句话是中文的，进不了英文界面；
+            // 页数用服务端算出的 enrichedPages，只有它缺的时候才退回服务端原话。
+            const skipped = data.autoRefreshSkipped === "t1-loss"
+              ? (Number(data.repo?.enrichedPages ?? 0) > 0
+                ? t("wiki.autoRefresh.skipped").replace("{n}", String(data.repo.enrichedPages))
+                : (data.autoRefreshSkipNote || t("wiki.autoRefresh.skippedGeneric")))
+              : null;
+            // 真失败要单独带上：刷新没成时页面还是旧的、徽章还亮着，不说出来
+            // 就是「点了、看起来正常、其实是上次的内容」。
+            const refreshError = typeof data.autoRefreshError === "string" && data.autoRefreshError
+              ? data.autoRefreshError
+              : null;
+            setState((s) => ({ ...s, page: data.page, autoRefreshNote: skipped, autoRefreshError: refreshError }));
           } catch (err) {
             setState((s) => ({ ...s, page: { error: String(err?.message ?? err) } }));
           }
@@ -12712,6 +13076,9 @@ window.__ModuleLoader__.load({
             setState((s) => ({
               ...s,
               rebuilding: false,
+              // 重建已经真的发生了，那条「自动刷新没做」的提示就该退场。
+              autoRefreshNote: null,
+              autoRefreshError: null,
               rebuildNote: `${t("wiki.rebuild.done")}: ${r.moduleCount ?? "?"} ${t("wiki.rebuild.modules")} / ${r.pageCount ?? "?"} ${t("wiki.rebuild.pages")}${loss ? ` — ${loss}` : ""}`
             }));
             await load(repo.id);
@@ -12916,9 +13283,48 @@ window.__ModuleLoader__.load({
               onClick: () => load(r.id)
             }, `${r.name}`)));
         }
+        // 证据复核的三种结局在这里一次性判完，渲染层不再现算：
+        // 「基线就是 HEAD」和「算不出来」必须走两条不同的分支，屏幕上也要是两句
+        // 不同的话——把两者显示成同一个样子，等于把「没算」当成「没事」。
+        const drift = state.drift;
+        const driftBySlug = new Map();
+        if (drift && Array.isArray(drift.pages)) {
+          for (const dp of drift.pages) driftBySlug.set(dp.slug, dp);
+        }
+        const driftDone = state.driftPhase === "done" && drift && !drift.error;
+        const driftClean = driftDone && drift.clean === true;
+        const driftAnchorStale = driftDone && drift.anchorStale === true;
+        // 「git 读不到」与「基线提交没了」是两种完全不同的处境：前者是仓库不是 git 目录
+        // 或不可读（去修环境），后者是 force-push/浅克隆把起点截断了（去重建骨架）。
+        // 两句 i18n 早就写好了，只是原来没接上，一律说成后者。
+        const driftGitUnreadable = driftAnchorStale && drift.reason === "git-unreadable";
+        const driftTotals = (driftDone && drift.totals) || null;
+        const driftRisk = driftTotals ? driftTotals.atRiskClaims : 0;
+        // 「比不了」的页数（验证基线认不出 + 从来没记过 + 有语义段却没 claims）单独计数：
+        // 它们一条都不判，不能混进「0 条需要复核」里当成没事。inconsistentPages 原来
+        // 完全没进这个汇总，于是「所有页都是残局」也会显示成「这次改动没碰到任何结论」。
+        const driftUndecidable = driftTotals
+          ? (driftTotals.baselineUnknownPages || 0)
+            + (driftTotals.anchorStalePages || 0)
+            + (driftTotals.inconsistentPages || 0)
+          : 0;
+        // 提交号显示前 7 位就够认，长 sha 会把这一行挤爆（完整值仍在 title 里）。
+        const shortSha = (sha) => String(sha ?? "").slice(0, 7);
+        // 四种命中原因各自一句：混成「失效」会让只是行号挪了的结论也被喊去重写，
+        // 喊几次就没人信这个标记了。
+        const driftReasonText = (c) => {
+          if (c.reason === "touched") return t("wiki.drift.touched");
+          if (c.reason === "shifted") return t("wiki.drift.shifted").replace("{n}", String(c.shift ?? 0));
+          if (c.reason === "deleted") return t("wiki.drift.deleted");
+          if (c.reason === "unverifiable") return t("wiki.drift.unverifiable");
+          return String(c.reason ?? "");
+        };
         const tree = [];
         for (const mod of state.modules) {
           const depth = (mod.slug.match(/-/g) || []).length;
+          // 树里直接挂「这页有几条要复核」：用户不用先点开才知道哪页被改动碰到。
+          const dp = driftBySlug.get(mod.slug);
+          const riskN = dp && dp.atRisk ? dp.atRisk.length : 0;
           tree.push(h("button", {
             key: mod.slug,
             type: "button",
@@ -12926,13 +13332,49 @@ window.__ModuleLoader__.load({
             style: { paddingLeft: `${8 + Math.min(depth, 4) * 14}px` },
             title: mod.title,
             onClick: () => openPage(mod.slug)
-          }, mod.slug));
+          }, mod.slug,
+            riskN > 0 && h("span", { className: "mneme-badge mneme-badge--pending mneme-wikidriftn" }, String(riskN)),
+            !riskN && dp && dp.inconsistent && h("span", { className: "mneme-wikidriftn mneme-wikidriftn--flat" }, "!"),
+            // 这页比不了时挂个问号：什么都不挂会让它和「比过、干净」长得一样。
+            !riskN && dp && !dp.inconsistent && (dp.baselineUnknown || dp.anchorStale) &&
+              h("span", {
+                className: "mneme-wikidriftn mneme-wikidriftn--unknown",
+                title: dp.baselineUnknown ? t("wiki.drift.verifiedUnknown") : t("wiki.drift.anchorStalePage")
+              }, "?")));
         }
         const pageBody = state.page
           ? (state.page.error
             ? h("div", { className: "mneme-wikiempty" }, state.page.error === "page-missing" ? t("wiki.state.pageMissing") : state.page.error)
             : renderWikiMarkdown(state.page.content))
           : h("div", { className: "mneme-wikiempty" }, t("wiki.state.pickPage"));
+        // 当前这页的证据复核结果：放在正文上方而不是塞进正文，因为它是「关于
+        // 正文的事实」，不是正文本身——混进 MD 渲染里会被下次重建覆盖掉。
+        const selectedDrift = state.selected ? driftBySlug.get(state.selected) : null;
+        // 「这页对着哪个提交验证的」是常驻信息（不论有没有风险都该看到），所以它是
+        // 正文上方单独一行，而不是塞进下面那张「有风险才出现」的卡里。
+        const pageProvenance = driftDone && selectedDrift
+          ? (selectedDrift.verifiedBaseline
+            ? h("div", { className: "mneme-wikidriftverified", title: selectedDrift.verifiedBaseline },
+              t("wiki.drift.verified").replace("{sha}", shortSha(selectedDrift.verifiedBaseline)))
+            // 老数据：没有逐页验证点，退到全仓基线比对。必须说清这是**保底起点**，
+            // 不能长成「对着 xxxx 验证」——那是把近似值冒充成真值。
+            : (selectedDrift.baselineApprox && selectedDrift.diffBaseline
+              ? h("div", { className: "mneme-wikidriftverified", title: selectedDrift.diffBaseline },
+                t("wiki.drift.verifiedApprox").replace("{sha}", shortSha(selectedDrift.diffBaseline)))
+              : (selectedDrift.claims > 0
+                ? h("div", { className: "mneme-wikidriftverified" }, t("wiki.drift.verifiedUnknown"))
+                : null)))
+          : null;
+        const pageDrift = selectedDrift && selectedDrift.atRisk && selectedDrift.atRisk.length > 0
+          ? h("div", { className: "mneme-wikidriftpage", role: "note" },
+            h("div", { className: "mneme-wikidriftpagehead" },
+              `${t("wiki.drift")} · ${selectedDrift.atRisk.length}`),
+            selectedDrift.atRisk.map((c) => h("div", { key: String(c.claimId ?? c.statement), className: "mneme-wikidriftrow" },
+              h("span", { className: "mneme-wikidriftwhy" }, driftReasonText(c)),
+              h("span", { className: "mneme-wikidriftpath" },
+                `${c.sourcePath}${c.startLine ? `:${c.startLine}${c.endLine && c.endLine !== c.startLine ? `-${c.endLine}` : ""}` : ""}`),
+              h("div", { className: "mneme-wikidriftstmt" }, c.statement))))
+          : null;
         const flags = state.flags || {};
         const t1Running = !!(state.t1 && state.t1.state === "running");
         return h("div", { className: "mneme-panel" },
@@ -12986,7 +13428,41 @@ window.__ModuleLoader__.load({
               title: t("memory.features.chorographyT1FromPanel.hint"),
               onClick: startT1
             }, t1Running ? t("wiki.t1.running") : t("wiki.t1")),
+            // 证据复核是只读动作（一次 git diff + 库内比对，不调模型），所以它
+            // 和「重建骨架」并列、不用二次确认；但绝不自动跑，见 checkDrift。
+            h("button", {
+              type: "button",
+              className: "mneme-wikibtn",
+              disabled: state.driftPhase === "loading",
+              title: t("wiki.drift.hint"),
+              onClick: checkDrift
+            }, state.driftPhase === "loading" ? t("wiki.drift.loading") : t("wiki.drift")),
             state.rebuildNote && h("span", { className: "mneme-wikirebuildnote" }, state.rebuildNote)),
+          // 「自动刷新我主动没做」的提示条。放在顶栏下面而不是 toast 里：它描述的
+          // 是一个仍然成立的状态（库里还有富化页），不是一次性的动作回执。
+          state.autoRefreshNote && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            state.autoRefreshNote),
+          // 「试过刷新但失败了」单独一条：它不是无事发生，也不是「主动没做」。
+          // 旧实现在这里整段丢字段，用户的感受就是「点了没反应」。
+          state.autoRefreshError && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            `${t("wiki.autoRefresh.failed")}: ${state.autoRefreshError}`),
+          // 证据复核回执条：三种结局三种说法，「比对失败」单独一条 --
+          // 它既不是「没事」也不是「有风险」，混进任何一边都是撒谎。
+          state.driftPhase === "failed" && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            `${t("wiki.drift.blocked")}: ${(state.drift && state.drift.error) || ""}`),
+          driftDone && driftAnchorStale && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            driftGitUnreadable ? t("wiki.drift.gitUnreadable") : t("wiki.drift.anchorStale")),
+          driftDone && !driftAnchorStale && driftClean && h("div", { className: "mneme-wikidriftbar", role: "status" },
+            t("wiki.drift.clean")),
+          driftDone && !driftAnchorStale && !driftClean && h("div", { className: "mneme-wikidriftbar", role: "status" },
+            t("wiki.drift.summary")
+              .replace("{pages}", String(driftTotals.pages))
+              .replace("{claims}", String(driftTotals.claims))
+              .replace("{risk}", String(driftRisk)),
+            driftRisk === 0 && driftUndecidable === 0 && h("span", { className: "mneme-wikidriftnone" }, ` · ${t("wiki.drift.none")}`),
+            // 有页比不了时，回执条必须自己说出来：否则「0 条需要复核」会被读成没事。
+            driftUndecidable > 0 && h("span", { className: "mneme-wikidriftnone" },
+              ` · ${t("wiki.drift.undecidable").replace("{n}", String(driftUndecidable))}`)),
           h("div", { className: "mneme-wikibody" },
             h("nav", { className: "mneme-wikitree", "aria-label": t("wiki.tree.title") }, tree),
             h("div", { className: "mneme-wikipage" },
@@ -12998,6 +13474,12 @@ window.__ModuleLoader__.load({
                   onClick: () => { setState((s) => ({ ...s, hits: [] })); openPage(hit.slug); }
                 }, `${hit.slug} · ${hit.section} · L${hit.line}: ${hit.excerpt}`)),
                 h("button", { type: "button", className: "mneme-wikihitsclose", onClick: () => setState((s) => ({ ...s, hits: [] })) }, "×")),
+              pageProvenance,
+              pageDrift,
+              // 正文有语义段、库里零条结论：这页的证据根本无从核对，必须自己说
+              // 出来，否则它会永远显示成「干净」——那是最坏的一种假成功。
+              selectedDrift && selectedDrift.inconsistent && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "note" },
+                t("wiki.drift.inconsistent")),
               pageBody)),
           // T1 进度：只在一个 job 活着时出现。数字来自 /choro/t1/status 的
           // modules 汇总，不再由面板自己数模块——那是任务侧的真相。

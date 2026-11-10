@@ -48,6 +48,8 @@ chorography/
 
 页面 frontmatter（机器写，人不该改）：`slug` `title` `parents` `sourceFiles`（相对路径数组）`gitBaseline` `generatedAt` `templateVersion` `language: zh` `status`（`skeleton` / `enriched` / `stale` / `failed`）。
 
+另有两个**只有 T1 会写**的键：`verifiedBaseline`（这次富化时仓库的 HEAD）与 `verifiedAt`（与 `generatedAt` 同值）。T0 一个字节都不产出它们——骨架页的渲染结果必须对同一份输入逐字节确定（`state.json` 的 `planFingerprint` / `repoFingerprint` 相同就复用 `generatedAt`），多一个时间戳就破坏这条不变量。T0 重跑整页重建时这两个键随 T1 正文一起消失，与「T0 丢弃 T1 语义段」是同一件事。
+
 混合所有权规则，这是整个设计里最容易出事的地方，所以写成可测的：
 
 - 页内 `<!-- CHORO:HUMAN:START -->` … `<!-- CHORO:HUMAN:END -->` 之间的内容重生成时**整块原样回填**，一个字不改；出现多个块按原相对顺序回填。
