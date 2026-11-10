@@ -87,7 +87,7 @@ test("issue#641 dupMin 可经 opts 覆盖（配置键 conflictLedgerDupMinSimila
 
 // ---- recordLedgerTriage：best-effort 记账 ----
 
-test("issue#641 分诊记账：逐对落账、tally 与档位计数一致", () => {
+test("issue#641 分诊记账：逐对落账、tally 与档位计数一致", async () => {
   const saved = [];
   const service = { saveConflictLedgerEntry: (r) => saved.push(r) };
   const pairs = [
@@ -96,14 +96,14 @@ test("issue#641 分诊记账：逐对落账、tally 与档位计数一致", () =
     { a: mem("e", { created_at: "2026-10-01T00:00:00.000Z" }), b: mem("f", { created_at: "2026-11-01T00:00:00.000Z" }), similarity: 0.8 },
     { a: mem("g", { created_at: "2026-11-02T00:00:00.000Z" }), b: mem("h", { created_at: "2026-11-01T00:00:00.000Z" }), similarity: 0.86 }
   ];
-  const tally = recordLedgerTriage(service, "run-1", pairs, { now: Date.UTC(2026, 10, 1) });
-  assert.deepEqual(tally, { dup: 1, "cross-scope-dup": 1, evolution: 1, conflict: 1, recorded: 4, failed: 0 });
+  const tally = await recordLedgerTriage(service, "run-1", pairs, { now: Date.UTC(2026, 10, 1) });
+  assert.deepEqual(tally, { dup: 1, "cross-scope-dup": 1, evolution: 1, conflict: 1, recorded: 4, failed: 0, truncatedAt: null });
   assert.equal(saved.length, 4);
   assert.equal(saved[0].tier, "dup");
   assert.equal(saved[0].run_id, "run-1");
 });
 
-test("issue#641 记账失败只计 failed 不打断：纯测量绝不反噬巩固相位", () => {
+test("issue#641 记账失败只计 failed 不打断：纯测量绝不反噬巩固相位", async () => {
   let calls = 0;
   const service = {
     saveConflictLedgerEntry: () => {
@@ -113,13 +113,56 @@ test("issue#641 记账失败只计 failed 不打断：纯测量绝不反噬巩�
   };
   const pairs = [1, 2, 3].map((i) => ({ a: mem(`a${i}`), b: mem(`b${i}`), similarity: 0.91 }));
   const warns = [];
-  const tally = recordLedgerTriage(service, "run-1", pairs, {
+  const tally = await recordLedgerTriage(service, "run-1", pairs, {
     now: Date.UTC(2026, 10, 1),
     logger: { warn: (m) => warns.push(m) }
   });
   assert.equal(tally.recorded, 2);
   assert.equal(tally.failed, 1);
   assert.equal(warns.length, 1, "失败要留下 warn，不是静默吞");
+});
+
+test("issue#641 记账分块：大池逐块落账不丢样本（shadow 分母必须完整）", async () => {
+  const saved = [];
+  const service = { saveConflictLedgerEntry: (r) => saved.push(r) };
+  const pairs = Array.from({ length: 120 }, (_, i) => ({
+    a: mem(`a${i}`, { created_at: "2026-11-01T00:00:00.000Z" }),
+    b: mem(`b${i}`, { created_at: "2026-11-01T01:00:00.000Z" }),
+    similarity: 0.91
+  }));
+  const tally = await recordLedgerTriage(service, "run-1", pairs, { now: Date.UTC(2026, 10, 1) });
+  assert.equal(tally.recorded, 120, "跨三块全部落账，无截断");
+  assert.equal(tally.dup, 120);
+  assert.equal(tally.truncatedAt, null);
+  assert.equal(saved.length, 120);
+});
+
+test("issue#641 记账分块：取消即停、truncatedAt 可见，绝不静默截断观察样本", async () => {
+  const service = { saveConflictLedgerEntry: () => {} };
+  const pairs = Array.from({ length: 120 }, (_, i) => ({
+    a: mem(`a${i}`, { created_at: "2026-11-01T00:00:00.000Z" }),
+    b: mem(`b${i}`, { created_at: "2026-11-01T01:00:00.000Z" }),
+    similarity: 0.91
+  }));
+  // 首块前取消：零写入，truncatedAt=0
+  const stopAtStart = await recordLedgerTriage(service, "run-1", pairs, { now: Date.UTC(2026, 10, 1), signal: { aborted: true } });
+  assert.equal(stopAtStart.recorded, 0, "取消在首块前生效");
+  assert.equal(stopAtStart.truncatedAt, 0);
+  // 中途取消：getter 在首块（50 条）落完后翻转 → 第二块前停，块内不弃样本
+  const saved = [];
+  let flipped = false;
+  const midService = {
+    saveConflictLedgerEntry: (r) => {
+      saved.push(r);
+      if (saved.length >= 10) flipped = true;
+    }
+  };
+  const mid = await recordLedgerTriage(midService, "run-2", pairs, {
+    now: Date.UTC(2026, 10, 1),
+    signal: { get aborted() { return flipped; } }
+  });
+  assert.equal(mid.recorded, 50, "第一块完整落账（块内不检查取消）");
+  assert.equal(mid.truncatedAt, 50, "取消点对可见，余下的对下一轮重见");
 });
 
 // ---- conflict_ledger 存储契约 ----

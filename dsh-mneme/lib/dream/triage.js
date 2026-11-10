@@ -97,27 +97,42 @@ export function triagePair(a, b, similarity, opts = {}) {
  * best-effort discipline as saveConflictReviewed / saveDifferentiatedPair —
  * 记账本身绝不能反过来把巩固打断）。
  *
- * @returns tally object {dup, cross-scope-dup, evolution, conflict, recorded, failed}
- *          or null when the caller shouldn't record (caller decides mode).
+ * 分块 + 让出（#643 review）：候选池大时同步写完全部对会连续占用事件循环、
+ * 延迟用户活动与取消信号的处理——每块之间 setImmediate 让出一次，并在每块
+ * 开始前检查 signal.aborted。取消后停止记账，余下的对下一轮自然重见；**不用
+ * 固定上限裁剪观察样本**（shadow 的分母必须完整，截断只来自取消，且在
+ * tally.truncatedAt 可见——静默截断会让分布失真，比没有数据更糟）。
+ *
+ * @returns Promise<tally> {dup, cross-scope-dup, evolution, conflict, recorded,
+ *          failed, truncatedAt} — truncatedAt 非 null 表示取消点（已处理的对数）
  */
-export function recordLedgerTriage(service, runId, pairs, opts = {}) {
-  const tally = { dup: 0, "cross-scope-dup": 0, evolution: 0, conflict: 0, recorded: 0, failed: 0 };
-  for (const p of pairs) {
-    try {
-      const verdict = triagePair(p.a, p.b, p.similarity, opts);
-      service.saveConflictLedgerEntry({
-        run_id: runId,
-        memory_a: p.a.id,
-        memory_b: p.b.id,
-        tier: verdict.tier,
-        similarity: p.similarity,
-        signals: verdict.signals
-      });
-      tally[verdict.tier] += 1;
-      tally.recorded += 1;
-    } catch (error) {
-      tally.failed += 1;
-      opts.logger?.warn?.(`dsh-mneme sleep: failed to record ledger triage for ${p.a?.id}/${p.b?.id}: ${String(error)}`);
+export async function recordLedgerTriage(service, runId, pairs, opts = {}) {
+  const tally = { dup: 0, "cross-scope-dup": 0, evolution: 0, conflict: 0, recorded: 0, failed: 0, truncatedAt: null };
+  const CHUNK = 50;
+  for (let start = 0; start < pairs.length; start += CHUNK) {
+    // 块间让出事件循环（首块前不用——pairs 为空或单块时零额外宏任务）
+    if (start > 0) await new Promise((resolve) => setImmediate(resolve));
+    if (opts.signal?.aborted) {
+      tally.truncatedAt = start;
+      break;
+    }
+    for (const p of pairs.slice(start, start + CHUNK)) {
+      try {
+        const verdict = triagePair(p.a, p.b, p.similarity, opts);
+        service.saveConflictLedgerEntry({
+          run_id: runId,
+          memory_a: p.a.id,
+          memory_b: p.b.id,
+          tier: verdict.tier,
+          similarity: p.similarity,
+          signals: verdict.signals
+        });
+        tally[verdict.tier] += 1;
+        tally.recorded += 1;
+      } catch (error) {
+        tally.failed += 1;
+        opts.logger?.warn?.(`dsh-mneme sleep: failed to record ledger triage for ${p.a?.id}/${p.b?.id}: ${String(error)}`);
+      }
     }
   }
   return tally;

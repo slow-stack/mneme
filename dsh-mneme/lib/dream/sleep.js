@@ -400,9 +400,11 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // 记账时点在 used 去重之后：被去重压掉的那半边对（同一条记忆配给了更高相似的
   // 对手）本来就不是这一轮的候选，观察它们只会让分母虚高。
   const ledgerTriage = (config.conflictLedgerMode ?? "off") === "shadow"
-    ? recordLedgerTriage(service, runId, selected, {
+    ? await recordLedgerTriage(service, runId, selected, {
         dupMinSimilarity: config.conflictLedgerDupMinSimilarity,
-        logger
+        logger,
+        // 分块记账的取消检查：用户活动打断时停止记账，余下的对下一轮重见
+        signal
       })
     : null;
 
