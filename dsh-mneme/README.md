@@ -70,7 +70,9 @@ dsh web
 
 开启 `chorographyEnabled` 后可用仓库地志工具。多个仓库已登记时请传仓库 ID。若搜索只读到部分页面，结果会标明漏查的页。
 
-### 工作流（M.O.，v0.9 beta）
+### 工作流（M.O.，v0.9 beta；v0.13.0 起从面板下架）
+
+> **状态**：设置面板不再渲染这一组，界面上没有入口。三个旗标（`actionPipelineEnabled` / `actionRunEnabled` / `actionNudgeEnabled`）与 `/mo-run` 命令、座位注册逻辑都还在，语义零改动；想恢复界面把该组加回 `FEATURE_GROUPS` 与 `FEATURE_FIRST_SCREEN` 即可。下面是设计说明。
 
 记忆库答的是「这件事**为什么**这么办」，答不了「这件事**到底怎么跑**」。v0.9 把后者从记忆库里的一行文字变成项目里可提交、可 review、可被 CI 读的一份文件——一条工作流一个 JSON：
 
