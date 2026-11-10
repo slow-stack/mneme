@@ -834,10 +834,10 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // v0.13 再新增 diaryEnabled（QQ 日记本：跨天判定 + 手写入口 + 面板页的总闸；
   // 顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 120。
   // v0.13 diaryWriteEveryMinutes（日记定时写间隔，走 INT_RANGES 表）= 121。
-  // issue #275 新增 capacityWarning.dbSizeWarnMb / archivedRowsWarn（阈值，走
-  // INT_RANGES 表）与 capacityWarning.archivedRatioWarn（阈值，走 NUMBER_RANGES
-  // 表）；三个都是嵌套点号键、都要进 NESTED_FLAG_PATHS = 124。
-  assert.equal(Object.keys(data.effective).length, 124);
+  // issue #557 新增 dreamInputSummaryEnabled（顶层布尔键，不需要 NESTED_FLAG_PATHS 条目）
+  // = +1；issue #275 新增 capacityWarning 三个嵌套点号键 = +3。两个 PR 各自把锁从
+  // 121 往上加，合并时只能做加法（选边会写回旧值，锁当场红）。
+  assert.equal(Object.keys(data.effective).length, 125);
   // 三个 kb 新键的默认值单独钉一遍：计数锁只钉数量，钉不住值（缺省值翻转时
   // 面板会静默换上一套授权语义），这里补上值这一层。
   assert.equal(data.effective.chorographyAutoRefresh, false);
@@ -849,6 +849,8 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   assert.equal(data.effective.allowCrossTypeMerge, false);
   assert.equal(data.effective.dreamMergeGuard, true);
   assert.equal(data.effective.injectHeatEnabled, false);
+  // issue #557：审计行快照瘦身默认关（默认审计行逐字节一致）
+  assert.equal(data.effective.dreamInputSummaryEnabled, false);
   // issue #380：注入前判定两级开关，默认全关（默认路径零行为变化）
   assert.equal(data.effective["preInjectGate.enabled"], false);
   assert.equal(data.effective["preInjectGate.enforce"], false);

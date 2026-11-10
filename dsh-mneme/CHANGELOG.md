@@ -4,6 +4,12 @@
 
 ## 🆕 新增
 
+- **dream 审计行输入快照瘦身（#557 建议 2，opt-in 默认关）**。`dream_runs.input` 的单行体积随记忆量涨（#557 实测平均 40-79 KB/轮，绝大部分是 content），轮数又随天数涨，两者相乘超线性增长（报告库占 43% 的页；`recall_runs` / `llm_audit_logs` 都有保留期与回收口，这张表只有手动 reclaim 一个口）。新增 `dreamInputSummaryEnabled`（默认 false = 审计行逐字节一致）：开启后 auto 轮的快照只落骨架（id/type/title/importance/updated_at，不含 content）。
+
+  - **判定与回执不受影响**：巩固的 LLM 输入由记忆库现算、`snapshot_hash` 在内存里对含 content 的快照计算，两者都不经过落库副本——prompt 与 receipt 完整性不变；变的只是离线回放（原文不在库里就重算不出 hash，#512「每一行都能回放一次巩固」对瘦身轮降级为骨架级）。
+  - **organize 轮结构性豁免**：整理轮的重放载荷走 `organize.js` 自己的 `saveDreamRun`，不经过 dream.js 的快照构造——与 #275 reclaim 清 input 的 `run_type != 'organize'` 谓词同一条边界，apply 重放永远不会被瘦身破坏。
+  - **不删行**：拍板 3（裁列同意、删行不同意）不动，`receipt_chain` / `memory_mints` 的 `run_id` 指针不涉及悬空问题；存量库的大行仍走 `dsh-mneme reclaim` 回收（#275）。
+  - **验证**：`test/dream.test.js` 新增 2 例（默认关 content 原样落库 / 开启后骨架 + 判定回执不变）；`test/api.test.js` 计数锁 121 → 122 并钉默认值；`docs/CONFIGURATION.md` 补键说明、`docs/STORAGE.md` 补写入期瘦身与拍板边界。
 - **容量预警（#275 空间维度）：库体积 / 归档区规模过线时，`/health` 与面板都看得见**。维护者 2026-10-21 对照 `main` 的现状盘点里，这是「还缺什么」第 2 条：保留期（`retentionDays`）给了时间维度，空间维度一直缺着——库在涨、归档区在涨，但没有任何地方会说过线。接手口径点得很直白：「`/health` 已经有镜像健康卡，加一个库体积卡是同一条路径」。
 
   - **三道阈值，全是观察口（`src/config.js`）**：`capacityWarning.dbSizeWarnMb`（256 MB）、`capacityWarning.archivedRowsWarn`（5000 行）、`capacityWarning.archivedRatioWarn`（0.95）。默认值全部锚定 #275 议题自己的实测，不拍脑袋——55 MB 库 VACUUM 0.8s，256 MB 起代价才值得先看数字（议题「现在便宜、以后贵」）；归档 5,000 是「数千条这个量级」的上沿（议题实测 2,400 时还没坏）；占比健康区就在 0.8~0.9（活跃数百 / 归档数千，议题实测 0.90），预警线刻意放 0.95，不然对着健康库天天报警。**没有 enabled 总开关**：预警没有周期性消费者（`/health` 被读到才算一次），也不自动归档 / 删除任何东西（#275 拍板：真删由人显式确认）——数字恒在，某条检查不要就把阈值设 0（0 = 显式关）。

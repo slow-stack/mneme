@@ -193,6 +193,7 @@
 | `dreamDelayMs` | `2000` | 触发后的延迟（毫秒） | — |
 | `dreamMinIntervalMinutes` | `0` | 两次开跑最小间隔（分钟，≤10080，#89） | 失败/degraded run 也占用；0 = 不限 |
 | `autoDreamFailureBackoff` | `false` | 连续失败指数退避：有效间隔 = 基数 × 2^连败，封顶 30 分钟（#292） | opt-in；基数取 `dreamMinIntervalMinutes`（0 = 无闸可翻倍）；成功一次清零；重启归零 |
+| `dreamInputSummaryEnabled` | `false` | dream 审计行输入快照瘦身（#557）：auto 轮只落骨架（id/type/title/importance/updated_at，不含 content） | opt-in；LLM 输入与 `snapshot_hash` 都不受影响；organize 轮重放载荷不受影响；开启后审计行无法离线重算 hash（骨架级回放） |
 | `dreamPeakHours` | `""` | 巩固错峰，与 `summarizePeakHours` 同一份时段语法（#239，全角等价符号同样归一） | 命中高峰不做梦、阈值继续累积、留 skip 审计；非法写法按未配置 |
 | `dreamPeakMaxDeferMinutes` | `120` | 巩固顺延上限（分钟） | 0 = 不设上限；到点仍处高峰照跑 |
 | `dreamProvider` / `dreamModel` | 空 | 巩固专用路由（settings「巩固模型」） | 建议非思考模型——思考模型易烧光预算返回空体（#135） |
