@@ -1,5 +1,6 @@
-import { validateDecisions, applyDecisions } from "./dream/decisions.js";
+import { validateDecisions, applyDecisions, supersedeInfoFirstPair } from "./dream/decisions.js";
 import { clusterMemories, findPotentialConflicts, cosineSimilarity } from "./dream/clustering.js";
+import { triagePair } from "./dream/triage.js";
 import { clusterByTag, intersectEvidence } from "./dream/narratives.js";
 import { scopeKeyOf } from "./scope.js";
 // Issue #239（第 4 项）镜像到巩固：错峰时段解析与「最近的高峰结束时刻」从独立的
@@ -1508,6 +1509,11 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     // bounds the review queue; overflow is skipped with a warning.
     let frozenCount = 0;
     const frozenIds = [];
+    // Issue #641（enforce 档）：T1 supersede 的实质产出计数与向量清理清单。声明在
+    // freeze/enforce 两个分支外层——noChange 判定与 maintainIndexAfterDream 都在
+    // 它们之后、函数作用域里消费。
+    let ledgerApplied = 0;
+    let ledgerVectorFixups = [];
     // v0.8.1（issue #170 复核项 3）：跨 scope 的 conflict 决策两种模式都一律
     // 停车人工裁决、绝不自动归档——否则普通 dream 的 LLM 能归档别的 scope 的
     // 唯一副本，sleep 路径（scope-candidate-queue）的保护在这里缺位。同 scope
@@ -1520,9 +1526,61 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
         || scopeKeyOf(a.workspace_scope) !== scopeKeyOf(b.workspace_scope)
       );
     };
-    const applyList = freezeEnabled
+    // Issue #641（beta 第二阶段，enforce 档）：dream 主链路的 conflict 决策改为
+    // 确定性处置。LLM 判出的 conflict 对先经 triagePair 再分诊：判为 dup 的走
+    // supersedeInfoFirstPair（与 sleep 自动档同一条契约）；其余（cross-scope-dup /
+    // evolution / conflict）只落 conflict_ledger 账本（tier + 信号），不停车、
+    // 不归档。#616 的父子绑定不继承：enforce 与 freeze 同开时 freeze 让位——
+    // 本段降级 shadow（conflict 照旧停车），绝不两套处置语义同时生效。
+    const ledgerEnforce = (config.conflictLedgerMode ?? "off") === "enforce" && !freezeEnabled;
+    if ((config.conflictLedgerMode ?? "off") === "enforce" && freezeEnabled) {
+      logger?.warn?.("dsh-mneme dream: conflictLedgerMode=enforce coexists with conflictFreezeEnabled — degrading to freeze; disable one of them");
+    }
+    if (ledgerEnforce) {
+      let t1Resolved = 0;
+      let marked = 0;
+      for (const d of decisions.filter((x) => x.action === "conflict")) {
+        const a = snapshot.get(d.winner);
+        const b = snapshot.get(d.loser);
+        if (!a || !b) continue;
+        try {
+          const verdict = triagePair(a, b, pairSimilarity.get(similarityKey(d.winner, d.loser)));
+          if (verdict.tier === "dup") {
+            const res = supersedeInfoFirstPair({ a, b }, service, logger, config);
+            if (res.applied) {
+              t1Resolved += 1;
+              ledgerApplied += 1;
+              // 败者向量清理走下面的 maintainIndexAfterDream：T1 的 supersede 是
+              // 本 helper 独立落地的，不在 applyList 里，必须显式补进维护清单
+              // （否则索引里留一行已归档记忆的向量，「清得掉才检索得到」失衡）。
+              ledgerVectorFixups.push({ action: "supersede", winner: res.winnerId, loser: res.loserId });
+              service.setConflictLedgerStatus(a.id, b.id, "superseded");
+              try {
+                service.saveConflictReviewed?.({ run_id: runId, memory_a: a.id, memory_b: b.id, outcome: "supersede", judged_at: new Date().toISOString() });
+              } catch (error) {
+                logger?.warn?.(`dsh-mneme dream: conflict_reviewed bookkeeping failed for ${a.id}/${b.id}: ${String(error)}`);
+              }
+            } else {
+              // CAS 没过（两侧在快照后被改过）：不冒险自动处置，落账本留观察。
+              service.saveConflictLedgerEntry({ run_id: runId, memory_a: a.id, memory_b: b.id, tier: verdict.tier, similarity: verdict.signals.similarity, signals: verdict.signals });
+            }
+          } else {
+            service.saveConflictLedgerEntry({ run_id: runId, memory_a: a.id, memory_b: b.id, tier: verdict.tier, similarity: verdict.signals.similarity, signals: verdict.signals });
+          }
+          marked += 1;
+        } catch (error) {
+          logger?.warn?.(`dsh-mneme dream: ledger conflict mark failed for ${d.winner}/${d.loser}: ${String(error)}`);
+        }
+      }
+      if (marked > 0) {
+        logger?.info?.(`[dsh-mneme] dream: ledger enforce marked ${marked} conflict decision(s), ${t1Resolved} deterministically superseded`);
+      }
+    }
+    const applyList = ledgerEnforce
       ? decisions.filter((d) => d.action !== "conflict")
-      : decisions.filter((d) => d.action !== "conflict" || !isCrossScopeDecision(d));
+      : freezeEnabled
+        ? decisions.filter((d) => d.action !== "conflict")
+        : decisions.filter((d) => d.action !== "conflict" || !isCrossScopeDecision(d));
     if (freezeEnabled) {
       const conflictsToFreeze = decisions.filter((d) => d.action === "conflict");
       if (conflictsToFreeze.length > 0) {
@@ -1552,9 +1610,11 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
           logger?.warn?.(`dsh-mneme dream: conflict freeze lookup failed: ${String(error)}`);
         }
       }
-    } else {
+    } else if (!ledgerEnforce) {
       // 非 freeze：跨 scope conflict 停车（绝不进 applyDecisions）。带专属
       // reason + 模型给出的裁决理由，队列里读起来是「归属裁决」而非重复项。
+      // ledger enforce 档不进这里：conflict 决策已在上面落账本（tier 含
+      // cross-scope-dup），零停车零归档（#641）。
       const crossScope = decisions.filter((d) => d.action === "conflict" && isCrossScopeDecision(d));
       for (const d of crossScope) {
         try {
@@ -1627,12 +1687,14 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     // happened and the scheduler refreshes the baseline on a false positive.
     // Frozen conflicts are substantive output (parked for review), so a run
     // that only froze conflicts is not a noop.
-    const noChange = frozenCount === 0 && applied === 0 && committed.every((c) => c.action === "keep");
+    // Issue #641：ledger enforce 的 T1 supersede 是独立于 applyList 落地的实质产出，
+    // 计入「本轮有没有干活」，否则有归档产出的轮会被当 noop 刷基线（#634 同族误报）。
+    const noChange = frozenCount === 0 && applied === 0 && ledgerApplied === 0 && committed.every((c) => c.action === "keep");
 
     // Keep the vector index consistent with the post-dream store state.
     if (semantic?.embedder && semantic?.vectorIndex) {
       try {
-        await maintainIndexAfterDream(applyList, service, semantic);
+        await maintainIndexAfterDream(ledgerVectorFixups.length ? [...applyList, ...ledgerVectorFixups] : applyList, service, semantic);
       } catch (error) {
         logger?.warn?.(`[dsh-mneme] dream index maintenance failed: ${String(error)}`);
       }
