@@ -48,8 +48,15 @@ const HOST_TOKENS = {
   "--dsw-alias-interactive-bg-active": { light: "#2631481a", dark: "#ffffff24" },
   "--dsw-alias-scrollbar-bg-l2": { light: "#e5e5e5", dark: "#545557" },
   "--dsw-alias-scrollbar-hover-l2": { light: "#d4d4d4", dark: "#65676b" },
+  // static-* 在两个主题下同值（宿主定义在 :root），图表色盘就是靠它们做色相来源，
+  // 再由 label 混色让深浅两套色阶自动成立。
+  "--dsw-static-amber-500": { light: "#f59e0b", dark: "#f59e0b" },
   "--dsw-static-amber-600": { light: "#dd8629", dark: "#dd8629" },
+  "--dsw-static-blue-500": { light: "#3b82f6", dark: "#3b82f6" },
   "--dsw-static-green-500": { light: "#22c55e", dark: "#22c55e" },
+  "--dsw-static-neutral-500": { light: "#7f8287", dark: "#7f8287" },
+  "--dsw-static-red-500": { light: "#ef4444", dark: "#ef4444" },
+  "--dsw-static-violet-400": { light: "#a78bfa", dark: "#a78bfa" },
   // 真实存在但**不是颜色**的宿主 token：只参与上面的「名字必须存在」检查。
   "--dsw-radius-md": { light: null, dark: null },
   "--dsw-focus-ring-width": { light: null, dark: null },
@@ -139,22 +146,38 @@ function resolveValue(raw, theme) {
   }
   return v.includes("\u00acMISSING\u00ac") ? null : v.trim();
 }
+// 按顶层逗号切。color-mix 会嵌套（图表色盘先跟中性灰压彩度、再跟 label 适配主题），
+// 早期用非贪婪正则会从内层那个「62%,」处劈开，两层都解析失败 → 图形锁报「解析不出颜色」，
+// 看着像色值坏了，其实是解析器不会数括号。
+function splitTop(s) {
+  const out = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of s) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  out.push(cur);
+  return out.map((x) => x.trim());
+}
 function colorOf(raw, theme) {
   const v = resolveValue(raw, theme);
   if (v === null) return null;
-  let m = /^color-mix\(\s*in\s+srgb\s*,\s*(.+?)\s+([\d.]+)%\s*,\s*transparent\s*\)$/.exec(v);
-  if (m) {
-    const base = colorOf(m[1], theme);
+  const head = /^color-mix\(\s*in\s+srgb\s*,/i.exec(v);
+  if (head && v.endsWith(")")) {
+    const args = splitTop(v.slice(head[0].length, -1));
+    if (args.length !== 2) return null;
+    const pct = /^(.*?)\s+([\d.]+)%$/.exec(args[0]);
+    if (!pct) return null;
+    const base = colorOf(pct[1], theme);
     if (!base) return null;
-    return [...base.slice(0, 3), base[3] * (parseFloat(m[2]) / 100)];
-  }
-  m = /^color-mix\(\s*in\s+srgb\s*,\s*(.+?)\s+([\d.]+)%\s*,\s*(.+?)\s*\)$/.exec(v);
-  if (m) {
-    const a = colorOf(m[1], theme);
-    const b = colorOf(m[3], theme);
-    if (!a || !b) return null;
-    const p = parseFloat(m[2]) / 100;
-    return [...a.slice(0, 3).map((x, i) => x * p + b[i] * (1 - p)), a[3] * p + b[3] * (1 - p)];
+    const p = parseFloat(pct[2]) / 100;
+    if (/^transparent$/i.test(args[1])) return [...base.slice(0, 3), base[3] * p];
+    const other = colorOf(args[1], theme);
+    if (!other) return null;
+    return [...base.slice(0, 3).map((x, i) => x * p + other[i] * (1 - p)), base[3] * p + other[3] * (1 - p)];
   }
   return parseColor(v);
 }
@@ -358,6 +381,43 @@ test("色槽各有其主：只被自己的图引用，且每格都由令牌供�
     }
   }
   assert.deepEqual(problems, [], "色槽归属或取色来源不对：\n" + problems.join("\n"));
+});
+
+// 图表调色盘（2026-11，代号 E）：五个色相 + 一套共同配方。上面那条明说了「不锁色值」——
+// 色号该靠截图给人看。这条锁的是**配方**，因为配方一散就会退回旧口径：
+//   ① 五个槽各自挑色器与配比：chart-2 与 chart-5 又都变绿（深色下 H 只差 4）、红槽彩度
+//      翻到 0.172（别人的两倍）、amber-600 再压黑读成土褐；
+//   ② 少掉「先跟中性灰混」那一步：彩度与明度带一起散，深浅两套色阶就没法自动成立；
+//   ③ 拿 --dsw-alias-state-* 当色源：那是宿主状态的语义别名，宿主调一次状态色就顺手
+//      换掉了整张图——图表色盘是设计决定，不该被别人的开关牵走。
+// 五个色相必须互不相同（这就是「两块绿」那条的直接回归锁），灰槽留给 chart-6。
+test("图表五色：五个不同色相、同一套两步混色配方", () => {
+  const problems = [];
+  const hues = new Set();
+  for (let i = 1; i <= 5; i++) {
+    const m = new RegExp("--mneme-chart-" + i + ":([^;]+);").exec(layer.body);
+    if (!m) { problems.push("--mneme-chart-" + i + " 没了"); continue; }
+    const v = m[1].trim();
+    if (/--dsw-alias-state-/.test(v)) problems.push("--mneme-chart-" + i + " 用了宿主状态别名当色源：" + v);
+    const shape = /^color-mix\(in srgb,color-mix\(in srgb,var\((--dsw-static-[a-z]+-\d{3}),#[0-9a-f]{6}\) \d+%,var\(--dsw-static-neutral-500,#7f8287\)\) \d+%,var\(--dsw-alias-label-primary\)\)$/.exec(v);
+    if (!shape) { problems.push("--mneme-chart-" + i + " 不是「静态色 → 中性灰 → label」两步式：" + v); continue; }
+    hues.add(shape[1]);
+  }
+  if (hues.size !== 5) problems.push("五个槽只用了 " + hues.size + " 个色相（" + [...hues].join(" / ") + "）：相邻两块又会分不出");
+  const g = /--mneme-chart-6:([^;]+);/.exec(layer.body);
+  if (!g) problems.push("--mneme-chart-6 没了");
+  else if (!/^color-mix\(in srgb,var\(--dsw-alias-label-primary\) \d+%,transparent\)$/.test(g[1].trim())) {
+    problems.push("--mneme-chart-6 是「其他」类，该保持半透明灰：" + g[1].trim());
+  }
+  // 沉淀图两根柱跟着同一套配方走（同页一半柔和一半艳最难解释），但归属仍是自己的
+  for (const tok of ["--mneme-sink-added", "--mneme-sink-merged"]) {
+    const m = new RegExp(tok + ":([^;]+);").exec(layer.body);
+    if (!m) { problems.push(tok + " 没了"); continue; }
+    if (!/color-mix\(in srgb,color-mix\(in srgb,var\(--dsw-static-/.test(m[1])) {
+      problems.push(tok + " 没跟着图表的配方走（单层混色会和 donut 并排时突兀）");
+    }
+  }
+  assert.deepEqual(problems, [], "图表调色盘的配方不统一：\n" + problems.join("\n"));
 });
 
 // 虚线关系边曾经在 .mneme-gedge-dashed 上再叠一层 opacity:.7，把已经只有 50% 的

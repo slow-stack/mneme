@@ -2556,14 +2556,21 @@ window.__ModuleLoader__.load({
         "--mneme-danger:color-mix(in srgb,var(--dsw-alias-state-error-primary) 80%,var(--dsw-alias-label-primary));" +
         "--mneme-warn:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 65%,var(--dsw-alias-label-primary));" +
         "--mneme-ok:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 65%,var(--dsw-alias-label-primary));" +
-        // Token 去向三屏（2026-10 可观测性改造）：图表六色全部单层 color-mix、
-        // 基准只用宿主 token，test/contrast.test.js GRAPHICS 逐 selector 锁浅/深
-        // ≥3:1。配比按 2026-10 审计数据校准（巩固 37% 是最大弧，占最深主色）。
-        "--mneme-chart-1:color-mix(in srgb,var(--dsw-alias-state-business-primary) 70%,var(--dsw-alias-label-primary));" +
-        "--mneme-chart-2:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 55%,var(--dsw-alias-label-primary));" +
-        "--mneme-chart-3:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 60%,var(--dsw-alias-label-primary));" +
-        "--mneme-chart-4:color-mix(in srgb,var(--dsw-alias-state-error-primary) 65%,var(--dsw-alias-label-primary));" +
-        "--mneme-chart-5:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 45%,var(--dsw-alias-state-business-primary));" +
+        // 图表六色（2026-11 重调，代号 E）：每个槽两步混色。第一步把静态色与中性灰
+        // 混掉一部分彩度（62%，紫用 74% 才不至于读成灰），第二步按各槽自己的比例混
+        // label——label 随主题反向，深浅两套色阶因此自动成立，不用写第二份深色值。
+        // 旧口径的四个毛病都是「各槽自己调、没有共同尺度」：彩度 0.065–0.172 差两倍
+        // （红最刺眼）、chart-2 与 chart-5 都是绿（深色下 H 只差 4，分不出）、amber-600
+        // 再压 40% 黑读成土褐、channel-5 的 L* 0.633 而 chart-4 只有 0.449（一条浮一条沉）。
+        // 五色相固定为 blue / green / amber / red / violet，灰槽（chart-6）留给「其他」。
+        // **刻意用 --dsw-static-* 而不是 --dsw-alias-state-***：别名是宿主状态的语义色，
+        // 宿主调一次状态色就会连带换掉图表色盘，而图表色盘该是设计决定。
+        // 实测浅色 L* 0.47–0.51、深色 0.72–0.81，彩度 0.065–0.095，最低对比 5.6:1（图形只要 3:1）。
+        "--mneme-chart-1:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-blue-500,#3b82f6) 62%,var(--dsw-static-neutral-500,#7f8287)) 70%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-2:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 62%,var(--dsw-static-neutral-500,#7f8287)) 64%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-3:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-amber-500,#f59e0b) 62%,var(--dsw-static-neutral-500,#7f8287)) 74%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-4:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-red-500,#ef4444) 62%,var(--dsw-static-neutral-500,#7f8287)) 67%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-5:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-violet-400,#a78bfa) 74%,var(--dsw-static-neutral-500,#7f8287)) 62%,var(--dsw-alias-label-primary));" +
         // 第 6 槽是半透明灰（「其他」那一类）。它曾同时以「令牌 + 弧 + 图例点」三份
         // 内联副本存在过，改一处漏两处；现在弧与点都直接 var 引用这一份。
         "--mneme-chart-6:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent);" +
@@ -2572,8 +2579,10 @@ window.__ModuleLoader__.load({
         // 同色两义。这里给沉淀图独立语义名，取值与今天的 chart-3 / chart-2 逐字相同
         // （只换语义，视觉零变化），但**刻意不写 var(--mneme-chart-N)**——那是继承，
         // 以后调 donut 的六色盘会顺手改掉「库在膨胀还是稳住了」这张结论图的颜色。
-        "--mneme-sink-added:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 60%,var(--dsw-alias-label-primary));" +
-        "--mneme-sink-merged:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 55%,var(--dsw-alias-label-primary));" +
+        // 取色与 chart-3 同一套配方，但**逐字重写一份、不写 var 引用**：视觉跟着 donut 走，
+        // 归属不跟着走（以后单独调沉淀图不必先改 donut）。
+        "--mneme-sink-added:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-amber-500,#f59e0b) 62%,var(--dsw-static-neutral-500,#7f8287)) 74%,var(--dsw-alias-label-primary));" +
+        "--mneme-sink-merged:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 62%,var(--dsw-static-neutral-500,#7f8287)) 64%,var(--dsw-alias-label-primary));" +
         // 热力档位用 label 补余而非 transparent：transparent 混色在浅色主题下
         // 低档位对白底不足 3:1；label 补余两套主题各档都过线且单调。
         "--mneme-heat-1:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
