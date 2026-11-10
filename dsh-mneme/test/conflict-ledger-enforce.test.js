@@ -196,6 +196,24 @@ test("issue#641 supersedeChain：幽灵行不落链，换指向以最后一次�
   store.close();
 });
 
+test("issue#641 检索降权：被取代的行排在其继任者之后（fuseRecall 的 T3 检索侧）", async () => {
+  const { service, store } = setup();
+  const oldMem = makeMemory(service, "部署方式旧", "部署方式用 systemd 托管服务");
+  const newMem = makeMemory(service, "部署方式新", "部署方式已切换 systemd 托管并加了自动重启");
+  assert.equal(service.supersedeChain(oldMem.id, newMem.id), true);
+  const rows = await service.searchMemories("部署方式 systemd", { mode: "auto", recordRecall: false });
+  const oldIdx = rows.findIndex((r) => r.id === oldMem.id);
+  const newIdx = rows.findIndex((r) => r.id === newMem.id);
+  assert.ok(oldIdx >= 0, "被取代的行仍可见（降权不是隐藏）");
+  assert.ok(newIdx >= 0, "继任者在场");
+  assert.ok(newIdx < oldIdx, "继任者必须排在被取代行之前");
+  // 未落链的行不受影响：那条排序乘数只对链上的行生效
+  const unrelated = makeMemory(service, "无关条目", "完全无关的部署笔记");
+  const rows2 = await service.searchMemories("无关条目 部署", { mode: "auto", recordRecall: false });
+  assert.ok(rows2.some((r) => r.id === unrelated.id), "未链行照常召回");
+  store.close();
+});
+
 test("issue#641 supersedeInfoFirstPair：长度优先（与 mint 顺序无关）", () => {
   const store = createStore(":memory:");
   const service = createService({ store, mirror: null, config: {} });

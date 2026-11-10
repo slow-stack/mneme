@@ -835,7 +835,7 @@ export function createService({ store, mirror, config, onWrite, logger, document
    * Returns { merged, signals }, where signals is Map<id, {keyword, vector,
    * bm25}> so searchMemories can decorate rows when signalTransparency is on.
    */
-  function fuseRecall({ keyword, vector, bm25, entity, lim, mode, wv, wk, wb, we }) {
+  function fuseRecall({ keyword, vector, bm25, entity, lim, mode, wv, wk, wb, we, supersededIds = null }) {
     const recipe = config?.recallFusion ?? "blend";
 
     // Per-source scores are recorded for every recipe so signalTransparency
@@ -976,6 +976,22 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // 且带 seen 去重与容量控制），不该由收尾段替别的配方代劳。删掉后 rrf/minmax
     // 的 auto 排序就是它们各自算出来的排序。
 
+    // #641（T3 取代链的检索侧，beta 第三阶段）：已被取代的行整体降权后重排——
+    // 它仍是「曾经为真」的可追溯历史，显式搜索照样能找到，但不该与取代它的
+    // 那行竞争注入名次。乘 0.5 的语义是「同卷必排继任者之后」，不是隐藏；
+    // 取代链只会在 enforce 档下落笔，链没落过时本段与从前逐字节一致。
+    // keyword 短路在前面已 return——那是人的显式检索动作，保留完整可见性与
+    // 原始排序。已知边界：各分支已按 lim 截断，这里只重排不再回填——极端
+    // 情况下一个刚挤进末位的被取代行会占住名额，但它被压到继任者之后，按
+    // 名次消费的注入实际效果等价；把降权挪进各分支截断前是显式重构，等
+    // 召回基准跑过一轮再决定值不值。行形状随来源不一（向量源可能是瘦行），
+    // 所以按 id 集合判定而不是读行上的 superseded_by。
+    if (supersededIds?.size) {
+      merged = merged
+        .map((m) => (supersededIds.has(m.id) ? { ...m, score: (m.score ?? 0) * 0.5 } : m))
+        .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    }
+
     return { merged, signals };
   }
 
@@ -1090,7 +1106,9 @@ export function createService({ store, mirror, config, onWrite, logger, document
     const wv = config?.hybridSearchVectorWeight ?? DEFAULT_HYBRID_WEIGHTS.vector;
     const wk = config?.hybridSearchKeywordWeight ?? DEFAULT_HYBRID_WEIGHTS.keyword;
 
-    const { merged: fusedMerged, signals } = fuseRecall({ keyword, vector, bm25, entity, lim, mode, wv, wk, wb, we: wb });
+    // T3 降权的判定集：一次部分索引查询拿全部已取代行 id（通常为空或个位数）。
+    const supersededIds = new Set(store.supersededIds());
+    const { merged: fusedMerged, signals } = fuseRecall({ keyword, vector, bm25, entity, lim, mode, wv, wk, wb, we: wb, supersededIds });
     let merged = fusedMerged;
     // v0.8.0 A3（issue #17）：strictScope 硬过滤——他 scope 的候选直接出局
     // （区别于 A2 的降权保留可见）；未标注行与命中行保留。strict 与 A2 加权

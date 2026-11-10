@@ -4143,6 +4143,14 @@ export function createStore(path) {
     return res.changes > 0;
   }
 
+  /**
+   * 已被取代行的 id 清单（issue #641，T3 检索侧降权用）。走部分索引，未落链
+   * 的库上是空查询。返回数组而非 Set——集合语义由调用方决定。
+   */
+  function supersededIds() {
+    return db.prepare("SELECT id FROM memories WHERE superseded_by IS NOT NULL").all().map((r) => r.id);
+  }
+
   /** Triage rows for the panel/analysis views, newest detection first. */
   function listConflictLedger({ limit = 200, offset = 0, tier, status } = {}) {
     const lim = Math.max(1, Math.min(5000, limit | 0));
@@ -5745,6 +5753,7 @@ export function createStore(path) {
     saveConflictLedgerEntry,
     setConflictLedgerStatus,
     supersedeChain,
+    supersededIds,
     listConflictLedger,
     countConflictLedger,
     saveScopeChange,
