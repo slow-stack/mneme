@@ -11,7 +11,7 @@ export const ACTIONS = new Set(["keep", "merge", "archive", "conflict", "update"
 // Epistemic trust (v0.4.5): when config.trustEpistemicWeighting is on, merge
 // keepSource and conflict winners prefer the higher-trust memory. Higher value
 // = preferred. observation (measured) > inferred (derived) > subjective (guess).
-const EPISTEMIC_PRIORITY = { observation: 3, inferred: 2, subjective: 1 };
+export const EPISTEMIC_PRIORITY = { observation: 3, inferred: 2, subjective: 1 };
 
 // Issue #104 方向 2：archive 类型护栏的长保留类型集合——这些类型的存在意义
 // 就是长期保存（踩坑记录、约束、用户偏好、挖掘出的模式），LLM 以「价值判断」

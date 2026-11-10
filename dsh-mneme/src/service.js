@@ -11,7 +11,7 @@ import { CAPACITY_WARNING_DEFAULTS } from "./config.js";
 // 外来行（source='imported'，导入路径落的来源）的身份判定只许有一个定义处——本文件的
 // 两处汇流口与巩固/降级那些读侧行池都调这同一个谓词，避免各处自己写字符串比较然后各自漂移。
 import { isImportedRow } from "./memory-source.js";
-import { applyDecisions } from "./dream/decisions.js";
+import { applyDecisions, EPISTEMIC_PRIORITY } from "./dream/decisions.js";
 import { createDocumentRegistrar } from "./document.js";
 import { createOrganizer } from "./organize.js";
 import { createShareImport } from "./share-import.js";
@@ -2115,7 +2115,49 @@ export function createService({ store, mirror, config, onWrite, logger, document
     }
     // #249 第一批：pin 前置到块内相关性排序之前（验收项），且不占 maxItems 名额。
     // pinned 为空时 selected 就是 general 本身——关闭态与改动前逐字节一致。
-    const selected = pinned.length > 0 ? [...pinned, ...general] : general;
+    let selected = pinned.length > 0 ? [...pinned, ...general] : general;
+    // Issue #641（T3/T4 注入侧，beta 第三阶段）：取代链行不进注入——继任者携带
+    // 现状，旧值注入只会浪费名额、冒着被采用的风险（supersedeChain 只由 enforce
+    // 落笔，shadow/关闭态下集合恒空，本过滤与从前逐字节一致）。矛盾对（tier=
+    // conflict 且仍 open）同批时按「可信度 → 新者」排位并互相标注：#537 的教训
+    // 是标注必须把区分信息带进注入文本，否则重演「记账了但没用上」；标注再显式
+    // 门控在 enforce 档——shadow 只记账零处置。
+    const supersededIdSet = new Set(store.supersededIds());
+    if (supersededIdSet.size) {
+      selected = selected.filter((m) => !supersededIdSet.has(m.id));
+    }
+    if (config.conflictLedgerMode === "enforce" && selected.length > 1) {
+      const language = langOf(config);
+      const byId = new Map(selected.map((m) => [m.id, m]));
+      for (const p of store.openConflictPairs()) {
+        const ma = byId.get(p.memory_a);
+        const mb = byId.get(p.memory_b);
+        if (!ma || !mb) continue;
+        // 确定性排位：可信度（observation > inferred > subjective，与
+        // applyConflict 的换位同序）优先，平手退回服务器时钟新者。多对并存时
+        // 逐一交换以相对次序为准——矛盾对是稀有事件，交换足够且可预测。
+        const rank = (m) => EPISTEMIC_PRIORITY[m.epistemic_status] ?? 0;
+        let preferred = ma;
+        let other = mb;
+        const ra = rank(ma);
+        const rb = rank(mb);
+        if (ra !== rb) {
+          if (rb > ra) { preferred = mb; other = ma; }
+        } else if ((mb.created_at ?? "") > (ma.created_at ?? "")) {
+          preferred = mb;
+          other = ma;
+        }
+        const detected = String(p.detected ?? "").slice(0, 10);
+        preferred.conflictNote = STR.conflictPairPreferred[language](String(other.title ?? "").slice(0, 24), detected);
+        other.conflictNote = STR.conflictPairSecondary[language](String(preferred.title ?? "").slice(0, 24), detected);
+        const pi = selected.indexOf(preferred);
+        const oi = selected.indexOf(other);
+        if (pi > oi) {
+          selected.splice(pi, 1);
+          selected.splice(oi, 0, preferred);
+        }
+      }
+    }
     if (pinnedStats) {
       // 「未展示」只数**真的没进块**的 pin 类条目：被 pin 预算挤下来的条目会回到
       // 候选池，仍可能被 general 槽选中——那就是展示了。按 eligible - pinned 直接

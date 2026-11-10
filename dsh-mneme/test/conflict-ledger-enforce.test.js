@@ -196,6 +196,46 @@ test("issue#641 supersedeChain：幽灵行不落链，换指向以最后一次�
   store.close();
 });
 
+test("issue#641 注入侧：被取代的行不进注入候选（继任者携带现状，旧值不值得名额）", () => {
+  const { service, store } = setup();
+  const oldMem = makeMemory(service, "注入旧", "注入旧的内容");
+  const newMem = makeMemory(service, "注入新", "注入新的内容");
+  assert.equal(service.supersedeChain(oldMem.id, newMem.id), true);
+  const candidates = service.injectCandidates({ query: "", maxItems: 5 });
+  const ids = candidates.map((m) => m.id);
+  assert.ok(!ids.includes(oldMem.id), "被取代的行不进注入");
+  assert.ok(ids.includes(newMem.id), "继任者照常注入");
+  store.close();
+});
+
+test("issue#641 注入侧：矛盾对同批时 enforce 下互相标注、可信度优先排位（#537 教训落地）", () => {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: { conflictLedgerMode: "enforce" } });
+  const a = makeMemory(service, "矛盾注入甲", "矛盾注入甲的内容");
+  const b = makeMemory(service, "矛盾注入乙", "矛盾注入乙的内容");
+  service.saveConflictLedgerEntry({ memory_a: a.id, memory_b: b.id, tier: "conflict" });
+  // 同为 subjective（默认）→ 平手退回服务器时钟新者：b 后铸，preferred = b
+  const candidates = service.injectCandidates({ query: "", maxItems: 5 }).filter((m) => m.id === a.id || m.id === b.id);
+  assert.equal(candidates.length, 2, "两条都在注入批里");
+  assert.ok(candidates[0].id === b.id, "新者排前（时钟平手规则）");
+  assert.match(candidates[0].conflictNote, /以其为准/, "preferred 的标注写明以它为准");
+  assert.match(candidates[1].conflictNote, /以那条为准/, "secondary 的标注指向 preferred");
+  store.close();
+});
+
+test("issue#641 注入侧：shadow 档只记账零处置——矛盾对不标注（负例）", () => {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: { conflictLedgerMode: "shadow" } });
+  const a = makeMemory(service, "影子甲", "影子甲的内容");
+  const b = makeMemory(service, "影子乙", "影子乙的内容");
+  service.saveConflictLedgerEntry({ memory_a: a.id, memory_b: b.id, tier: "conflict" });
+  const candidates = service.injectCandidates({ query: "", maxItems: 5 }).filter((m) => m.id === a.id || m.id === b.id);
+  assert.equal(candidates.length, 2);
+  assert.equal(candidates[0].conflictNote, undefined, "shadow 不标注——只记账零处置");
+  assert.equal(candidates[1].conflictNote, undefined);
+  store.close();
+});
+
 test("issue#641 检索降权：被取代的行排在其继任者之后（fuseRecall 的 T3 检索侧）", async () => {
   const { service, store } = setup();
   const oldMem = makeMemory(service, "部署方式旧", "部署方式用 systemd 托管服务");

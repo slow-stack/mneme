@@ -4151,6 +4151,18 @@ export function createStore(path) {
     return db.prepare("SELECT id FROM memories WHERE superseded_by IS NOT NULL").all().map((r) => r.id);
   }
 
+  /**
+   * 仍未消解的真矛盾对（issue #641，T4 注入侧感知用）。只取 tier=conflict 且
+   * status=open 的行——superseded/differentiated 已消解，zombied 已被 heat 兜底；
+   * shadow 档记下的观察对也在其中（注入侧标注以 enforce 档为门，见 injectCandidates）。
+   * 按最近观察排序，上限 2000：账本对的量级是个位数到几十，上限只为防御性兜底。
+   */
+  function openConflictPairs(limit = 2000) {
+    return db.prepare(
+      "SELECT memory_a, memory_b, first_seen_at AS detected FROM conflict_ledger WHERE tier = 'conflict' AND status = 'open' ORDER BY last_seen_at DESC LIMIT ?"
+    ).all(Math.max(1, Math.min(2000, limit | 0)));
+  }
+
   /** Triage rows for the panel/analysis views, newest detection first. */
   function listConflictLedger({ limit = 200, offset = 0, tier, status } = {}) {
     const lim = Math.max(1, Math.min(5000, limit | 0));
@@ -5754,6 +5766,7 @@ export function createStore(path) {
     setConflictLedgerStatus,
     supersedeChain,
     supersededIds,
+    openConflictPairs,
     listConflictLedger,
     countConflictLedger,
     saveScopeChange,
