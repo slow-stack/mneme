@@ -711,11 +711,17 @@ export const apply = (ctx, config) => {
       startT1Job: (args) => t1Jobs.start(args),
       t1JobStatus: (jobId) => t1Jobs.status(jobId),
     };
+    // The semantic surface handed to the API is createSemantic()'s own return
+    // value, plus the vectorIndex it does not carry. Passing the bare literal
+    // `{ vectorIndex, reranker }` used to drop embeddingDiagnostics, so the
+    // panel's `data.embeddings` was permanently null on a real install — the
+    // typeof guard in api.js fell through every time, and no test noticed
+    // because none asserted on `data.embeddings`.
     const api = createApi(ctx, service, settings, commands ?? {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,
       list: () => []
-    }, embedder, { vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro, profileFacts, kb, diary);
+    }, embedder, { ...semantic, vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro, profileFacts, kb, diary);
     disposers.push(api.dispose);
 
     // dsh-go 原生面板：只有宿主提供 dshGo 服务（dsh-go 手机 App）时才挂载。
