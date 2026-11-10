@@ -5490,7 +5490,43 @@ window.__ModuleLoader__.load({
         overlayListeners.add(fn);
         return () => { overlayListeners.delete(fn); };
       }, []);
-      return [open, setOverlayOpen];
+      return [open, setOpen];
+    }
+
+    // --- 引导任务在飞态（issue #558，module-level pub/sub）---
+    // better-sidebar 关 tab 会把标签页体（MemoryExplorer 与引导弹层）整个卸载：
+    // keepMounted 覆盖隐藏与切视图、**不含关闭**（它自己的设计文档写明「记录的
+    // 寿命只由原生 tab 关闭与会话消失回收」）。引导 POST 照样跑完、行照样落库
+    // （saveWithDedupe 的 (type,title,scope) 三元组去重 + _overwrite 刷新，重复
+    // 执行是合并更新不写坏数据），但成功/失败提示没地方显示，忙碌态也丢了——
+    // 重开标签页还能再提交一次。把任务状态搬到模块级：弹层挂载时回放快照、订阅
+    // 后续变化，就是上面 overlayListeners 的现成形状。prop 钻孔的 busy 链
+    // （弹层 → explorer → overlay）整条拆掉，三处各自订阅同一份。
+    //
+    // 清理责任有界：terminal 状态只在「人看得见的关闭」时回 idle（MemoryExplorer
+    // 的 onClose、⋯ 菜单的收起、explorer 卸载时**非 running** 的兜底——规则是
+    // 「只存活用户没来得及看的那一份」：卸载发生在 running 时，结果还没人看过，
+    // 留着等重开回放；卸载时已经是 done/failed，说明用户见过它，回 idle 保持
+    // 「重开是干净弹层」的既有行为）。running 状态只有这一条路能跨过卸载，没有
+    // 定时器要跨卸载存活，进程级生命周期随面板 bundle 结束。
+    const bootstrapJob = { phase: "idle", dir: "", result: null, error: null, listeners: new Set() };
+    function setBootstrapJob(patch) {
+      Object.assign(bootstrapJob, patch);
+      for (const fn of bootstrapJob.listeners) fn();
+    }
+    // phase 回 idle 但**保留 dir**：重开弹层带着上次用过的目录，重试同目录是最常见
+    // 的下一步（弹层挂载时从这份 dir 播种输入框）。
+    function resetBootstrapJob() {
+      setBootstrapJob({ phase: "idle", result: null, error: null });
+    }
+    function useBootstrapJob() {
+      const [, bump] = useState(0);
+      useEffect(() => {
+        const fn = () => bump((n) => n + 1);
+        bootstrapJob.listeners.add(fn);
+        return () => { bootstrapJob.listeners.delete(fn); };
+      }, []);
+      return bootstrapJob;
     }
 
     // 居中 sheet 记忆库：任何状态下（含新会话 hero、无 tab 环）都能从侧边栏
@@ -5502,7 +5538,11 @@ window.__ModuleLoader__.load({
       // 关闭路径都要看它：关掉弹层会把 MemoryExplorer 连同引导弹层一起卸载，
       // 而 POST 还在飞，回来那句「新建几条、并入几条」就再没有地方显示——
       // 库写进去了，用户却以为没成功（评审 #4453225573）。
-      const [explorerBusy, setExplorerBusy] = useState(false);
+      // #558 起直接订阅模块级 bootstrapJob：弹层与 explorer 的 prop 钻孔链拆掉后，
+      // 这里不再依赖子组件回报（tab 注册的 explorer 没有 onBusyChange，原本就
+      // 报不上来），在飞守卫对所有挂载路径一致成立。
+      const bootstrapJob = useBootstrapJob();
+      const explorerBusy = bootstrapJob.phase === "running";
       // 用 ref 读而不是进 effect 依赖：那个 effect 在 [open] 变化时会
       // closeBtnRef.current.focus()，若把 explorerBusy 也列进依赖，每次请求
       // 起落都会重跑一次并抢焦点——用户正打字输目录时会被踢出输入框。
@@ -5566,7 +5606,7 @@ window.__ModuleLoader__.load({
               onClick: () => { if (!explorerBusyRef.current) setOpen(false); }
             }, "✕")
           ),
-          h("div", { className: "mneme-overlaybody" }, h(MemoryExplorer, { t, onBusyChange: setExplorerBusy }))
+          h("div", { className: "mneme-overlaybody" }, h(MemoryExplorer, { t }))
         )
       );
       if (reactDom && typeof document !== "undefined") return reactDom.createPortal(tree, document.body);
@@ -7859,40 +7899,58 @@ window.__ModuleLoader__.load({
       );
     }
 
-    // --- 从目录引导弹层（issue #386 第 6 条）---
+    // --- 从目录引导弹层（issue #386 第 6 条；#558 起状态住模块级 bootstrapJob）---
     // 后端能力早在 #220 就实现了（src/bootstrap.js：六类确定性产物，零 LLM，吃
     // saveWithDedupe 的 (type,title,scope) 去重），但只有 Bearer 数据面一条入口，
     // 面板够不着——用户照文档找过来，发现产品界面里没有这个东西。
     //
     // 与 ImportDialog 的两处刻意的不同：
-    // 1. 成功路径**不**重复 setBusy(false)。这里没有「同键再提交一次会追加正文」的
-    //    风险（bootstrap 是 _overwrite 刷新），但 900ms 的提示阅读时间同样成立；
-    //    更要紧的是这一段里组件仍挂着，按钮若重新可点，人会以为「没反应」再点一次。
-    //    定时器句柄存进 ref，卸载时清掉——否则第二次提交的结果会写进已卸载的组件
-    //    （#386 第 6 条评审）。
+    // 1. 成功后保持 900ms 的提示阅读时间再自动收口。定时器句柄存进 ref，卸载时清
+    //    掉——若 tab 在这 900ms 里被关掉，结果已经写进模块级 bootstrapJob（done），
+    //    重开标签页回放这一份；timer 没了就不再自动收口，由人手动关（关 = 确认，
+    //    explorer 会把任务态回 idle）。
     // 2. 错误按服务端的码分开说。「目录不存在」「不是目录」「能力没接线」三种情况下
     //    用户该做的事完全不同，统一成一句「引导失败」等于让他自己猜。
-    function BootstrapDialog({ t, onClose, onImported, onBusyChange }) {
-      const [dir, setDir] = useState("");
-      const [busy, setBusy] = useState(false);
-      const [msg, setMsg] = useState("");
-      const [err, setErr] = useState("");
+    //
+    // busy / msg / err 全部从 store 派生而非本地 state：组件只是任务态的一个视图，
+    // 卸载（tab 关闭）不丢、重挂载回放——这正是 #558 要的「请求与结果活得比标签页
+    // 体长」。唯一的本地态是输入框草稿与「目录没填」这种提交前校验（请求没起飞，
+    // 没有什么需要跨卸载存活）。
+    function BootstrapDialog({ t, onClose, onImported }) {
+      const job = useBootstrapJob();
+      const [dir, setDir] = useState(job.dir || "");
+      const [localErr, setLocalErr] = useState("");
       const timerRef = useRef(null);
       useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
-      // 忙碌状态要让外面也知道：菜单那个「⋯」在请求进行中若把弹层卸掉，等于绕过
-      // 了下面那两个 disabled 的按钮，请求还在飞、界面已经没了（评审 #4452245292）。
-      useEffect(() => { if (onBusyChange) onBusyChange(busy); }, [busy, onBusyChange]);
-      useEffect(() => () => { if (onBusyChange) onBusyChange(false); }, [onBusyChange]);
+      const busy = job.phase === "running";
+      // 「新鲜 done」＝本次提交刚落地的 900ms 阅读窗（timer 还挂着）；重开回放的
+      // done 没有 timer，按钮必须可点——否则旧结果会把弹层锁死。
+      const freshDone = job.phase === "done" && timerRef.current !== null;
+      const submitBlocked = busy || freshDone;
+      // 错误消息从码派生：码是服务端的 error 字段（或 generic 兜底），本地校验的
+      // 「目录没填」不进 store——请求没起飞，无需跨卸载存活。
+      const err = localErr || (job.phase === "failed"
+        ? (() => {
+            const key = "memory.explorer.bootstrapErr." + String(job.error || "generic");
+            const localized = t(key);
+            // t() 对未知键原样返回键名——那就退回通用文案，别把键名甩给用户。
+            return localized === key ? t("memory.explorer.bootstrapFailed") : localized;
+          })()
+        : "");
+      const msg = job.phase === "done"
+        ? t("memory.explorer.bootstrapDone")
+            .replace("{n}", String((job.result && job.result.created) ?? 0))
+            .replace("{m}", String((job.result && job.result.merged) ?? 0))
+        : "";
       const submit = () => {
         if (busy) return;
         const target = String(dir || "").trim();
-        if (!target) { setErr(t("memory.explorer.bootstrapNoDir")); return; }
-        setBusy(true);
-        // 同步告诉父组件，别等下面那个 effect：effect 要等这次渲染提交后才跑，
-        // 中间那一拍父组件的 bootstrapBusy 还是 false，此时点「⋯」仍会把弹层卸掉，
-        // 请求的成功或失败就再没有地方显示（评审 #4452539705）。
-        if (onBusyChange) onBusyChange(true);
-        setErr("");
+        if (!target) { setLocalErr(t("memory.explorer.bootstrapNoDir")); return; }
+        // 任务态同步进 store（running）：父组件的「⋯」守卫与外层 Esc/背板/✕ 守卫
+        // 在同一渲染里就位——旧 prop 链要等渲染提交后才追上，中间那一拍是
+        // #4452539705 的老毛病；现在 setBootstrapJob 的监听者同步被唤醒。
+        setBootstrapJob({ phase: "running", dir, result: null, error: null });
+        setLocalErr("");
         apiFetch("/api/dsh-mneme/bootstrap", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -7903,24 +7961,18 @@ window.__ModuleLoader__.load({
           .then((res) => res.json().then((d) => ({ ok: res.ok, d })))
           .then(({ ok, d }) => {
             if (!ok) {
-              const code = d && d.error;
-              const key = "memory.explorer.bootstrapErr." + String(code || "");
-              const localized = t(key);
-              // t() 对未知键原样返回键名——那就退回通用文案，别把键名甩给用户。
-              setErr(localized === key ? t("memory.explorer.bootstrapFailed") : localized);
-              setBusy(false);
+              // terminal 化只写 store：此刻本组件可能已被 tab 关闭卸载——那正是
+              // 要修的路径，结果留在 store 里等重开回放，而不是写进已卸载的组件。
+              setBootstrapJob({ phase: "failed", error: (d && d.error) || "generic" });
               return;
             }
-            setMsg(t("memory.explorer.bootstrapDone")
-              .replace("{n}", String((d && d.created) ?? 0))
-              .replace("{m}", String((d && d.merged) ?? 0)));
-            // onImported 同步调，只把 onClose 留在定时器里：切视图会卸载本组件并清掉
-            // timerRef，若刷新也排在那 900ms 之后，这一步就静默丢了——库已经写进去了，
-            // 列表却还是旧的（评审 #4452539711）。
+            setBootstrapJob({ phase: "done", result: { created: (d && d.created) ?? 0, merged: (d && d.merged) ?? 0 } });
+            // onImported 只在结果落地那一刻调，回放不重复调：列表刷新要么当时已
+            // 生效，要么重开标签页时挂载 effect 重新取（库已写入，列表不会旧）。
             onImported();
             timerRef.current = setTimeout(() => onClose(), 900);
           })
-          .catch(() => { setBusy(false); setErr(t("memory.explorer.bootstrapFailed")); });
+          .catch(() => { setBootstrapJob({ phase: "failed", error: "generic" }); });
       };
       return h("div", { className: "mneme-impdialog", role: "region", "aria-label": t("memory.explorer.bootstrapTitle") },
         h("div", { className: "mneme-set-title" }, t("memory.explorer.bootstrapTitle")),
@@ -7938,14 +7990,17 @@ window.__ModuleLoader__.load({
             // 请求进行中锁住输入框：否则用户改成 B，回来的提示就贴在 B 旁边，
             // 而它说的是 A 的结果（评审 #4452245279）。
             disabled: busy,
-            onChange: (e) => { setDir(e.target.value); setErr(""); }
+            onChange: (e) => { setDir(e.target.value); setLocalErr(""); }
           })
         ),
         err && h("div", { className: "mneme-featsubhint", style: { color: "var(--mneme-danger)", marginTop: 8 } }, err),
         msg && h("div", { className: "mneme-saved", style: { marginTop: 8 } }, msg),
         h("div", { className: "mneme-improw", style: { justifyContent: "flex-end" } },
+          // 取消在 running 时锁死（既有守卫）；fresh done 的 900ms 窗内**可点**——
+          // 旧实现靠 busy 连 cancel 一起锁，那时 busy 是本地 state、必然随组件活着
+          // 解锁；现在 done 是 store 态、可能被重开回放，锁死会把弹层永久焊住。
           h("button", { type: "button", className: "mneme-btn", disabled: busy, onClick: onClose }, t("memory.explorer.importCancel")),
-          h("button", { type: "button", className: "mneme-btn", disabled: busy, onClick: submit },
+          h("button", { type: "button", className: "mneme-btn", disabled: submitBlocked, onClick: submit },
             busy ? t("memory.explorer.bootstraping") : t("memory.explorer.bootstrapConfirm"))
         )
       );
@@ -8431,20 +8486,18 @@ window.__ModuleLoader__.load({
       const [menuOpen, setMenuOpen] = useState(false);
       const [importOpen, setImportOpen] = useState(false);
       const [bootstrapOpen, setBootstrapOpen] = useState(false);
-      // 引导请求是否在飞：「⋯」按钮在忙碌时必须不关弹层（评审 #4452245292）。
-      const [bootstrapBusy, setBootstrapBusy] = useState(false);
-      // 一路直接抬到外层 MemoryOverlay：它要在 Esc / 背板 / ✕ 三条关闭路径上一起挡
-      // （评审 #4453225573）。刻意**不**用 useEffect 转报——那要等渲染提交后才跑，
-      // 中间那一拍外层守卫读到的是 false，正是 #4452539705 那条的老毛病。
-      // 走 BootstrapDialog 的回调，它的 submit 里是同步调的。
-      // better-sidebar 那个 tab 注册时不传 onBusyChange，所以这里必须容忍 undefined。
-      // 身份必须稳定：BootstrapDialog 的卸载 effect 依赖 [onBusyChange]，父组件每
-      // 重渲染一次就会先跑 cleanup 调 onBusyChange(false)——而父组件恰好是在
-      // setBootstrapBusy(true) 之后重渲染的，那一抹等于把刚置上的忙碌标记当场抹掉。
-      const reportBootstrapBusy = useCallback((v) => {
-        setBootstrapBusy(v);
-        if (onBusyChange) onBusyChange(v);
-      }, [onBusyChange]);
+      // 引导请求是否在飞（#558）：订阅模块级 bootstrapJob 而不是接弹层的回调。
+      // 「⋯」按钮在忙碌时必须不关弹层（评审 #4452245292）；从 store 派生后这条
+      // 守卫跨 tab 关闭/重开仍然成立——请求在飞时重开标签页，菜单照样锁着。
+      const bootstrapJob = useBootstrapJob();
+      const bootstrapBusy = bootstrapJob.phase === "running";
+      // 卸载兜底：只回「用户没来得及看」之外的状态。卸载发生在 running 时（tab
+      // 关闭 / 覆盖层关闭都算），结果还没人看过——terminal 化发生在卸载之后，
+      // 这份要留给重开回放（本 issue 修的就是它）；卸载时已是 done/failed，
+      // 用户见过它，回 idle 保持「重开是干净弹层」的既有行为。
+      useEffect(() => () => {
+        if (bootstrapJob.phase !== "running") resetBootstrapJob();
+      }, []);
       const [createOpen, setCreateOpen] = useState(false);
       const [shareOpen, setShareOpen] = useState(false);
       const [receiveOpen, setReceiveOpen] = useState(false);
@@ -8846,7 +8899,9 @@ window.__ModuleLoader__.load({
                   setImportOpen(false);
                   // 引导弹层只在不忙的时候才关：它内部已经用 busy 禁用了取消与提交，
                   // 这里若照旧卸载，等于给了一条绕过那两道锁的路（评审 #4452245292）。
-                  if (!bootstrapBusy) setBootstrapOpen(false);
+                  // 关的同时把任务态回 idle——用户看得见这个关闭，terminal 状态
+                  // 不该留到下次重开（#558 的存活规则：只留没人看过的那份）。
+                  if (!bootstrapBusy) { resetBootstrapJob(); setBootstrapOpen(false); }
                   setCreateOpen(false);
                   setShareOpen(false);
                   setReceiveOpen(false);
@@ -8878,8 +8933,10 @@ window.__ModuleLoader__.load({
               }),
               bootstrapOpen && h(BootstrapDialog, {
                 t,
-                onClose: () => setBootstrapOpen(false),
-                onBusyChange: reportBootstrapBusy,
+                // 人看得见的关闭（取消 / 自动收口 / 菜单收起）：terminal 状态回 idle，
+                // 重开是干净弹层；tab 关闭不经过这里——running 的任务态留在模块级，
+                // 由重开时回放（#558）。
+                onClose: () => { resetBootstrapJob(); setBootstrapOpen(false); },
                 onImported: () => { setReloadKey((k) => k + 1); broadcastStoreChanged("import"); }
               }),
               shareOpen && h(ShareDialog, { t, onClose: () => setShareOpen(false) }),
