@@ -3016,6 +3016,21 @@ test("panel copy and icons must not silently vanish (missing dict lines, unregis
     for (const b of expr.matchAll(/[?:]\s*"([a-zA-Z]+)"/g)) iconNames.add(b[1]);
   }
   for (const m of clientSource.matchAll(/feedRow\(\s*"([a-zA-Z]+)"/g)) iconNames.add(m[1]);
+  // 页签图标走 TAB_ICONS 查表（子视图 key -> 图标名），不是 h(Icon, ...) 字面量，
+  // 上面两条提取器看不见它。这里把表里的值按 ICON_PATHS 的同形状收进来——否则
+  // 改表时把某个 key 指向未注册名字，闸门照绿而屏幕上那格图标是空的。
+  const tabTable = clientSource.match(/const TAB_ICONS = \{((?:[^}]|\n)*?)\}/);
+  assert.ok(tabTable, "TAB_ICONS must be parseable (subview key -> icon name)");
+  const tabEntries = [...tabTable[1].matchAll(/([a-zA-Z]+):\s*"([a-zA-Z]+)"/g)];
+  assert.ok(tabEntries.length >= 7, `TAB_ICONS must cover every subview (saw ${tabEntries.length})`);
+  for (const m of tabEntries) iconNames.add(m[2]);
+  // 反向：每个 subviews 的 key 都得在表里有一行，否则那一格掉到 ?? "settings" 上。
+  const subviewsBlock = clientSource.match(/const subviews = \[((?:[^\]]|\n)*?)\]/);
+  assert.ok(subviewsBlock, "subviews must be parseable");
+  const subviewKeys = [...subviewsBlock[1].matchAll(/key: "([a-zA-Z]+)"/g)].map((m) => m[1]);
+  assert.ok(subviewKeys.length >= 7, `subviews must be parseable (saw ${subviewKeys.length})`);
+  const unmapped = subviewKeys.filter((k) => !tabEntries.some((m) => m[1] === k));
+  assert.deepEqual(unmapped, [], `页签没有图标映射（会退化成设置齿轮）：${unmapped.join(", ")}`);
   assert.ok(iconNames.size >= 8, `icon usage must be parseable (saw ${iconNames.size})`);
   const noIcon = [...iconNames].filter((n) => !registered.has(n)).sort();
   assert.deepEqual(noIcon, [], `Icon 静默 return null 的未注册名：${noIcon.join(", ")}`);
@@ -4376,4 +4391,35 @@ test("affective panel keeps loading, error and empty apart (#619)", () => {
   assert.ok(clientSource.includes('{ key: "affective", label: t("memory.explorer.tabAffective") }'),
     "情绪页签必须注册");
   assert.ok(clientSource.includes('view === "affective"'), "视图分支必须存在");
+});
+
+// 回归锁：情绪行必须说出「谁」，页签图标必须各自认领（v0.13.0 复验轮）。
+// 这两处都是「数据在、界面没显示」的假绿形状：服务端一直带 person、ICON_PATHS
+// 之外的页签则静默落到 else 分支，闸门全绿而屏幕上少一块信息。
+test("affective rows name the person, and every tab owns its icon (#619)", () => {
+  const start = clientSource.indexOf("function AffectivePanel({ t })");
+  const end = clientSource.indexOf("function StatusPanel({ t, onBrowse })", start);
+  const body = clientSource.slice(start, end);
+
+  // 谁：person 必须进渲染，缺名给占位，不许把 undefined 打到界面上。
+  assert.ok(/it\.person/.test(body), "情绪行要渲染 person（服务端 from_name 一直都在）");
+  assert.ok(/it\.person\s*\?\?\s*"/.test(body), "person 缺失时要给占位符，不能渲染出 undefined");
+  // 顺序：谁 -> 情绪 -> 对什么。少了前半句「不安」就不知道是谁对谁。
+  const order = [body.indexOf('className: "mneme-affective-person"'), body.indexOf('className: "mneme-affective-emotion"'), body.indexOf('className: "mneme-affective-target"')];
+  assert.ok(order.every((i) => i > 0) && order[0] < order[1] && order[1] < order[2],
+    `情绪行的字段顺序必须是 谁 · 情绪 · 对什么（实际 ${order.join(",")}）`);
+
+  // 页签图标：affective 与 diary 各自有名字，且都在 ICON_PATHS 注册表里。
+  const tabTable = clientSource.match(/const TAB_ICONS = \{((?:[^}]|\n)*?)\}/);
+  assert.ok(tabTable, "TAB_ICONS must exist");
+  const map = Object.fromEntries([...tabTable[1].matchAll(/([a-zA-Z]+):\s*"([a-zA-Z]+)"/g)].map((m) => [m[1], m[2]]));
+  assert.equal(map.affective, "heart", "情绪页签要用 heart");
+  assert.equal(map.diary, "book", "日记页签要用 book");
+  for (const [key, icon] of Object.entries(map)) {
+    assert.ok(new RegExp(`^\\s{6}${icon}: \\[\\[`, "m").test(clientSource),
+      `页签 ${key} 指向的图标 ${icon} 没在 ICON_PATHS 注册（会静默渲染成空）`);
+  }
+  // 页签渲染只许走查表；再长出嵌套三元就又会把新页签塞到 else 分支。
+  assert.ok(/h\(Icon, \{ name: TAB_ICONS\[s\.key\]/.test(clientSource),
+    "页签图标必须走 TAB_ICONS 查表，不许回到嵌套三元");
 });
