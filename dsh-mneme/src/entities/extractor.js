@@ -1,4 +1,9 @@
 const VALID_TYPES = new Set(["person", "project", "concept", "technology", "organization"]);
+// #619：affective_context **刻意不在**这张白名单里。它不是结构关系，是「某人
+// 在某一次场合对某事的情绪」——判它需要 provenance（这条记忆来自哪个会话），
+// 而实体抽取发生在写入当下、手里没有会话边界，判不了「一次场合」与「反复出现
+// 的特质」。让它在这里也能写，就等于给 entity_relations 开第二个只带 {model}
+// 的写入口，同一张表两种 schema。唯一的写入者是 sleep 的 affective 相位。
 const VALID_RELATIONS = new Set(["uses", "depends_on", "part_of", "related_to"]);
 const MAX_MEMORY_CHARS = 4000;
 
@@ -25,6 +30,8 @@ RULES:
 
 CONSTRAINTS:
 - "type" must be one of: person, project, concept, technology, organization. If unsure, use "concept".
+- Relation "type" must be one of: uses, depends_on, part_of, related_to. If unsure, use related_to.
+- Do NOT emit emotional or affective relations. An emotion belongs to one occasion and needs session provenance to judge it; that is recorded separately, not here.
 - "relations" from/to must reference entity names from the "entities" list.
 - Maximum ${maxEntities} entities. Maximum ${maxAttrs} attributes per entity. Truncate if exceeded.
 - Only include entity-related attributes. Ignore irrelevant miscellaneous details.
@@ -72,12 +79,19 @@ function sanitizeConfidence(conf) {
   return Math.min(1, Math.max(0, num));
 }
 
+// #619：未知关系类型**不再静默降级成 related_to**。旧行为是「写入成功、不报错、
+// 图上没有那条轴」——最难排查的一种失败：模型抽对了，库里却读不出它抽的是情感边
+// 还是普通关联。现在返回 null，由调用方丢弃并 logger.warn 带原始类型名。
+// 注意这与 sanitizeType（未知实体类型 → concept）刻意不同：实体类型是可容错的
+// 粗分类，关系类型是语义轴本身，猜错一条边就是给图加错误事实。
 function sanitizeRelationType(type) {
-  if (VALID_RELATIONS.has(type)) return type;
-  return "related_to";
+  if (typeof type !== "string") return null;
+  const normalized = type.trim();
+  if (VALID_RELATIONS.has(normalized)) return normalized;
+  return null;
 }
 
-function sanitizeExtractedData(data, config) {
+function sanitizeExtractedData(data, config, logger = null) {
   const maxEntities = config.entityExtractionMaxEntities ?? 10;
   const maxAttrs = config.entityExtractionMaxAttrs ?? 20;
   
@@ -115,19 +129,31 @@ function sanitizeExtractedData(data, config) {
   }
   
   const relations = [];
+  const rejectedRelationTypes = [];
   if (Array.isArray(data.relations)) {
     for (const rawRel of data.relations) {
       if (!rawRel || typeof rawRel.from !== "string" || typeof rawRel.to !== "string") continue;
       if (!seenNames.has(rawRel.from) || !seenNames.has(rawRel.to)) continue;
+      const relationType = sanitizeRelationType(rawRel.type);
+      if (!relationType) {
+        // #619：不再降级成 related_to——记下原始类型名，交给调用方 warn。
+        rejectedRelationTypes.push(String(rawRel.type));
+        continue;
+      }
       relations.push({
         from: rawRel.from,
         to: rawRel.to,
-        type: sanitizeRelationType(rawRel.type)
+        type: relationType
       });
     }
   }
-  
-  return { entities, relations };
+  if (rejectedRelationTypes.length > 0) {
+    logger?.warn?.(
+      `[extractor] dropped ${rejectedRelationTypes.length} relation(s) with unknown type(s): ${[...new Set(rejectedRelationTypes)].join(", ")}`
+    );
+  }
+
+  return { entities, relations, rejectedRelationTypes };
 }
 
 async function resolveEntity(entity, store) {
@@ -178,7 +204,7 @@ export async function extractEntities(memory, { store, config, callLLM, logger }
       return { ok: false, error: "Failed to parse JSON from LLM response" };
     }
     
-    const { entities, relations } = sanitizeExtractedData(rawData, config);
+    const { entities, relations, rejectedRelationTypes } = sanitizeExtractedData(rawData, config, logger);
     
     const resolvedEntities = [];
     const entityIdMap = new Map();
@@ -247,6 +273,9 @@ export async function extractEntities(memory, { store, config, callLLM, logger }
       entities: resolvedEntities,
       attrs,
       relations: savedRelations,
+      // #619：被丢弃的未知关系类型（含原始名字）。调用方据此判断「模型没抽」
+      // 与「抽了但类型不认识」——两者的运维动作完全不同。
+      rejectedRelationTypes,
       skipped: skipCount
     };
     

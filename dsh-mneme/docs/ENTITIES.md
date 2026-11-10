@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS entity_relations (
   id TEXT PRIMARY KEY,
   from_entity TEXT NOT NULL,
   to_entity TEXT NOT NULL,
-  relation_type TEXT NOT NULL,   -- uses|depends_on|part_of|related_to|supersedes
+  relation_type TEXT NOT NULL,   -- uses|depends_on|part_of|related_to|supersedes|affective_context（末者仅由 sleep 情感相位写入）
   memory_id TEXT,
   created_at TEXT NOT NULL,
   metadata TEXT                  -- JSON 自由字段
@@ -149,7 +149,9 @@ saveAttr(entity=X, key=role, value="前端工程师")
 
 1. `buildSystemPrompt` — 约束上限（`entityExtractionMaxEntities` / `entityExtractionMaxAttrs`）、禁编造、用规范化名
 2. `extractJsonFromText` — 先直接 `JSON.parse`，失败再抓首个 `{...}` 块
-3. `sanitizeExtractedData` — 非法 type → `concept`；非法 relation type → `related_to`；非法 confidence → 0.9；超限截断；relations 的 from/to 必须引用实体清单
+3. `sanitizeExtractedData` — 非法 type → `concept`；**非法 relation type → 拒收**（#619：不再静默降级成 `related_to`，丢弃的类型名进返回值 `rejectedRelationTypes` 并 `logger.warn`，让"模型抽了但类型不认识"在审计里看得见）；非法 confidence → 0.9；超限截断；relations 的 from/to 必须引用实体清单
+
+> **`affective_context` 不在这条管线里。** 它只有一个写入者：sleep 的情感归因相位（`docs/SLEEP.md` §5）。实体抽取发生在写入当下，手里没有会话边界，判不了"一次场合"和"反复出现的特质"；放它进白名单，等于在同一张 `entity_relations` 表里造第二种 schema（没有 `emotion` / `attribution` / `sessionCount`）。抽取器遇到它会当未知类型拒收并 warn。
 4. `resolveEntity` — **同名去重**：`findEntityByName` 命中 → `updateEntity(id, {})`（`mention_count+1`），未命中 → 建新实体
 5. 逐条 `saveAttr`（挂 `memory_id` + `source: "llm_extract"`）→ 逐条 `saveRelation`
 6. 单实体/属性/关系失败只 `skipCount++` 并告警，不中断整批
@@ -157,7 +159,7 @@ saveAttr(entity=X, key=role, value="前端工程师")
 ### 返回 / fail-safe
 
 ```js
-{ ok: true, entities: [{ name, type, attrs, entity_id }], attrs: [...], relations: [...], skipped: n }
+{ ok: true, entities: [{ name, type, attrs, entity_id }], attrs: [...], relations: [...], skipped: n, rejectedRelationTypes: [...] }
 { ok: false, error: "..." }
 ```
 

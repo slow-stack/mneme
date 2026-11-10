@@ -707,6 +707,22 @@ export const Config = z.object({
   sleepPatternLookbackDays: z.natural().min(1).max(90).default(30),
   // Max pattern memories minted per run (0 = disabled).
   sleepMaxPatternPerRun: z.natural().min(0).max(10).default(3),
+  // --- affective attribution (v0.13.0, issue #619) --------------------------
+  // Opt-in: when false (default) the affective phase does not run at all — no
+  // LLM call, no relations written. It exists so that a situational emotion
+  // ("she was anxious on defence day") can be stored as an occasion-bound
+  // relation instead of being generalised into "she is an anxious person".
+  sleepAffectiveEnabled: z.boolean().default(false),
+  // How many **independent sessions** a candidate must span before it may be
+  // promoted to a type=pattern trait. Below this it stays an occasion-bound
+  // affective_context relation. The floor is 2 on purpose: N=1 means a single
+  // occasion, and a single occasion is exactly what must never become a trait
+  // (that is the failure mode this phase exists to prevent).
+  sleepAffectiveTraitMinSessions: z.natural().min(2).max(10).default(3),
+  // Max affective_context relations written per run. Same role as
+  // sleepMaxPatternPerRun for the relation channel: a runaway model that
+  // "finds" an emotion in every memory must be capped, not trusted.
+  sleepAffectiveMaxRelationsPerRun: z.natural().min(0).max(50).default(10),
   // Optional LLM route override for sleep's bulk passes (empty = use dream
   // route / agent default model).
   sleepProvider: z.string().default("").description("sleep 深维护专用模型服务商，留空用巩固模型或当前模型。"),
@@ -1178,6 +1194,9 @@ const LIGHT_MODE_OFF = [
   "entityExtractionEnabled",
   "autoDream",
   "sleepModeEnabled",
+  // #619：情感归因相位要调模型、且依赖实体抽取产出（抽取关掉就没有实体可挂边），
+  // 与低资源档双重互斥。默认本就是关，这里只是轻量预设再确认一次。
+  "sleepAffectiveEnabled",
   "rerankEnabled",
   "autoReindexOnBoot",
   "hybridInject",

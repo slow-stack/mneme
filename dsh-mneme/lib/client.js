@@ -934,6 +934,9 @@ window.__ModuleLoader__.load({
         "memory.features.autoDream.hint": "开：后台自动合并、沉淀碎片记忆（autoDream）；关：记忆只增不减，越用越散",
         "memory.features.sleepModeEnabled": "你不在的时候它整理记忆",
         "memory.features.sleepModeEnabled.hint": "开：空闲时段做分层压缩与整理，白天少打扰；关：只有你手动触发的整理（睡眠模式，默认关）",
+        // #619：情感归因是 sleep 的子相——父开关关着它就一定不跑，所以紧挨着摆。
+        "memory.features.sleepAffectiveEnabled": "它记得你在哪件事上是什么心情",
+        "memory.features.sleepAffectiveEnabled.hint": "开：整理时把「某人在某件事上的情绪」记成一条带场合的关联，跨多个独立场合反复出现才认作稳定倾向；关：不记录情绪（情感归因，默认关，且要睡眠模式开着）",
         // #427 建议 5：hybridInject / selectiveInjectEnabled / adaptiveThresholdEnabled
         // 是同一件事「带什么回来」的三档，相邻摆放并在 hint 里点明，不再摊成
         // 三个不相干的并列开关。
@@ -1978,6 +1981,10 @@ window.__ModuleLoader__.load({
         "memory.features.autoDream.hint": "On: fragmented memories are merged and settled in the background (autoDream). Off: memory only accumulates, so it gets messier the longer you use it",
         "memory.features.sleepModeEnabled": "It tidies memories while you are away",
         "memory.features.sleepModeEnabled.hint": "On: layered compaction and tidying happen during idle periods. Off: only consolidation you trigger manually (sleep mode, off by default)",
+        // #619: affective attribution is a sub-phase of sleep — it cannot run while
+        // the parent is off, so it sits next to it.
+        "memory.features.sleepAffectiveEnabled": "It remembers how you felt about a particular thing",
+        "memory.features.sleepAffectiveEnabled.hint": "On: tidying records \"how someone felt about one event\" as an occasion-bound link, and only calls it a stable disposition when it recurs across several independent occasions. Off: emotions are not recorded (affective attribution, off by default, and requires sleep mode)",
         // #427 suggestion 5: hybridInject / selectiveInjectEnabled /
         // adaptiveThresholdEnabled are three dials of one question — what comes
         // back. Adjacent placement plus a hint that names the other two.
@@ -4206,7 +4213,7 @@ window.__ModuleLoader__.load({
         // 日记本（v0.13）：右栏座位的闸门。和 M.O. 一样是「开关=座位注册与否」，
         // 但它属于「它在替你写字」这一类行为开关，所以归 enhance 而不是单开一组。
         "diaryEnabled"] },
-      { key: "group.dream", items: ["sleepModeEnabled"] },
+      { key: "group.dream", items: ["sleepModeEnabled", "sleepAffectiveEnabled"] },
       // v0.8.0 A4（issue #17）：作用域隔离组——标注总开关 + 严格硬过滤。
       { key: "group.scope", items: ["scopeEnabled", "strictScope"] }
     ];

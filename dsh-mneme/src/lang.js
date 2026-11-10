@@ -40,6 +40,15 @@ const PROMPTS = {
     "zh": "你是记忆库模式发现助手。下面是最近的记忆条目（id、类型、标题、内容）。\n请发现跨条目的稳定模式：用户偏好的规律、反复出现的主题、可复用的工作流或项目规律。\n对每个模式输出一个 create decision：\n{ \"action\": \"create\", \"type\": \"pattern\", \"title\": \"模式一句话标题\", \"content\": \"模式详细描述（2-4句）\", \"importance\": 1-5, \"evidence\": [\"支持该模式的记忆id\"] }\n规则：\n- 只输出有据可依的模式，宁缺毋滥\n- evidence 必须是列表中真实存在的 id\n- 最多输出 N 个模式\n- 只输出 JSON 数组，不要其他文字",
     "en": "You are the memory pattern-discovery assistant. Below are recent memory entries (id, type, title, content).\nDiscover stable cross-entry patterns: regularities in user preferences, recurring themes, reusable workflows or project patterns.\nFor each pattern output one create decision:\n{ \"action\": \"create\", \"type\": \"pattern\", \"title\": \"one-sentence pattern title\", \"content\": \"detailed pattern description (2-4 sentences)\", \"importance\": 1-5, \"evidence\": [\"ids of memories supporting this pattern\"] }\nRules:\n- Only output well-evidenced patterns; prefer fewer over filler\n- evidence must contain ids that actually exist in the list\n- Output at most N patterns\n- Write every title, content, and reason in English\n- Output only a JSON array, no other text"
   },
+  // 情感归因（#619）：只认「某人在某个场合对某事有某种情绪」，把场合与特质分开写。
+  // 这条 prompt 的全部难度集中在一个判断上——这句话说的是**那一次**还是**那个人**。
+  // 所以规则写的不是输出格式，而是判据：同一情绪在几个独立会话里复现才算特质，只
+  // 凭一次发言一律算场合。宁可全判 occasion（写关系、不改画像），也不要误升特质：
+  // 升错的代价是不可逆的画像污染，漏升只是一条关系没建。
+  "affective": {
+    "zh": "你是记忆库情感归因助手。下面给出记忆条目（id、时间、正文）和这些条目里出现过的实体名。\n\n任务：找出**明确表达了情绪**的条目，判断这份情绪属于哪一类，并指出情绪属于谁、是关于什么的。\n\n两类，必须分清：\n1. occasion（场合性）——这一次、那天、那件事引起的情绪。「答辩前一晚很焦虑」「被退稿那天特别失落」「今天这个 bug 修好很开心」。这类**只**输出 occasion。\n2. trait（稳定特质）——反复出现、跨越多个不同场合仍成立的倾向。「每次截止日期前都会焦虑」「一向对公开演讲发怵」。输出 trait 时必须能指出至少 {{MIN_SESSIONS}} 个**相互独立**的会话作为依据。\n\n判据：只凭一次发言、一次事件、一个时间点，一律判 occasion。拿不准就判 occasion。\n\n对每条输出一个对象：\n{ \"person\": \"实体名（情绪属于谁，必须来自给定实体名）\", \"target\": \"实体名或事项名（关于什么，必须来自给定实体名）\", \"emotion\": \"情绪词（简短，如 焦虑/开心/沮丧/愤怒/安心）\", \"attribution\": \"occasion | trait\", \"evidence\": [\"支持这条判断的记忆 id\"], \"why\": \"一句话依据\" }\n规则：\n- person 与 target 必须是给定实体名里的真实名字，不要编造\n- evidence 必须真实存在于列表中\n- 判 trait 时 evidence 必须覆盖至少 {{MIN_SESSIONS}} 个不同会话；做不到就判 occasion\n- 只输出 JSON 数组，不要其他文字；没有可归因的情绪就输出 []",
+    "en": "You are the memory affective-attribution assistant. Below are memory entries (id, time, body) and the entity names that appear in them.\n\nTask: find entries that **explicitly express emotion**, decide which class the emotion belongs to, and say whose emotion it is and what it is about.\n\nTwo classes, and they must not be confused:\n1. occasion — an emotion caused by this one time, that day, that event. \"was anxious the night before the defence\", \"felt awful the day the paper was rejected\", \"happy this bug is finally fixed\". These get **only** occasion.\n2. trait — a disposition that recurs across several different occasions. \"always anxious before a deadline\", \"consistently afraid of public speaking\". A trait claim must point to at least {{MIN_SESSIONS}} **mutually independent** sessions as grounds.\n\nRule of judgment: one remark, one event, one point in time is always occasion. When unsure, choose occasion.\n\nFor each item output an object:\n{ \"person\": \"entity name (whose emotion)\", \"target\": \"entity or matter name (about what)\", \"emotion\": \"short emotion word\", \"attribution\": \"occasion | trait\", \"evidence\": [\"memory ids supporting this\"], \"why\": \"one-line rationale\" }\nRules:\n- person and target must be real names from the given entity list; never invent them\n- evidence must really exist in the list\n- a trait claim needs evidence spanning at least {{MIN_SESSIONS}} distinct sessions; if it does not, use occasion\n- Output only a JSON array, no other text; output [] when there is no attributable emotion\n- Write every why in English"
+  },
   "freezeSuffix": {
     "zh": "\n\n当前为「冲突冻结」模式：检测到内容矛盾的条目时，仍请输出 conflict，并以 winner/loser 作为候选、reason 说明理由；冲突不会被自动裁决，而会冻结待人工确认。",
     "en": "\n\nConflict-freeze mode is active: when you detect entries with contradictory content, still output conflict — winner/loser are treated as candidates and reason explains the rationale; conflicts are not auto-adjudicated but frozen for human confirmation."
@@ -295,6 +304,24 @@ export const STR = {
   evidenceSuffix: {
     zh: (content, evidence) => `${content}\n\n[证据: ${evidence.join(", ")}]`,
     en: (content, evidence) => `${content}\n\n[Evidence: ${evidence.join(", ")}]`
+  },
+  // #619：sleep 情感归因相位铸 trait pattern 时的标题与正文。放在这里而不是
+  // 写在 sleep.js 里，因为 en prompt 明确要求 why 用英文，标题正文却是中文
+  // 会让同一条记忆两种语言混排。
+  affectiveTrait: {
+    // 标题必须带 target。`applyCreate` 走 `service.saveWithDedupe`，而它按
+    // (type, title) 找同题行——标题不含对象时，「对答辩长期焦虑」与「对面试
+    // 长期焦虑」是同一条，第二条会被静默合并掉：不报错、不进 failures、
+    // `applied` 还如实显示写入了。也就是说一条真实结论被吞掉，而返回值说它
+    // 已经落库。对象写进标题既修好去重键，也让标题自己说清是对什么焦虑。
+    title: {
+      zh: (p) => `稳定倾向：${p.person} 对${p.target}在多次独立场合${p.emotion}`,
+      en: (p) => `Stable disposition: ${p.person} is ${p.emotion} about ${p.target} across several independent occasions`
+    },
+    content: {
+      zh: (t) => `${t.person} 在 ${t.sessionCount} 个相互独立的场合（${t.evidence.length} 条记忆）中反复表现出「${t.emotion}」，对象是 ${t.target}。${t.why}`,
+      en: (t) => `${t.person} repeatedly showed "${t.emotion}" toward ${t.target} across ${t.sessionCount} independent occasions (${t.evidence.length} memories). ${t.why}`
+    }
   },
   supersededSuffix: {
     zh: (content, oldInfo) => `${content}\n\n（已否决旧信息：${oldInfo}）`,

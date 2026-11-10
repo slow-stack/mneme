@@ -175,6 +175,11 @@ const FEATURE_FLAG_BOOLEANS = [
   // Issue #529：sleep 连续失败退避（默认关）。基数是 sleepMinIntervalHours，
   // 有效间隔 = 基数 × 2^连续失败数（成功清零），封顶 max(基数, 24h)；面板可启停。
   "sleepFailureBackoff",
+  // Issue #619：情感归因相位（默认关）。把「某人某场合的情绪」写成 occasion-bound
+  // 的 affective_context 关系，只有跨够 sleepAffectiveTraitMinSessions 个独立会话
+  // 才允许升成稳定特质。要调模型且依赖实体抽取，所以必须显式打开、可随时关掉；
+  // 它是 sleepModeEnabled 的子相：父开关关着时整个 sleep 不跑。
+  "sleepAffectiveEnabled",
   "heatEnabled",
   // issue #218 / E5：注入侧 heat 独立开关（默认关，老用户 injectHeatEnabled=true 回滚）。
   "injectHeatEnabled",
@@ -339,6 +344,11 @@ const FEATURE_FLAG_INT_RANGES = {
   pinnedInjectBudget: [0, 5],
   // Issue #257：sleep 冲突/模式阶段的 LLM 输出预算（原硬编码 2048，实测不足）。
   sleepMaxTokens: [256, 131072],
+  // Issue #619：情感归因的两个闸——升特质所需的最小独立会话数（下界 2：N=1 就是
+  // 单次场合，正是必须禁止升特质的那个情形），以及单轮可写的 affective_context
+  // 关系条数上限（0 = 关闭关系通道）。闭区间与 config.js 的 z.natural() 对齐。
+  sleepAffectiveTraitMinSessions: [2, 10],
+  sleepAffectiveMaxRelationsPerRun: [0, 50],
   // Issue #529：sleep 冲突阶段的输入侧预算（此前完全没有——全部候选对一次进一个
   // prompt，实测 163,054 token 撞服务端 163,840 上限）。两个键都是 0 = 不设上限，
   // 与 config.js 的 z.natural().min(0).max() 成对。

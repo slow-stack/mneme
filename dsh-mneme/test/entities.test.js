@@ -296,6 +296,79 @@ test("extractor writes entities, attrs and relations from mock LLM output", asyn
   store.close();
 });
 
+test("extractor refuses to write affective_context, which belongs to the sleep phase", async () => {
+  // #619：affective_context 只有一个写入者——sleep 的 affective 相位。实体抽取发生
+  // 在写入当下，手里没有会话边界，判不了「一次场合」和「反复出现的特质」，写进去的
+  // 只会是一条没有 emotion/attribution/sessionCount 的半成品边，同一张表两种 schema。
+  // 所以抽取器把它当未知类型拒收，而不是当一等公民放行。
+  const store = openStore();
+  const memory = store.save({ type: "history", title: "答辩前一晚", content: "答辩前一晚他很焦虑", importance: 3 });
+  const warnings = [];
+  const logger = { warn: (msg) => warnings.push(String(msg)), info: () => {} };
+  const callLLM = jsonLLM({
+    entities: [
+      { name: "他", type: "person", attrs: [] },
+      { name: "答辩", type: "concept", attrs: [] }
+    ],
+    relations: [{ from: "他", to: "答辩", type: "affective_context" }]
+  });
+  const result = await extractEntities(memory, { store, config: {}, callLLM, logger });
+  assert.equal(result.ok, true);
+  assert.equal(result.relations.length, 0);
+  assert.deepEqual(result.rejectedRelationTypes, ["affective_context"]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /affective_context/);
+  assert.equal(store.getRelations(store.findEntityByName("他").id).length, 0);
+  store.close();
+});
+
+test("extractor rejects unknown relation types instead of silently downgrading to related_to", async () => {
+  // 变异自证：把 sanitizeRelationType 改回 `return "related_to"` 兜底，这条必红
+  // ——既会多落一条假边，rejectedRelationTypes 也会变空、warn 不再触发。
+  const store = openStore();
+  const memory = store.save({ type: "project", title: "混入未知类型", content: "A 对 B 有种奇怪的关系", importance: 3 });
+  const warnings = [];
+  const logger = { warn: (msg) => warnings.push(String(msg)), info: () => {} };
+  const callLLM = jsonLLM({
+    entities: [
+      { name: "A", type: "concept", attrs: [] },
+      { name: "B", type: "concept", attrs: [] }
+    ],
+    relations: [
+      { from: "A", to: "B", type: "feels_weird_about" },
+      { from: "A", to: "B", type: "related_to" }
+    ]
+  });
+  const result = await extractEntities(memory, { store, config: {}, callLLM, logger });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.rejectedRelationTypes, ["feels_weird_about"]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /feels_weird_about/);
+  const rels = store.getRelations(store.findEntityByName("A").id);
+  assert.equal(rels.length, 1, "only the legitimate relation lands");
+  assert.equal(rels[0].relation_type, "related_to");
+  store.close();
+});
+
+test("extractor drops a relation whose type is not even a string", async () => {
+  const store = openStore();
+  const memory = store.save({ type: "project", title: "空类型", content: "A 和 B 有联系", importance: 3 });
+  const callLLM = jsonLLM({
+    entities: [
+      { name: "A", type: "concept", attrs: [] },
+      { name: "B", type: "concept", attrs: [] }
+    ],
+    relations: [{ from: "A", to: "B" }]
+  });
+  const result = await extractEntities(memory, { store, config: {}, callLLM });
+  assert.equal(result.ok, true);
+  assert.equal(result.relations.length, 0);
+  assert.deepEqual(result.rejectedRelationTypes, ["undefined"]);
+  assert.deepEqual(store.getRelations(store.findEntityByName("A").id), []);
+  store.close();
+});
+
+
 test("resolveEntity dedups: re-extracting the same name bumps mention_count", async () => {
   const store = openStore();
   const memory = store.save({ type: "preference", title: "工具", content: "用 Vite", importance: 3 });

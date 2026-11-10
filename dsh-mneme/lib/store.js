@@ -432,7 +432,10 @@ CREATE INDEX IF NOT EXISTS idx_distill_runs_created ON distill_runs(created_at);
 --   · 本表 = 行级，「这条记忆出生自哪一轮」，覆盖没有窗口的铸造路径。
 -- 只填 **create** 一种动作：merge/conflict/update/supersede 对既有行的改动，receipt_chain
 -- 已经按 (run_id, record_id) 记过了——再造一份就是第二套账。create 是那边唯一的洞
--- （buildOutcome 刻意不给 create 派 disposition，receipt_chain 也就不产行）。
+-- （buildRecordReceipts 不给 create/create_merged 产行：新行没有「改动前后的账」可记，
+-- 只有「出生自哪一轮」，那正是本表的事）。#619 起 buildOutcome 会给 create 派
+-- disposition（created / created-refreshed），那是审计面读的结果，与 receipt_chain
+-- 产不产行是两件事；created-refreshed 是原地刷新，没有出生，本表也不记。
 -- run_type / trigger_source 就地冗余：run_id 在 dream_runs 与 distill_runs 两张表里
 -- 各有自己的主键域，读侧不该为了显示一个类型去 union 两张审计表。
 -- ON DELETE CASCADE：记忆行没了，归因没有指代对象；remove() 仍显式清（与
@@ -4410,6 +4413,26 @@ export function createStore(path) {
   }
 
   /**
+   * 覆盖一条关系行的 metadata（#619）。关系本身仍按 saveRelation 追加，
+   * 这条只给「同一条边被后续观察补充证据」用——情感相位判重命中时要把
+   * evidence 并集与 sessionCount 写回既有边，否则边上的场合数会永远停在
+   * 第一次写入那一刻。只改 metadata，不动 weight/source/created_at：这条边的
+   * 来源与权重反映的是它第一次被建立时的事实。
+   * 幂等（缺行 changes=0 → false）。
+   */
+  function updateRelationMetadata(id, metadata) {
+    const metaStr = metadata === undefined
+      ? null
+      : typeof metadata === "string"
+        ? metadata
+        : JSON.stringify(metadata);
+    const result = db.prepare(
+      "UPDATE entity_relations SET metadata = ? WHERE id = ?"
+    ).run(metaStr, id);
+    return result.changes > 0;
+  }
+
+  /**
    * Re-point every attr row whose memory_id is fromMemoryId to toMemoryId
    * (autoDream merge migration, v0.3.0 Phase 4 / 4.3.2). When the keeper
    * already carries a live attr for the same entity+key, the source row is
@@ -5575,6 +5598,7 @@ export function createStore(path) {
     listBoostedRelations,
     getLinkedMemoryIds,
     saveRelation,
+    updateRelationMetadata,
     bumpRelationWeight,
     migrateAttrsToMemory,
     getRelations,

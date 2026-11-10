@@ -164,6 +164,17 @@ export function buildOutcome(decisions) {
       byId[d.loser] = "superseded-archived";
     } else if (d.action === "differentiate") {
       for (const id of d.ids ?? []) byId[id] = "differentiated";
+    } else if (d.action === "create") {
+      // #619：create 铸出新行——记下「这一条是这一轮新生的」。它此前特意不派
+      // disposition，好让 receipt_chain 不为它产行（新行的改动无处可记，只有
+      // memory_mints 记出生）。这里补上的是审计面能读懂的那句话，不改 receipt_chain。
+      if (d.id) byId[d.id] = "created";
+    } else if (d.action === "create_merged") {
+      // #619 / Ephor 第七轮 ②：create 撞上同题活跃行时走原地刷新，没有新条目。
+      // 这条动作原本在 if 链里缺席，`outcome.byId` 就是空对象——一个只刷新不铸造
+      // 的轮，审计行看不出任何目标被处置过（#126 review 在 supersede 上踩过同一个
+      // 坑）。刷新有自己的名字，不冒充 created。
+      if (d.id) byId[d.id] = "created-refreshed";
     }
   }
   return { byId };

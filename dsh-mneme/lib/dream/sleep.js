@@ -13,6 +13,9 @@ import { STR, langOf } from "../lang.js";
 //      type=pattern entries carrying evidence id references.
 //   4. relation completion — orphan entities (zero relations) get implied
 //      relations completed from memory co-occurrence.
+//   5. affective attribution (v0.13.0, #619) — opt-in. Occasion-bound emotions
+//      become affective_context relations; only emotions recurring across
+//      enough independent sessions are minted as type=pattern traits.
 // Each phase is wrapped so one failure never aborts the others, and a missing
 // LLM route / semantic embedder only skips the phases that need it. A run is
 // abortable via an AbortController signal (user activity) — phases check the
@@ -1076,15 +1079,388 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
   // applyDecisions 的 @param config。
   // #512：runId 也必须给——这是 sleep 唯一的真实铸造路径，漏了它，铸造出来的
   // pattern 就只能追到「sleep 这条管道」，追不到「哪一轮 sleep」（正是 #512 要补的口子）。
-  const { applied, failures, conflicts } = applyDecisions(
+  const { applied, merged, failures, conflicts } = applyDecisions(
     decisions, service, logger, snapshot, { ...config, mintSource: "sleep", runId }
   );
   return {
-    status: applied > 0 ? "ok" : "noop",
+    // A pattern that hit an existing same-title row is refreshed in place, not
+    // minted. Counting it as `ok` with `applied: 0` claims a mint that did not
+    // happen; report the refresh separately (#619 audit round 6).
+    status: applied > 0 ? "ok" : (merged > 0 ? "refreshed" : "noop"),
     scanned: memories.length,
     applied,
+    merged,
     failures,
     conflicts
+  };
+}
+
+/**
+ * Phase 5 — affective attribution (issue #619). The LLM reads recent memories and
+ * names emotions, but the shape of what it may write is fixed here, not by the
+ * prompt: an emotion tied to **one occasion** becomes an `affective_context`
+ * relation carrying the attribution on the edge; only an emotion that recurs
+ * across sleepAffectiveTraitMinSessions **independent sessions** may be minted as
+ * a standing trait (a type=pattern memory, through the same
+ * validateDecisions/applyDecisions channel every other mint uses).
+ *
+ * The whole point is the guardrail, so it lives in code and not in the prompt:
+ *  - the model may *claim* trait, but the claim only survives if provenance shows
+ *    enough distinct sessions. A single session is downgraded to occasion, never
+ *    dropped silently — dropped claims are counted and reported.
+ *  - person/target must resolve to entities that already exist; an emotion about
+ *    an unknown name is not evidence, it is a hallucination.
+ *  - evidence ids must be inside the scanned pool (same rule phasePatterns uses).
+ * Off by default (sleepAffectiveEnabled) and a child of sleepModeEnabled: no
+ * route, no entities, or the flag off all mean "skip", never "run anyway".
+ */
+async function phaseAffective(ctx, service, config, logger, runId, signal = null) {
+  if (config.sleepAffectiveEnabled !== true) return { status: "skipped", reason: "disabled" };
+  const route = resolveSleepRoute(ctx, config, logger);
+  if (!route) return { status: "skipped", reason: "no llm route" };
+  const entities = service.listEntities({ limit: 1000 }) ?? [];
+  if (entities.length < 2) return { status: "skipped", reason: "too few entities" };
+  const limit = config.sleepPatternMinMemories ?? 100;
+  const poolQuery = {
+    limit: Math.max(200, limit),
+    includeForgotten: false,
+    excludeTypes: ["document", "summary", "pattern"],
+    excludeImported: true
+  };
+  const gather = (query) => withoutPaused(service, service.list(query));
+  let pool = gather(poolQuery);
+  if (pool.length < limit) pool = gather({ ...poolQuery, limit: null });
+  const memories = [...pool].sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))).slice(0, limit);
+  if (memories.length === 0) return { status: "skipped", reason: "no memories" };
+  const scannedIds = new Set(memories.map((m) => m.id));
+  const byName = new Map();
+  for (const e of entities) byName.set(e.name.toLowerCase(), e);
+  const traitMinSessions = config.sleepAffectiveTraitMinSessions ?? 3;
+  const maxRelations = config.sleepAffectiveMaxRelationsPerRun ?? 10;
+  const maxTraits = config.sleepMaxPatternPerRun ?? 3;
+  const language = langOf(config).startsWith("zh") ? "zh" : "en";
+  const entityNames = entities.map((e) => e.name).slice(0, 200).join(", ");
+  const listText = memories.map((m) => `id=${m.id} | time=${m.updated_at ?? ""} | type=${m.type} | title=${m.title} | content=${m.content}`).join("\n");
+  let streamFailure;
+  const runAffective = (tokens) => auditedSleepLlm(
+    ctx, service, config, logger,
+    {
+      triggerSource: "sleep",
+      operationType: "sleep_affective",
+      modelId: `${route.provider}:${route.model}`,
+      relatedMemoryIds: memories.map((m) => m.id),
+      streamError: () => streamFailure,
+      auditError: (out) => (parseJsonArray(out) ? null : "no json array in llm output"),
+      metadataFrom: (out) => (parseJsonArray(out) ? null : parseFailureMeta(out))
+    },
+    (reportUsage) => streamText(ctx, {
+      provider: route.provider,
+      model: route.model,
+      purpose: "sleep-affective",
+      maxTokens: tokens,
+      messages: [
+        {
+          role: "system",
+          content: [{ type: "text", text: STR.prompts.affective[language].replaceAll("{{MIN_SESSIONS}}", String(traitMinSessions)) }],
+          source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" }
+        },
+        { role: "user", content: [{ type: "text", text: fenceListBody(language, `${entityNames}\n---\n${listText}`) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
+      ]
+    }, reportUsage, (reason) => { streamFailure = describeStreamFailure(reason); })
+  );
+  const text = await withMaxTokensFallback(ctx, config.sleepMaxTokens ?? 2048, runAffective, () => streamFailure);
+  if (text === undefined) return { status: "failed", error: "llm failed" };
+  const items = parseJsonArray(text) ?? [];
+  if (items.length === 0) return { status: "skipped", reason: "no attributions found" };
+  const relations = [];
+  const merges = [];
+  const traits = [];
+  const dropped = [];
+  let downgradedCount = 0;
+  const sessionCache = new Map();
+  const sessionsFor = (memoryIds) => {
+    const out = new Set();
+    for (const id of memoryIds) {
+      if (!sessionCache.has(id)) {
+        let rows = [];
+        try {
+          rows = service.provenanceFor?.(id) ?? [];
+        } catch {
+          rows = [];
+        }
+        sessionCache.set(id, rows.map((r) => r.session_id).filter((s) => typeof s === "string" && s));
+      }
+      for (const s of sessionCache.get(id)) out.add(s);
+    }
+    return out;
+  };
+  for (const item of items) {
+    if (signal?.aborted) break;
+    if (!item || typeof item !== "object") continue;
+    const person = byName.get(String(item.person ?? "").toLowerCase());
+    const target = byName.get(String(item.target ?? "").toLowerCase());
+    if (!person || !target || person.id === target.id) {
+      dropped.push({ reason: "unknown entity", person: item.person, target: item.target });
+      continue;
+    }
+    const evidence = (Array.isArray(item.evidence) ? item.evidence : []).filter((id) => scannedIds.has(id));
+    if (evidence.length === 0) {
+      dropped.push({ reason: "no real evidence", person: item.person, target: item.target });
+      continue;
+    }
+    const emotion = String(item.emotion ?? "").trim();
+    if (!emotion) {
+      dropped.push({ reason: "no emotion", person: item.person, target: item.target });
+      continue;
+    }
+    // The guardrail: a claimed trait is checked against provenance, and a claim
+    // that does not survive is demoted — not discarded. Demoted claims are the
+    // interesting number: they are exactly the mis-attributions the probe hunts.
+    const claimedTrait = String(item.attribution ?? "").toLowerCase() === "trait";
+    const sessions = sessionsFor(evidence);
+    const downgraded = claimedTrait && sessions.size < traitMinSessions;
+    const attribution = claimedTrait && !downgraded ? "trait" : "occasion";
+    const record = {
+      person: person.name,
+      target: target.name,
+      emotion,
+      attribution,
+      evidence,
+      sessionCount: sessions.size,
+      why: String(item.why ?? "").slice(0, 200),
+      ...(downgraded ? { downgradedFrom: "trait" } : {})
+    };
+    if (downgraded) downgradedCount += 1;
+    if (attribution === "trait") {
+      traits.push(record);
+      continue;
+    }
+    // #619 / Ephor: entity_relations 没有 UNIQUE 约束，saveRelation 每次
+    // randomUUID() 新插一条。同一个 (person, target, 场合) 跑第二轮就会得到
+    // 第二条一模一样的边——而探针会拿同一批段反复回放，重复边会让 sessionCount
+    // 看起来比真实场合数多，主指标直接失真。
+    //
+    // 「同一场合」不能拿 evidence 有没有交集来判。两次判据都基于证据列表，
+    // 而证据列表既不是场合本身、也不稳定：
+    //   ① 模型给 evidence 的顺序不定（parseJsonArray 也不排序），[m1,m2] 与
+    //      [m2,m1] 是同一场合的两种写法；
+    //   ② 同一会话里的两条不同记忆各说一句「他很焦虑」，证据天然不相交，可
+    //      它们是同一个场合——那时该合并成一条边，而不是各写一条把边数抬高；
+    //   ③ 反过来，第一轮看到 1 条证据、第二轮攒到 2 条（含新会话），若判成重复
+    //      就整条丢掉，边上 sessionCount 永远停在第一次那个数，将来读归因覆盖率
+    //      会一直读到 1。
+    // 所以键落在会话层：同一 (person, target, emotion) 且两边的会话集有交集，
+    // 就是同一场合。命中时把 evidence 并集写回、按并集重算 sessionCount，而不是
+    // 丢弃——被扩充的边记进 merged，让「这一轮其实补了证据」在返回值里看得见。
+    // 这一步在 cap 之前：合并既有边不新增行，不该占名额。
+    const currentSessions = sessions;
+    const priorEdges = (service.getRelations(person.id) ?? []).filter((r) =>
+      r.relation_type === "affective_context" && r.to_entity === target.id
+    );
+    let mergedInto = null;
+    for (const edge of priorEdges) {
+      const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : null;
+      const priorEmotion = String(meta?.emotion ?? "").trim();
+      if (priorEmotion !== emotion) continue;
+      const priorEvidence = Array.isArray(meta?.evidence)
+        ? meta.evidence
+        : (edge.memory_id ? [edge.memory_id] : []);
+      const priorSessions = sessionsFor(priorEvidence);
+      // "Same occasion" is judged on session keys first. Only when either side
+      // has no session key at all does it fall back to an evidence intersection:
+      // memory_save writes memories without provenance (1671 of 8517 active rows
+      // in the live database have none), so sessionsFor returns an empty set and
+      // a session-only test would write the same edge again on every sleep pass,
+      // inflating sessionCount past the real number of occasions.
+      const sameOccasion = [...priorSessions].some((s) => currentSessions.has(s))
+        || ((priorSessions.size === 0 || currentSessions.size === 0)
+          && priorEvidence.some((id) => evidence.includes(id)));
+      if (!sameOccasion) continue;
+      mergedInto = { edge, priorEvidence, priorSessions };
+      break;
+    }
+    if (mergedInto) {
+      const { edge, priorEvidence, priorSessions } = mergedInto;
+      const unionEvidence = [...new Set([...priorEvidence, ...evidence])];
+      const unionSessions = new Set([...priorSessions, ...currentSessions]);
+      const mergedMetadata = {
+        ...(edge.metadata && typeof edge.metadata === "object" ? edge.metadata : {}),
+        emotion,
+        // 保留首个 attribution，但降级痕迹一旦有就留着——合并不能把
+        // 「它曾被判成 trait 又被降级」这段历史抹掉。
+        attribution: (edge.metadata && edge.metadata.attribution) || attribution,
+        evidence: unionEvidence,
+        sessionCount: unionSessions.size,
+        lastMergedRunId: runId
+      };
+      if (record.downgradedFrom && !mergedMetadata.downgradedFrom) {
+        mergedMetadata.downgradedFrom = record.downgradedFrom;
+      }
+      try {
+        service.updateRelationMetadata?.(edge.id, mergedMetadata);
+        merges.push({
+          id: edge.id,
+          from: person.name,
+          to: target.name,
+          emotion,
+          evidence: unionEvidence.length,
+          sessionCount: unionSessions.size
+        });
+      } catch (error) {
+        logger?.warn?.(`dsh-mneme sleep: affective relation merge ${person.name}/${target.name} failed: ${String(error)}`);
+      }
+      continue;
+    }
+    if (relations.length >= maxRelations) {
+      dropped.push({ reason: "relation cap", person: person.name, target: target.name });
+      continue;
+    }
+    try {
+      const saved = service.saveRelation({
+        from_entity: person.id,
+        to_entity: target.id,
+        relation_type: "affective_context",
+        memory_id: evidence[0],
+        source: "llm",
+        metadata: {
+          emotion,
+          attribution,
+          why: record.why,
+          evidence,
+          sessionCount: sessions.size,
+          ...(record.downgradedFrom ? { downgradedFrom: record.downgradedFrom } : {}),
+          model: `${route.provider}:${route.model}`,
+          runId
+        }
+      });
+      relations.push({ id: saved?.id, from: person.name, to: target.name, emotion, attribution, ...(record.downgradedFrom ? { downgradedFrom: record.downgradedFrom } : {}) });
+    } catch (error) {
+      logger?.warn?.(`dsh-mneme sleep: affective relation ${person.name}/${target.name} failed: ${String(error)}`);
+    }
+  }
+  // Traits ride the standard decision channel so they inherit every existing cap
+  // and the #512 mint ledger. No new write path is introduced for them.
+  let applied = 0;
+  let refreshedTraits = 0;
+  let failures = [];
+  let conflicts = [];
+  let ok = true;
+  // Candidates beyond the cap are otherwise neither minted, demoted, nor
+  // recorded: they simply vanish, while `traits` still counts them and a reader
+  // concludes they were handled. Record them the same way `relation cap` records
+  // edges, so "everything that disappears is accounted for" holds for traits.
+  for (const t of traits.slice(maxTraits)) {
+    dropped.push({ reason: "trait cap", person: t.person, target: t.target });
+  }
+  if (traits.length > 0) {
+    const decisions = traits.slice(0, maxTraits).map((t) => ({
+      action: "create",
+      type: "pattern",
+      title: STR.affectiveTrait.title[language](t),
+      content: STR.affectiveTrait.content[language](t),
+      importance: 3,
+      evidence: t.evidence
+    }));
+    const snapshot = new Map();
+    const validated = validateDecisions(decisions, snapshot, { maxCreatePerRun: maxTraits, allowedActions: ["create"] });
+    ok = validated.ok;
+    if (ok) {
+      const result = applyDecisions(decisions, service, logger, snapshot, { ...config, mintSource: "sleep", runId });
+      applied = result.applied;
+      failures = result.failures;
+      conflicts = result.conflicts;
+      // A trait whose pattern was refreshed in place (same title, same row) is
+      // not a new conclusion. Keep it out of `applied` and report it as a
+      // refresh, otherwise two different targets would read as two minted
+      // patterns while only one row exists (#619 audit round 6).
+      refreshedTraits = result.merged ?? 0;
+      // Ocasion edges observed before a disposition was confirmed do not get
+      // rewritten — an edge records "this occasion was observed", which stays
+      // true. But the edge and the pattern would then answer "how many
+      // occasions" differently (edge.sessionCount vs pattern evidence), and a
+      // coverage query reading both would have no way to tell they describe the
+      // same thing. Mark them instead of mutating the count: the edge still
+      // means one observed occasion, and `promotedToTrait` says that occasion is
+      // now part of a confirmed disposition.
+      for (const trait of traits.slice(0, maxTraits)) {
+        const person = byName.get(String(trait.person ?? "").toLowerCase());
+        const target = byName.get(String(trait.target ?? "").toLowerCase());
+        if (!person || !target || person.id === target.id) continue;
+        for (const edge of service.getRelations(person.id) ?? []) {
+          if (edge.relation_type !== "affective_context" || edge.to_entity !== target.id) continue;
+          const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : null;
+          if (String(meta?.emotion ?? "").trim() !== trait.emotion) continue;
+          if (meta?.promotedToTrait === true) continue;
+          try {
+            service.updateRelationMetadata?.(edge.id, {
+              ...meta,
+              promotedToTrait: true,
+              traitSessionCount: trait.sessionCount
+            });
+          } catch (error) {
+            logger?.warn?.(`dsh-mneme sleep: marking occasion ${edge.id} as promoted failed: ${String(error)}`);
+          }
+        }
+      }
+    }
+  }
+  // Aborting mid-pass is not "did nothing" and not "all done". Even when nothing
+  // was written yet, "noop" would claim the whole pool was examined and found
+  // empty — the loop broke at an arbitrary index, so it examined an unknown
+  // prefix. Report it as aborted either way.
+  if (signal?.aborted) {
+    return {
+      status: "aborted",
+      reason: "user activity",
+      scanned: memories.length,
+      relations: relations.length,
+      edgeWrites: relations.length,
+      merged: merges.length,
+      mergedList: merges,
+      applied,
+      refreshedTraits,
+      traits: traits.length,
+      downgraded: downgradedCount,
+      dropped
+    };
+  }
+  if (!ok) {
+    return {
+      status: "failed",
+      error: "trait decisions rejected by validation",
+      scanned: memories.length,
+      relations: relations.length,
+      edgeWrites: relations.length,
+      merged: merges.length,
+      mergedList: merges,
+      applied: 0,
+      refreshedTraits,
+      traits: traits.length,
+      downgraded: downgradedCount,
+      dropped
+    };
+  }
+  return {
+    // "refreshed" is a real write that minted nothing: the trait pattern already
+    // existed under the same title and was rewritten in place. Calling that
+    // "noop" would say the phase examined the pool and found nothing to do.
+    status: relations.length + merges.length + applied > 0 ? "ok" : (refreshedTraits > 0 ? "refreshed" : "noop"),
+    scanned: memories.length,
+    relations: relations.length,
+    merged: merges.length,
+    // #619: edges are real writes but not "applied decisions", so the receipt
+    // would read `:0` for a run that did write. Count them separately instead
+    // of folding them into `applied` (that would make the two numbers mean
+    // different things depending on which phase produced them).
+    edgeWrites: relations.length,
+    mergedList: merges,
+    applied,
+    refreshedTraits,
+    failures,
+    conflicts,
+    traits: traits.length,
+    downgraded: downgradedCount,
+    dropped
   };
 }
 
@@ -1151,7 +1527,9 @@ function deriveStatus(phases) {
   const anyError = list.some((p) => p.status === "failed" || p.status === "error");
   // Issue #126 review（Copilot）：phase 自身可以是 degraded（合法子集已应用但有条目被
   // 跳过），它同样算"有产出"——否则整轮会被误判成 noop，把真实变更报成空轮。
-  const anyWork = list.some((p) => p.status === "ok" || p.status === "degraded");
+  // #619：`refreshed` 也是一次真实写入（同题行原地刷新），只是没铸出新条目。把它
+  // 排除在 anyWork 之外，整轮会被记成 noop，审计行又变回「跑了、什么都没干」。
+  const anyWork = list.some((p) => p.status === "ok" || p.status === "degraded" || p.status === "refreshed");
   const anyDegraded = list.some((p) => p.status === "degraded");
   // Issue #529：被打断（用户恢复活动）既不是失败也不是"没活干"。相位层已经用
   // aborted 区分了这两种，整轮层若回落到 noop，审计行就又把"没跑完"记成"跑过、
@@ -1190,10 +1568,40 @@ export async function runSleep(ctx, service, config, logger, semantic = null, si
   await attempt("demotion", () => phaseDemotion(service, config, logger, runId, signal));
   await attempt("patterns", () => phasePatterns(ctx, service, config, logger, runId, signal));
   await attempt("relations", () => phaseRelations(service, config, logger, runId, signal));
+  // #619：情感归因排在 relations 之后——它要读实体与 provenance，先让孤立实体的
+  // 结构边补完，再往上挂情绪轴；两相写的是不同 relation_type，不抢同一批对。
+  await attempt("affective", () => phaseAffective(ctx, service, config, logger, runId, signal));
 
   const status = deriveStatus(phases);
   const route = resolveSleepRoute(ctx, config, logger);
-  const totalApplied = Object.values(phases).reduce((n, p) => n + (Number.isInteger(p?.applied) ? p.applied : 0), 0);
+  // #619: a phase may write rows that are not "applied decisions" — the
+  // affective phase inserts relation edges directly — and it may also extend an
+  // existing edge instead of inserting one. Both are store writes, and the
+  // receipt has to answer "did this run change anything", so both count. A run
+  // whose only effect was extending an edge would otherwise read `:0`, i.e.
+  // "ran and did nothing", which is exactly what a probe must never see.
+  //
+  // The per-kind numbers stay apart in `phases` (`applied` / `edgeWrites` /
+  // `merged` / `refreshedTraits`); the receipt is a single write count on
+  // purpose, because buildReceipt/parseReceipt are an eight-field contract
+  // shared with organize.js and four test files. Detail lives in
+  // dream_runs.phases JSON, not in the receipt.
+  //
+  // #619 / Ephor 第七轮 ①：`refreshedTraits` 必须计入。它是「同一标题的 pattern
+  // 被原地重写」的条数——库确实变了，但没有铸新条目，所以它既不在 `applied` 里
+  // （那会把刷新谎报成铸造），也不在 `merged` 里（affective 相位的 `merged` 是
+  // **边**合并数 `merges.length`，同名不同义）。漏掉它的后果实测过：第二轮
+  // `phase.status=refreshed`、`refreshedTraits=1`，整轮 receipt 第 7 段仍是 0，
+  // 于是「相位说改了、整轮说没改」，正是上一轮刚修掉的「改了库读成 0」形态。
+  const totalApplied = Object.values(phases).reduce(
+    (n, p) =>
+      n +
+      (Number.isInteger(p?.applied) ? p.applied : 0) +
+      (Number.isInteger(p?.edgeWrites) ? p.edgeWrites : 0) +
+      (Number.isInteger(p?.merged) ? p.merged : 0) +
+      (Number.isInteger(p?.refreshedTraits) ? p.refreshedTraits : 0),
+    0
+  );
   // Issue #126（与 #104 同向）：把各 phase 的跳过明细汇总成一行审计数据，带 phase
   // 名（同一次 run 里 conflicts 与 patterns 都可能产出 skipped）。全空时写 NULL，
   // 不落空数组——审计行只记真实发生过的跳过。
