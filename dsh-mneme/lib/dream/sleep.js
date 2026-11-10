@@ -23,6 +23,7 @@ import { STR, langOf } from "../lang.js";
 import { randomUUID, createHash } from "node:crypto";
 import { validateDecisions, applyDecisions, ACTIONS } from "./decisions.js";
 import { findPotentialConflicts, cosineSimilarity } from "./clustering.js";
+import { recordLedgerTriage } from "./triage.js";
 import { scopeKeyOf } from "../scope.js";
 import { buildReceipt, describeStreamFailure, resolveDreamEffort, withEffortFallback, withMaxTokensFallback, maintainIndexAfterDream, fenceListBody, parseFailureMeta } from "../dream.js";
 import { computeHeat } from "../heat.js";
@@ -390,6 +391,21 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     selected.push(p);
   }
 
+  // Issue #641（beta 第一阶段，shadow 档）：分诊账本。对 selected 全量做确定性
+  // 分诊（dup / cross-scope-dup / evolution / conflict，判据唯一实现见 triage.js）
+  // 并落 conflict_ledger。shadow = 只记账零处置：下面 freeze/LLM 路径一个字节都
+  // 不变——shadow 的存在意义就是让「分诊分布是否复现真实库 46/20/5/27」在真实
+  // 运行里可测，作为切 enforce（处置接线，后续 PR）前的预注册证据。记账失败只
+  // warn 计数，绝不反噬相位（与 conflict_reviewed 同一条 best-effort 纪律）。
+  // 记账时点在 used 去重之后：被去重压掉的那半边对（同一条记忆配给了更高相似的
+  // 对手）本来就不是这一轮的候选，观察它们只会让分母虚高。
+  const ledgerTriage = (config.conflictLedgerMode ?? "off") === "shadow"
+    ? recordLedgerTriage(service, runId, selected, {
+        dupMinSimilarity: config.conflictLedgerDupMinSimilarity,
+        logger
+      })
+    : null;
+
   // v0.8.1（issue #170 第 2 步）：跨 scope 相似对分流。同一内容落在两个归属下
   // （任一维标注键不等即算，NULL=未标注=全局也参与比较——「全局副本 + 专属副本
   // 并存」正是收窄/提升裁决的典型候选）不能自动裁决：归档败者可能销毁该内容在
@@ -583,7 +599,10 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       batches: 0,
       ledgerSkipped,
       perRunSkipped,
-      pendingSkipped
+      pendingSkipped,
+      // #641 shadow：分诊分布随相位结果透出（dream phases 与审计行都能看到），
+      // 面板消费在 beta 第二批接。
+      ...(ledgerTriage ? { ledgerTriage } : {})
     };
   }
 
@@ -601,13 +620,14 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       scopeCandidates: scopeParked,
       pairs: selected.length,
       batches: 0,
-      ledgerSkipped
+      ledgerSkipped,
+      ...(ledgerTriage ? { ledgerTriage } : {})
     };
   }
 
   // LLM adjudication（仅同 scope 对）。
   const route = resolveSleepRoute(ctx, config, logger);
-  if (!route) return { status: "skipped", reason: "no llm route", scopeCandidates: scopeParked, pairs: selected.length, batches: 0, ledgerSkipped };
+  if (!route) return { status: "skipped", reason: "no llm route", scopeCandidates: scopeParked, pairs: selected.length, batches: 0, ledgerSkipped, ...(ledgerTriage ? { ledgerTriage } : {}) };
   // 每轮总上限：分批解决的是单请求撞墙，不是"一个 449 对的池子该在一轮里跑完"。
   // 没进这一轮的对留在下一轮（它们既没被丢弃，也不在台账里）。
   const perRunCap = config.sleepConflictMaxPairsPerRun ?? 60;
@@ -907,7 +927,10 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     conflicts,
     // Issue #126：#104 同向——被跳过的逐对明细要进审计行，否则事后无法判断
     // 是哪一对、因何被跳过（此前只进 logger.warn，splice 后就地消失）。
-    skipped
+    skipped,
+    // #641 shadow：分诊分布随相位结果透出（四个出口都要带——freeze/空池/无路由/
+    // LLM 全路径，缺一个出口 shadow 期就有部分轮次查不到分布）。
+    ...(ledgerTriage ? { ledgerTriage } : {})
   };
 }
 

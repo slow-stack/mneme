@@ -249,6 +249,36 @@ CREATE TABLE IF NOT EXISTS conflict_reviewed (
 );
 CREATE INDEX IF NOT EXISTS idx_conflict_reviewed_judged ON conflict_reviewed(judged_at);
 
+-- conflict_ledger: 冲突分诊账本（issue #641 beta 第一阶段，shadow 档）。conflict
+-- 相位的每一对候选在送进 freeze/LLM 之前先过确定性分诊（dup / cross-scope-dup /
+-- evolution / conflict，判据唯一实现见 src/dream/triage.js），分档结果落在这里。
+-- shadow 档只记账不改任何行为——它存在的目的就是让「分诊分布是否复现真实库的
+-- 46/20/5/27」这件事在真实运行里可测，切 enforce 前先有一周的真实分布可对。
+--
+-- 为什么不复用 conflict_reviewed：那张表的语义是「这一对被机器**裁决**过」，键的
+-- 消费方（alreadyJudged 预筛）拿它挡重送；本表语义是「这一对被分诊**观察**过」，
+-- 挡重送反而错误——同一对每轮都要重新观察（两侧内容变了 tier 可能变），它不是
+-- 处置记录，是测量记录。也不复用 conflict_pending（人工队列，见上表注释）。
+--
+-- 主键归一化后的对，与 conflict_reviewed 同一口径；ON CONFLICT 只刷新 tier/
+-- signals/last_*，first_seen_at/first_run_id 保留首次检出时刻——同召率与「挂账
+-- 时长」这类惰性消解指标都以此为准。status 是 enforce 阶段消解落账的方向
+-- （open → superseded / differentiated / zombied），shadow 期恒为 open。
+CREATE TABLE IF NOT EXISTS conflict_ledger (
+  memory_a      TEXT NOT NULL,
+  memory_b      TEXT NOT NULL,
+  tier          TEXT NOT NULL,          -- dup | cross-scope-dup | evolution | conflict
+  similarity    REAL,
+  signals       TEXT,                   -- JSON: 分诊依据（crossScope/annotated/gapDays/dupMin/similarity）
+  status        TEXT NOT NULL DEFAULT 'open',
+  first_run_id  TEXT,
+  last_run_id   TEXT,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at  TEXT NOT NULL,
+  PRIMARY KEY (memory_a, memory_b)
+);
+CREATE INDEX IF NOT EXISTS idx_conflict_ledger_status ON conflict_ledger(status);
+
 -- scope_changes: v0.8.1 底座（issue #170）scope 归属的人工修正审计。显式声明
 -- （memory_save/memory_update 的 scope 参数、面板编辑）每次改变某条记忆的
 -- agent/workspace 归属都落一行：改动前后值 + 来源 + actor（tool=模型侧 /
@@ -4029,6 +4059,77 @@ export function createStore(path) {
     ).all(Math.max(1, Math.min(5000, limit | 0)));
   }
 
+  // --- conflict triage ledger（issue #641，shadow 档）-----------------------
+
+  const LEDGER_STATUSES = new Set(["open", "superseded", "differentiated", "zombied"]);
+  const LEDGER_TIERS = new Set(["dup", "cross-scope-dup", "evolution", "conflict"]);
+
+  /**
+   * Record one triage observation. Upsert on the normalized pair: tier/
+   * signals/last_* refresh (the pair's classification may legitimately change
+   * after an edit), while first_seen_at/first_run_id stay put — 挂账时长与
+   * 消解路径统计都锚在首次检出，刷新它们等于重写历史。
+   */
+  function saveConflictLedgerEntry({ run_id, memory_a, memory_b, tier, similarity, signals }) {
+    const [a, b] = [memory_a, memory_b].sort();
+    if (!LEDGER_TIERS.has(tier)) {
+      throw new Error(`conflict_ledger: unknown tier ${String(tier)}`);
+    }
+    const now = nowIso();
+    db.prepare(
+      `INSERT INTO conflict_ledger (memory_a, memory_b, tier, similarity, signals, status, first_run_id, last_run_id, first_seen_at, last_seen_at)
+       VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
+       ON CONFLICT(memory_a, memory_b) DO UPDATE SET
+         tier         = excluded.tier,
+         similarity   = excluded.similarity,
+         signals      = excluded.signals,
+         last_run_id  = excluded.last_run_id,
+         last_seen_at = excluded.last_seen_at`
+    ).run(
+      a, b, tier,
+      typeof similarity === "number" ? similarity : null,
+      // 与 differentiated_pairs.distinctions 同一条约定：没有就落 NULL，不落 "[]"。
+      signals == null ? null : JSON.stringify(signals),
+      run_id ?? null, run_id ?? null, now, now
+    );
+  }
+
+  /** Status transition for the lazy-resolution stages (enforce-phase wiring). */
+  function setConflictLedgerStatus(memory_a, memory_b, status) {
+    const [a, b] = [memory_a, memory_b].sort();
+    if (!LEDGER_STATUSES.has(status)) {
+      throw new Error(`conflict_ledger: unknown status ${String(status)}`);
+    }
+    const res = db.prepare(
+      "UPDATE conflict_ledger SET status = ? WHERE memory_a = ? AND memory_b = ?"
+    ).run(status, a, b);
+    return res.changes > 0;
+  }
+
+  /** Triage rows for the panel/analysis views, newest detection first. */
+  function listConflictLedger({ limit = 200, offset = 0, tier, status } = {}) {
+    const lim = Math.max(1, Math.min(5000, limit | 0));
+    const off = Math.max(0, offset | 0);
+    const where = [];
+    const args = [];
+    if (tier != null) { where.push("tier = ?"); args.push(String(tier)); }
+    if (status != null) { where.push("status = ?"); args.push(String(status)); }
+    const clause = where.length ? ` WHERE ${where.join(" AND ")}` : "";
+    args.push(lim, off);
+    return db.prepare(
+      `SELECT * FROM conflict_ledger${clause} ORDER BY last_seen_at DESC, rowid DESC LIMIT ? OFFSET ?`
+    ).all(...args);
+  }
+
+  function countConflictLedger({ tier, status } = {}) {
+    const where = [];
+    const args = [];
+    if (tier != null) { where.push("tier = ?"); args.push(String(tier)); }
+    if (status != null) { where.push("status = ?"); args.push(String(status)); }
+    const clause = where.length ? ` WHERE ${where.join(" AND ")}` : "";
+    return db.prepare(`SELECT COUNT(*) AS n FROM conflict_ledger${clause}`).get(...args).n;
+  }
+
   /**
    * v0.8.1 底座（issue #170）：scope 归属人工修正的审计行。record 描述「一次
    * 决策后的完整状态」（prev_* 为改前、next_* 为改后，NULL=global/未标注），
@@ -5562,6 +5663,10 @@ export function createStore(path) {
     saveConflictReviewed,
     loadConflictReviewed,
     listConflictReviewed,
+    saveConflictLedgerEntry,
+    setConflictLedgerStatus,
+    listConflictLedger,
+    countConflictLedger,
     saveScopeChange,
     listScopeChanges,
     // 政策轴（issue #471）：按下/松开一个作用域。纯 bookkeeping，不调

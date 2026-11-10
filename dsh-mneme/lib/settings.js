@@ -198,6 +198,10 @@ const FEATURE_FLAG_BOOLEANS = [
   // 显式打开，面板可启停。阈值见 FEATURE_FLAG_NUMBER_RANGES 的
   // conflictAutoResolveMinSimilarity。
   "conflictAutoResolveEnabled",
+  // Issue #641（beta 第一阶段）：conflictLedgerMode / conflictLedgerDupMinSimilarity
+  // 不在本表——前者是枚举键（FEATURE_FLAG_ENUMS），后者是数值键
+  // （FEATURE_FLAG_NUMBER_RANGES），flagKeysFromSpec 会把三张表合成一份白名单，
+  // 在这里重复登记会让同键被收两次（config-keys 的覆盖完整性锁抓过）。
   "trustEpistemicWeighting",
   // Plan #2: attach per-source {keyword, vector, bm25, final} signals to each
   // search result for transparency/debugging. Default off, purely decorative.
@@ -382,6 +386,9 @@ const FEATURE_FLAG_NUMBER_RANGES = {
   // Issue #603 第 4 层：自动裁决的相似度门槛。下界 0.85 与冲突检测阈值同源——
   // 低于它就不是「重复」而是「相似」，不该自动归档任何一条。
   conflictAutoResolveMinSimilarity: [0.85, 1],
+  // Issue #641：T1（dup）档的相似度下限。检测阈值（normal 0.85）与自动档 autoMin
+  // （0.95，#616 重测在现库覆盖为 0）之间的空带由它接管，下界与检测阈值同源。
+  conflictLedgerDupMinSimilarity: [0.85, 1],
   // #275 容量预警的归档占比阈值（0 = 关）：健康形态本身就落在 0.8~0.9，默认
   // 0.95 起才算「归档区吞掉活跃区」——0.9 会对着健康库天天报警（依据见 config.js
   // capacityWarning 的注释）。浮点键，同 conflictAutoResolveMinSimilarity 的缘由。
@@ -434,7 +441,11 @@ const FEATURE_FLAG_ENUMS = {
     localEmbedPooling: ["auto", "cls", "mean"],
   // M3 开局注入档位（spec §7）：轻量档在消费侧压成 off，见 wiki/inject.js 的
   // resolveInjectTier——LIGHT_MODE_OFF 对平铺键一律赋 false，枚举值进去会静默失效。
-  chorographyInject: ["off", "light", "full"]
+  chorographyInject: ["off", "light", "full"],
+  // Issue #641：冲突分诊账本档位。现阶段只放 off/shadow——「设了但没行为」的档位
+  // 不进枚举（#616「假成功」教训：阈值覆盖为 0 时开了等于没开，用户以为功能坏了）；
+  // enforce（处置接线）随其实现 PR 一起进枚举。
+  conflictLedgerMode: ["off", "shadow"]
 };
 const FEATURE_FLAG_STRING_MAX = 200;
 

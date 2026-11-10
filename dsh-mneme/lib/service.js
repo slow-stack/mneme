@@ -3138,6 +3138,13 @@ export function createService({ store, mirror, config, onWrite, logger, document
     saveConflictReviewed: (r) => store.saveConflictReviewed(r),
     loadConflictReviewed: () => store.loadConflictReviewed(),
     listConflictReviewed: (opts) => store.listConflictReviewed(opts),
+    // #641：冲突分诊账本。与上面 conflict_reviewed 同一条 bookkeeping 纪律——纯
+    // 测量记录，写它绝不触发 write hooks，否则 shadow 档的每轮记账都会把睡眠
+    // 调度器叫醒。
+    saveConflictLedgerEntry: (r) => store.saveConflictLedgerEntry(r),
+    setConflictLedgerStatus: (a, b, s) => store.setConflictLedgerStatus(a, b, s),
+    listConflictLedger: (opts) => store.listConflictLedger(opts),
+    countConflictLedger: (opts) => store.countConflictLedger(opts),
     // Recall evaluation trail (方案 B): audit-bookkeeping semantics like the
     // dream/recall passthroughs above — a recall_evals write is a snapshot, not
     // a memory mutation, so it never triggers write hooks.
