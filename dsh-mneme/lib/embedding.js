@@ -265,6 +265,20 @@ export function createEmbedder({ store, settings, logger, vectorIndex }) {
       return null;
     },
 
+    // Same as embedSingle, but keeps the reason a vector did not come back.
+    // embedSingle() drops it on purpose — its callers only care whether a
+    // vector exists — but the boot backfill has to tell "this row is broken"
+    // from "the provider was unreachable", and a bare null erases that
+    // distinction. Callers feature-detect this method and fall back to
+    // embedSingle() so older adapters keep working unchanged.
+    async embedSingleDetailed(text) {
+      const cfg = settings.getVectorConfig();
+      if (!configComplete(cfg)) return { vector: null, reason: "config-incomplete" };
+      const out = await embedTextDetailed(cfg, text);
+      if (out.vector) _dimension = out.vector.length;
+      return out;
+    },
+
     /** Model fingerprint (model#hex), or undefined when not configured. */
     get modelHash() {
       const cfg = settings.getVectorConfig();
@@ -284,7 +298,7 @@ export function createEmbedder({ store, settings, logger, vectorIndex }) {
      */
     async reindexMissing(limit = 50) {
       const cfg = settings.getVectorConfig();
-      if (!cfg?.enabled) return { indexed: 0, skipped: 0 };
+      if (!cfg?.enabled) return { indexed: 0, failed: 0, skipped: 0 };
       const model = modelHashOf(cfg.model);
       // Fall back to the plain selector for stores that predate the
       // provenance column (older hosts, test doubles).
@@ -292,17 +306,37 @@ export function createEmbedder({ store, settings, logger, vectorIndex }) {
         ? store.needsEmbeddingFor(model, limit)
         : store.needsEmbedding(limit);
       let indexed = 0;
+      let failed = 0;
       for (const row of rows) {
-        const text = [row.title, row.content].filter(Boolean).join("\n");
-        const vector = await embedText(cfg, text);
-        if (vector) {
-          store.setEmbedding(row.id, vector, model);
-          _dimension = vector.length;
-          indexed++;
+        try {
+          const text = [row.title, row.content].filter(Boolean).join("\n");
+          // Prefer the reason-preserving call for the same reason the boot
+          // backfill does: a bare null cannot tell "this row is unembeddable"
+          // from "the provider was unreachable", and the receipt ledger files
+          // both under one indistinguishable entry.
+          const detailed = typeof this.embedSingleDetailed === "function"
+            ? await this.embedSingleDetailed(text)
+            : null;
+          const vector = detailed ? detailed.vector : await embedText(cfg, text);
+          if (vector?.length) {
+            store.setEmbedding(row.id, vector, model);
+            _dimension = vector.length;
+            indexed++;
+          } else {
+            failed++;
+          }
+        } catch (error) {
+          // A throw used to abort the whole loop and surface as a rejected
+          // promise from the API route; one bad row must not stop the rest.
+          failed++;
+          logger?.warn?.(`[dsh-mneme] reindex embed failed for ${row.id}: ${String(error)}`);
         }
       }
       if (indexed > 0) markModel(cfg, _dimension || undefined);
-      return { indexed, skipped: rows.length - indexed };
+      // #604: `skipped: rows.length - indexed` folded "tried and got nothing"
+      // into "never touched". Every selected row is attempted here, so nothing
+      // is skipped; what failed is reported as failed.
+      return { indexed, failed, skipped: 0 };
     }
   };
 }

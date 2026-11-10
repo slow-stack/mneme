@@ -1289,7 +1289,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     handler(req, res) {
       try {
         if (!embedder) {
-          sendJson(res, 200, { indexed: 0, skipped: 0, error: "vector-unavailable" });
+          sendJson(res, 200, { indexed: 0, failed: 0, skipped: 0, error: "vector-unavailable" });
           return;
         }
         const url = new URL(req.url, "http://localhost");
@@ -1299,13 +1299,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const viaIndex = semantic?.vectorIndex && semantic?.vectorIndex.rebuildIndex;
         const task = viaIndex
           ? semantic.vectorIndex.rebuildIndex(embedder, { limit })
-          : embedder.reindexMissing ? embedder.reindexMissing(limit) : Promise.resolve({ indexed: 0, skipped: 0, error: "vector-unavailable" });
+          : embedder.reindexMissing ? embedder.reindexMissing(limit) : Promise.resolve({ indexed: 0, failed: 0, skipped: 0, error: "vector-unavailable" });
         // Return the chain so awaiting callers (tests/health checks) observe the
         // finished response rather than racing the async backfill.
         return task.then((result) => {
           sendJson(res, 200, result);
         }).catch(() => {
-          sendJson(res, 200, { indexed: 0, skipped: 0, error: "vector-failed" });
+          sendJson(res, 200, { indexed: 0, failed: 0, skipped: 0, error: "vector-failed" });
         });
       } catch {
         sendJson(res, 500, { error: "internal" });
@@ -1382,6 +1382,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           dimension: embedder?.dimension ?? null,
           reranker: semantic?.reranker ? "ready" : null,
           index: stats,
+          // #604：回填与写入两条嵌入路径的诊断。此前 backfillStatus() 与
+          // embedReceipts() 都已经算好了，但没有任何出口 —— 面板能看到的只有
+          // 「已索引 N 条」，看不出「上一轮撞了 cap」「最近一次嵌入为什么失败」。
+          // 两个字段都是只读快照，不查库、不触发推理。
+          embeddings: typeof semantic?.embeddingDiagnostics === "function"
+            ? semantic.embeddingDiagnostics()
+            : null,
           // issue #131 / PR-A：自管运行时的状态。无论当前 provider 是不是 local
           // 都报 —— 面板需要区分「已收编但没启用」和「要用本地却没收编」。
           // 这里只做结构检查（不跑推理），失败降级成状态对象，不会让本端点 500。

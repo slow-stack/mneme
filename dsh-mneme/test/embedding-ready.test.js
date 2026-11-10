@@ -159,10 +159,12 @@ test("reindexMissing: 逐行回填并统计 indexed/skipped，有成功才记模
 test("reindexMissing: 未启用时直接返回 0/0，不碰 store", async () => {
   const { embedder } = make({ ...FULL, enabled: false });
   const result = await embedder.reindexMissing(50);
-  assert.deepEqual(result, { indexed: 0, skipped: 0 });
+  assert.deepEqual(result, { indexed: 0, failed: 0, skipped: 0 });
 });
 
-test("reindexMissing: 嵌入失败的行走 skipped，不算 indexed", async () => {
+test("reindexMissing: 嵌入失败的行走 failed，不算 indexed、也不算 skipped", async () => {
+  // #604：`skipped = rows.length - indexed` 把「试过没拿到向量」和「压根没碰」
+  // 混成一个数。每一行都被尝试过，所以 skipped 必须是 0，失败单列。
   const writes = [];
   const embedder = createEmbedder({
     store: {
@@ -174,7 +176,35 @@ test("reindexMissing: 嵌入失败的行走 skipped，不算 indexed", async () 
   await withFetch(async () => ({ ok: false }), async () => {
     const result = await embedder.reindexMissing(50);
     assert.equal(result.indexed, 0);
-    assert.equal(result.skipped, 1, "嵌入失败的行走 skipped，不算 indexed");
+    assert.equal(result.failed, 1, "试过但没拿到向量 → failed");
+    assert.equal(result.skipped, 0, "选择器选中了它，所以它没有被跳过");
+  });
+});
+
+test("reindexMissing: 一行写入抛错不中断其余行，且计入 failed", async () => {
+  // 注意：这里抛错的不能是 embedding 请求 —— embedTextDetailed 把网络错误吞成
+  // request-failed:network，永远不抛。真正会让这个 catch 跑起来的是写库失败
+  // （约束冲突、磁盘满），所以用 setEmbedding 抛。
+  const writes = [];
+  const embedder = createEmbedder({
+    store: {
+      setEmbedding: (id, v) => {
+        if (id === "m1") throw new Error("SQLITE_CONSTRAINT");
+        writes.push({ id, v });
+      },
+      needsEmbedding: () => [
+        { id: "m1", title: "t1", content: "a" },
+        { id: "m2", title: "t2", content: "b" }
+      ]
+    },
+    settings: { getVectorConfig: () => FULL },
+    logger: { info() {}, warn() {} }
+  });
+  await withFetch(async () => okResponse([1, 0]), async () => {
+    const result = await embedder.reindexMissing(50);
+    assert.equal(result.failed, 1, "写库失败的那行算 failed");
+    assert.equal(result.indexed, 1, "后面那行仍然被处理，循环没有中断");
+    assert.equal(writes.length, 1);
   });
 });
 

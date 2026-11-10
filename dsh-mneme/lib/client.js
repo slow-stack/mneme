@@ -657,6 +657,9 @@ window.__ModuleLoader__.load({
         "memory.settings.vectorReindex": "重建索引",
         "memory.settings.vectorReindexing": "索引中…",
         "memory.settings.vectorReindexDone": "已索引 {n} 条",
+        "memory.settings.vectorReindexPartial": "已索引 {n} 条，{f} 条失败",
+        "memory.settings.vectorReindexRemaining": "已索引 {n} 条，还剩 {r} 条待重建",
+        "memory.settings.vectorReindexNothing": "没有需要重建的行（当前模型的向量已齐）",
         "memory.settings.apiTokenTitle": "API Token（可选）",
         "memory.settings.apiTokenHint": "这里只把 Token 存在当前浏览器（localStorage），供面板请求携带；服务端的锁是插件配置里的 apiToken，两边填同一个值才真正上锁。只填这里不改服务端 = 没上锁。",
         "memory.settings.apiTokenPlaceholder": "与插件配置的 apiToken 保持一致",
@@ -1275,6 +1278,11 @@ window.__ModuleLoader__.load({
         "memory.status.vectorRuntimeFetchDownloaded": "下载完成：{n} 个包 / {m} 个文件。**请重启 DSH 使本地嵌入生效**（取回不会让当前进程里的 embedder 复活）。",
         "memory.status.vectorRuntimeFetchFailed": "取回失败：{reason}",
         "memory.status.vectorIndexed": "已索引 {n} / {m} 条",
+        "memory.status.vectorBackfillRunning": "回填中：本轮上限 {m} 条",
+        "memory.status.vectorBackfillDrained": "回填完成：本次启动补了 {n} 条",
+        "memory.status.vectorBackfillCapped": "回填暂停：本轮额度用完（上限 {m} 条），会继续排下一轮",
+        "memory.status.vectorBackfillStalled": "回填卡住：{f} 条嵌不进去，下次启动再试",
+        "memory.status.vectorBackfillError": "回填失败：{e}",
       "memory.status.vectorUnconfigured": "未配置",
       "memory.status.vectorUnconfiguredHint": "未填 embedding 端点/模型或未启用，语义召回不可用",
       "memory.status.vectorDegradedHint": "已索引 0 / {m} 条，语义召回实际不可用",
@@ -1694,6 +1702,9 @@ window.__ModuleLoader__.load({
         "memory.settings.vectorReindex": "Reindex",
         "memory.settings.vectorReindexing": "Indexing…",
         "memory.settings.vectorReindexDone": "Indexed {n} items",
+        "memory.settings.vectorReindexPartial": "Indexed {n} items, {f} failed",
+        "memory.settings.vectorReindexRemaining": "Indexed {n} items, {r} still pending",
+        "memory.settings.vectorReindexNothing": "Nothing to rebuild (every row already carries this model's vector)",
         "memory.settings.apiTokenTitle": "API Token (optional)",
         "memory.settings.apiTokenHint": "This field only stores the token in this browser (localStorage) for the panel requests. The server-side lock is the plugin\u0027s apiToken config — set both to the same value; this field alone locks nothing.",
         "memory.settings.apiTokenPlaceholder": "Must match the plugin\u0027s apiToken",
@@ -2289,6 +2300,11 @@ window.__ModuleLoader__.load({
         "memory.status.vectorRuntimeFetchDownloaded": "Download complete: {n} packages / {m} files. **Restart DSH to activate local embedding** (fetching does not revive the embedder already running in this process).",
         "memory.status.vectorRuntimeFetchFailed": "Fetch failed: {reason}",
         "memory.status.vectorIndexed": "Indexed {n} / {m} items",
+        "memory.status.vectorBackfillRunning": "Backfilling: {m} rows per run",
+        "memory.status.vectorBackfillDrained": "Backfill finished: {n} rows embedded this start",
+        "memory.status.vectorBackfillCapped": "Backfill paused: run budget spent ({m} rows), another round is queued",
+        "memory.status.vectorBackfillStalled": "Backfill stuck: {f} rows will not embed, retrying on next start",
+        "memory.status.vectorBackfillError": "Backfill failed: {e}",
       "memory.status.vectorUnconfigured": "Not configured",
       "memory.status.vectorUnconfiguredHint": "No embedding endpoint/model configured — semantic recall is off",
       "memory.status.vectorDegradedHint": "Indexed 0 / {m} items — semantic recall is effectively unavailable",
@@ -4960,8 +4976,25 @@ window.__ModuleLoader__.load({
         try {
           const res = await apiFetch("/api/dsh-mneme/vector-reindex");
           const data = await res.json();
-          const n = data.indexed ?? 0;
-          setReindexMsg(t("memory.settings.vectorReindexDone").replace("{n}", String(n)));
+          const n = Number(data.indexed ?? 0);
+          const f = Number(data.failed ?? 0);
+          const r = data.remaining;
+          // #604: "已索引 0 条" used to be the only outcome ever shown, so a
+          // rebuild that selected nothing (model switch, wrong selector) looked
+          // exactly like a successful no-op. Say which of the three it was.
+          if (data.error) {
+            setReindexMsg("");
+          } else if (n === 0 && f === 0 && (r === 0 || r == null)) {
+            setReindexMsg(t("memory.settings.vectorReindexNothing"));
+          } else if (f > 0) {
+            setReindexMsg(t("memory.settings.vectorReindexPartial")
+              .replace("{n}", String(n)).replace("{f}", String(f)));
+          } else if (Number.isFinite(r) && r > 0) {
+            setReindexMsg(t("memory.settings.vectorReindexRemaining")
+              .replace("{n}", String(n)).replace("{r}", String(r)));
+          } else {
+            setReindexMsg(t("memory.settings.vectorReindexDone").replace("{n}", String(n)));
+          }
         } catch { setReindexMsg(""); }
         setReindexing(false);
       }
@@ -5701,7 +5734,7 @@ window.__ModuleLoader__.load({
       );
     }
     function VectorStatusCard({ t }) {
-      const [state, setState] = useState({ loading: true, error: false, provider: null, ready: null, configured: null, degraded: false, dimension: 0, embedded: 0, total: 0, localRuntime: null });
+      const [state, setState] = useState({ loading: true, error: false, provider: null, ready: null, configured: null, degraded: false, dimension: 0, embedded: 0, total: 0, localRuntime: null, backfill: null });
       // 收编是写操作、耗时数秒，所以要有忙碌态与就地结果；reload 只是用来让上面的
       // 加载 useEffect 重跑一次，从而把最新状态拉回来。
       const [reload, setReload] = useState(0);
@@ -5730,12 +5763,22 @@ window.__ModuleLoader__.load({
               embedded: Number(j?.index?.embeddedCount ?? 0),
               total: Number(j?.index?.totalCount ?? 0),
               // issue #131: 自管运行时状态。与 provider 无关地拿来，由下面决定是否要展示。
-              localRuntime: j?.localRuntime ?? null
+              localRuntime: j?.localRuntime ?? null,
+              // #604：上一轮回填的去向。此前这一段完全没有出口 —— 面板只能看到
+              // 「已索引 N / M 条」，撞 cap 停了、全行失败、抛错都长得一样。
+              backfill: j?.embeddings?.backfill ?? null
             });
           })
           .catch(() => { if (!cancelled) setState({ loading: false, error: true, provider: null, ready: null, dimension: 0, embedded: 0, localRuntime: null }); });
         return () => { cancelled = true; };
       }, [reload]);
+      // #604：回填在后台跑，卡如果只在挂载时取一次，「回填中」会一直挂着不动 ——
+      // 那正是这次要修的「看不见」。跑着的时候每 5 秒自己再问一次，停了就不再问。
+      useEffect(() => {
+        if (state.backfill?.state !== "running") return undefined;
+        const timer = setTimeout(() => setReload((n) => n + 1), 5000);
+        return () => clearTimeout(timer);
+      }, [state.backfill?.state, reload]);
       const off = !state.provider;
       // issue #135: 先把「没配」和「配了但在初始化」分开。此前两者都落到
       // ready !== true，于是未配置的 legacy embedder（ready 恒 true）反而
@@ -5774,6 +5817,26 @@ window.__ModuleLoader__.load({
                   ? t("memory.status.vectorDegradedHint").replace("{m}", state.total)
                   : t("memory.status.vectorIndexed").replace("{n}", state.embedded).replace("{m}", state.total);
 
+      // #604：回填这一轮到底怎么了，必须在卡上说得出来。三种停法含义完全不同：
+      //   capped  → 还有活，额度用完了，会自动续排（可等）
+      //   stalled → 剩下的都嵌不进去，本轮不再重试（要查原因）
+      //   error   → 这一轮整个抛错（要看日志）
+      // 都没跑过时 backfill 为 null，这里不出任何多余的行。
+      const bf = state.backfill;
+      const backfillHint = !bf || off || unconfigured || pending || localBlocked
+        ? ""
+        : bf.state === "running"
+          ? t("memory.status.vectorBackfillRunning").replace("{m}", String(bf.maxTotal ?? "?"))
+          : bf.state === "error"
+            ? t("memory.status.vectorBackfillError").replace("{e}", String(bf.error ?? "").slice(0, 120))
+            : bf.finishReason === "capped"
+              ? t("memory.status.vectorBackfillCapped").replace("{m}", String(bf.maxTotal ?? "?"))
+              : bf.finishReason === "stalled"
+                ? t("memory.status.vectorBackfillStalled").replace("{f}", String(bf.failed ?? 0))
+                : bf.finishReason === "drained"
+                  ? t("memory.status.vectorBackfillDrained").replace("{n}", String(bf.indexed ?? 0))
+                  : "";
+
 
       // 取回运行时由共享组件负责（设置页用的是同一份实现，见 RuntimeProvisionBlock）：
       // 代价说明、三档来源、结果文案与「要重启」都在那里 —— 同一件事不该有两份代码。
@@ -5785,6 +5848,9 @@ window.__ModuleLoader__.load({
           error: state.error,
           num,
           cap,
+          // #604：回填去向单独一行，不与「已索引 N / M」混在一句里 —— 那两件事
+          // 回答的是不同问题（现在有多少可用 / 上一轮为什么停）。
+          foot: backfillHint || null,
           // 概览区三张卡在 2 列档位会剩下半行空洞：向量卡在该档位跨满整行
           className: "mneme-statuscard--vectorwide"
         }),
