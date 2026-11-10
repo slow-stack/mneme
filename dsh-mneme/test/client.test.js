@@ -294,6 +294,33 @@ test("knowledge base page exposes the §3.6 routes and explains every empty stat
   );
 });
 
+// 仓库卡片 + 一键整理（#607 反馈：希望「在这里选择整理知识」，照 Qoder Repo Wiki 那样）。
+// 这条锁四件事，都是「假成功」的高发点：
+//  · /choro/repos 的 409/503 不能并进「还没有仓库」，否则地志没开被说成用户没生成；
+//  · 批量整理的失败必须逐条留名（toast 2.5 秒就没了，名字一多读不完）；
+//  · 只有 relPath 存在的模块才去灌（没骨架页硬灌 = 一串 file-not-found）；
+//  · 手动入库降级为可折叠的高级入口，卡片才是首屏路径。
+test("knowledge base organises a whole repo from cards and never fakes a clean result", () => {
+  const fn = sliceComponent("KbMainPanel");
+  assert.ok(fn.includes('"/api/dsh-mneme/choro/repos"'), "the cards read the repo list (the only route with rootPath)");
+  assert.ok(fn.includes('"/api/dsh-mneme/choro/modules?repo="'), "organising needs each repo's page relative paths");
+  // 409/503 必须各走各的 reposPhase，不许落进空列表。
+  assert.ok(/status === 409[^}]*reposPhase: "disabled"/.test(fn), "409 must set reposPhase=disabled, not an empty list");
+  assert.ok(/status === 503[^}]*reposPhase: "unavailable"/.test(fn), "503 must set reposPhase=unavailable, not an empty list");
+  assert.ok(fn.includes('t("kb.repos.empty")'), "a genuinely empty repo list gets its own copy");
+  // 三档回执：新增 / 未变 / 失败，合并成一句「整理完成」就是假回声。
+  assert.ok(fn.includes('t("kb.repos.new")') && fn.includes('t("kb.repos.same")') && fn.includes('t("kb.repos.failedN")'),
+    "the batch receipt must report added, unchanged and failed separately");
+  assert.ok(fn.includes("organizeErrors"), "failed pages must stay on the page, not only in a 2.5s toast");
+  // 只灌有 relPath 的页。
+  assert.ok(/\.filter\(\(m\) => m\.relPath\)/.test(fn), "only modules with a relPath may be ingested");
+  // 高级入口：手动表单常驻，但折叠在按钮后面。
+  assert.ok(fn.includes("mneme-kbadvtoggle") && fn.includes('t("kb.advanced")'),
+    "manual ingest stays available behind one explicit toggle");
+  // 卡片上的「已整理 N/M」按当前集合的 relKey 前缀数，不额外打请求。
+  assert.ok(fn.includes("organizedCount") && fn.includes("state.docs"), "the organised count reads the loaded docs, not a new request");
+});
+
 // 知识库是第三个座位：id 与 main 的 key 必须逐字同名，否则宿主 selectPanel
 // 直接抛 "main panel ... is not registered"（#562 在记忆座位上踩过）。
 test("knowledge base entry registers its own seat pair in the same panellist block", () => {
