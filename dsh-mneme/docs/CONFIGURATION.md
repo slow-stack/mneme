@@ -168,13 +168,13 @@
 | `autoInject` | `true` | 每轮自动注入记忆块的父总闸 | 关 = 两个子开关一并失效（持久值保留，不重置） |
 | `maxInjectedItems` | `5` | 注入条数上限（1–20） | — |
 | `importanceThreshold` | `3` | 注入候选的 importance 下限（1–5） | 低于该值的记忆不进注入面 |
-| `injectRotationTurns` | `0` | 跨轮轮换：最近 N 轮注入过的不再优先（#205） | opt-in；会话边界自动重置 |
+| `injectRotationTurns` | `0` | 跨轮轮换：最近 N 轮注入过的不再优先（#205） | opt-in；面板设置页可调（#637 起进 feature_flags 白名单，此前只能写配置文件）；会话边界自动重置 |
 | `injectContentMaxChars` | `300` | 单条正文截断上限（60–4000，#164①） | 截断带「上限/原长/全文指引」提示，不静默 |
 | `injectUncertaintyAdaptive` | `false` | 确定性强的话题收缩注入条数（减半、下限 1，#239 第 5 项） | 只做单向收缩，绝不越过 `maxInjectedItems` |
 | `injectGuidanceEnabled` **light** | `true` | 工具描述 + order 150 系统段讲「何时查/何时写」（#249） | `autoInject` 子开关；lightMode 强制关 |
 | `continuityRescueEnabled` **light** | `false` | 压缩边缘双落点：连续性提案落库 + 追加注入（#249 N3） | opt-in（新注入表面）；`autoInject` 子开关；订阅宿主压缩事件，无该时机则降级为持久规则 |
 | `pinnedInjectBudget` | `0` | 约束/偏好 pin 池独立预算（0–5，#249 B1） | 0 = 关；pin 不占 `maxInjectedItems` 名额 |
-| `hotMemoryEnabled` | `true` | 会话近期对话渲染在长期记忆块之前 | — |
+| `hotMemoryEnabled` | `true` | 会话近期对话渲染在长期记忆块之前 | 热记忆只回放**已完成的轮次**：正在组装的这一轮不渲染（提问本来就在 prompt 里，重复渲染 + 回答落地后的文本抖动会让宿主一轮追多份注入快照，#637） |
 | `hotMemoryRounds` | `5` | 热记忆覆盖最近几轮对话（≤50） | — |
 | `hotMemoryMaxTokens` | `2000` | 热记忆块 token 上限（200–32000） | — |
 | `escapePromptVariables` | `true` | 注入内容连续花括号转义（#162） | 关 = 原样透传（DSH interpolate 可能 throw） |

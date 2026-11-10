@@ -864,12 +864,16 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // sleepAffectiveTraitMinSessions 与 sleepAffectiveMaxRelationsPerRun
   // （两个都走 INT_RANGES 表）= +3，故 121 + 1 + 3 + 3 = 128。
   // issue #641（beta 第一阶段）新增 conflictLedgerMode（分诊账本档位枚举，走 ENUMS
-  // 表）与 conflictLedgerDupMinSimilarity（T1 dup 阈值，走 NUMBER_RANGES 表）= 130。
-  assert.equal(Object.keys(data.effective).length, 130);
+  // 表）与 conflictLedgerDupMinSimilarity（T1 dup 阈值，走 NUMBER_RANGES 表）= +2；
+  // issue #637 新增 injectRotationTurns（注入跨轮轮换窗口；键本身 #205 就在 config
+  // schema，只是补白名单——走 INT_RANGES 表）= +1。两条各自加法落地，128 + 2 + 1 = 131。
+  assert.equal(Object.keys(data.effective).length, 131);
   // issue #641：分诊账本档位默认 off（默认路径零行为变化）、T1 阈值默认 0.9。
   // 值单独钉：计数锁钉不住枚举默认被翻转（shadow 意外变默认会让每轮巩固多写账本）。
   assert.equal(data.effective.conflictLedgerMode, "off");
   assert.equal(data.effective.conflictLedgerDupMinSimilarity, 0.9);
+  // #637：轮换窗口的默认值（0 = 关）与 schema 对齐，防止白名单值域改动时静默漂移
+  assert.equal(data.effective.injectRotationTurns, 0);
   // 三个 kb 新键的默认值单独钉一遍：计数锁只钉数量，钉不住值（缺省值翻转时
   // 面板会静默换上一套授权语义），这里补上值这一层。
   assert.equal(data.effective.chorographyAutoRefresh, false);

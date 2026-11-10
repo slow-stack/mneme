@@ -112,6 +112,14 @@ function inboxMessageQuery(message) {
 // visibleSeqsOf). Rewind-shadowed / compacted events are thereby excluded:
 // hot memory and the model see the same conversation. Best-effort: returns []
 // on any failure, and the hot block simply does not render.
+//
+// omitPendingRound: true（Issue #637）：prompt 组装发生的时刻，尾部 pending 轮
+// 就是「正在组装的这一轮」——它的提问已经作为真实 user message 在本条 prompt
+// 里，热记忆里再渲染一份空 `A:` 行是纯重复，且回答落地后该行会从空 `A:` 抖成
+// 正文：宿主「文本变了就追加快照」的契机会让同一轮的注入块被追加多份 runtime-
+// context，旧份永久留在会话历史（#637 报告：4 轮 → 10 份、75% 重复）。省略之后
+// 一轮内热块文本恒定、回答落地时恰好变一次——快照数降到每轮一份。直调方
+// （tests / 其他消费者）不传这个参数，保持完整配对。
 function extractRounds(ctx, maxRounds) {
   try {
     const session = ctx?.agent?.session;
@@ -119,7 +127,7 @@ function extractRounds(ctx, maxRounds) {
     // still have the .events property, so fall back to it.
     const events = session?.snapshotEvents?.() ?? session?.events;
     if (!Array.isArray(events) || events.length === 0) return [];
-    return roundsFromEvents(events, maxRounds, visibleSeqsOf(session));
+    return roundsFromEvents(events, maxRounds, visibleSeqsOf(session), { omitPendingRound: true });
   } catch {
     return [];
   }

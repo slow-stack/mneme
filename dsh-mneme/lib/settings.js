@@ -315,6 +315,10 @@ const FEATURE_FLAG_INT_RANGES = {
   distillMaxChars: [1000, 200000],
   codingBoostFactor: [1, 5],
   dreamMinIntervalMinutes: [0, 10080],
+  // Issue #637：注入跨轮轮换的窗口（0 = 关，#205 既有语义；config.js 的
+  // z.natural().min(0).max(20) 与此成对）。此前不在白名单——报告者想开只能写
+  // 宿主 patch 文件（cordis.patch.yml），面板上根本看不见这个键的存在。
+  injectRotationTurns: [0, 20],
   dreamMaxTokens: [256, 131072],
   // Issue #127：autoSummarize 节流三键（0 = 零行为变化，等同现状）。
   summarizeMinIntervalMinutes: [0, 10080],
