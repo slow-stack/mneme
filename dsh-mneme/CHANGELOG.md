@@ -4,6 +4,13 @@
 
 ## 🆕 新增
 
+- **仓库地志侧栏入口改旗标门控：`chorographyEnabled` 关着（默认）时侧栏不再常驻那一格（#598）**。此前侧栏座位无条件注册（P11），从没用过地志的用户侧栏永久多一个图标、点进去只有一句「未启用」。
+
+  - **成对规则拆成两半**：`main`（key `"dsh-mneme-wiki"`）**无条件保留**——#562 那堵墙（布局存着 `activePanelId="dsh-mneme-wiki"` 时少注册 main，宿主 selectPanel 直接抛）；侧栏 glyph 的登记挪进座位闸，与 M.O.（v0.9.0）/日记（v0.13）同一形态——读一次 `/features`、fail-closed（读不到就不注册，不猜）、开关改动重启生效。
+  - **提示文案跟着说准**：两语言 hint 的「关着时它们全部不存在」现在包括侧栏入口（此前这句与实现不符，正是 #598 的另一半）。
+  - **kb 座位刻意不动**：契约 §3.6 选的是「入口常驻 + 空态自解释」（#607 的另一种写法），两种形态并存是 #598 评论区 §四的拍板；独立开关（issue 建议②）是已排期的 D2 形态，不在本 PR。
+  - **验证**：`test/client.test.js` 座位闸断言重写（main 无条件 / glyph 在闸内 / fail-closed / panellist 清理扫帚少了 wiki glyph）；panellist 结构测试更新（无条件集合只剩记忆 + kb 两对 glyph，main 仍三份）。
+
 - **引导请求不再被 tab 关闭吞掉：任务态搬到模块级，重开标签页回放结果（#558）**。面板「⋯ → 从目录引导」的请求在飞时关掉整个 better-sidebar 标签页，MemoryExplorer 与引导弹层随标签页体一起卸载——keepMounted 覆盖隐藏与切视图、**不含关闭**（它自己的设计文档写明「记录的寿命只由原生 tab 关闭与会话消失回收」）。请求照样跑完、行照样落库（三元组去重 + _overwrite 刷新，重复执行不写坏数据），但成功/失败提示没地方显示、忙碌态也丢了，重开还能再提交一次。
 
   - **状态住模块级（`lib/client.js`）**：新增 `bootstrapJob` store（phase: idle/running/done/failed + dir/result/error）与 `useBootstrapJob` 订阅钩子——就是 `overlayListeners`/`setOverlayOpen` 的现成形状。busy/msg/err 全部从 store 派生，弹层只是任务态的视图；prop 钻孔链（弹层 → explorer → overlay 的 `onBusyChange` 三段）整条拆掉，MemoryOverlay 的 Esc/背板/✕ 三条关闭守卫改为直接订阅——**顺带修掉 tab 注册路径守卫为空的老缺口**（那条路径没有 onBusyChange，busy 从来报不上去）。
