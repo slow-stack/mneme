@@ -154,7 +154,7 @@ Versioning follows semantic versioning (`MAJOR.MINOR.PATCH`). The mechanical par
 2. **Fill in what only a human can write**, in that PR:
    - the wording and the cuts in the CHANGELOG entries (`[Unreleased]` entries are already moved into the new section by the workflow — do not move them by hand; split them into subsections and rewrite them for outside readers). End the section with a `### 贡献者 / Thanks` subsection summarising outside contributors (`git log vPrev..HEAD --format='%an <%ae>' | sort -u`; list non-maintainers as "GitHub handle + what they did", and keep the inline 「感谢 @handle」 in the entry too); omit it when there are none. **Keep entries neutral**: no references to non-public issue numbers and no internal experiment codenames — nobody reading this repository can resolve them.
    - the theme text of the new placeholder rows in both READMEs;
-   - one new row in each of the root README's 「📰 最近更新」 / 「📰 Recent updates」 tables (pure editorial content — the workflow never touches them).
+   - the headline paragraph under the root README's 「📰 最近更新」 / 「📰 Recent updates」 heading (it is prose now, not a table — pure editorial content, the workflow never touches it).
 3. **Cross-minor releases only**: the workflow prints a warning instead of failing when `SECURITY.md`'s supported-versions table still names the previous minor. Shift both language tables down one row (new minor → active, previous minor → best-effort, and update the end-of-life notice below them) inside the same PR; until then `test/security-doc.test.js` is red, which is exactly when it should be.
 4. **Full test pass**: `npm test` must be green (`node scripts/check-sync.js` too, after any `lib/` change).
 5. **Merge the PR**, then tag: `git tag vX.Y.Z` → `git push origin vX.Y.Z`. Publishing from here on is automatic.
@@ -358,7 +358,7 @@ DSH 上游仍处于 developer preview 阶段，API 与服务接口变动频繁�
 2. **在这个 PR 里补上只有人能写的内容**：
    - CHANGELOG 条目的措辞与取舍（`[Unreleased]` 攒的条目工作流已整段搬进新版本节，**不用手搬**；把它们分节并改写成外部读者能看懂的话）。小节末尾加 `### 贡献者 / Thanks` 汇总本版外部贡献者（`git log v上一版..HEAD --format='%an <%ae>' | sort -u`，非维护者逐条列「GitHub 用户名 + 一句话做了什么」，条目内也保留「感谢 @用户名」）；无外部贡献者时省掉该小节。**条目一律用中性措辞**：不引用非公开的 issue 编号、不出现内部实验代号——它们在公开仓库里解析不出来，读者只会困惑。
    - 两个 README 里新占位行的主题描述；
-   - 根 README 的「📰 最近更新」与「📰 Recent updates」表各加一行头条（纯编辑内容，工作流从不改写这两张表）。
+   - 根 README 的「📰 最近更新」与「📰 Recent updates」那一段的头条（现在是标题式散文、不是表格；纯编辑内容，工作流从不改它）。
 3. **只有跨 minor 发版时**：`SECURITY.md` 的支持版本表还写着上一个 minor 时，工作流只警告不失败。在同一份 PR 里把中英两张表向下挪一格（新 minor 进活跃行、上一版进尽力维护行，并同步改下面的停止维护通知）；在那之前 `test/security-doc.test.js` 是红的——那正是它该红的时候。
 4. **全量测试**：`npm test` 确认通过（动过 `lib/` 的话 `node scripts/check-sync.js` 也要过）。
 5. **合并 PR**，然后打 tag：`git tag vX.Y.Z` → `git push origin vX.Y.Z`。到此为止，发布是自动的。

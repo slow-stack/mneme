@@ -31,7 +31,7 @@
 
 **v0.13.0 — 记忆开始分得清「这一次」和「你这个人」**（2026-11-10）
 
-夜里巩固时情绪第一次有了落点：记下「哪一次、因为什么、什么情绪」。同一情绪要在 3 个以上互相独立的会话里出现过，才算你稳定的倾向；不够就只当这一次——被降级的会记账，不静默丢。
+夜里巩固时情绪第一次有了落点：记下「哪一次、因为什么、什么情绪」。同一情绪要在 3 个以上互相独立的会话里出现过，才算你稳定的倾向；不够就只当这一次——被降级的会记账，不静默丢。**这一相位默认不跑**，要同时打开 `sleepModeEnabled` 与 `sleepAffectiveEnabled` 才会开始记。
 同版日记本长成本子样（能到点自己写、正文终于排版），工作流（M.O.）从面板下架，另有一圈面板与容量预警的修复。
 
 > 逐条见 [CHANGELOG](dsh-mneme/CHANGELOG.md) · 完整版本历史见 [Releases](https://github.com/slow-stack/mneme/releases)
@@ -98,7 +98,7 @@ dsh plugin --profile web add 'git+https://github.com/slow-stack/mneme.git#path:/
 
 1. **聊**：新开对话，跟 AI 聊几句关于你的偏好或手头项目（比如"我写代码更喜欢 4 空格缩进"）。
 2. **等**：关掉窗口，重开新对话。如果它还记得刚才的事，说明记忆已经写入。
-3. **可选**：核心链路装好就是开的，不用先动任何开关；想完全离线、开实体抽取或多会话隔离，再去「设置 → 记忆库设置」按需改（见快速配置）。
+3. **可选**：注入与后台整理装好就是开的，不用先动任何开关；想完全离线、开实体抽取或多会话隔离，再去「设置 → 记忆库设置」按需改（见快速配置）。注意实体抽取在 bundle 安装里本来就是开的、在手动安装里是关的——以设置页实际显示为准。
 
 ## 快速配置（可选）
 
@@ -106,7 +106,7 @@ dsh plugin --profile web add 'git+https://github.com/slow-stack/mneme.git#path:/
 |------|--------|--------|------|
 | 完全离线运行 | `embedProvider` | `openai` | 改为 `local` |
 | 后台自动整理记忆 | `autoDream` | `true` | 改为 `false` 可关 |
-| 自动提取结构化实体 | `entityExtractionEnabled` | `false` | 改为 `true` |
+| 自动提取结构化实体 | `entityExtractionEnabled` | `false`（bundle 安装为 `true`） | 手动安装改为 `true`；bundle 安装已是开，想关再改 |
 | 多 Agent / 多项目记忆隔离 | `scopeEnabled`（需要更强隔离再加 `strictScope`，硬隔离只对显式声明生效） | `false` | 改为 `true` |
 
 > 以上均在 DSH 设置面板 → 记忆库设置 中修改。完整配置见 [配置章节](dsh-mneme/README.md)。
@@ -124,11 +124,13 @@ dsh plugin --profile web add 'git+https://github.com/slow-stack/mneme.git#path:/
 升级就是覆盖安装，装完重启一次：
 
 ```bash
+# --profile 后面写你当初安装它时用的那个名字，默认是 web
 dsh plugin --profile web remove @modusensus/dsh-mneme
 dsh plugin --profile web add @modusensus/dsh-mneme
 dsh web
 ```
 
+> 上面是 npm 来源的装法；当初从 Git、tarball 或本地目录装的，按下同一种来源重装即可（见上方「四种安装来源」）。唯一要求是**先 remove 再 add**。
 > 不用重装 DSH。重装 DSH 动的是 profile，是更大范围的改动，与插件版本无关。
 > 也不要只 `add` 不 `remove`——宿主可能拿到缓存的旧副本，版本号没变就说明没换成。
 
@@ -334,7 +336,7 @@ dsh-mneme 的机制设计与下列公开研究相互印证（以下引用均逐�
 
 **v0.13.0 — Memory now tells "this once" apart from "who you are"** (2026-11-10)
 
-Emotion finally has a place to live: the nightly consolidation records which occasion, why, and what feeling. An emotion counts as one of your stable traits only when it shows up in three or more independent sessions; short of that it stays "this once" — every downgrade is counted, never silently dropped.
+Emotion finally has a place to live: the nightly consolidation records which occasion, why, and what feeling. An emotion counts as one of your stable traits only when it shows up in three or more independent sessions; short of that it stays "this once" — every downgrade is counted, never silently dropped. **This phase is off by default**: turn on both `sleepModeEnabled` and `sleepAffectiveEnabled` before anything gets recorded.
 The same release grows the diary into a real notebook (it can write itself on schedule, and its text is finally laid out), retires the M.O. workflow from the panel, and brings a round of panel and capacity-warning fixes.
 
 > Per-item notes in the [CHANGELOG](dsh-mneme/CHANGELOG.md) · full history in [Releases](https://github.com/slow-stack/mneme/releases)
@@ -401,7 +403,7 @@ It works out of the box. To feel its value in five minutes:
 
 1. **Chat** — start a session and tell the AI something about your preferences or a project (e.g. "I prefer 4-space indentation.").
 2. **Verify** — close the window, open a new one. If it recalls what you said, the memory has landed.
-3. **Tune** — open **Settings → Memory Settings** and flip the three switches below as needed.
+3. **Optional** — injection and background consolidation are on from install; touch nothing first. Only if you want fully-offline embeddings, entity extraction, or per-agent isolation, open **Settings → Memory Settings** and change what you need (see Quick config). Note that entity extraction is already on for bundle installs and off for manual installs — trust what the settings page shows.
 
 ## Quick config (optional)
 
@@ -409,7 +411,7 @@ It works out of the box. To feel its value in five minutes:
 |------|-----------|---------|--------|
 | Fully offline | `embedProvider` | `openai` | Change to `local` |
 | Background consolidation | `autoDream` | `true` | Change to `false` to disable |
-| Structured entity extraction | `entityExtractionEnabled` | `false` | Change to `true` |
+| Structured entity extraction | `entityExtractionEnabled` | `false` (`true` for bundle installs) | Manual installs change it to `true`; bundle installs already have it on, change it to turn it off |
 | Memory isolation per agent / workspace | `scopeEnabled` (add `strictScope` for stronger isolation — hard blocking applies to explicit declarations only) | `false` | Change to `true` |
 
 > All of these live in DSH Settings → Memory Settings. Full config docs in the [Configuration section](dsh-mneme/README.md) (Chinese, bilingual file).
@@ -427,11 +429,13 @@ Settings and memories are tables in the **same SQLite file** (`user_settings`, `
 Upgrading means reinstalling over the top, then restarting once:
 
 ```bash
+# replace "web" with the profile name you originally installed into; web is the default
 dsh plugin --profile web remove @modusensus/dsh-mneme
 dsh plugin --profile web add @modusensus/dsh-mneme
 dsh web
 ```
 
+> The commands above are for an npm install; if you installed from Git, a tarball or a local directory, reinstall from the same source (see "Four install sources" above). The only requirement is **remove first, then add**.
 > Do not reinstall DSH itself; that rewrites your profile, which is a much larger change and unrelated to the plugin version.
 > Do not `add` without `remove` first — the host may reuse a cached copy, and the version badge not changing is the sign it did.
 

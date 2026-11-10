@@ -145,7 +145,7 @@ console.log("");
 console.log(touched ? "完成（" + touched + " 份 README 有改动）。还需要人写的：" : "完成（README 无需改动）。还需要人写的：");
 console.log("  1. dsh-mneme/CHANGELOG.md 新节条目的**措辞与取舍**（[Unreleased] 攒的已整段搬过去，不用手搬）");
 console.log("  2. 双 README 版本表占位行里的主题描述");
-console.log("  3. 根 README 的「📰 最近更新」与「📰 Recent updates」表各加一行头条（纯编辑内容，脚本不碰）");
+console.log("  3. 根 README 的「📰 最近更新」与「📰 Recent updates」段落的头条（现在是标题式散文，已不是表格；纯编辑内容，脚本不碰）");
 if (supportTableProblems.length) {
   console.log("");
   console.log("⚠ 还有一件必须先做，否则这个 PR 的 CI 会是红的：");
