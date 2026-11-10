@@ -7,6 +7,10 @@
 import { gitHead } from "./wiki/t0.js";
 import { renderChoroBlock } from "./wiki/inject.js";
 import { STR } from "./lang.js";
+// #607：提示里的 CLI 命令必须给绝对路径入口（profile 装的插件没有全局 shim），
+// 光写 `dsh-mneme-choro` 让用户照抄只会 command not found。推导不出入口时
+// 返回 null，文案退回通用说法——宁可少说，也不给一条跑不起来的命令。
+import { choroCliCommandFrom } from "./wiki/cli-hint.js";
 
 export const CHORO_COMMAND = "choro";
 
@@ -46,6 +50,9 @@ function staleness(repo) {
  * @param {() => string} [opts.language]
  */
 export function createChoroHandler({ choro, config, language = () => "zh" } = {}) {
+  // 本文件在 `src/` 与 `lib/` 的同一层（bin/ 的父级），推导一次就够，不必每次
+  // 报错都去碰文件系统。
+  const cli = choroCliCommandFrom(import.meta.url, language() === "en" ? "<repo path>" : "<仓库路径>");
   return (invocation) => {
     const lang = language() === "en" ? "en" : "zh";
     const S = STR.choroCommandUsage[lang];
@@ -58,7 +65,7 @@ export function createChoroHandler({ choro, config, language = () => "zh" } = {}
       const cwd = typeof raw === "string" ? raw.trim() : "";
       if (!cwd) return { kind: "error", text: S.noCwd };
       const repo = choro ? choro.repoByCwd(cwd) : null;
-      if (!repo) return { kind: "error", text: S.noRepo(cwd) };
+      if (!repo) return { kind: "error", text: S.noRepo(cwd, cli) };
       const outline = choro.outline(repo.id);
       if (!outline || outline.modules.length === 0) {
         return { kind: "success", text: S.title(repo.name, 0, dateOnly(repo.updated_at)) + "\n" + S.empty };
@@ -76,7 +83,7 @@ export function createChoroHandler({ choro, config, language = () => "zh" } = {}
       if (rest > 0) lines.push(S.truncated(rest));
       const head = staleness(repo);
       if (head.state === "fresh") lines.push(S.fresh(shortSha(head.head)));
-      else if (head.state === "stale") lines.push(S.stale(shortSha(head.baseline), shortSha(head.head)));
+      else if (head.state === "stale") lines.push(S.stale(shortSha(head.baseline), shortSha(head.head), cli));
       else lines.push(S.noGit);
       lines.push(S.hint);
       return { kind: "success", text: lines.filter(Boolean).join("\n") };

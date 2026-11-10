@@ -24,12 +24,18 @@ import { join, dirname, sep, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { realpathSync } from "node:fs";
 import { extractHumanBlocks, injectHumanBlocks, T1_SECTION_START, T1_SECTION_END } from "./render.js";
+// issue #607：拒绝文案里的 CLI 命令要给绝对路径入口（profile 装的插件没有全局
+// shim，光写 `dsh-mneme-choro` 用户照抄只会 command not found）。
+import { choroCliCommandFrom } from "./cli-hint.js";
 
 // 标记的单一来源在 render.js（页面格式的家）；这里转出去，调用方与测试继续从
 // t1.js 取，不必知道它住在哪。
 export { T1_SECTION_START, T1_SECTION_END };
 export const T1_FAIL_THRESHOLD = 2;
 export const DEFAULT_T1_MODEL = "xdpool/deepseek-v4.1-flash";
+
+// #607：拒绝文案里的命令串推导一次（本文件在 src/wiki/ 与 lib/wiki/ 同一层）。
+const T1_CLI = choroCliCommandFrom(import.meta.url, "<repo>");
 
 // 三重上限缺省（实现计划 P15）：单模块预算——timeout 墙钟、工具调用次数、
 // 累计输出字节。真实成本实测见 V1（10s/次任务），这里给的是上限不是预期。
@@ -239,7 +245,7 @@ export function createT1({ store, runSession = null, limits = DEFAULT_LIMITS, no
     const rootPath = realpathSync(resolve(repoRoot));
     const repo = store.db.prepare("SELECT * FROM choro_repos WHERE root_path = ?").get(rootPath);
     if (!repo) {
-      throw new T1Refusal("not-registered", `${rootPath} 还没有登记：先跑一次 T0（dsh-mneme-choro <repo> --apply）`);
+      throw new T1Refusal("not-registered", `${rootPath} 还没有登记：先跑一次 T0（${T1_CLI ?? "dsh-mneme-choro <repo> --apply"}）`);
     }
 
     // 选模块：skeleton 必跑；failed 只在 retryFailed 时；enriched 跳过（重富化留待显式 --module）。

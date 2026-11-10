@@ -7,6 +7,9 @@ import { timingSafeEqual, randomBytes } from "node:crypto";
 import { TYPES } from "./store.js";
 import { TYPE_FILE, renderMirrorText, renderFileHeader, parseHumanEdits, MIRROR_READONLY_TYPES } from "./mirror.js";
 import { langOf } from "./lang.js";
+// issue #607：面板空态要显示「能直接粘贴就跑」的命令，而面板 bundle 拿不到
+// CLI 入口路径（独立 bundle 不能 import src）——所以由这条路由把命令算好发给它。
+import { choroCliCommandFrom } from "./wiki/cli-hint.js";
 // op 形状谓词单一份（评审 P3：两份皮会让形状修洞漏一边）。
 import { isValidFactOps } from "./profile-facts.js";
 import { computeHeat } from "./heat.js";
@@ -57,6 +60,10 @@ import {
   NUDGE_BOUNDARIES,
   NUDGE_AUTO_BUDGET_MS
 } from "./pipeline-nudge.js";
+
+// 面板空态与 409 hint 共用的 CLI 命令串（#607）：本文件在 src/ 与 lib/ 同一层，
+// 模块加载时推导一次。推导不出时为 null，两处各自退回通用说法。
+const CHORO_CLI = choroCliCommandFrom(import.meta.url, "<repo>");
 
 // headers：少数端点（/export 附件下载）需要追加 Content-Disposition 等响应头。
 function sendJson(res, status, payload, headers = {}) {
@@ -3083,7 +3090,9 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           }
         }
       }
-      sendJson(res, 200, { repos, autoRefreshed, autoRefreshError });
+      // cliCommand（#607）：面板空态直接把它贴出来，用户复制即用。推导不出
+      // 入口时为 null，面板据此退回通用说法（不硬编一个假路径）。
+      sendJson(res, 200, { repos, autoRefreshed, autoRefreshError, cliCommand: CHORO_CLI });
     }
   });
 
@@ -3138,7 +3147,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           slug: page.slug,
           relPath: page.relPath,
           hint: page.error === "page-missing"
-            ? "run `dsh-mneme-choro <repo> --apply` to rebuild"
+            ? `run ${CHORO_CLI ? `\`${CHORO_CLI}\`` : "`dsh-mneme-choro <repo> --apply`"} to rebuild`
             : "check the local file and its permissions"
         });
         return;

@@ -9,10 +9,16 @@ import { TOOL_GUIDE, CONTINUITY_TOOL_RULE } from "./guide.js";
 import { injectChildEnabled } from "./config.js";
 import { normalizeScopeStateDimension, normalizeScopeStateValue, normalizeScopeStateState } from "./scope-state.js";
 import { lastUserQuery } from "./inject.js";
+// issue #607：工具报错里的 CLI 命令同样要给绝对路径入口——profile 装的插件没有
+// 全局 shim，光写 `dsh-mneme-choro` 用户照抄只会 command not found。
+import { choroCliCommandFrom } from "./wiki/cli-hint.js";
 // 知识库三工具（契约 §3.4）：定义住在 kb/tools.js，本文件只决定注册不注册。
 import { kbToolDefinitions } from "./kb/tools.js";
 
 const TEXT_OUTPUT = (text) => [{ type: "text", text }];
+// 工具报错里的命令串：本文件在 src/ 与 lib/ 同一层（bin/ 的父级），模块加载时推导一次。
+// 推导不出（源码树被裁剪）就返回 null，文案退回通用说法。
+const CHORO_CLI = choroCliCommandFrom(import.meta.url, "<repo>");
 const incompleteChoroSearch = (pages) =>
   `Search was incomplete because these pages could not be read (${pages.join(", ")}). Check the local checkout and page permissions.`;
 // Per-registry tool-name registry: guards against duplicate registration on
@@ -102,7 +108,7 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
     const row = choro.resolveRepo(ref);
     if (!row) {
       const reason = ref ? `Repository ${JSON.stringify(ref)} is not registered.` : "No repository is registered for chorography.";
-      throw new Error(`${reason} Run \`dsh-mneme-choro <repo> --apply\` to register a repository.`);
+      throw new Error(`${reason} ${CHORO_CLI ? `Run \`${CHORO_CLI}\`` : "Run `dsh-mneme-choro <repo> --apply`"} to register a repository.`);
     }
     if (row.ambiguous) {
       const choices = row.ambiguous.map(({ id, name }) => `${id} (${name})`).join(", ");
@@ -1227,7 +1233,7 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
           throw new Error(`Page ${JSON.stringify(args?.slug ?? "")} was not found. Use choro_module_map to list page slugs.`);
         }
         if (page.error === "page-missing") {
-          throw new Error(`Page ${JSON.stringify(page.slug)} is missing from disk (${page.relPath}). Check the local checkout or run \`dsh-mneme-choro <repo> --apply\` to rebuild it.`);
+          throw new Error(`Page ${JSON.stringify(page.slug)} is missing from disk (${page.relPath}). Check the local checkout or run ${CHORO_CLI ? `\`${CHORO_CLI}\`` : "`dsh-mneme-choro <repo> --apply`"} to rebuild it.`);
         }
         if (page.error) {
           throw new Error(`Page ${JSON.stringify(page.slug)} could not be read (${page.relPath}). Check the local file and its permissions.`);
