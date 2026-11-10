@@ -595,6 +595,27 @@ export const Config = z.object({
   conflictAutoResolveEnabled: z.boolean().default(false),
   conflictAutoResolveMinSimilarity: z.number().min(0.85).max(1).default(0.95),
 
+  // --- conflict ledger（issue #641，beta 第一阶段）--------------------------
+  // 冲突分诊账本的档位。真实库 788 对人审队列的全量分类：46% 近重复 + 20% 跨作用域
+  // 重复 + 5% 时序演进，真矛盾只有 ~27%——现行窄 prompt 把前 71% 全逼成了「输赢」，
+  // 再由人逐对裁决（≈30 条/天，且 92% 的对从未两侧同场）。分诊把「谁该机械处理、
+  // 谁才是真矛盾」从 LLM 手里拿回来（E13b：winner-take-all 裁决 P(毒胜出)=86.8%）。
+  //
+  //   "off"    默认。不分类、不记账，conflict 相位与 v0.13.0 逐字节一致。
+  //   "shadow" 只分类 + 落 conflict_ledger 账本（bookkeeping，不触发 write hooks），
+  //            freeze/LLM 路径零变化——beta 实验的测量期：shadow 一周拿真实分诊
+  //            分布，验证是否复现 46/20/5/27，预注册判据过了才切 enforce（处置接线
+  //            是后续 PR：T1 送合并、T2 去重账本、T3 取代链、T4 惰性消解）。
+  //
+  // 现阶段枚举里不放 "enforce"：宁可让配置挡住手滑，也不要一个「设了但没行为」的
+  // 档位——#616 的「假成功」教训（autoMin 0.95 在现库覆盖为 0，开了等于没开，用户
+  // 以为功能坏了）。判据唯一实现在 src/dream/triage.js。
+  conflictLedgerMode: z.union([z.const("off"), z.const("shadow")]).default("off"),
+  // T1（dup）档的相似度下限。检测阈值（normal 0.85）与自动档 autoMin（0.95）之间
+  // 的空带由它接管：真实库 reason 相似度回声集中在 0.85-0.93，正好落在两个阈值
+  // 之间、自动档开了也接不住的那一段。下界与检测阈值同源。
+  conflictLedgerDupMinSimilarity: z.number().min(0.85).max(1).default(0.9),
+
   // --- entity gene (v0.3.0) -----------------------------------------------
   // Opt-in: when false (default) nothing in the pipeline extracts entities.
   // The storage layer (entities/entity_attrs/entity_relations tables + CRUD)

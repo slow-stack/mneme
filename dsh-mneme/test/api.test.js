@@ -863,7 +863,13 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // issue #619 情感归因相位再新增 sleepAffectiveEnabled（顶层布尔键）、
   // sleepAffectiveTraitMinSessions 与 sleepAffectiveMaxRelationsPerRun
   // （两个都走 INT_RANGES 表）= +3，故 121 + 1 + 3 + 3 = 128。
-  assert.equal(Object.keys(data.effective).length, 128);
+  // issue #641（beta 第一阶段）新增 conflictLedgerMode（分诊账本档位枚举，走 ENUMS
+  // 表）与 conflictLedgerDupMinSimilarity（T1 dup 阈值，走 NUMBER_RANGES 表）= 130。
+  assert.equal(Object.keys(data.effective).length, 130);
+  // issue #641：分诊账本档位默认 off（默认路径零行为变化）、T1 阈值默认 0.9。
+  // 值单独钉：计数锁钉不住枚举默认被翻转（shadow 意外变默认会让每轮巩固多写账本）。
+  assert.equal(data.effective.conflictLedgerMode, "off");
+  assert.equal(data.effective.conflictLedgerDupMinSimilarity, 0.9);
   // 三个 kb 新键的默认值单独钉一遍：计数锁只钉数量，钉不住值（缺省值翻转时
   // 面板会静默换上一套授权语义），这里补上值这一层。
   assert.equal(data.effective.chorographyAutoRefresh, false);
