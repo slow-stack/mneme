@@ -243,6 +243,71 @@ M5b / M5c 这两条是专门为"拼错令牌也能过"这个漏洞设的——�
 对比图落在 `C:/Users/石晴/AppData/Local/Temp/kb-preview/`：`cmp-light-cards.png`（上=改前，下=改后）、
 `cmp-light-tail.png`、`cmp-dark-cards.png`。
 
+### 5.F 落地记录（图表 bug，2026-11-11 已实现）
+
+桉桉问「话说之前的图表呢，需要改吗？」——P1b 只动了间距，**绘制逻辑一行没碰**，所以三处真 bug 原样留着。
+她说「现在改」。这三处不是审美问题，是数字读错：
+
+| # | 现象 | 根因（行号为改前） | 谁受害 |
+| --- | --- | --- | --- |
+| ① | 纵轴永远 `1M / 1M / 1M / 0M` | `${(v / 1e6).toFixed(0)}M`（client.js:6848）—— 750K / 500K 都进 1M、250K 进 0M | **所有日用量 < 4M 的库**（即正常使用的库） |
+| ② | 柱子贴地，像没数据 | `Math.max(1e6, Math.ceil(dayMax / 1e6) * 1e6)`（:6686）把上限钉在 1M——日 7 万时柱高 7% | 小库；大库反而正常，**方向是反的** |
+| ③ | 七天全零也画轴 + 七根贴地柱 | 无条件渲染（:6845-6862），而沉淀图有空态（:6900） | 新库 / 停用期 |
+
+**改法**：抽一个纯函数块 `/* panel-chart-scale:begin … end */`（同 `panel-geometry` 的先例，测试用
+`new Function` 直接跑），两个函数：
+
+- `chartScale(dayMax)` → `{ step, max, labels }`，或 `null`（无数据）。步长在 `1 / 2 / 2.5 / 5 / 10 × 10^n`
+  里挑第一个满足 `step × 4 >= dayMax` 的，四格刚好盖住峰值；只收整数步长（`2.5 × 10^0` 会把整 token 轴
+  切成小数，`exp >= 10` 时仍是整数）。
+- `chartAxisLabel(n)` → `1M` / `1.5M` / `750K` / `500`。**整百万不带小数**（`toFixed(1)` 会写成「1.0M」，
+  轴上一排「1.0M / 0.8M」比「1M / 750K」难读）。
+
+**三种状态必须分开**（沿用 #412 那条教训：`stats` 为 `null` 与 `{}` 分属「未知」与「已知为空」）：
+
+| 状态 | 渲染 |
+| --- | --- |
+| `rawDays === null`（未加载） | 空骨架 `.mneme-bars`，**不画轴也不刷文案** |
+| `rawDays` 有值、七天全零 | 新增 `memory.status.token.daysEmpty`（「最近 7 天没有 token 记录」） |
+| `statsError` | `memory.status.error` + `var(--mneme-danger)`（与 donut 同一口径） |
+
+**实测轴**（改前 → 改后）：70K 从 `1M/1M/1M/0M` → `80K/60K/40K/20K`（柱高 7% → 88%）；
+900K → `1M/750K/500K/250K`；3.9M → `4M/3M/2M/1M`（本来就对，不能改坏）；12M → `20M/15M/10M/5M`。
+
+**新锁** `dsh-mneme/test/panel-chart-scale.test.js`（6 例）：
+
+1. 0 / 负数 / NaN / null / `"abc"` / `Infinity` → `null`（调用方画空态，不画假轴）；
+2. 五组定点量级的轴标签逐值断言；
+3. **四条轴标签互不相同** ← 这条锁的是 ① 的**形状**（原 bug 去重后只剩「1M / 0M」两个值），
+   比锁具体字符串更能挡住「换成别的错误格式」；
+4. `max >= 峰值`，且峰值 ≥ 1000 时 `max < 峰值 × 2.5` ← 锁 ② 不许退回 1M 地板；
+5. `chartAxisLabel` 的 K/M 分档与「整百万不带小数」；
+6. **源级守卫**：`client.js` 里不许再出现 `toFixed(0)}M` 与 `Math.max(1e6,`，且渲染必须真的调用
+   `chartAxisLabel(v)` 与 `scale.max`——纯函数绿了但渲染绕过去，等于没修。
+
+**变异自证（4 条，全部按预期红，逐条还原后复查 6/6 绿，`readFileSync` 比对 identical=true）**：
+
+| 变异 | 期望 | 实际 |
+| --- | --- | --- |
+| M6a 删掉 `if (!Number.isFinite(d) \|\| d <= 0) return null;` | 第 1 条红 | ✅ 1 红 |
+| M6b `chartAxisLabel` 的 M 档退回 `toFixed(0)` | 第 5、6 条红 | ✅ 2 红 |
+| M6c 在 `chartScale` 里把上限夹回 `Math.max(1e6, step)` | 第 2、4、6 条红 | ✅ 3 红 |
+| M6d 柱高改回 `d.total / 1e6` | 只第 6 条红（纯函数测不到渲染） | ✅ 1 红 |
+
+M6d 是刻意留的：它证明第 6 条源级守卫不是摆设——去掉它，渲染绕过纯函数就没人发现。
+
+**视觉复核**（Edge headless，深浅两主题，mock 的 `by_day` 改成「每天 6–9 万、总量约 48.6 万」）：
+`C:/Users/石晴/AppData/Local/Temp/kb-preview/cmp-chart-light.png`（上=改前 / 中=改后 / 下=空态）、
+`cmp-chart-dark.png`。改前实测轴就是 `1M / 1M / 1M / 0M`，改后 `100K / 75K / 50K / 25K`。
+
+**看见但没动的两处**（都不是 bug，且都要改视觉）：
+
+- **同页撞色**：沉淀图用 `--mneme-chart-3`（amber）= 新增、`--mneme-chart-2`（green）= 巩固，
+  而同一页 donut 里 chart-3 = 实体抽取、chart-2 = 会话蒸馏——**同色两义**。建议给沉淀图两个独立语义
+  令牌（`--mneme-sink-added` / `--mneme-sink-merged`），等桉桉点头；
+- **donut 只有 6 个色槽**：第 7 种 operation 起会全部落灰。现在服务端正好 6 个（`TOKEN_OPS`），
+  够用；真加第 7 种再改成「前 6 + 其他」。
+
 ---
 
 ## 六、迁移分片（每片独立可验证，可停在任意一片）

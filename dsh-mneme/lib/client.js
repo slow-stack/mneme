@@ -1387,6 +1387,7 @@ window.__ModuleLoader__.load({
         "memory.status.token.conflictsFoot": "来自 /dream-status · 实时",
         "memory.status.token.donut": "按组件 · 谁花了这些 token",
         "memory.status.token.days": "按天 · 7 天趋势",
+        "memory.status.token.daysEmpty": "最近 7 天没有 token 记录",
         "memory.status.token.heat": "8 周热力 · 每天花了多少",
         "memory.status.token.heatLess": "少",
         "memory.status.token.heatMore": "多",
@@ -2448,6 +2449,7 @@ window.__ModuleLoader__.load({
         "memory.status.token.conflictsFoot": "From /dream-status · live",
         "memory.status.token.donut": "By component · who spent these tokens",
         "memory.status.token.days": "By day · 7-day trend",
+        "memory.status.token.daysEmpty": "no token usage in the last 7 days",
         "memory.status.token.heat": "8-week heat · daily spend",
         "memory.status.token.heatLess": "less",
         "memory.status.token.heatMore": "more",
@@ -6667,6 +6669,40 @@ window.__ModuleLoader__.load({
       if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
       return String(n);
     };
+    /* panel-chart-scale:begin
+       7 天柱状的纵轴（2026-11 修）。原实现两处错：标签写死 (v/1e6).toFixed(0)+"M"
+       ——750K / 500K / 250K 全变 1M，小库永远看到「1M / 1M / 1M / 0M」；上限又被
+       1e6 的地板钉死，日用量 7 万时柱子只有 7% 高。等于用量越大越正常，反了。
+       这里按 1 / 2 / 2.5 / 5 × 10^n 挑步长，四格刚好盖住峰值、不浪费超过一半高度；
+       标签按 K / M 分档，整百万不带小数（toFixed(1) 会写成「1.0M」）。抽成纯函数并
+       留标记，测试用 new Function 直接跑（同 panel-geometry 的先例）。 */
+    function chartScale(dayMax) {
+      const d = Number(dayMax);
+      // 全零 / 未加载 → null：调用方画空态或骨架，不画一条假轴。
+      if (!Number.isFinite(d) || d <= 0) return null;
+      const exp = Math.pow(10, Math.floor(Math.log10(d / 4)));
+      // 只收整数步长：2.5×10^0 = 2.5 会把整 token 轴切成小数（exp >= 10 时仍是整数）。
+      const steps = [1, 2, 2.5, 5, 10].map((m) => m * exp).filter((s) => Number.isInteger(s));
+      let step = steps[steps.length - 1];
+      for (const s of steps) {
+        if (s * 4 >= d) { step = s; break; }
+      }
+      return { step, max: step * 4, labels: [4, 3, 2, 1].map((k) => k * step) };
+    }
+    function chartAxisLabel(n) {
+      const v = Number(n);
+      if (!Number.isFinite(v)) return "";
+      if (Math.abs(v) >= 1e6) {
+        const m = v / 1e6;
+        return m % 1 === 0 ? `${m}M` : `${m.toFixed(1)}M`;
+      }
+      if (Math.abs(v) >= 1e3) {
+        const k = v / 1e3;
+        return k % 1 === 0 ? `${k}K` : `${k.toFixed(1)}K`;
+      }
+      return String(v);
+    }
+    /* panel-chart-scale:end */
     // 热力分档：固定阈值（75万/150万/250万）在低用量库里整片落在 l1，档位失真
     // （复验第三轮「颜色不怎么明显」）。改按 56 天窗口内的非零日做三分位切四档
     // ——GitHub 贡献图同思路，档次随库的实际用量自适应拉开；全零/无数据退化
@@ -6799,9 +6835,10 @@ window.__ModuleLoader__.load({
             return { day: key, total: rawDayMap.get(key) ?? 0 };
           })
         : [];
-      const dayMax = Math.max(1, ...days.map((d) => d.total));
-      const niceMax = Math.max(1e6, Math.ceil(dayMax / 1e6) * 1e6);
-      const gridVals = [niceMax, niceMax * 0.75, niceMax * 0.5, niceMax * 0.25];
+      const dayMax = Math.max(0, ...days.map((d) => d.total));
+      // scale 为 null 有两种来源：还没加载（rawDays 为 null，画骨架）与已知为空
+      // （七天全零，画空态文案）。两者不能混——加载中先说「没有记录」就是撒谎。
+      const scale = rawDays ? chartScale(dayMax) : null;
       // 8 周热力：数据必须来自 56 天窗口（heatStats），右缘对齐该窗口最后一天
       // （UTC），左侧补齐到周一；数据窗口之外的格子隐藏留形。日期一律走 UTC——
       // by_day 的 day 就是 UTC 日期。用 heatStats 而非 stats：否则 56 格里
@@ -6960,23 +6997,33 @@ window.__ModuleLoader__.load({
                 )
               ),
           h("h3", { className: "mneme-xcolhead" }, t("memory.status.token.days")),
-          h("div", { className: "mneme-bars" },
-            gridVals.map((v, i) => h("div", { key: v, className: "mneme-gridline", style: { top: `${i * 25}%` } },
-              h("span", { className: "mneme-gridlabel" }, `${(v / 1e6).toFixed(0)}M`)
-            )),
-            h("div", { className: "mneme-barcols" },
-              days.map((d) => h("div", { className: "mneme-barcol", key: d.day },
-                h("div", {
-                  className: "mneme-bar",
-                  style: { height: `${Math.max((d.total / niceMax) * 100, 0.4)}%` },
-                  title: `${d.day} · ${d.total.toLocaleString()}`
-                })
-              ))
-            )
-          ),
-          h("div", { className: "mneme-barlabels" },
-            days.map((d) => h("span", { key: d.day }, d.day.slice(5)))
-          ),
+          statsError
+            ? h("div", { className: "mneme-statuscap", style: { color: "var(--mneme-danger)" } }, t("memory.status.error"))
+            : rawDays === null
+              // 未加载：留空骨架，不画柱也不刷文案（stats 与 statsError 都不作数时）。
+              ? h("div", { className: "mneme-bars" }, h("div", { className: "mneme-barcols" }))
+              : scale
+                ? h("div", { className: "mneme-bars" },
+                    scale.labels.map((v, i) => h("div", { key: v, className: "mneme-gridline", style: { top: `${i * 25}%` } },
+                      h("span", { className: "mneme-gridlabel" }, chartAxisLabel(v))
+                    )),
+                    h("div", { className: "mneme-barcols" },
+                      days.map((d) => h("div", { className: "mneme-barcol", key: d.day },
+                        h("div", {
+                          className: "mneme-bar",
+                          style: { height: `${Math.max((d.total / scale.max) * 100, 0.4)}%` },
+                          title: `${d.day} · ${d.total.toLocaleString()}`
+                        })
+                      ))
+                    )
+                  )
+                // 已知为空（rawDays 有值、七天全零）：明确说没有，不留七根贴地柱。
+                : h("div", { className: "mneme-statuscap", style: { marginTop: "12px" } }, t("memory.status.token.daysEmpty")),
+          scale && !statsError
+            ? h("div", { className: "mneme-barlabels" },
+                days.map((d) => h("span", { key: d.day }, d.day.slice(5)))
+              )
+            : null,
           // 热力与沉淀并排两列：热力只有约 745px，右侧原本整块空着。两列
           // 在窄容器里回落单列（见 .mneme-flowrow 的 @container）。
           h("div", { className: "mneme-flowrow" },
