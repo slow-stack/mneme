@@ -352,6 +352,35 @@ window.__ModuleLoader__.load({
         "wiki.t1.failedCount": "失败",
         "wiki.stale": "代码已变",
         "wiki.stale.hint": "上次生成之后仓库代码变过，页面可能和现状对不上：点「重建骨架」刷新。",
+        // 证据复核（Grounded Claims）：不重跑 T1 也能知道「哪几条结论被改动碰到了」。
+        // 文案刻意把「算不出来」和「一条都没事」写成两句不同的话——这两种状态在
+        // 屏幕上长得一样的话，用户会把「没算」当成「没问题」，那正是 #607 的病。
+        "wiki.drift": "证据复核",
+        "wiki.drift.hint": "用 git diff 比对每条结论记下的文件与行号：只有被改动碰到的才标出来，不重跑模型。",
+        "wiki.drift.loading": "正在比对…",
+        "wiki.drift.summary": "{pages} 页 · {claims} 条结论 · {risk} 条需要复核",
+        "wiki.drift.clean": "基线就是当前 HEAD：所有结论的锚点都还对得上。",
+        "wiki.drift.none": "这次改动没碰到任何结论的锚点。",
+        "wiki.drift.gitUnreadable": "读不到这个仓库的 git 信息（不是 git 目录或不可读），没法比对。",
+        "wiki.drift.anchorStale": "上次生成记下的基线提交在 git 里已经找不到了（可能被 force-push 或浅克隆截断）：无法比对，建议重建骨架。",
+        "wiki.drift.blocked": "比对失败",
+        "wiki.drift.touched": "改动碰到这行",
+        "wiki.drift.shifted": "上方有增删，行号挪了 {n}",
+        "wiki.drift.deleted": "文件已删",
+        "wiki.drift.unverifiable": "这条没记行号，无法定位",
+        "wiki.drift.inconsistent": "正文有语义段、库里却没有结论记录（上次 T1 没写完），这页证据无法核对。",
+        // 语义段 provenance（①）：每页的结论是「对着哪个提交」读出来的。不说清这一点，
+        // 「证据复核」就只是在和某个不明时点比——页越晚富化，误报越多。
+        "wiki.drift.verified": "对着 {sha} 验证",
+        "wiki.drift.verifiedUnknown": "这页没记下是哪个提交验证的（早期富化没有记录），所以判不出它有没有过时。重跑一次 T1 就会记上。",
+        "wiki.drift.verifiedApprox": "这页是早期富化的，没记下自己的验证点；下面按全仓基线 {sha} 比对（起点比实际更早，只会多报不会漏报）。",
+        "wiki.drift.anchorStalePage": "这页记下的验证提交在 git 里已经找不到了（force-push 或浅克隆截断），这页没法比对。",
+        "wiki.drift.undecidable": "{n} 页的验证基线不可用，没有参与比对",
+        // 自动刷新被主动跳过（仓库里有已富化的页）。这句话必须说的是「我没做，因为
+        // 做了会丢东西」，而不是「刷新失败」——失败是另一种情况，另一种文案。
+        "wiki.autoRefresh.skipped": "自动刷新这次没有做：这仓库有 {n} 页已经富化过，重跑骨架会把语义段和结论一起清掉。要新快照请手动点「重建骨架」（会先告诉你丢哪几页）。",
+        "wiki.autoRefresh.skippedGeneric": "自动刷新这次没有做：这仓库已有富化过的页，重跑骨架会把语义段和结论一起清掉。要新快照请手动点「重建骨架」。",
+        "wiki.autoRefresh.failed": "自动刷新试过但失败了",
         "wiki.run.pathRequired": "先填仓库目录的绝对路径",
         "wiki.run.failed": "生成失败",
         "wiki.run.notAbsolute": "要给绝对路径（例如 D:\\code\\my-repo）：相对路径会按服务端进程的当前目录解析，同一个请求换个启动位置就落到别的目录。",
@@ -526,16 +555,16 @@ window.__ModuleLoader__.load({
         "memory.settings.factsRunStatusOk": "成功",
         "memory.settings.factsRunStatusNoop": "无变更",
         "memory.settings.factsRunStatusFailed": "失败",
-        "memory.features.personaEnabled": "人格定义（beta）",
-        "memory.features.personaEnabled.hint": "把「设置 → 个性化」里的人格卡注入到每轮对话。默认关（beta）；总闸与人格卡内的开关同时打开才生效。",
-        "memory.features.personaStrictAddressing": "严格人格寻址",
-        "memory.features.personaStrictAddressing.hint": "开：会话身份没有对应人格卡、或那张卡被关掉时，就不注入人格——默认卡只兜「解析不到会话身份」的会话。宿主里跑着自带身份的 bot（DS Bot 那类）时关掉这种兜底，免得两句「你是谁」撞在同一轮。默认关 = 未命中就落默认卡（历史行为）。",
+        "memory.features.personaEnabled": "人格注入",
+        "memory.features.personaEnabled.hint": "把人格卡注入每轮对话；与卡内开关同时开才生效。",
+        "memory.features.personaStrictAddressing": "严格寻址",
+        "memory.features.personaStrictAddressing.hint": "身份没有对应人格卡时不注入，默认卡只兜解析不到的会话。",
         "memory.features.profileExtractEnabled": "画像提取草稿",
-        "memory.features.profileExtractEnabled.hint": "打开「设置 → 个性化 → Agent 眼中的你」卡上的「从记忆提取草稿」按钮：读一批活跃记忆、花一次模型调用，产一段「助手眼中的用户」草稿。草稿只在那张卡上展示副本，可一键复制，不会写进记忆库、也不会覆盖你自己填的「用户画像」。轻量档预设关（用户显式勾选仍然赢）。",
+        "memory.features.profileExtractEnabled.hint": "从记忆生成「Agent 眼中的你」草稿，只出副本。",
         "memory.features.profileFactsEnabled": "自动事实",
-        "memory.features.profileFactsEnabled.hint": "每次 dream（巩固）轮后，把这一窗口里沉淀的新记忆再读一遍，按会话身份卡维护一份「Agent 眼中的你」事实清单（设置 → 个性化 → 自动事实），注入在手填画像之后。事实住独立的表，不会覆盖你自己填的「用户画像」；面板上可逐条修正或删除（删除=归档，可恢复）。轻量档预设关（用户显式勾选仍然赢）。",
-        "memory.features.chorographyEnabled": "仓库地志（chorography）",
-        "memory.features.chorographyEnabled.hint": "读一遍仓库写成一份带页码的志书：确定性骨架零模型、可以随时重建；语义段由 CLI 的 headless 会话逐模块补。打开后有四个入口——模型侧三个只读工具、面板「仓库地志」浏览页、每轮的开局提纲注入、/choro 命令。关着时它们全部不存在（模型工具列表里根本没有，注入块不渲染，/choro 与侧栏入口都不注册）。默认关。",
+        "memory.features.profileFactsEnabled.hint": "每次巩固后自动维护「Agent 眼中的你」事实清单。",
+        "memory.features.chorographyEnabled": "仓库地志",
+        "memory.features.chorographyEnabled.hint": "把仓库读成一份带页码的志书，四个入口随开随用。",
         "memory.features.chorographyInject": "开局注入档位",
         "memory.features.chorographyInject.hint": "每轮往上下文里塞地志提纲的份量：light 只列文件数最多的 6 个模块（约 8 行）、full 列全部模块、off 不注入（工具与面板页仍可用）。只注模块名 / 文件数 / 页状态 / 页相对路径，不含正文；正文要模型自己用 choro_read_page 取。轻量档预设压成 off。",
         "memory.features.chorographyInject.off": "off（不注入）",
@@ -546,7 +575,7 @@ window.__ModuleLoader__.load({
         "memory.features.chorographyT1FromPanel": "面板可发起 T1",
         "memory.features.chorographyT1FromPanel.hint": "允许面板「仓库地志」页上的「补语义正文（T1）」按钮起一个 headless 会话逐模块补语义段。默认开：按钮是人主动点的，不是后台行为。关掉后按钮仍在，但点了会提示去命令行跑。",
         "memory.features.kbEnabled": "知识库",
-        "memory.features.kbEnabled.hint": "把外部资料（本地文件 / 网页 / 仓库地志页）切块索引，供检索与注入使用；面板新增「知识库」页管理与入库。默认关。",
+        "memory.features.kbEnabled.hint": "外部资料切块索引，供检索与注入；面板多一页。",
         "memory.features.group.kb": "知识库",
         "memory.settings.rules": "规则",
         "memory.settings.rulesHint": "给 Agent 立下必须遵守的规矩，随时增删，下一轮即生效。",
@@ -760,40 +789,46 @@ window.__ModuleLoader__.load({
         "memory.tab.document": "文档",
         "memory.features.title": "功能开关",
         "memory.features.desc": "控制插件在后台做哪些事。先看「常用」里的总开关就够了，其余项收在「全部设置」里。改动即时保存，重启 DSH 后生效。",
-        // Issue #427：分组原先按「实现」分（基础/检索与增强/巩固与睡眠/多会话隔离
-        // 是架构图的分区），而人真正会问的是四个问题：它会记住什么、它什么时候
-        // 写进去、它怎么用回来、不同会话会不会串。组名改成人话，术语留在 hint。
+        // Issue #427：组名说人话、术语留在 hint。#427 revamp（2026-11-11）按
+        // 「防线 / 写入 / 检索 / 个性化」重排：core 里「拦什么、记什么」的开关
+        // 与行为开关混在一起、enhance 里检索旋钮与人格画像混在一起，是设置页
+        // 「难找、难看」的主因（产品口径：每组 ≤6 行、性质一致）。
         // group.basic 是首屏层：新用户不读文档就该答得出「会不会自动记」；
         // 「别的会话能不能看到」由同在首屏的 scope 组回答。
-        "memory.features.group.basic": "常用（先动这几个）",
-        "memory.features.group.core": "它会记住什么",
+        "memory.features.group.basic": "常用",
+        // group.ext 是 v0.13.x 起的独立分组：mneme 本体只做记忆，仓库地志 /
+        // 知识库 / 日记本是三个可选子系统。它们是「装不装这个子系统」而不是
+        // 「每轮付多少」（#607 的「知识库没成型」一半是入口问题），故提到
+        // 首屏单列一组。
+        "memory.features.group.ext": "扩展功能",
+        "memory.features.group.safety": "防线与审计",
+        "memory.features.group.pipeline": "蒸馏与写入",
+        "memory.features.group.retrieve": "检索与注入",
+        "memory.features.group.persona": "个性化",
         // group.mo 是 v0.9.0 的独立分组（座位闸门，不是行为开关），现已随 M.O.
         // 下架从 FEATURE_GROUPS 摘掉；这条文案留着是为了恢复时不必再想措辞。
         "memory.features.group.mo": "它的工作流（M.O.）",
-        "memory.features.group.enhance": "它什么时候写进去",
-        "memory.features.group.dream": "它怎么用回来",
-        "memory.features.group.scope": "不同会话之间",
+        "memory.features.group.dream": "巩固与睡眠",
+        "memory.features.group.scope": "会话隔离",
         "memory.features.group.advanced": "高级",
         // 「全部设置」= 第一层折叠（issue #427 建议 1），常显只留 basic + scope
         // 两组；「高级」是它内部的第二层（进阶 7 项）。
         "memory.features.allToggle": "全部设置",
-        "memory.features.advancedToggle": "更少用的 7 个开关",
+        "memory.features.advancedToggle": "更少用的 9 个开关",
         "memory.features.restartHint": "重启 DSH 后生效",
         "memory.features.loadFailed": "加载失败",
         "memory.features.saveFailed": "保存失败",
         // Issue #427 建议 2：条目名给「打开会怎样、关掉会怎样」，术语放末尾。
         // 括号里的英文是设置项键名，末尾的「（BM25）」才是术语。
-        "memory.features.autoInject": "自动带上旧记忆（每轮都用）",
-        "memory.features.autoInject.hint": "开：每轮自动挑相关记忆塞给 Agent，它不用问就能想起；关：Agent 得自己调用查记忆的工具",
-        "memory.features.injectGuidanceEnabled": "顺带教 Agent 怎么用记忆",
-        "memory.features.injectGuidanceEnabled.hint": "开：在记忆工具的说明里写清什么时候该查、什么时候该写；关：只给工具不给用法",
-        "memory.features.continuityRescueEnabled": "长对话被压缩前先存一份快照",
-        "memory.features.continuityRescueEnabled.hint": "开：压缩前先存「正在做什么 / 下一步 / 未决问题」，关键上下文活过压缩；关：压缩可能把它压掉",
+        "memory.features.autoInject": "自动注入旧记忆",
+        "memory.features.autoInject.hint": "每轮自动把相关记忆带给 Agent，不用它自己查。",
+        "memory.features.injectGuidanceEnabled": "教 Agent 用记忆",
+        "memory.features.injectGuidanceEnabled.hint": "在记忆工具说明里写清何时查、何时写。",
+        "memory.features.continuityRescueEnabled": "压缩前存快照",
+        "memory.features.continuityRescueEnabled.hint": "长对话压缩前保存关键上下文，不被压掉。",
         "memory.features.parentOff": "上一项关闭时不生效",
         // 「默认 / 已改」徽标：overrides 里没有这个键 = 值来自 config schema 的
         // 默认值，一条命令就能退回。徽标让这件事不必去读配置文件才成立。
-        "memory.features.tagDefault": "默认",
-        "memory.features.tagDefault.hint": "这一项用的是出厂默认值，没有被你改过",
         "memory.features.tagChanged": "已改",
         "memory.features.tagChanged.hint": "你改过这一项，它不再用默认值",
         // 「待重启」是第三态，不是「已改」的加强版：#481 之前面板只有「已改」，
@@ -801,14 +836,14 @@ window.__ModuleLoader__.load({
         "memory.features.tagPending": "待重启",
         "memory.features.tagPending.hint": "这一项已存进配置，但本次启动还没用上——重启 DSH（或在插件管理里关开一次本插件）后才生效",
         "memory.features.pendingRestartNotice": "有改动还没生效：标着「待重启」的开关要等重启 DSH 后才起作用（在插件管理里把本插件关开一次也行）。",
-        "memory.features.autoSummarize": "自动把对话记下来（自动注入之外）",
-        "memory.features.autoSummarize.hint": "开：对话结束自动提炼成长期记忆条目（autoSummarize）；关：只有你手动存或 Agent 主动存才有记忆",
-        "memory.features.hotMemoryEnabled": "顺带带上最近几轮原话",
-        "memory.features.hotMemoryEnabled.hint": "开：注入时把最近几轮的对话原文一并带上，Agent 眼前就是刚才聊的内容；关：只带提炼后的长期记忆。这几轮原文不会写进长期记忆（热记忆，默认开）",
-        "memory.features.injectTimePrefix": "会话开头告诉它今天几号",
-        "memory.features.injectTimePrefix.hint": "开：每个新会话的第一轮注入一次日期与星期，「今天」「上周」这类说法更稳；关：注入里不带时间（时间前缀，默认关）",
-        "memory.features.entityExtractionEnabled": "顺手抽出人名、项目和概念",
-        "memory.features.entityExtractionEnabled.hint": "开：每条新记忆里抽出人物/项目/概念，关系图谱自己长起来，也能按「谁」找记忆；关：只存整条记忆，不建关系（实体抽取，默认关）",
+        "memory.features.autoSummarize": "自动蒸馏对话",
+        "memory.features.autoSummarize.hint": "对话结束后自动提炼成长期记忆。",
+        "memory.features.hotMemoryEnabled": "带上最近几轮原话",
+        "memory.features.hotMemoryEnabled.hint": "注入附带最近几轮对话原文，不写进长期记忆。",
+        "memory.features.injectTimePrefix": "注入日期星期",
+        "memory.features.injectTimePrefix.hint": "新会话第一轮带一次日期，「今天」更稳。",
+        "memory.features.entityExtractionEnabled": "实体抽取",
+        "memory.features.entityExtractionEnabled.hint": "每条新记忆抽出人物/项目/概念，长出关系图谱。",
         "memory.features.entityExtractionProvider": "实体抽取 Provider",
         "memory.features.entityExtractionModel": "实体抽取模型",
         "memory.features.entityExtractionReasoning": "实体抽取思考强度",
@@ -824,14 +859,16 @@ window.__ModuleLoader__.load({
         "memory.features.summarizeReasoningEffort.high": "高",
         "memory.features.summarizeReasoningEffort.hint": "思考型模型建议选「低」或「关闭思考」，避免推理占满输出导致总结失败",
         "memory.features.entityExtractionModelHint": "Provider / 模型留空 = 跟随主对话模型；思考强度选「跟随默认」= 服务商默认",
-        "memory.features.codingRetrospect": "写代码的过程也记下来",
-        "memory.features.codingRetrospect.hint": "开：整段编码过程（含报错与工具调用）一并回顾，沉淀踩坑、约束和被否决的方案；关：只提炼对话内容（编码记忆蒸馏，默认关）",
-        "memory.features.rerankEnabled": "搜出来的结果再精排一遍",
-        "memory.features.rerankEnabled.hint": "开：本地重排模型给召回结果重新打分，更准但更慢；关：直接用检索时的排序（结果重排，默认关）",
-        "memory.features.heatEnabled": "越久没用越靠后（像会忘）",
-        "memory.features.heatEnabled.hint": "开：像遗忘曲线一样给记忆降温，长期没用过的往后排、不占注入名额；关：一直按相关度排（热度衰减，默认关）",
-        "memory.features.documentMemoryEnabled": "长文档只存一张摘要卡",
-        "memory.features.documentMemoryEnabled.hint": "开：Agent 写的长文档在记忆里只放「摘要卡」，正文仍由 Agent 保管、按需读取，注入只带摘要；关：整篇都往上下文里带（document 型记忆，默认关）",
+        "memory.features.codingRetrospect": "编码回溯",
+        "memory.features.codingRetrospect.hint": "整段编码过程一并回顾，沉淀踩坑与被否方案。",
+        "memory.features.rerankEnabled": "结果重排",
+        "memory.features.rerankEnabled.hint": "本地重排模型给召回结果重新打分，更准更慢。",
+        "memory.features.heatEnabled": "热度衰减",
+        "memory.features.heatEnabled.hint": "越久没用的记忆越靠后，像遗忘曲线。",
+        "memory.features.injectHeatEnabled": "注入热度排序",
+        "memory.features.injectHeatEnabled.hint": "注入排序乘上记忆热度；需先开「热度衰减」。",
+        "memory.features.documentMemoryEnabled": "文档只存摘要卡",
+        "memory.features.documentMemoryEnabled.hint": "长文档记忆只放摘要，正文按需读取。",
         // --- v0.9.0 M.O.（Modus Operandi，beta）---
         // M.O. = Modus Operandi，拉丁语「一个人一贯的做事方式」；也是 org 词根
         // modus（modusensus）。界面主显示 M.O.，设置项 hint 第一句给全名。
@@ -907,10 +944,10 @@ window.__ModuleLoader__.load({
         "memory.features.actionPipelineEnabled.hint": "只读视图：把真实会话里反复走通的动作连成一张图谱——会话头图标、右栏完整视图、每次运行的结算卡。看 ≠ 写：沉淀由「M.O. 自动沉淀」单独开，执行记账由 /mo-run 单独开。Modus Operandi（工作流）。重启 DSH 后生效",
         "memory.features.actionNudgeEnabled": "自动沉淀工作流（beta）",
         "memory.features.actionNudgeEnabled.hint": "开：每轮结束后看一眼这个项目自己的会话日志，把反复走通的动作挖成记忆库里的一条「提议」，等你确认才可能变成工作流。只产草稿、不自动启用、不往仓库里塞文件。挂热路径且要解压日志，轻量档会强制关掉。重启 DSH 后生效",
-        "memory.features.diaryEnabled": "日记本（beta）",
-        "memory.features.diaryEnabled.hint": "开：右栏多一个「日记本」，拥有人格的 agent 每天用这个项目真实发生过的对话写一篇日记——今天没聊就不写，不编。日记正文落在记忆目录，点「存到这个项目」才复制一份到项目里。轻量档会强制关掉。重启 DSH 后生效",
-        "memory.features.diaryWriteEveryMinutes": "每隔多少分钟自动写（0 = 关）",
-        "memory.features.diaryWriteEveryMinutes.hint": "关着时只有「聊完天」和「重启 DSH」两个时刻会判断今天该不该写——你整天不说话，它就整天不写。填个分钟数（如 60）它会到点自己醒来看一眼。仍然一天最多一篇，写不写由磁盘上有没有当天的文件决定",
+        "memory.features.diaryEnabled": "日记本",
+        "memory.features.diaryEnabled.hint": "有人格的 agent 每天按真实对话写一篇日记。",
+        "memory.features.diaryWriteEveryMinutes": "自动写间隔（分钟）",
+        "memory.features.diaryWriteEveryMinutes.hint": "到点自动看一眼今天该不该写；0 = 只在聊完与重启时判。",
         "memory.diary.title": "日记本",
         "memory.diary.note": "写的是这个项目里真实发生过的事：没聊过就不写，不编。",
         "memory.diary.write": "写今天",
@@ -934,8 +971,7 @@ window.__ModuleLoader__.load({
         "memory.diary.bookLabel": "纸和字",
         "memory.diary.book.plain": "素纸",
         "memory.diary.book.ruled": "横线",
-        "memory.diary.book.grid": "方格",
-        "memory.diary.book.kraft": "牛皮",
+        "memory.diary.book.grid": "点阵",
         "memory.diary.count": "共 {n} 篇",
         "memory.diary.writtenOk": "写好了：{path}",
   "memory.diary.exportOk": "已存到 {path}",
@@ -949,28 +985,34 @@ window.__ModuleLoader__.load({
         "memory.diary.status.written": "写了",
         "memory.diary.status.skipped": "跳过",
         "memory.diary.status.failed": "失败",
-        "memory.features.resilientModelDownload": "模型下载断了能续上",
-        "memory.features.resilientModelDownload.hint": "开：下载中断后从断点续传并自动重试；关：中断就整份重来（断点续传，默认开）",
-        "memory.features.searchSemanticDedup": "搜到意思相同的只留一条",
-        "memory.features.searchSemanticDedup.hint": "开：检索结果里意思相近的条目合并成一条，少占名额；关：同义条目一起出现（语义去重，默认关）",
-        "memory.features.autoDream": "后台自动整理记忆（合并 · 去重）",
-        "memory.features.autoDream.hint": "开：后台自动合并、沉淀碎片记忆（autoDream）；关：记忆只增不减，越用越散",
-        "memory.features.sleepModeEnabled": "你不在的时候它整理记忆",
-        "memory.features.sleepModeEnabled.hint": "开：空闲时段做分层压缩与整理，白天少打扰；关：只有你手动触发的整理（睡眠模式，默认关）",
+        "memory.features.resilientModelDownload": "下载断点续传",
+        "memory.features.resilientModelDownload.hint": "模型下载中断后从断点续传并自动重试。",
+        "memory.features.searchSemanticDedup": "同义去重",
+        "memory.features.searchSemanticDedup.hint": "检索结果里意思相近的条目合并成一条。",
+        "memory.features.autoDream": "后台自动整理",
+        "memory.features.autoDream.hint": "空闲时段自动巩固：去重、合并、归档。",
+        "memory.features.sleepModeEnabled": "睡眠整理",
+        "memory.features.sleepModeEnabled.hint": "空闲时段分层压缩与整理，白天少打扰。",
         // #619：情感归因是 sleep 的子相——父开关关着它就一定不跑，所以紧挨着摆。
-        "memory.features.sleepAffectiveEnabled": "它记得你在哪件事上是什么心情",
-        "memory.features.sleepAffectiveEnabled.hint": "开：整理时把「某人在某件事上的情绪」记成一条带场合的关联，跨多个独立场合反复出现才认作稳定倾向；关：不记录情绪（情感归因，默认关，且要睡眠模式开着）",
+        "memory.features.sleepAffectiveEnabled": "情感归因",
+        "memory.features.sleepAffectiveEnabled.hint": "整理时记下「谁在哪件事上什么心情」，反复出现才认。",
         // #427 建议 5：hybridInject / selectiveInjectEnabled / adaptiveThresholdEnabled
         // 是同一件事「带什么回来」的三档，相邻摆放并在 hint 里点明，不再摊成
         // 三个不相干的并列开关。
-        "memory.features.hybridInject": "关键词 + 意思 两路一起找",
-        "memory.features.hybridInject.hint": "开：两路检索各取一批再合并，召回更全；关：只用一路。「带什么回来」共三档（混合注入 / 选择性注入 / 自适应阈值），可只开其中一档（混合注入，默认开）",
-        "memory.features.selectiveInjectEnabled": "只带真正相关的记忆",
-        "memory.features.selectiveInjectEnabled.hint": "开：按相关性筛一遍再注入，上下文更干净；关：带出去的更多也更杂。三档之一（选择性注入，默认开）",
-        "memory.features.adaptiveThresholdEnabled": "按检索质量自动调松紧",
-        "memory.features.adaptiveThresholdEnabled.hint": "开：召回质量差时放宽门槛、好时收紧；关：门槛固定。三档之一（自适应阈值，默认开）",
-        "memory.features.reflectionUpdateEnabled": "整理时允许改已有记忆",
-        "memory.features.reflectionUpdateEnabled.hint": "开：巩固可以改写、合并已有条目，不是只增不改；关：旧记忆永不被自动改动（反思更新，默认开）",
+        "memory.features.hybridInject": "混合注入",
+        "memory.features.hybridInject.hint": "关键词 + 语义两路一起找，召回更全。",
+        // 实体召回（#219）与图谱锚定（#24）：进阶检索轴，默认关、依赖实体抽取
+        // 产出（pipeline 组），收进「高级」第二层折叠。
+        "memory.features.entityRecallEnabled": "实体召回",
+        "memory.features.entityRecallEnabled.hint": "查询命中实体名时，把该实体挂联的记忆一起召回。",
+        "memory.features.graphAnchoringEnabled": "图谱锚定",
+        "memory.features.graphAnchoringEnabled.hint": "以命中实体为种子沿关系表级联扩散，把邻居记忆带进召回池。",
+        "memory.features.selectiveInjectEnabled": "选择性注入",
+        "memory.features.selectiveInjectEnabled.hint": "按相关性筛一遍再注入，上下文更干净。",
+        "memory.features.adaptiveThresholdEnabled": "自适应阈值",
+        "memory.features.adaptiveThresholdEnabled.hint": "召回质量差时放宽门槛、好时收紧。",
+        "memory.features.reflectionUpdateEnabled": "允许改写旧记忆",
+        "memory.features.reflectionUpdateEnabled.hint": "巩固可以改写合并已有条目，不只是增。",
         "memory.features.distill": "蒸馏与限流",
         "memory.features.distillRateLimitIntervalMs": "蒸馏放行间隔 (ms)",
         "memory.features.distillRateLimitRetries": "429 重试次数",
@@ -981,42 +1023,42 @@ window.__ModuleLoader__.load({
         // hint 必须写清两件事：这是**原始对话**落盘（隐私面），以及天数只管
         // 启动期裁剪（reclaim 走另一条 --older-than，不读这个键）。
         "memory.features.distillRecords.enabled": "留存蒸馏原文",
-        "memory.features.distillRecords.enabled.hint": "蒸馏时把窗口内的公开对话原文一并落盘，并记下每条记忆的来源区间；私密推理与工具结果不落。关 = 一行不写、连收集都不做",
+        "memory.features.distillRecords.enabled.hint": "蒸馏时落盘窗口原文并记来源，私密内容不落。",
         "memory.features.distillRecords.retentionDays": "原文保留天数",
-        "memory.features.distillRecords.retentionDays.hint": "1–3650 天；只管启动期裁剪。想让 reclaim 也按这个天数回收，需显式传 --older-than 同一数值",
+        "memory.features.distillRecords.retentionDays.hint": "1–3650 天，只管启动期裁剪。",
         "memory.features.codingBoostFactor": "编码记忆加权",
-        "memory.features.memoryQualityFilter.enabled": "没价值的记忆自动收起来",
-        "memory.features.memoryQualityFilter.enabled.hint": "开：低价值条目自动归档、注入时按质量降权；关：什么都留着，噪声也一起带（记忆质量过滤，默认开）",
-        "memory.features.llmAudit.enabled": "记下后台用了多少模型调用",
-        "memory.features.llmAudit.enabled.hint": "开：巩固/总结的后台调用与 token 消耗都有账可查；关：后台开销无从核对（调用审计，默认开）",
+        "memory.features.memoryQualityFilter.enabled": "质量过滤",
+        "memory.features.memoryQualityFilter.enabled.hint": "低价值记忆自动归档、注入时降权。",
+        "memory.features.llmAudit.enabled": "调用审计",
+        "memory.features.llmAudit.enabled.hint": "后台模型调用与 token 消耗都有账可查。",
         // #254：写入准入两层。检测关时整条路径不碰；检测开、拦截关 = 仅告警 +
         // 留审计；两个都开才真拦。文案要写清「只留审计」与「真拦下」的区别，
         // 否则操作者会以为打开检测就已经在拦。
-        "memory.features.writeAdmission.enabled": "写入前先判一下是不是废话（只记不拦）",
-        "memory.features.writeAdmission.enabled.hint": "开：空白/噪声写入判为命中并留一条审计记录，但仍存进去；关：完全不判。要真拦，见下一项（写入准入判定，默认关）",
-        "memory.features.writeAdmission.enforce": "真把没用的写入挡下来",
-        "memory.features.writeAdmission.enforce.hint": "开：命中直接拒绝写入；关：只留审计、照存不误。需先打开上面那项判定（写入准入拦截，默认关）",
-        "memory.features.preInjectGate.enabled": "注入前先筛掉「只是我的看法」的记忆（只记不拦）",
-        "memory.features.preInjectGate.enabled.hint": "开：注入前判出意见/立场类记忆并留审计，先观察分布；关：照常注入（注入前判定，默认关）",
-        "memory.features.preInjectGate.enforce": "注入时真滤掉判定不合适的",
-        "memory.features.preInjectGate.enforce.hint": "开：命中的候选在注入时丢掉；关：只留审计、照常注入。需先打开上面那项判定（注入前判定拦截，默认关）",
+        "memory.features.writeAdmission.enabled": "写入判定（只记不拦）",
+        "memory.features.writeAdmission.enabled.hint": "写入前判空白与噪声，先记账不拦截。",
+        "memory.features.writeAdmission.enforce": "写入拦截",
+        "memory.features.writeAdmission.enforce.hint": "判为噪声的写入直接拒绝。需先开「写入判定」。",
+        "memory.features.preInjectGate.enabled": "注入判定（只记不拦）",
+        "memory.features.preInjectGate.enabled.hint": "注入前判出意见类记忆，先记账观察。",
+        "memory.features.preInjectGate.enforce": "注入过滤",
+        "memory.features.preInjectGate.enforce.hint": "判定不合适的候选注入时丢掉。需先开「注入判定」。",
         // #164 A2：密钥/PII 判据自己的闸。文案要写清它管的是哪一批判据（与上面的
         // 空白/噪声分开）、它跑在「写入准入判定」里面（那一项关着就不跑），以及
         // 「开着也不拦」——拦是上面那项的事。
-        "memory.features.sensitiveScanEnabled": "写入前扫一遍密钥和个人信息",
-        "memory.features.sensitiveScanEnabled.hint": "开：在写入准入判定里面扫密钥/个人信息，命中只留审计；要真拦，再打开「写入准入拦截」。判定关着时它不跑（密钥/PII 扫描，默认关）",
-        "memory.features.bm25SearchEnabled": "也用关键词方式找记忆",
-        "memory.features.bm25SearchEnabled.hint": "开：多一个字少一个字也搜得到，专名、报错码、路径更易命中，与「按意思找」互补；关：只按语义相近度（BM25 关键词检索，默认开）",
-        "memory.features.conflictFreezeEnabled": "互相矛盾的记忆先冻结",
-        "memory.features.conflictFreezeEnabled.hint": "开：整理发现矛盾时先冻结待你确认，不让两条同时生效；关：两边都照用（冲突冻结，默认关）",
-        "memory.features.scopeEnabled": "记住每条记忆来自哪个会话",
-        "memory.features.scopeEnabled.hint": "开：每条新记忆标上来自哪个 Agent / 工作区，别的会话能不能看到由它说了算；关：新记忆不带来源，所有会话共用一批记忆（作用域标注，默认关）",
-        "memory.features.strictScope": "别人设为私有的记忆我看不见",
-        "memory.features.strictScope.hint": "开：其他会话明确标私有的记忆对你彻底不可见；关：仍可见、只是排到后面。要彻底隔离请用条目的「敏感度」字段。需先打开上面那项标注（严格隔离，默认关）",
-        "memory.features.trustEpistemicWeighting": "按来源可信度调排序",
-        "memory.features.trustEpistemicWeighting.hint": "开：可信度高的来源排前面；关：一视同仁（可信度加权，实验性，默认关）",
-        "memory.features.reflectionFailureTracking": "整理失败时留下案例",
-        "memory.features.reflectionFailureTracking.hint": "开：把失败原因与案例记下来供诊断改进；关：失败不留记录（失败追踪，默认开）",
+        "memory.features.sensitiveScanEnabled": "密钥与隐私扫描",
+        "memory.features.sensitiveScanEnabled.hint": "写入判定里顺带扫密钥/个人信息，命中只记账。",
+        "memory.features.bm25SearchEnabled": "BM25 检索",
+        "memory.features.bm25SearchEnabled.hint": "关键词一路的词法检索，与语义互补。",
+        "memory.features.conflictFreezeEnabled": "矛盾冻结",
+        "memory.features.conflictFreezeEnabled.hint": "整理发现矛盾先冻结待确认，不自动裁决。",
+        "memory.features.scopeEnabled": "来源标注",
+        "memory.features.scopeEnabled.hint": "每条记忆标上来自哪个 Agent / 工作区。",
+        "memory.features.strictScope": "严格隔离",
+        "memory.features.strictScope.hint": "别的会话标私有的记忆彻底不可见。需先开「来源标注」。",
+        "memory.features.trustEpistemicWeighting": "可信度加权",
+        "memory.features.trustEpistemicWeighting.hint": "来源可信度高的记忆排前面（实验性）。",
+        "memory.features.reflectionFailureTracking": "失败案例留存",
+        "memory.features.reflectionFailureTracking.hint": "整理失败的原因与案例记下来供诊断。",
         "memory.features.embedRoute": "语义检索路线",
         "memory.features.embedProvider": "Embedding 提供方",
         "memory.features.embedProvider.openai": "OpenAI 兼容接口",
@@ -1029,23 +1071,23 @@ window.__ModuleLoader__.load({
         "memory.features.ollamaBaseUrl": "Ollama 服务地址",
         "memory.features.ollamaModel": "Ollama 模型名",
         "memory.features.dreamProvider": "巩固模型 Provider",
-        "memory.features.dreamModel": "巩固用模型名",
-        "memory.features.dreamModelHint": "留空 = 跟随主对话模型；只影响记忆巩固（autoDream）用的模型",
-        "memory.features.dreamPeakHours": "高峰时段（不做梦）",
-        "memory.features.dreamPeakHours.hint": "设置忙碌时段，巩固会避开这些时间、事后补跑。写法：09:00-18:00，多段用逗号分隔，可带星期（如 mon-fri 08:00-12:00），支持跨零点；留空 = 不限制",
+        "memory.features.dreamModel": "巩固模型名",
+        "memory.features.dreamModelHint": "留空 = 跟随主对话模型；只影响巩固用的模型。",
+        "memory.features.dreamPeakHours": "巩固高峰时段",
+        "memory.features.dreamPeakHours.hint": "巩固避开这些时段、事后补跑。写法 09:00-18:00，可多段。",
         "memory.features.dreamPeakHours.invalid": "当前值无法解析为时段，将按未配置处理（巩固全天候生效）。写法：09:00-18:00，多段用逗号分隔，可带星期前缀（mon-fri 08:00-12:00），支持跨零点；24:00 越界请写 00:00",
-        "memory.features.summarizePeakHours": "高峰时段（不蒸馏）",
-        "memory.features.summarizePeakHours.hint": "与巩固侧同一份写法；蒸馏会避开这些时段，窗口先攒着、非高峰一次蒸完",
+        "memory.features.summarizePeakHours": "蒸馏高峰时段",
+        "memory.features.summarizePeakHours.hint": "蒸馏避开这些时段，窗口攒着非高峰一次蒸完。",
         "memory.features.summarizePeakHours.invalid": "当前值无法解析为时段，将按未配置处理（蒸馏全天候生效）。写法与巩固侧相同：09:00-18:00，多段用逗号分隔，可带星期前缀，支持跨零点",
         "memory.features.sleepProvider": "睡眠 Provider",
         "memory.features.sleepModel": "睡眠模型",
         "memory.features.sleepModelHint": "留空 = 用巩固模型或当前模型；建议选非思考模型",
         // Issue #478：max_tokens 预算键。hint 写清两件事：这是「单轮输出预算」，
         // 以及服务商硬上限更小时后端会按报错自动降级重试（对齐 #478 的后端行为）。
-        "memory.features.dreamMaxTokens": "巩固单轮输出上限 (max_tokens)",
-        "memory.features.dreamMaxTokens.hint": "单轮巩固最多生成多少 token，256–131072。默认 131072 超过部分服务商硬上限时，后端会按报错里的上限自动降级重试",
-        "memory.features.sleepMaxTokens": "睡眠单轮输出上限 (max_tokens)",
-        "memory.features.sleepMaxTokens.hint": "睡眠阶段冲突/模式判断的单轮输出预算，256–131072；超上限同样自动降级",
+        "memory.features.dreamMaxTokens": "巩固输出上限",
+        "memory.features.dreamMaxTokens.hint": "单轮巩固最多生成的 token 数，超上限自动降级。",
+        "memory.features.sleepMaxTokens": "睡眠输出上限",
+        "memory.features.sleepMaxTokens.hint": "睡眠阶段单轮输出预算，超上限自动降级。",
         "memory.features.routeFollowDefault": "跟随默认路由",
         "memory.features.modelTest": "测试连通性",
         "memory.features.modelTesting": "测试中…",
@@ -1387,6 +1429,7 @@ window.__ModuleLoader__.load({
         "memory.status.token.conflictsFoot": "来自 /dream-status · 实时",
         "memory.status.token.donut": "按组件 · 谁花了这些 token",
         "memory.status.token.days": "按天 · 7 天趋势",
+        "memory.status.token.daysEmpty": "最近 7 天没有 token 记录",
         "memory.status.token.heat": "8 周热力 · 每天花了多少",
         "memory.status.token.heatLess": "少",
         "memory.status.token.heatMore": "多",
@@ -1445,6 +1488,36 @@ window.__ModuleLoader__.load({
         "wiki.t1.failedCount": "failed",
         "wiki.stale": "Code changed",
         "wiki.stale.hint": "The repository's code changed since the last run, so these pages may be out of date — press \"Rebuild skeleton\" to refresh.",
+        // Evidence review (Grounded Claims): which claims a change touched, without
+        // re-running T1. "Could not compare" and "nothing touched" must read as two
+        // different sentences — if they look the same on screen, an uncomputed check
+        // passes for a clean bill of health, which is exactly what #607 was about.
+        "wiki.drift": "Evidence check",
+        "wiki.drift.hint": "Diffs each claim's recorded file and line range against git: only the ones a change actually touched are flagged. No model call.",
+        "wiki.drift.loading": "Comparing…",
+        "wiki.drift.summary": "{pages} pages · {claims} claims · {risk} need review",
+        "wiki.drift.clean": "The baseline is the current HEAD: every claim still points where it did.",
+        "wiki.drift.none": "This change did not touch any claim anchor.",
+        "wiki.drift.gitUnreadable": "Cannot read git for this repository (not a git directory, or unreadable), so nothing can be compared.",
+        "wiki.drift.anchorStale": "The baseline commit recorded at generation time no longer exists in git (force-push or a shallow clone cut it off): nothing to compare against — rebuild the skeleton.",
+        "wiki.drift.blocked": "Comparison failed",
+        "wiki.drift.touched": "A change touched this line",
+        "wiki.drift.shifted": "Insertions above moved it {n} lines",
+        "wiki.drift.deleted": "File deleted",
+        "wiki.drift.unverifiable": "No line number recorded — cannot locate",
+        "wiki.drift.inconsistent": "This page has prose in the file but no claims on record (the last T1 run did not finish), so its evidence cannot be checked.",
+        // Claim provenance: each page's claims were read from one specific commit. Without
+        // saying which, "evidence check" compares against an unknown point in time.
+        "wiki.drift.verified": "Verified at {sha}",
+        "wiki.drift.verifiedUnknown": "This page did not record which commit its claims were verified against (earlier enrichment did not store one), so staleness cannot be decided. Re-running T1 will record it.",
+        "wiki.drift.verifiedApprox": "This page was enriched before provenance was recorded; the comparison below starts from the repository baseline {sha} (earlier than the real one, so it can over-report but never miss).",
+        "wiki.drift.anchorStalePage": "The commit this page was verified against no longer exists in git (force-push or a shallow clone cut it off), so this page cannot be compared.",
+        "wiki.drift.undecidable": "{n} page(s) have no usable verification baseline and were left out of the comparison",
+        // Auto-refresh was deliberately skipped. This must read as "I did not do it,
+        // because doing it would lose something", never as "refresh failed".
+        "wiki.autoRefresh.skipped": "Auto-refresh was skipped: {n} page(s) in this repository are already enriched, and rebuilding the skeleton would wipe their prose and claims. Click Rebuild skeleton yourself if you want a new snapshot (it tells you which pages it drops).",
+        "wiki.autoRefresh.skippedGeneric": "Auto-refresh was skipped: this repository already has enriched pages, and rebuilding the skeleton would wipe their prose and claims. Click Rebuild skeleton yourself if you want a new snapshot.",
+        "wiki.autoRefresh.failed": "Auto-refresh was attempted but failed",
         "wiki.run.pathRequired": "Enter the repository's absolute path first",
         "wiki.run.failed": "Generate failed",
         "wiki.run.notAbsolute": "Give an absolute path (for example /home/me/code/my-repo): relative paths resolve against the server process's working directory, so the same request can land somewhere else depending on how the host was started.",
@@ -1615,16 +1688,16 @@ window.__ModuleLoader__.load({
         "memory.settings.factsRunStatusOk": "ok",
         "memory.settings.factsRunStatusNoop": "no change",
         "memory.settings.factsRunStatusFailed": "failed",
-        "memory.features.personaEnabled": "Persona (beta)",
-        "memory.features.personaEnabled.hint": "Inject the persona card (Settings → Personalization) into every turn. Off by default (beta); both this switch and the card's own toggle must be on.",
-        "memory.features.personaStrictAddressing": "Strict persona addressing",
-        "memory.features.personaStrictAddressing.hint": "On: when a session's identity has no persona card — or that card is switched off — no persona is injected, so the default card only covers sessions with no resolvable identity. Turn this on when the host runs a bot that brings its own identity (DS Bot and friends), otherwise two \"you are ...\" claims land in the same turn. Off (default): unresolved identities fall back to the default card, as before.",
-        "memory.features.profileExtractEnabled": "Profile draft from memory",
-        "memory.features.profileExtractEnabled.hint": "Adds the \"Draft from memory\" button to the \"You in the agent's eyes\" card under Settings → Personalization: reads a batch of active memories, spends one model call, and returns an \"as the assistant sees them\" draft. The draft is only shown there as a copy you can copy out — it is never written to the memory store and never overwrites the User Profile you wrote yourself. Off in the lightweight preset (an explicit choice still wins).",
+        "memory.features.personaEnabled": "Persona injection",
+        "memory.features.personaEnabled.hint": "Injects persona cards each turn; the card switch must be on too.",
+        "memory.features.personaStrictAddressing": "Strict addressing",
+        "memory.features.personaStrictAddressing.hint": "No persona card means no injection; the default card covers unresolvable sessions only.",
+        "memory.features.profileExtractEnabled": "Profile draft",
+        "memory.features.profileExtractEnabled.hint": "Generates a draft profile from memories — copy only, never auto-applied.",
         "memory.features.profileFactsEnabled": "Auto facts",
-        "memory.features.profileFactsEnabled.hint": "After each dream (consolidation) run, the memories settled in that window are read once more to maintain a per-identity-card list of facts the agent holds about you (Settings → Personalization → Auto facts), injected after the handwritten profile. Facts live in their own tables and never overwrite the User Profile you wrote yourself; any fact can be fixed or removed in the panel (removing = archiving, restorable). Off in the lightweight preset (an explicit choice still wins).",
-        "memory.features.chorographyEnabled": "Repo atlas (chorography)",
-        "memory.features.chorographyEnabled.hint": "Reads a repository once and writes it up as a paginated atlas: the deterministic skeleton costs no model and can be rebuilt any time; the semantic sections are added per module by a headless session in the CLI. Turning it on enables four entry points — three read-only tools for the model, the atlas panel page, the per-turn outline injection, and the /choro command. With it off none of them exist (the tools are absent from the model's tool list, the injection block is not rendered, neither /choro nor the sidebar entry is registered). Off by default.",
+        "memory.features.profileFactsEnabled.hint": "Maintains the facts list after every consolidation run.",
+        "memory.features.chorographyEnabled": "Repo chorography",
+        "memory.features.chorographyEnabled.hint": "Reads the repo into a paginated gazetteer; four entry points.",
         "memory.features.chorographyInject": "Opening injection tier",
         "memory.features.chorographyInject.hint": "How much of the atlas outline goes into context every turn: light lists the six modules with the most files (about 8 lines), full lists every module, off injects nothing (tools and the panel page still work). Only module name / file count / page status / page path are injected, never page bodies — the model fetches those with choro_read_page. The lightweight preset forces off.",
         "memory.features.chorographyInject.off": "off (no injection)",
@@ -1635,7 +1708,7 @@ window.__ModuleLoader__.load({
         "memory.features.chorographyT1FromPanel": "Allow T1 from panel",
         "memory.features.chorographyT1FromPanel.hint": "Lets the \"Enrich prose (T1)\" button on the Repo Atlas panel start a headless session that fills in the semantic sections module by module. On by default: it is a button a human presses, not a background behaviour. With it off the button stays but points you at the CLI.",
         "memory.features.kbEnabled": "Knowledge base",
-        "memory.features.kbEnabled.hint": "Chunks and indexes external material (local files / web pages / Repo Atlas pages) for recall and injection, plus a \"Knowledge base\" panel page to manage and ingest it. Off by default.",
+        "memory.features.kbEnabled.hint": "Chunks and indexes external material; adds a panel page.",
         "memory.features.group.kb": "Knowledge base",
         "memory.settings.rules": "Rules",
         "memory.settings.rulesHint": "Rules the agent must follow — add or remove anytime, effective next turn.",
@@ -1846,39 +1919,46 @@ window.__ModuleLoader__.load({
         // group.basic is the first-screen tier; the scope group sits there too so
         // "can other sessions see this?" is answerable without opening anything.
         "memory.features.group.basic": "Common (start here)",
-        "memory.features.group.core": "What gets remembered",
+        // group.ext: mneme proper is memory only; chorography, the knowledge base
+        // and the diary are three optional subsystems. Each switch decides whether
+        // the subsystem exists at all, not how much it costs per turn — mixing them
+        // into the behaviour groups is why "you can only find it once it is already
+        // on" (#607's "the knowledge base never took shape" was half an entry-point
+        // problem), so they get their own first-screen group.
+        "memory.features.group.ext": "Extensions",
+        "memory.features.group.safety": "Guardrails & audit",
+        "memory.features.group.pipeline": "Distillation & writing",
+        "memory.features.group.retrieve": "Retrieval & injection",
+        "memory.features.group.persona": "Personalization",
         "memory.features.group.mo": "Its workflow (M.O.)",
-        "memory.features.group.enhance": "When it gets written",
-        "memory.features.group.dream": "How it comes back",
-        "memory.features.group.scope": "Between sessions",
+        "memory.features.group.dream": "Consolidation & sleep",
+        "memory.features.group.scope": "Session isolation",
         "memory.features.group.advanced": "Advanced",
         "memory.features.allToggle": "All settings",
-        "memory.features.advancedToggle": "7 rarer switches",
+        "memory.features.advancedToggle": "9 rarer switches",
         "memory.features.restartHint": "Takes effect after restarting DSH",
         "memory.features.loadFailed": "Failed to load",
         "memory.features.saveFailed": "Failed to save",
-        "memory.features.autoInject": "Carry old memories into every turn",
-        "memory.features.autoInject.hint": "On: relevant memories are handed to the agent every turn, so it remembers without being asked. Off: the agent has to call the search tool itself",
-        "memory.features.injectGuidanceEnabled": "Also teach the agent how to use memory",
-        "memory.features.injectGuidanceEnabled.hint": "On: the memory tools' description says when to search and when to write. Off: the tools ship without guidance",
-        "memory.features.continuityRescueEnabled": "Snapshot before a long chat gets compacted",
-        "memory.features.continuityRescueEnabled.hint": "On: a snapshot of what's in progress / next steps / open questions is stored before compaction, so key context survives it. Off: compaction can crush it",
+        "memory.features.autoInject": "Auto-inject memories",
+        "memory.features.autoInject.hint": "Relevant memories reach the agent every turn — no need to ask.",
+        "memory.features.injectGuidanceEnabled": "Teach memory usage",
+        "memory.features.injectGuidanceEnabled.hint": "Tool descriptions explain when to search vs. write.",
+        "memory.features.continuityRescueEnabled": "Pre-compaction snapshot",
+        "memory.features.continuityRescueEnabled.hint": "Saves key context before compaction eats it.",
         "memory.features.parentOff": "Inactive while the switch above is off",
-        "memory.features.tagDefault": "default",
-        "memory.features.tagDefault.hint": "This one is at its factory default — you have not changed it",
         "memory.features.tagChanged": "changed",
         "memory.features.tagChanged.hint": "You changed this one; it no longer uses the default",
         "memory.features.tagPending": "restart pending",
         "memory.features.tagPending.hint": "Saved, but not yet in effect for this session — restart DSH (or toggle this plugin off and on in the plugin manager) to apply it",
         "memory.features.pendingRestartNotice": "Some changes are not in effect yet: switches marked \"restart pending\" apply only after you restart DSH (toggling this plugin off and on in the plugin manager works too).",
-        "memory.features.autoSummarize": "Turn conversations into memory automatically",
-        "memory.features.autoSummarize.hint": "On: memory entries are distilled when a conversation ends (autoSummarize). Off: memory only exists if you save it, or the agent decides to",
-        "memory.features.hotMemoryEnabled": "Carry the last few turns verbatim",
-        "memory.features.hotMemoryEnabled.hint": "On: the recent turns ride along with each injection, so the agent sees what was just said. Off: only distilled memories travel. Those turns are never written to long-term memory (hot memory, on by default)",
-        "memory.features.injectTimePrefix": "Tell it today's date at session start",
-        "memory.features.injectTimePrefix.hint": "On: the first turn of each new session gets the date and weekday once, so \"today\" and \"last week\" land reliably. Off: no time in the injection (time prefix, off by default)",
-        "memory.features.entityExtractionEnabled": "Also pull out people, projects and concepts",
-        "memory.features.entityExtractionEnabled.hint": "On: each new memory yields people / projects / concepts, so the relation graph grows by itself and recall can key on who. Off: memories stay whole, no relations (entity extraction, off by default)",
+        "memory.features.autoSummarize": "Auto-distill conversations",
+        "memory.features.autoSummarize.hint": "Conversations are distilled into long-term memories automatically.",
+        "memory.features.hotMemoryEnabled": "Recent turns verbatim",
+        "memory.features.hotMemoryEnabled.hint": "Injects the last few raw turns; never written to long-term memory.",
+        "memory.features.injectTimePrefix": "Inject date & weekday",
+        "memory.features.injectTimePrefix.hint": "One date line at session start — 'today' gets reliable.",
+        "memory.features.entityExtractionEnabled": "Entity extraction",
+        "memory.features.entityExtractionEnabled.hint": "Pulls people/projects/concepts from each memory; grows a graph.",
         "memory.features.entityExtractionProvider": "Entity extraction provider",
         "memory.features.entityExtractionModel": "Entity extraction model",
         "memory.features.entityExtractionReasoning": "Entity extraction reasoning",
@@ -1894,14 +1974,16 @@ window.__ModuleLoader__.load({
         "memory.features.summarizeReasoningEffort.high": "High",
         "memory.features.summarizeReasoningEffort.hint": "For thinking models, prefer Low or No reasoning so thinking cannot fill the output budget and break summaries",
         "memory.features.entityExtractionModelHint": "Provider / model empty = follow the main conversation model; reasoning \"Follow default\" = provider default",
-        "memory.features.codingRetrospect": "Remember how the code was written too",
-        "memory.features.codingRetrospect.hint": "On: the whole coding session (errors and tool calls included) is reviewed, yielding pitfalls, constraints and rejected solutions. Off: only conversation content is distilled (coding retrospection, off by default)",
-        "memory.features.rerankEnabled": "Rerank search results once more",
-        "memory.features.rerankEnabled.hint": "On: a local rerank model re-scores recalled candidates — more precise, slower. Off: the search-time order stands (reranking, off by default)",
-        "memory.features.heatEnabled": "The longer unused, the lower it ranks",
-        "memory.features.heatEnabled.hint": "On: memories cool down like a forgetting curve — long-unused ones rank later and stop taking injection slots. Off: relevance order always (heat decay, off by default)",
-        "memory.features.documentMemoryEnabled": "Store long documents as a summary card",
-        "memory.features.documentMemoryEnabled.hint": "On: long agent-authored documents live in memory as a \"summary card\"; the full text stays agent-owned and is read on demand. Off: the whole document travels into context (document memory, off by default)",
+        "memory.features.codingRetrospect": "Coding retrospection",
+        "memory.features.codingRetrospect.hint": "Reviews whole coding sessions: pitfalls, constraints, rejected plans.",
+        "memory.features.rerankEnabled": "Reranking",
+        "memory.features.rerankEnabled.hint": "A local reranker re-scores recall — more accurate, slower.",
+        "memory.features.heatEnabled": "Heat decay",
+        "memory.features.heatEnabled.hint": "Stale memories rank lower, like a forgetting curve.",
+        "memory.features.injectHeatEnabled": "Heat-aware ranking",
+        "memory.features.injectHeatEnabled.hint": "Injection ordering weighs memory heat; requires heat decay.",
+        "memory.features.documentMemoryEnabled": "Docs as summary cards",
+        "memory.features.documentMemoryEnabled.hint": "Long documents are stored as summary cards; bodies on demand.",
         // --- v0.9.0 M.O. / Modus Operandi (beta) ---
         "memory.actions.beta": "Beta",
         "memory.actions.notice": "Extracted steps are candidates: they may be wrong, outdated, or refuted.",
@@ -1973,10 +2055,10 @@ window.__ModuleLoader__.load({
         "memory.features.actionPipelineEnabled.hint": "Read-only view: the ways of working that actually got walked through in real sessions, drawn as a graph — session-header icon, full sidebar view, and a per-run settlement card. Viewing is not writing: distillation has its own switch below, and run accounting has its own (/mo-run). Modus Operandi. Takes effect after restarting DSH",
         "memory.features.actionNudgeEnabled": "Auto-distill workflows (beta)",
         "memory.features.actionNudgeEnabled.hint": "On: after each turn, look at this project's own session logs and mine the actions it keeps repeating into a proposal in the memory store — it still needs your sign-off before becoming a workflow. Drafts only; never auto-activates; never writes files into the repo. Hooks a hot path and decompresses logs, so light mode forces it off. Takes effect after restarting DSH",
-        "memory.features.diaryEnabled": "Diary (beta)",
-        "memory.features.diaryEnabled.hint": "On: a Diary tab appears in the right sidebar, and the agent that carries a persona writes one entry a day from what actually happened in this project — no conversation that day, no entry, and nothing made up. Entries live in the memory directory; only the “Save into this project” button copies one into the repo. Light mode forces it off. Takes effect after restarting DSH",
-        "memory.features.diaryWriteEveryMinutes": "Auto-write every N minutes (0 = off)",
-        "memory.features.diaryWriteEveryMinutes.hint": "When off, DSH only checks whether today needs an entry at turn end and at startup — stay quiet all day and nothing gets written. Put a number here (e.g. 60) and it wakes up on its own. Still at most one entry a day: whether to write is decided by whether today's file exists on disk",
+        "memory.features.diaryEnabled": "Diary",
+        "memory.features.diaryEnabled.hint": "Persona-carrying agents write one diary a day from real conversations.",
+        "memory.features.diaryWriteEveryMinutes": "Auto-write interval (min)",
+        "memory.features.diaryWriteEveryMinutes.hint": "Wakes to check if today's diary is due; 0 = chat end/restart only.",
         "memory.diary.title": "Diary",
         "memory.diary.note": "Written from what actually happened in this project: no conversation, no entry, nothing invented.",
         "memory.diary.write": "Write today",
@@ -2000,8 +2082,7 @@ window.__ModuleLoader__.load({
         "memory.diary.bookLabel": "Paper and type",
         "memory.diary.book.plain": "Plain",
         "memory.diary.book.ruled": "Ruled",
-        "memory.diary.book.grid": "Grid",
-        "memory.diary.book.kraft": "Kraft",
+        "memory.diary.book.grid": "Dots",
         "memory.diary.count": "{n} entries",
         "memory.diary.writtenOk": "Written: {path}",
   "memory.diary.exportOk": "Saved to {path}",
@@ -2015,71 +2096,75 @@ window.__ModuleLoader__.load({
         "memory.diary.status.written": "written",
         "memory.diary.status.skipped": "skipped",
         "memory.diary.status.failed": "failed",
-        "memory.features.resilientModelDownload": "Model downloads resume after interruption",
-        "memory.features.resilientModelDownload.hint": "On: downloads continue from where they stopped and retry automatically. Off: an interrupted download starts over (resumable downloads, on by default)",
-        "memory.features.searchSemanticDedup": "Keep one entry when search hits near-duplicates",
-        "memory.features.searchSemanticDedup.hint": "On: near-duplicate entries merge into one, saving injection slots. Off: duplicates all show up (semantic dedup, off by default)",
-        "memory.features.autoDream": "Tidy memories in the background (merge · dedupe)",
-        "memory.features.autoDream.hint": "On: fragmented memories are merged and settled in the background (autoDream). Off: memory only accumulates, so it gets messier the longer you use it",
-        "memory.features.sleepModeEnabled": "It tidies memories while you are away",
-        "memory.features.sleepModeEnabled.hint": "On: layered compaction and tidying happen during idle periods. Off: only consolidation you trigger manually (sleep mode, off by default)",
+        "memory.features.resilientModelDownload": "Resumable downloads",
+        "memory.features.resilientModelDownload.hint": "Model downloads resume from breakpoints and retry.",
+        "memory.features.searchSemanticDedup": "Semantic dedup",
+        "memory.features.searchSemanticDedup.hint": "Near-duplicate recall results collapse into one.",
+        "memory.features.autoDream": "Background consolidation",
+        "memory.features.autoDream.hint": "Consolidates (dedupe, merge, archive) automatically when idle.",
+        "memory.features.sleepModeEnabled": "Sleep cleanup",
+        "memory.features.sleepModeEnabled.hint": "Tiered compaction and tidying while idle.",
         // #619: affective attribution is a sub-phase of sleep — it cannot run while
         // the parent is off, so it sits next to it.
-        "memory.features.sleepAffectiveEnabled": "It remembers how you felt about a particular thing",
-        "memory.features.sleepAffectiveEnabled.hint": "On: tidying records \"how someone felt about one event\" as an occasion-bound link, and only calls it a stable disposition when it recurs across several independent occasions. Off: emotions are not recorded (affective attribution, off by default, and requires sleep mode)",
+        "memory.features.sleepAffectiveEnabled": "Affect attribution",
+        "memory.features.sleepAffectiveEnabled.hint": "Records who feels what about which matter, across repeated occasions.",
         // #427 suggestion 5: hybridInject / selectiveInjectEnabled /
         // adaptiveThresholdEnabled are three dials of one question — what comes
         // back. Adjacent placement plus a hint that names the other two.
-        "memory.features.hybridInject": "Search by keywords and meaning together",
-        "memory.features.hybridInject.hint": "On: both channels each fetch a batch and merge — broader recall. Off: one channel only. Three dials exist for \"what comes back\" (hybrid / selective / adaptive threshold); one is enough (hybrid injection, on by default)",
-        "memory.features.selectiveInjectEnabled": "Only carry memories that truly matter",
-        "memory.features.selectiveInjectEnabled.hint": "On: relevance is filtered before injecting — cleaner context. Off: more comes along, and noisier. One of the three dials (selective injection, on by default)",
-        "memory.features.adaptiveThresholdEnabled": "Tighten or loosen by retrieval quality",
-        "memory.features.adaptiveThresholdEnabled.hint": "On: a poor-recall day loosens the floor, a good one tightens it. Off: the floor is fixed. One of the three dials (adaptive threshold, on by default)",
-        "memory.features.reflectionUpdateEnabled": "Let tidying revise existing memories",
-        "memory.features.reflectionUpdateEnabled.hint": "On: consolidation may rewrite and merge existing entries, not only add. Off: old memories are never auto-edited (reflective update, on by default)",
+        "memory.features.hybridInject": "Hybrid injection",
+        "memory.features.hybridInject.hint": "Keyword + semantic retrieval merged for better recall.",
+        "memory.features.entityRecallEnabled": "Entity recall",
+        "memory.features.entityRecallEnabled.hint": "When the query matches an entity, its linked memories join the recall pool.",
+        "memory.features.graphAnchoringEnabled": "Graph anchoring",
+        "memory.features.graphAnchoringEnabled.hint": "Seeds on matched entities and cascades along relations into the recall pool.",
+        "memory.features.selectiveInjectEnabled": "Selective injection",
+        "memory.features.selectiveInjectEnabled.hint": "Filters by relevance before injecting — cleaner context.",
+        "memory.features.adaptiveThresholdEnabled": "Adaptive threshold",
+        "memory.features.adaptiveThresholdEnabled.hint": "Loosens the bar when recall is poor, tightens when good.",
+        "memory.features.reflectionUpdateEnabled": "Allow rewrites",
+        "memory.features.reflectionUpdateEnabled.hint": "Consolidation may rewrite and merge existing entries.",
         "memory.features.distill": "Distillation & rate limiting",
         "memory.features.distillRateLimitIntervalMs": "Distill spacing (ms)",
         "memory.features.distillRateLimitRetries": "429 retries",
         "memory.features.distillRateLimitBaseDelayMs": "Backoff base delay (ms)",
         "memory.features.distillMaxChars": "Transcript cap (chars)",
-        "memory.features.distillRecords.enabled": "Keep distilled transcripts",
-        "memory.features.distillRecords.enabled.hint": "Also store the public parts of the distilled window, with a provenance link per memory; private reasoning and tool output are never stored. Off writes nothing and skips collection entirely",
-        "memory.features.distillRecords.retentionDays": "Transcript retention (days)",
-        "memory.features.distillRecords.retentionDays.hint": "1–3650 days; startup pruning only. To make reclaim use the same window, pass the same value via --older-than",
+        "memory.features.distillRecords.enabled": "Keep distill sources",
+        "memory.features.distillRecords.enabled.hint": "Persists transcript windows and per-memory provenance.",
+        "memory.features.distillRecords.retentionDays": "Source retention (days)",
+        "memory.features.distillRecords.retentionDays.hint": "1–3650 days; startup pruning only.",
         "memory.features.codingBoostFactor": "Coding boost factor",
-        "memory.features.memoryQualityFilter.enabled": "Tuck low-value memories away automatically",
-        "memory.features.memoryQualityFilter.enabled.hint": "On: low-value entries are archived automatically and injection downranks by quality. Off: everything stays, noise included (memory quality filter, on by default)",
-        "memory.features.llmAudit.enabled": "Keep tabs on background model usage",
-        "memory.features.llmAudit.enabled.hint": "On: background consolidation / summary calls and token usage are all on record. Off: there is no way to check what the background spent (call audit, on by default)",
+        "memory.features.memoryQualityFilter.enabled": "Quality filter",
+        "memory.features.memoryQualityFilter.enabled.hint": "Low-value memories get archived and down-ranked.",
+        "memory.features.llmAudit.enabled": "Call audit",
+        "memory.features.llmAudit.enabled.hint": "Background model calls and token spend are on record.",
         // #254 — two layers: enabled runs the check (audit only), enforce actually
         // blocks. The hints must keep that difference explicit.
-        "memory.features.writeAdmission.enabled": "Judge blank / noise writes before storing (audit only)",
-        "memory.features.writeAdmission.enabled.hint": "On: blank / noise writes are flagged with an audit row but still stored. Off: nothing is judged. To actually block, see the next switch (write admission checks, off by default)",
-        "memory.features.writeAdmission.enforce": "Really reject useless writes",
-        "memory.features.writeAdmission.enforce.hint": "On: flagged writes are rejected outright. Off: audit row only, stored anyway. Needs the checks switch above (write admission enforcement, off by default)",
-        "memory.features.preInjectGate.enabled": "Screen out \"just my opinion\" memories before injection (audit only)",
-        "memory.features.preInjectGate.enabled.hint": "On: opinion / stance memories are judged before injection and audited, so you can watch the distribution first. Off: injected as usual (pre-inject gate, off by default)",
-        "memory.features.preInjectGate.enforce": "Really drop flagged candidates at injection",
-        "memory.features.preInjectGate.enforce.hint": "On: flagged candidates are dropped at injection time. Off: audit row only, injected anyway. Needs the gate switch above (pre-inject gate enforcement, off by default)",
+        "memory.features.writeAdmission.enabled": "Write admission (log only)",
+        "memory.features.writeAdmission.enabled.hint": "Judges blank/noise writes and records them — nothing blocked.",
+        "memory.features.writeAdmission.enforce": "Write blocking",
+        "memory.features.writeAdmission.enforce.hint": "Flagged writes are actually refused. Requires write admission.",
+        "memory.features.preInjectGate.enabled": "Pre-inject gate (log only)",
+        "memory.features.preInjectGate.enabled.hint": "Flags opinion-type memories before injection — observe first.",
+        "memory.features.preInjectGate.enforce": "Injection filtering",
+        "memory.features.preInjectGate.enforce.hint": "Flagged candidates are dropped at injection. Requires the gate.",
         // #164 A2: its own gate for the secret / PII rules (separate from the
         // blank/noise pair above), and it runs inside the write admission checks
         // above, so with those off it never runs. Hits are audited only;
         // enforcement stays with the key above.
-        "memory.features.sensitiveScanEnabled": "Scan writes for credentials and personal data",
-        "memory.features.sensitiveScanEnabled.hint": "On: secret / PII rules run inside the write admission checks; hits are audited only — to block, also enable enforcement. Nothing runs while the checks switch is off (secret / PII scan, off by default)",
-        "memory.features.bm25SearchEnabled": "Also search by exact keywords",
-        "memory.features.bm25SearchEnabled.hint": "On: exact-term scoring joins in, so proper nouns, error codes and paths hit reliably — a complement to meaning-based search. Off: semantic similarity only (BM25 keyword search, on by default)",
-        "memory.features.conflictFreezeEnabled": "Freeze contradictory memories first",
-        "memory.features.conflictFreezeEnabled.hint": "On: contradictions found while tidying are frozen for your confirmation instead of both staying live. Off: both stay in use (conflict freezing, off by default)",
-        "memory.features.scopeEnabled": "Record which session each memory came from",
-        "memory.features.scopeEnabled.hint": "On: every new memory is tagged with the agent / workspace it came from — that tag decides whether other sessions see it. Off: new memories carry no origin and all sessions share one pool (scope tagging, off by default)",
-        "memory.features.strictScope": "Memories others marked private stay invisible to me",
-        "memory.features.strictScope.hint": "On: memories explicitly made private by other sessions are fully invisible. Off: they stay visible but rank lower. For true isolation use a memory's sensitivity field. Needs the tagging switch above (strict isolation, off by default)",
-        "memory.features.trustEpistemicWeighting": "Rank by source credibility",
-        "memory.features.trustEpistemicWeighting.hint": "On: more credible sources rank higher. Off: everything counts the same (credibility weighting, experimental, off by default)",
-        "memory.features.reflectionFailureTracking": "Keep failed tidying cases on record",
-        "memory.features.reflectionFailureTracking.hint": "On: failure causes and cases are stored for diagnosis and improvement. Off: failures leave no record (failure tracking, on by default)",
+        "memory.features.sensitiveScanEnabled": "Secrets & PII scan",
+        "memory.features.sensitiveScanEnabled.hint": "Scans for secrets/PII inside write admission; logs only.",
+        "memory.features.bm25SearchEnabled": "BM25 search",
+        "memory.features.bm25SearchEnabled.hint": "Lexical keyword retrieval alongside semantics.",
+        "memory.features.conflictFreezeEnabled": "Conflict freeze",
+        "memory.features.conflictFreezeEnabled.hint": "Freezes contradictions for review instead of auto-deciding.",
+        "memory.features.scopeEnabled": "Scope tagging",
+        "memory.features.scopeEnabled.hint": "Tags each memory with its agent/workspace origin.",
+        "memory.features.strictScope": "Strict isolation",
+        "memory.features.strictScope.hint": "Memories marked private elsewhere become invisible. Needs tagging.",
+        "memory.features.trustEpistemicWeighting": "Trust weighting",
+        "memory.features.trustEpistemicWeighting.hint": "Higher-trust sources rank first (experimental).",
+        "memory.features.reflectionFailureTracking": "Failure cases",
+        "memory.features.reflectionFailureTracking.hint": "Keeps failure causes and cases for diagnosis.",
         "memory.features.embedRoute": "Semantic search route",
         "memory.features.embedProvider": "Embedding provider",
         "memory.features.embedProvider.openai": "OpenAI-compatible API",
@@ -2093,22 +2178,22 @@ window.__ModuleLoader__.load({
         "memory.features.ollamaModel": "Ollama model",
         "memory.features.dreamProvider": "Consolidation provider",
         "memory.features.dreamModel": "Consolidation model",
-        "memory.features.dreamModelHint": "Leave empty to follow the main conversation model; only affects autoDream consolidation",
-        "memory.features.dreamPeakHours": "Peak hours (no dreaming)",
-        "memory.features.dreamPeakHours.hint": "Busy hours for the machine; consolidation avoids them and catches up afterwards. Syntax: 09:00-18:00, several windows comma-separated, weekday prefix allowed (mon-fri 08:00-12:00), midnight-crossing allowed; empty = no limit",
+        "memory.features.dreamModelHint": "Empty = follow the host model; only affects consolidation.",
+        "memory.features.dreamPeakHours": "Consolidation peak hours",
+        "memory.features.dreamPeakHours.hint": "Consolidation avoids these windows and catches up later. Format 09:00-18:00, comma-separated.",
         "memory.features.dreamPeakHours.invalid": "Current value is not a valid time-window spec and will be treated as unset (consolidation runs around the clock). Syntax: 09:00-18:00, comma-separated windows, optional weekday prefix (mon-fri 08:00-12:00), midnight-crossing allowed; write 00:00 instead of 24:00",
-        "memory.features.summarizePeakHours": "Peak hours (no distillation)",
-        "memory.features.summarizePeakHours.hint": "Same syntax as the consolidation side above; distillation avoids these windows and accumulates the material for one run off-peak",
+        "memory.features.summarizePeakHours": "Distill peak hours",
+        "memory.features.summarizePeakHours.hint": "Distillation avoids these windows; buffers flush off-peak.",
         "memory.features.summarizePeakHours.invalid": "Current value is not a valid time-window spec and will be treated as unset (distillation runs around the clock). Syntax as on the consolidation side: 09:00-18:00, comma-separated windows, optional weekday prefix, midnight-crossing allowed",
         "memory.features.sleepProvider": "Sleep provider",
         "memory.features.sleepModel": "Sleep model",
         "memory.features.sleepModelHint": "Leave empty to reuse the consolidation model; a non-reasoning model is recommended",
         // Issue #478: max_tokens budget keys. Hint states both the scope (single-run
         // output budget) and the backend auto-downgrade on provider cap rejection.
-        "memory.features.dreamMaxTokens": "Consolidation output cap (max_tokens)",
-        "memory.features.dreamMaxTokens.hint": "Max tokens generated per consolidation run, 256–131072. When the default 131072 exceeds a provider's hard limit, the backend retries with the cap from the error",
-        "memory.features.sleepMaxTokens": "Sleep output cap (max_tokens)",
-        "memory.features.sleepMaxTokens.hint": "Single-run output budget for sleep conflict/mode calls, 256–131072; over-cap values are downgraded automatically",
+        "memory.features.dreamMaxTokens": "Consolidation max tokens",
+        "memory.features.dreamMaxTokens.hint": "Per-run output budget; auto-degrades past provider limits.",
+        "memory.features.sleepMaxTokens": "Sleep max tokens",
+        "memory.features.sleepMaxTokens.hint": "Per-run output budget for sleep phases; auto-degrades.",
         "memory.features.routeFollowDefault": "Follow default route",
         "memory.features.modelTest": "Test connectivity",
         "memory.features.modelTesting": "Testing…",
@@ -2448,6 +2533,7 @@ window.__ModuleLoader__.load({
         "memory.status.token.conflictsFoot": "From /dream-status · live",
         "memory.status.token.donut": "By component · who spent these tokens",
         "memory.status.token.days": "By day · 7-day trend",
+        "memory.status.token.daysEmpty": "no token usage in the last 7 days",
         "memory.status.token.heat": "8-week heat · daily spend",
         "memory.status.token.heatLess": "less",
         "memory.status.token.heatMore": "more",
@@ -2556,22 +2642,73 @@ window.__ModuleLoader__.load({
         "--mneme-danger:color-mix(in srgb,var(--dsw-alias-state-error-primary) 80%,var(--dsw-alias-label-primary));" +
         "--mneme-warn:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 65%,var(--dsw-alias-label-primary));" +
         "--mneme-ok:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 65%,var(--dsw-alias-label-primary));" +
-        // Token 去向三屏（2026-10 可观测性改造）：图表六色全部单层 color-mix、
-        // 基准只用宿主 token，test/contrast.test.js GRAPHICS 逐 selector 锁浅/深
-        // ≥3:1。配比按 2026-10 审计数据校准（巩固 37% 是最大弧，占最深主色）。
-        "--mneme-chart-1:color-mix(in srgb,var(--dsw-alias-state-business-primary) 70%,var(--dsw-alias-label-primary));" +
-        "--mneme-chart-2:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 55%,var(--dsw-alias-label-primary));" +
-        "--mneme-chart-3:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 60%,var(--dsw-alias-label-primary));" +
-        "--mneme-chart-4:color-mix(in srgb,var(--dsw-alias-state-error-primary) 65%,var(--dsw-alias-label-primary));" +
-        "--mneme-chart-5:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 45%,var(--dsw-alias-state-business-primary));" +
-        // chart-6 与 graphic-dim 同款但内联写：对比度解析器不递归 --mneme-* 变量。
+        // 图表六色（2026-11 重调，代号 E）：每个槽两步混色。第一步把静态色与中性灰
+        // 混掉一部分彩度（62%，紫用 74% 才不至于读成灰），第二步按各槽自己的比例混
+        // label——label 随主题反向，深浅两套色阶因此自动成立，不用写第二份深色值。
+        // 旧口径的四个毛病都是「各槽自己调、没有共同尺度」：彩度 0.065–0.172 差两倍
+        // （红最刺眼）、chart-2 与 chart-5 都是绿（深色下 H 只差 4，分不出）、amber-600
+        // 再压 40% 黑读成土褐、channel-5 的 L* 0.633 而 chart-4 只有 0.449（一条浮一条沉）。
+        // 五色相固定为 blue / green / amber / red / violet，灰槽（chart-6）留给「其他」。
+        // **刻意用 --dsw-static-* 而不是 --dsw-alias-state-***：别名是宿主状态的语义色，
+        // 宿主调一次状态色就会连带换掉图表色盘，而图表色盘该是设计决定。
+        // 实测浅色 L* 0.47–0.51、深色 0.72–0.81，彩度 0.065–0.095，最低对比 5.6:1（图形只要 3:1）。
+        "--mneme-chart-1:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-blue-500,#3b82f6) 62%,var(--dsw-static-neutral-500,#7f8287)) 70%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-2:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 62%,var(--dsw-static-neutral-500,#7f8287)) 64%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-3:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-amber-500,#f59e0b) 62%,var(--dsw-static-neutral-500,#7f8287)) 74%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-4:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-red-500,#ef4444) 62%,var(--dsw-static-neutral-500,#7f8287)) 67%,var(--dsw-alias-label-primary));" +
+        "--mneme-chart-5:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-violet-400,#a78bfa) 74%,var(--dsw-static-neutral-500,#7f8287)) 62%,var(--dsw-alias-label-primary));" +
+        // 第 6 槽是半透明灰（「其他」那一类）。它曾同时以「令牌 + 弧 + 图例点」三份
+        // 内联副本存在过，改一处漏两处；现在弧与点都直接 var 引用这一份。
         "--mneme-chart-6:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent);" +
+        // 沉淀图（8 周「进来 vs 稳住」）与 donut（token 都去哪了）是两套分类，原先共用
+        // chart-3 / chart-2：同一页里那根琥珀柱在 donut 是「实体抽取」、在沉淀图是「新增」，
+        // 同色两义。这里给沉淀图独立语义名，取值与今天的 chart-3 / chart-2 逐字相同
+        // （只换语义，视觉零变化），但**刻意不写 var(--mneme-chart-N)**——那是继承，
+        // 以后调 donut 的六色盘会顺手改掉「库在膨胀还是稳住了」这张结论图的颜色。
+        // 取色与 chart-3 同一套配方，但**逐字重写一份、不写 var 引用**：视觉跟着 donut 走，
+        // 归属不跟着走（以后单独调沉淀图不必先改 donut）。
+        "--mneme-sink-added:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-amber-500,#f59e0b) 62%,var(--dsw-static-neutral-500,#7f8287)) 74%,var(--dsw-alias-label-primary));" +
+        "--mneme-sink-merged:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 62%,var(--dsw-static-neutral-500,#7f8287)) 64%,var(--dsw-alias-label-primary));" +
         // 热力档位用 label 补余而非 transparent：transparent 混色在浅色主题下
         // 低档位对白底不足 3:1；label 补余两套主题各档都过线且单调。
         "--mneme-heat-1:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
         "--mneme-heat-2:color-mix(in srgb,var(--dsw-alias-state-business-primary) 70%,var(--dsw-alias-label-primary));" +
         "--mneme-heat-3:color-mix(in srgb,var(--dsw-alias-state-business-primary) 55%,var(--dsw-alias-label-primary));" +
-        "--mneme-heat-4:color-mix(in srgb,var(--dsw-alias-state-business-primary) 40%,var(--dsw-alias-label-primary))" +
+        "--mneme-heat-4:color-mix(in srgb,var(--dsw-alias-state-business-primary) 40%,var(--dsw-alias-label-primary));" +
+        // 几何刻度层（视觉系统 P0，docs/plans/2026-11-10-panel-visual-system.md）：
+        // 颜色有 16 个 token 兜住，空间此前一个都没有——于是 padding 长出 107 种
+        // 取值、只有 41.7% 落在 4 网格上、29% 是奇数像素。刻度按**像素值命名**
+        // （--mneme-space-8 就是 8px），而不是 0..8 的档位号：
+        // 档位号会让 gap:"4" 等于 8px，写的人要背一张表，读的人没法核对；
+        // 值命名让调用点自解释，也让 test/panel-tokens.test.js 能用「允许的 px 集」
+        // 直接校验，不需要第二份映射表。2/6/10 是半档（图标与文字之间、标题与卡之间），
+        // 40 是滚动区末端的留白：24 之后一格跨度太窄，装不下滚到底时需要的呼吸。
+        "--mneme-space-0:0;" +
+        "--mneme-space-2:2px;" +
+        "--mneme-space-4:4px;" +
+        "--mneme-space-6:6px;" +
+        "--mneme-space-8:8px;" +
+        "--mneme-space-10:10px;" +
+        "--mneme-space-12:12px;" +
+        "--mneme-space-16:16px;" +
+        "--mneme-space-20:20px;" +
+        "--mneme-space-24:24px;" +
+        "--mneme-space-40:40px;" +
+        // 圆角：全文件此前 borderRadius 声明 0 处（圆角全靠宿主，各页不统一）。
+        // 留两档是因为用途不同：8 是列表里的小卡，12 是仪表盘大卡（容器大、信息
+        // 密度低，8 会让四角显得太紧）。
+        "--mneme-radius-4:4px;" +
+        "--mneme-radius-8:8px;" +
+        "--mneme-radius-12:12px;" +
+        "--mneme-radius-pill:999px;" +
+        // 字号：现有 12/13/15 三种覆盖了绝大多数文本，把既有事实写成 token；
+        // 10/14/18 仍散落在 133/61/52 处，属待迁移，不在此列（迁移要逐页视觉复核，
+        // 全局替换会把紧凑列表撑开）。
+        "--mneme-type-12:12px;" +
+        "--mneme-type-13:13px;" +
+        "--mneme-type-15:15px;" +
+        "--mneme-weight-400:400;" +
+        "--mneme-weight-600:600" +
       "}",
       ".mneme-x{flex:1;min-height:0;height:100%;width:100%;box-sizing:border-box;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);container-type:inline-size}",
       // 窄容器（better-sidebar 工作台 ~500px）下中央 vtabs 会与右缘悬浮的
@@ -2752,11 +2889,13 @@ window.__ModuleLoader__.load({
       ".mneme-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-btn:disabled{opacity:.5;cursor:default}",
       ".mneme-saved{font-size:12px;color:var(--mneme-ok)}",
-      // rule rows: numbered chips + hover-revealed delete
-      ".mneme-set-row{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;margin-bottom:8px;background:var(--dsw-alias-bg-base,transparent)}",
+      // rule rows: numbered chips + 常显的淡删除键（悬停/聚焦才满不透明）。
+      // 曾经彻底 opacity:0，只有鼠标扫过才出现——在窄侧栏和触摸设备上等于没有删除入口，
+      // 用户只能靠猜。留 .45 的常显态，噪声换可发现性。
+      ".mneme-set-row{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-8);margin-bottom:8px;background:var(--dsw-alias-bg-base,transparent)}",
       ".mneme-set-idx{flex:none;width:20px;height:20px;border-radius:50%;border:1px solid var(--dsw-alias-border-l2);color:var(--mneme-fg-dim);font-size:11px;line-height:18px;display:inline-flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}",
       ".mneme-set-ruletext{flex:1;min-width:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);word-break:break-word}",
-      ".mneme-set-del{flex:none;opacity:0;transition:opacity .12s;border:none;background:none;color:var(--mneme-fg-dim);cursor:pointer;font-size:14px;line-height:20px;padding:0 4px;border-radius:6px}",
+      ".mneme-set-del{flex:none;opacity:.45;transition:opacity .12s;border:none;background:none;color:var(--mneme-fg-dim);cursor:pointer;font-size:14px;line-height:20px;padding:0 4px;border-radius:6px}",
       ".mneme-set-row:hover .mneme-set-del,.mneme-set-row:focus-within .mneme-set-del{opacity:1}",
       ".mneme-set-del:hover{color:var(--mneme-danger);background:var(--dsw-alias-interactive-bg-hover)}",
       // 人格卡删除 × 独立类：不复用 mneme-set-del——其 opacity:0 仅在
@@ -2770,7 +2909,6 @@ window.__ModuleLoader__.load({
       ".mneme-set-cmdname{font-size:13px;font-weight:600;color:var(--mneme-accent)}",
       ".mneme-set-cmddesc{font-size:12px;line-height:17px;color:var(--mneme-fg-dim);margin-top:1px;word-break:break-word}",
       // --- settings sub-view ---
-      ".mneme-set{flex:1;min-height:0;overflow-y:auto;padding:8px 24px 48px;box-sizing:border-box}",
       // --- 宿主中列整页面板（sidebar.panellist + main 成对座位）---
       // 宿主把 main 槽渲染在三列 grid 的中列里，那一层只给了 min-width:0 与
       // overflow:hidden，没有任何尺寸约束——注册者必须自己铺满并自管滚动，
@@ -2841,6 +2979,26 @@ window.__ModuleLoader__.load({
       ".mneme-wikitoggle.mneme-on{border-color:var(--dsw-alias-state-business-primary)}",
       ".mneme-wikistale{margin-inline-end:2px}",
       ".mneme-wikit1bar{flex:none;padding:6px 16px;border-top:1px solid var(--dsw-alias-border-l2);font-size:11.5px;line-height:16px;color:var(--mneme-fg-dim);background:var(--dsw-alias-bg-layer-1)}",
+      // --- 证据复核（Grounded Claims）---
+      // 回执条压在顶栏下面一条，三种结局共用同一块位置：位置固定，用户扫一眼
+      // 就知道「这次点完是什么」。warn 档只换左边框颜色，不改正文色——正文色
+      // 一动就得过 contrast.test.js 的重算，而这里没必要冒那个险。
+      ".mneme-wikidriftbar{flex:none;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;padding:6px 16px;border-bottom:1px solid var(--dsw-alias-border-l1);font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-base,transparent)}",
+      ".mneme-wikidriftbar--warn{border-left:3px solid var(--dsw-alias-state-business-primary);padding-left:13px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-wikidriftnone{color:var(--mneme-fg-dim)}",
+      // 树里的条数徽章：复用 pending 徽章的视觉，只压窄一点，避免挤掉模块名。
+      ".mneme-wikidriftn{margin-inline-start:6px;font-size:10.5px;line-height:14px}",
+      ".mneme-wikidriftn--flat{margin-inline-start:6px;color:var(--mneme-fg-dim)}",
+      // 「这页比不了」和「这页没事」必须是两种视觉：前者是空心问号，后者什么都不挂。
+      ".mneme-wikidriftn--unknown{margin-inline-start:6px;color:var(--mneme-fg-dim);font-size:11px}",
+      ".mneme-wikidriftverified{font-size:11px;line-height:16px;color:var(--mneme-fg-dim);margin-bottom:10px}",
+      // 当前这页的明细：读之前先给出「哪条、在哪、为什么」，不给判断（判断是人的）。
+      ".mneme-wikidriftpage{margin:0 0 14px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}",
+      ".mneme-wikidriftpagehead{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary);margin-bottom:6px}",
+      ".mneme-wikidriftrow{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;padding:5px 0;border-top:1px solid var(--dsw-alias-border-l1)}",
+      ".mneme-wikidriftwhy{font-size:11.5px;line-height:16px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-wikidriftpath{font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
+      ".mneme-wikidriftstmt{flex-basis:100%;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}",
       // --- 知识库页（契约 §3.6）---
       // 左列复用 wikitree 的宽度与分隔线，只是树项改成了集合行；右边沿用
       // wikipage 的阅读排版。颜色全部走语义层，不新增任何宿主 token。
@@ -2965,27 +3123,27 @@ window.__ModuleLoader__.load({
       ".mneme-badge--default{color:var(--mneme-fg-dim);background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-badge--changed{color:var(--mneme-accent);background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 10%,transparent);border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary) 30%,transparent)}",
       // 冲突集中处理队列（v0.8.0）：状态页的待确认冲突列表
-      ".mneme-conflictq{display:flex;flex-direction:column;gap:10px}",
-      ".mneme-conflictq-head{display:flex;align-items:center;gap:8px}",
+      ".mneme-conflictq{display:flex;flex-direction:column;gap:var(--mneme-space-10)}",
+      ".mneme-conflictq-head{display:flex;align-items:center;gap:var(--mneme-space-8)}",
 ".mneme-conflictq-truncated{flex:1;font-size:12px;line-height:16px;color:var(--mneme-fg-dim);text-align:right}",
-      ".mneme-conflict-item{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px}",
+      ".mneme-conflict-item{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:var(--mneme-radius-8);padding:var(--mneme-space-10);display:flex;flex-direction:column;gap:var(--mneme-space-8)}",
       ".mneme-conflict-reason{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary)}",
-      ".mneme-conflict-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}",
-      ".mneme-conflict-side{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:4px;min-width:0}",
+      ".mneme-conflict-pair{display:grid;grid-template-columns:1fr 1fr;gap:var(--mneme-space-8)}",
+      ".mneme-conflict-side{border:1px solid var(--dsw-alias-border-l1,var(--dsw-alias-interactive-bg-hover));border-radius:var(--mneme-radius-8);padding:var(--mneme-space-8);display:flex;flex-direction:column;gap:var(--mneme-space-4);min-width:0}",
       ".mneme-conflict-sidelabel{font-size:11px;color:var(--mneme-fg-dim)}",
       ".mneme-conflict-sidetitle{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".mneme-conflict-snippet{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}",
       ".mneme-conflict-missing{font-size:12px;color:var(--mneme-fg-dim)}",
-      ".mneme-conflict-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}",
+      ".mneme-conflict-actions{display:flex;align-items:center;gap:var(--mneme-space-6);flex-wrap:wrap}",
       ".mneme-conflict-hint{font-size:11px;color:var(--mneme-fg-dim);margin-right:auto}",
       // #177 冲突队列视觉批次：A/B 侧色、相似度条、词级 diff、主色按钮、空态
       ".mneme-conflict-side--a{border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary) 35%,transparent);background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 4%,transparent)}",
       ".mneme-conflict-side--a .mneme-conflict-sidelabel{color:var(--mneme-accent);font-weight:600}",
       ".mneme-conflict-side--b{border-color:color-mix(in srgb,var(--mneme-warn) 45%,transparent);background:color-mix(in srgb,var(--mneme-warn) 5%,transparent)}",
       ".mneme-conflict-side--b .mneme-conflict-sidelabel{color:var(--mneme-warn);font-weight:600}",
-      ".mneme-conflict-simrow{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dsw-alias-label-secondary)}",
-      ".mneme-conflict-simbar{position:relative;flex:1;height:5px;border-radius:3px;background:var(--dsw-alias-interactive-bg-hover);overflow:hidden}",
-      ".mneme-conflict-simfill{position:absolute;top:0;bottom:0;left:0;border-radius:3px;background:var(--dsw-alias-state-business-primary)}",
+      ".mneme-conflict-simrow{display:flex;align-items:center;gap:var(--mneme-space-8);font-size:11px;color:var(--dsw-alias-label-secondary)}",
+      ".mneme-conflict-simbar{position:relative;flex:1;height:5px;border-radius:var(--mneme-radius-pill);background:var(--dsw-alias-interactive-bg-hover);overflow:hidden}",
+      ".mneme-conflict-simfill{position:absolute;top:0;bottom:0;left:0;border-radius:var(--mneme-radius-pill);background:var(--dsw-alias-state-business-primary)}",
       ".mneme-conflict-diff{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}",
       // 展开全文：取消行数钳制并给一个内部滚动区——报障点是「窗口太小又不能
       // 放大，完全对比不了内容」，所以展开态必须能容纳长文本且不撑破面板。
@@ -2993,25 +3151,25 @@ window.__ModuleLoader__.load({
       // 页），那时 46vh 会算成 0px，展开态直接看不见字——实测踩过。
       ".mneme-conflict-diff--full{display:block;-webkit-line-clamp:unset;max-height:28em;overflow-y:auto}",
       ".mneme-conflict-text{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;overflow-wrap:anywhere;max-height:28em;overflow-y:auto}",
-      ".mneme-conflict-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
+      ".mneme-conflict-meta{display:flex;align-items:center;gap:var(--mneme-space-6);flex-wrap:wrap;font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
       ".mneme-conflict-metaval{color:var(--dsw-alias-label-secondary)}",
       // 窄面板下并排会把每侧挤到无法阅读，退成单列（容器查询按面板实际宽度判）
       "@container (max-width:560px){.mneme-conflict-pair{grid-template-columns:1fr}}",
-      ".mneme-conflict-mark{text-decoration:none;border-radius:3px;padding:0 1px}",
+      ".mneme-conflict-mark{text-decoration:none;border-radius:var(--mneme-radius-4);padding:0 1px}",
       ".mneme-conflict-mark--del{background:color-mix(in srgb,var(--mneme-danger) 16%,transparent);text-decoration:line-through}",
       ".mneme-conflict-mark--ins{background:color-mix(in srgb,var(--mneme-ok) 18%,transparent)}",
-      ".mneme-conflict-primary{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 10px;border-radius:8px;border:none;background:var(--mneme-accent);color:var(--dsw-alias-bg-layer-1);cursor:pointer;font-family:inherit;font-size:12px;line-height:16px}",
+      ".mneme-conflict-primary{display:inline-flex;align-items:center;gap:var(--mneme-space-4);height:24px;padding:0 var(--mneme-space-10);border-radius:var(--mneme-radius-8);border:none;background:var(--mneme-accent);color:var(--dsw-alias-bg-layer-1);cursor:pointer;font-family:inherit;font-size:12px;line-height:16px}",
       ".mneme-conflict-primary:disabled{opacity:.55;cursor:default}",
       ".mneme-conflict-primary:hover:not(:disabled){background:color-mix(in srgb,var(--mneme-accent) 85%,var(--dsw-alias-label-primary))}",
       ".mneme-badge--frozen{color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 12%,transparent)}",
       // 「待重启」徽标：沿用 frozen 的 warn 语义（都是「现状不是你刚设的样子」），
       // 但加边框把它和只读冻结态区分开——它需要用户动手，不是终态。
       ".mneme-badge--pending{color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 12%,transparent);border:1px solid color-mix(in srgb,var(--mneme-warn) 30%,transparent)}",
-      ".mneme-pending{display:flex;align-items:flex-start;gap:8px;margin:8px 0 0;padding:8px 10px;border-radius:8px;font-size:12.5px;line-height:18px;color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 10%,transparent);border:1px solid color-mix(in srgb,var(--mneme-warn) 28%,transparent)}",
+      ".mneme-pending{display:flex;align-items:flex-start;gap:var(--mneme-space-8);margin:var(--mneme-space-8) 0 0;padding:var(--mneme-space-8) var(--mneme-space-12);border-radius:var(--mneme-radius-8);font-size:12.5px;line-height:18px;color:var(--mneme-warn);background:color-mix(in srgb,var(--mneme-warn) 10%,transparent);border:1px solid color-mix(in srgb,var(--mneme-warn) 28%,transparent)}",
       // 圆点用当前色（currentColor）而不是再引一次 --mneme-warn：色值只有一个真源，
       // 改主题时提示行与圆点不会走散。
-      ".mneme-pending-dot{flex:none;width:6px;height:6px;margin-top:6px;border-radius:50%;background:currentColor}",
-      ".mneme-conflict-empty{border:1px dashed var(--dsw-alias-border-l2);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:4px}",
+      ".mneme-pending-dot{flex:none;width:6px;height:6px;margin-top:var(--mneme-space-6);border-radius:50%;background:currentColor}",
+      ".mneme-conflict-empty{border:1px dashed var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-8);padding:var(--mneme-space-12);display:flex;flex-direction:column;gap:var(--mneme-space-4)}",
       ".mneme-conflict-empty-title{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-secondary)}",
       ".mneme-conflict-empty-body{font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
       ".mneme-statuscard--actionable{border-color:color-mix(in srgb,var(--mneme-warn) 55%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--mneme-warn) 35%,transparent)}",
@@ -3019,7 +3177,7 @@ window.__ModuleLoader__.load({
       ".mneme-triggerwrap{position:relative;pointer-events:none}",
       ".mneme-triggerwrap .mneme-trigger{pointer-events:auto}",
       ".mneme-conflict-jump .mneme-statuscard{border-color:color-mix(in srgb,var(--mneme-warn) 55%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--mneme-warn) 35%,transparent)}",
-      ".mneme-conflict-jump:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px;border-radius:12px}",
+      ".mneme-conflict-jump:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px;border-radius:var(--mneme-radius-12)}",
       // 详情抽屉：sheet 内右侧滑出，覆盖在浏览区之上
       ".mneme-xmain{position:relative}",
       "@keyframes mneme-slidein{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:translateX(0)}}",
@@ -3075,8 +3233,8 @@ window.__ModuleLoader__.load({
       ".mneme-xmore{display:flex;justify-content:center;align-items:center;padding:10px 0 24px;min-height:20px}",
       ".mneme-xemptyico{display:block;margin:0 auto 6px;opacity:.7}",
       // --- status sub-view: responsive stat-card grid (auto-fill, ~220px min) ---
-      ".mneme-status{flex:1;min-height:0;overflow-y:auto;padding:20px 24px 40px;box-sizing:border-box}",
-      ".mneme-statusgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;max-width:1000px;margin:0 auto 12px}",
+      ".mneme-status{flex:1;min-height:0;overflow-y:auto;padding:var(--mneme-space-20) var(--mneme-space-24) var(--mneme-space-40);box-sizing:border-box}",
+      ".mneme-statusgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:var(--mneme-space-12);max-width:1000px;margin:0 auto var(--mneme-space-12)}",
       ".mneme-statusgrid:last-of-type{margin-bottom:0}",
       // 概览区是单行三卡：auto-fit 让不满的轨道塌缩，三张卡恒等宽铺满、行尾不留洞
       ".mneme-statusgrid--overview{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}",
@@ -3085,13 +3243,13 @@ window.__ModuleLoader__.load({
       "@container (min-width:452px) and (max-width:683px){.mneme-statuscard--vectorwide{grid-column:span 2}}",
       "@container (min-width:452px){.mneme-statuscard--wide{grid-column:span 2}}",
       // 状态页分组标题（库内一览 / 后台运转）：只做扫读锚点，压得比卡片标题低
-      ".mneme-statushead{max-width:1000px;margin:0 auto 10px;font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim)}",
-      ".mneme-statusgrid+.mneme-statushead{margin-top:26px}",
-      ".mneme-statuscard{min-width:0;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px 16px 14px}",
+      ".mneme-statushead{max-width:1000px;margin:0 auto var(--mneme-space-10);font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim)}",
+      ".mneme-statusgrid+.mneme-statushead{margin-top:var(--mneme-space-24)}",
+      ".mneme-statuscard{min-width:0;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:var(--mneme-space-16) var(--mneme-space-16) var(--mneme-space-12)}",
       // 指标行：一行一指标（label 左 / 数值右），取代「·」串联的说明长句——
       // 拥挤感的根源是把多指标压进一段会换行的散文
-      ".mneme-statrows{margin-top:10px;display:flex;flex-direction:column;gap:4px}",
-      ".mneme-statrow{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
+      ".mneme-statrows{margin-top:var(--mneme-space-10);display:flex;flex-direction:column;gap:var(--mneme-space-4)}",
+      ".mneme-statrow{display:flex;align-items:baseline;justify-content:space-between;gap:var(--mneme-space-12);font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
       ".mneme-statrow>span:first-child{flex:none;white-space:nowrap}",
       ".mneme-statrow .mneme-heatdot{align-self:center}",
       // 预警行（#275 库体积卡）：行与值都要落预警色——.mneme-statrowval 自带
@@ -3099,9 +3257,9 @@ window.__ModuleLoader__.load({
       ".mneme-statrow--warn{color:var(--mneme-warn)}",
       ".mneme-statrow--warn .mneme-statrowval{color:var(--mneme-warn)}",
       ".mneme-statrowval{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}",
-      ".mneme-statfoot{margin-top:8px;font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
+      ".mneme-statfoot{margin-top:var(--mneme-space-8);font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
       // 热度分布条：三档占比一图看清，行标只补数字（类名带双横线，与 heatdot 同款）
-      ".mneme-heatbar{display:flex;height:6px;border-radius:3px;overflow:hidden;margin-top:12px;background:var(--dsw-alias-interactive-bg-hover)}",
+      ".mneme-heatbar{display:flex;height:6px;border-radius:var(--mneme-radius-pill);overflow:hidden;margin-top:var(--mneme-space-12);background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-heatbar-seg{min-width:2px}",
       ".mneme-heatbar--hot{background:var(--mneme-warn)}",
       ".mneme-heatbar--warm{background:var(--mneme-fg-dim)}",
@@ -3113,10 +3271,10 @@ window.__ModuleLoader__.load({
       // --- Token 去向三屏（2026-10 可观测性改造）：KPI 带 / donut / 7 天柱状 / 8 周热力 ---
       // KPI 带固定 4 列、容器收窄降 2 列：用 @container 不用 @media——面板同时长在
       // 宿主侧栏（~500px）与 sheet（1240px）里，决定布局的是容器宽度而非视口。
-      ".mneme-kpiband{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;max-width:1000px;margin:0 auto 12px}",
+      ".mneme-kpiband{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--mneme-space-12);max-width:1000px;margin:0 auto var(--mneme-space-12)}",
       "@container (max-width:560px){.mneme-kpiband{grid-template-columns:repeat(2,minmax(0,1fr))}}",
-      ".mneme-tokenflow{max-width:1000px;margin:0 auto 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px 16px 14px}",
-      ".mneme-donutwrap{display:flex;gap:20px;align-items:center;margin-top:12px}",
+      ".mneme-tokenflow{max-width:1000px;margin:0 auto var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:var(--mneme-space-16) var(--mneme-space-16) var(--mneme-space-12)}",
+      ".mneme-donutwrap{display:flex;gap:var(--mneme-space-20);align-items:center;margin-top:var(--mneme-space-12)}",
       "@container (max-width:480px){.mneme-donutwrap{flex-direction:column;align-items:stretch}.mneme-donutbox{align-self:center}}",
       ".mneme-donutbox{position:relative;flex:none;width:148px;height:148px}",
       ".mneme-donutbox svg{width:100%;height:100%;display:block}",
@@ -3131,7 +3289,7 @@ window.__ModuleLoader__.load({
       ".mneme-seg--3{stroke:var(--mneme-chart-3)}",
       ".mneme-seg--4{stroke:var(--mneme-chart-4)}",
       ".mneme-seg--5{stroke:var(--mneme-chart-5)}",
-      ".mneme-seg--6{stroke:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent)}",
+      ".mneme-seg--6{stroke:var(--mneme-chart-6)}",
       ".mneme-legend{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}",
       ".mneme-legendrow{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;cursor:default;font-size:12.5px;line-height:18px;color:var(--dsw-alias-label-primary)}",
       ".mneme-legendrow:hover,.mneme-legendrow.focused{background:var(--dsw-alias-interactive-bg-hover)}",
@@ -3142,7 +3300,7 @@ window.__ModuleLoader__.load({
       ".mneme-dot--3{background:var(--mneme-chart-3)}",
       ".mneme-dot--4{background:var(--mneme-chart-4)}",
       ".mneme-dot--5{background:var(--mneme-chart-5)}",
-      ".mneme-dot--6{background:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent)}",
+      ".mneme-dot--6{background:var(--mneme-chart-6)}",
       ".mneme-legendname{color:var(--dsw-alias-label-primary);white-space:nowrap}",
       ".mneme-legendsub{color:var(--mneme-fg-dim);font-size:11px}",
       ".mneme-legendval{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary);white-space:nowrap}",
@@ -3181,35 +3339,35 @@ window.__ModuleLoader__.load({
       ".mneme-flowsink{min-width:0;display:flex;flex-direction:column}",
       // 8 周沉淀只画两条（进来的 / 稳住的）：220px 宽里三序列会细到看不清，
       // 归档数改在下方图例里给总量。
-      ".mneme-sinkchart{display:flex;align-items:flex-end;gap:4px;height:96px;margin-top:12px}",
-      ".mneme-sinkcol{flex:1;min-width:0;display:flex;align-items:flex-end;gap:2px;height:100%}",
-      ".mneme-sinkbar{flex:1;min-width:0;border-radius:2px 2px 0 0;min-height:1px}",
-      ".mneme-sinkbar--added{background:var(--mneme-chart-3)}",
-      ".mneme-sinkbar--merged{background:var(--mneme-chart-2)}",
-      ".mneme-sinklabels{display:flex;gap:4px;margin-top:4px;font-size:9.5px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums}",
+      ".mneme-sinkchart{display:flex;align-items:flex-end;gap:var(--mneme-space-4);height:96px;margin-top:var(--mneme-space-12)}",
+      ".mneme-sinkcol{flex:1;min-width:0;display:flex;align-items:flex-end;gap:var(--mneme-space-2);height:100%}",
+      ".mneme-sinkbar{flex:1;min-width:0;border-radius:var(--mneme-radius-4) var(--mneme-radius-4) 0 0;min-height:1px}",
+      ".mneme-sinkbar--added{background:var(--mneme-sink-added)}",
+      ".mneme-sinkbar--merged{background:var(--mneme-sink-merged)}",
+      ".mneme-sinklabels{display:flex;gap:var(--mneme-space-4);margin-top:var(--mneme-space-4);font-size:9.5px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums}",
       ".mneme-sinklabels span{flex:1;min-width:0;text-align:center;white-space:nowrap}",
-      ".mneme-sinklegend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:8px;font-size:10.5px;color:var(--mneme-fg-dim)}",
+      ".mneme-sinklegend{display:flex;flex-wrap:wrap;align-items:center;gap:var(--mneme-space-4) var(--mneme-space-10);margin-top:var(--mneme-space-8);font-size:10.5px;color:var(--mneme-fg-dim)}",
       ".mneme-sinklegend b{font-weight:600;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}",
       // 原 9 卡降级折叠区：默认收起，展开才挂载子卡（见 TokenFlowSection 注释）。
-      ".mneme-legacy{max-width:1000px;margin:0 auto 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:12px 16px}",
+      ".mneme-legacy{max-width:1000px;margin:0 auto var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:var(--mneme-space-12) var(--mneme-space-16)}",
       ".mneme-legacy summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}",
       // --- 状态页工作台：让用户看见插件在干活（动态/沉淀/归档） ---
-      ".mneme-wbhead{margin:28px auto 10px;font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);max-width:1000px;display:flex;align-items:baseline;justify-content:space-between;gap:8px}",
-      ".mneme-wblist{max-width:1000px;display:flex;flex-direction:column;gap:6px}",
-      ".mneme-wbrow{display:flex;gap:10px;align-items:flex-start;padding:10px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px}",
-      ".mneme-wbdot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:6px;background:var(--mneme-ok)}",
+      ".mneme-wbhead{margin:var(--mneme-space-24) auto var(--mneme-space-10);font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);max-width:1000px;display:flex;align-items:baseline;justify-content:space-between;gap:var(--mneme-space-8)}",
+      ".mneme-wblist{max-width:1000px;display:flex;flex-direction:column;gap:var(--mneme-space-6)}",
+      ".mneme-wbrow{display:flex;gap:var(--mneme-space-10);align-items:flex-start;padding:var(--mneme-space-10) var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l1);border-radius:var(--mneme-radius-8)}",
+      ".mneme-wbdot{flex:none;width:8px;height:8px;border-radius:50%;margin-top:var(--mneme-space-6);background:var(--mneme-ok)}",
       ".mneme-wbdot--err{background:var(--mneme-danger)}",
       ".mneme-wbmain{min-width:0;flex:1}",
       ".mneme-wbtitle{font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
       ".mneme-wbsub{font-size:12px;line-height:17px;color:var(--mneme-fg-dim);margin-top:1px}",
-      ".mneme-wbmemo{display:flex;gap:10px;align-items:center;padding:10px 14px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px}",
+      ".mneme-wbmemo{display:flex;gap:var(--mneme-space-10);align-items:center;padding:var(--mneme-space-10) var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l1);border-radius:var(--mneme-radius-8)}",
       ".mneme-wbmemo .mneme-xdot{flex:none}",
       ".mneme-wbmemo-main{min-width:0;flex:1}",
       ".mneme-statusnum{font-size:24px;font-weight:600;line-height:32px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}",
       // 大数字预警色（#275 库体积卡）：状态卡都走 StatusCard，只有传 numWarn 的
       // 卡会挂这个类。
       ".mneme-statusnum--warn{color:var(--mneme-warn)}",
-      ".mneme-statuscap{margin-top:4px;font-size:13px;line-height:19px;color:var(--mneme-fg-dim);word-break:break-word}",
+      ".mneme-statuscap{margin-top:var(--mneme-space-4);font-size:13px;line-height:19px;color:var(--mneme-fg-dim);word-break:break-word}",
       // --- destructive actions: red outline = delete, solid red = confirm ---
       ".mneme-btndanger{color:var(--mneme-danger);border-color:var(--mneme-danger)}",
       ".mneme-btndanger:hover{background:color-mix(in srgb,var(--mneme-danger) 12%,transparent)}",
@@ -3218,7 +3376,7 @@ window.__ModuleLoader__.load({
       // --- settings cards: boxed cards for the runtime-mode and external-API
       // sections — each card owns its fetch/PUT state, so it renders as a
       // self-contained unit inside the stacked settings view ---
-      ".mneme-set-card{border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px;margin-bottom:10px}",
+      ".mneme-set-card{border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:16px;margin-bottom:10px}",
       // 设置页分组标题（个性化 / 记忆引擎 / 搜索 / 连接与安全 / 帮助）：
       // 先给「这一段在管什么」，卡片才是具体选项；scroll-margin-top 是给 #518 的粘顶目录（实测约 74px 高）留的跳转余量
       // ——没有它，点 chip 滚过去的标题就停在目录背面
@@ -3231,7 +3389,7 @@ window.__ModuleLoader__.load({
       ".mneme-set-toc{position:sticky;top:0;z-index:2;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1));padding:8px 0 10px;margin-bottom:4px;border-bottom:1px solid var(--dsw-alias-border-l2)}",
       ".mneme-set-toclabel{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin-bottom:6px}",
       ".mneme-set-toclist{display:flex;gap:6px;overflow-x:auto;padding:3px}", // 不 wrap：chip flex:none，窄屏横向滚；3px 给 focus ring 留位（滚动容器会裁掉描边）
-      ".mneme-set-tocchip{flex:none;height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--dsw-alias-border-l2);background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:12px;line-height:24px;transition:border-color .12s,color .12s}",
+      ".mneme-set-tocchip{flex:none;height:26px;padding:0 10px;border-radius:var(--mneme-radius-pill);border:1px solid var(--dsw-alias-border-l2);background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:12px;line-height:24px;transition:border-color .12s,color .12s}",
       ".mneme-set-tocchip:hover{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary)}",
       ".mneme-set-tocchip:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
       ".mneme-set-token{font-family:monospace;font-size:12px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);word-break:break-all;user-select:all}",
@@ -3440,14 +3598,18 @@ window.__ModuleLoader__.load({
         "--mneme-accent:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
         "--mneme-danger:color-mix(in srgb,var(--dsw-alias-state-error-primary) 80%,var(--dsw-alias-label-primary));" +
         "--mneme-warn:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 65%,var(--dsw-alias-label-primary));" +
-        "--mneme-ok:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 65%,var(--dsw-alias-label-primary))" +
+        "--mneme-ok:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 65%,var(--dsw-alias-label-primary));" +
+        // 格线专用：纸面合成色上 1px 线要看得见但不抢字。宿主 border-l1 只有 3.9%/5.9%，
+        // 与纸的对比 1.09:1（浅）/1.20:1（深），1px 线在这个量级等于没有；20% 是
+        // 1.55:1 / 1.88:1，14% 偏淡（1.35/1.55），26% 开始压字。深浅各开一支不值。
+        "--mneme-rule:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent)" +
       "}",
       // 手绘风只靠**形状**做，不靠颜色：四角不对称的圆角（每边一个数会写成
       // 「横向/纵向」两组百分比）、比常规粗一点的 1.5px 描边、虚线分隔、以及
       // 正负 0.3deg 的轻微歪斜——这些都不碰对比度，深浅主题下一样成立。
       // 想加纸纹就用 repeating-linear-gradient：它不是 color 声明，主锁不看；
       // 反过来**别在这里加 color**，任何新色值都要先过 #178 的 AA 主锁。
-      ".mneme-diary{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;padding:10px 12px;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary);box-sizing:border-box}",
+      ".mneme-diary{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary);box-sizing:border-box}",
       ".mneme-diary-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}",
       ".mneme-diary-title{font-size:15px;line-height:21px;font-weight:700;letter-spacing:.3px;color:var(--dsw-alias-label-primary)}",
       ".mneme-diary-note{font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
@@ -3484,29 +3646,43 @@ window.__ModuleLoader__.load({
       // 不另起弹层——面板里已经有纸张在动，再多一层浮层会盖住正文。
       ".mneme-diary-notice{flex:none;font-size:12px;line-height:18px;padding:5px 9px;border-radius:6px;border-left:3px solid var(--mneme-accent);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);word-break:break-word}",
       ".mneme-diary-notice--bad{border-left-color:var(--mneme-danger);color:var(--mneme-danger)}",
-      ".mneme-diary-paperhead{display:flex;align-items:baseline;gap:8px;padding-bottom:6px;margin-bottom:6px;border-bottom:1px solid var(--dsw-alias-border-l1)}",
+      ".mneme-diary-paperhead{display:flex;align-items:baseline;gap:8px;padding-bottom:6px;margin-bottom:6px;border-bottom:1px dashed var(--dsw-alias-border-l1)}",
       ".mneme-diary-papername{font-size:13px;line-height:19px;font-weight:600;color:var(--mneme-accent);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".mneme-diary-paperdate{font-size:11px;line-height:16px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums;flex:none}",
-      // 纸地：素纸 / 横线 / 方格 / 牛皮。横线与方格用 background-size 让格线正好
-      // 落在 26px 行高上，行距一改就得同步改这两个数，否则字会压在线上。
-      ".mneme-diary-paper--ruled{background-image:repeating-linear-gradient(to bottom,transparent 0 25px,var(--dsw-alias-border-l1) 25px 26px);background-size:100% 26px;background-position:0 0}",
-      ".mneme-diary-paper--grid{background-image:repeating-linear-gradient(to bottom,transparent 0 25px,var(--dsw-alias-border-l1) 25px 26px),repeating-linear-gradient(to right,transparent 0 25px,var(--dsw-alias-border-l1) 25px 26px);background-size:100% 26px,26px 100%;background-position:0 0,0 0}",
-      ".mneme-diary-paper--kraft{background:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 8%,transparent)}",
-      ".mneme-diary-paper--plain{background:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
-      ".mneme-diary-paper{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.18deg);background:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
+      // 纸地：素纸 / 横线 / 点阵。（牛皮已删：它只是「给纸面上 3%→8% 同一层色」，
+      // 与素纸平均通道差 5.7 级、浅色下只差 1.01:1，且是这块唯一硬编码 hex。）
+      //
+      // 纹路挂在**正文元素**上而不是纸上，这是这段唯一的非常规处，两个理由：
+      // ① 挂在纸上时，这几条与下面那条基础规则是**同一个类选择器**、特异性打平，
+      //    基础规则在数组里更靠后且用的是 background 简写，会把 background-image 与
+      //    background-color 一起复位——「四种纸面一模一样」就是这么来的，注释里
+      //    「格线正好落在 26px 行高上」的好意从来没生效过。换成后代选择器后两者
+      //    不再是同一个元素，冲突从结构上消失，不靠源码顺序。
+      // ② 纸面在两处渲染：右栏 pane 里纸内第一个孩子直接是 .mneme-diary-text，面板
+      //    tab 里纸内先是 .mneme-diary-paperhead——同一个 background-position 一处要
+      //    12px、另一处要 32px，挂在纸上永远对不齐一处；挂在拥有 26px 行高的元素上，
+      //    纹路跟着行盒走，两处天然对齐。行高若改，这里的 25px/26px 要同步。
+      ".mneme-diary-paper--ruled .mneme-diary-text{background-image:repeating-linear-gradient(to bottom,transparent 0 25px,var(--mneme-rule) 25px 26px);background-size:100% 26px;background-repeat:repeat}",
+      // 点阵：横竖都 26px 一个点，点落在行盒正中。选点阵不选方格，是因为 14px 中文
+      // 衬线正文里竖线会从字中间穿过去（20% 时尤其明显），点只占一个行盒中心，
+      // 二维结构还在，正文不受干扰。点半径用 em 而不是 px：随字号走，也不进 px 棘轮。
+      ".mneme-diary-paper--grid .mneme-diary-text{background-image:radial-gradient(circle at 50% 50%,var(--mneme-rule) 0 .08em,transparent .1em);background-size:26px 26px;background-repeat:repeat}",
+      // 素纸没有纹路，只靠这层 3% 纸色。**必须写 background-color**：简写会把上面两条
+      // 的 background-image 清掉，这正是这个 bug 的形状，别再写回去。
+      ".mneme-diary-paper{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.18deg);background-color:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
       // 日记正文用衬线：本子上写字不该像聊天记录。四套纸共用一套字，行高 26px
       // 与 --ruled/--grid 的格线对齐；行高一改必须同步上面两条 background-size。
-      ".mneme-diary-text{margin:0;word-break:break-word;font-family:Georgia,\"Times New Roman\",\"Songti SC\",\"Noto Serif SC\",serif;font-size:14px;line-height:26px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-diary-text{margin:0;min-height:100%;box-sizing:border-box;word-break:break-word;font-family:Georgia,\"Times New Roman\",\"Songti SC\",\"Noto Serif SC\",serif;font-size:14px;line-height:26px;color:var(--dsw-alias-label-primary)}",
       // 正文是渲染过的排版（renderDiaryBody），不再是 <pre> 原文：段落、小标题、
       // 列表各归各位。行高 26px 必须贯穿所有块级元素，否则格线会和字错开。
-      ".mneme-diary-text p{margin:0 0 13px}",
+      ".mneme-diary-text p{margin:0 0 1lh}",
       ".mneme-diary-text p:last-child{margin-bottom:0}",
-      ".mneme-diary-text h2,.mneme-diary-text h3,.mneme-diary-text h4,.mneme-diary-text h5{margin:13px 0 6px;font-family:inherit;font-weight:600;line-height:26px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-diary-text h2,.mneme-diary-text h3,.mneme-diary-text h4,.mneme-diary-text h5{margin:1lh 0 0;font-family:inherit;font-weight:600;line-height:26px;color:var(--dsw-alias-label-primary)}",
       ".mneme-diary-text h2{font-size:16px}",
       ".mneme-diary-text h3{font-size:15px}",
-      ".mneme-diary-text ul,.mneme-diary-text ol{margin:0 0 13px;padding-left:22px}",
+      ".mneme-diary-text ul,.mneme-diary-text ol{margin:0 0 1lh;padding-left:22px}",
       ".mneme-diary-text li{margin:0;line-height:26px}",
-      ".mneme-diary-text blockquote{margin:0 0 13px;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2);color:var(--mneme-fg-dim)}",
+      ".mneme-diary-text blockquote{margin:0 0 1lh;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2);color:var(--mneme-fg-dim)}",
       ".mneme-diary-text code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;background:var(--dsw-alias-interactive-bg-active);border-radius:4px;padding:1px 4px}",
       ".mneme-diary-sheet{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
       ".mneme-diary-empty{padding:14px 0;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
@@ -3521,7 +3697,7 @@ window.__ModuleLoader__.load({
       // 刻意**不新开一份 --mneme-* 语义色层**：contrast.test.js 按首次出现的
       // 「--mneme-fg-dim」定义解析色值（:118），再来一份就得保证顺序，收益却为零。
       // 这一页只用第一份色层已经覆盖到的宿主 token 与既有 -dim 类名，靠形状做手绘感。
-      ".mneme-persona{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;padding:10px 12px;box-sizing:border-box;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-persona{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;box-sizing:border-box;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
       ".mneme-persona-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none}",
       ".mneme-persona-title{font-size:15px;line-height:21px;font-weight:700;letter-spacing:.3px;color:var(--dsw-alias-label-primary)}",
       ".mneme-persona-spacer{flex:1 1 auto;min-width:0}",
@@ -3531,10 +3707,10 @@ window.__ModuleLoader__.load({
       // 左列身份卡：宽度固定，卡片是「贴纸」而不是菜单行。
       ".mneme-persona-col{flex:0 0 190px;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;padding-right:2px;border-right:1px dashed var(--dsw-alias-border-l2)}",
       ".mneme-persona-card{display:flex;align-items:center;gap:2px}",
-      ".mneme-persona-pick{flex:1 1 auto;min-width:0;text-align:left;border:1.5px solid transparent;background:0 0;cursor:pointer;font-family:inherit;font-size:12.5px;line-height:18px;padding:5px 10px;border-radius:12px 8px 13px 9px;color:var(--mneme-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".mneme-persona-pick{flex:1 1 auto;min-width:0;text-align:left;border:1.5px solid transparent;background:0 0;cursor:pointer;font-family:inherit;font-size:12px;line-height:18px;padding:5px 10px;border-radius:12px 8px 13px 9px;color:var(--mneme-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".mneme-persona-pick:hover{background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-persona-pick:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
-      ".mneme-persona-pick--on{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
+      ".mneme-persona-pick--on{border-color:var(--mneme-accent);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
       ".mneme-persona-del{flex:none;border:0;background:0 0;cursor:pointer;font-family:inherit;font-size:13px;line-height:18px;padding:2px 6px;border-radius:8px;color:var(--mneme-fg-dim)}",
       ".mneme-persona-del:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--mneme-danger)}",
       ".mneme-persona-del:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
@@ -3583,7 +3759,7 @@ window.__ModuleLoader__.load({
       // sharedialog 自己不带 padding：它和 impdialog 同挂一条 div（见 JSX 里的
       // `className:"mneme-impdialog mneme-sharedialog"`），盒模型由 impdialog 带过来，
       // 所以它同样 +30px；宽度取哪一条由源码顺序决定，故两条都得是 border-box。
-      "@container (max-width: 480px){.mneme-xbar{justify-content:flex-start;padding:0 52px 0 10px}.mneme-vtab{padding:0 10px}.mneme-vtabs{min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.mneme-vtabs::-webkit-scrollbar{height:0}.mneme-xmain{flex-direction:column}.mneme-xside{width:100%;flex:0 1 auto;min-height:0;max-height:min(42vh,300px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2);overscroll-behavior:contain}.mneme-xbrowsebar{padding:8px 12px}.mneme-filterbar{padding:8px 12px}.mneme-drawer{width:100%}.mneme-drawerbody{padding:16px 14px 24px}.mneme-cards{padding:14px 12px 24px;overscroll-behavior:contain}.mneme-ent{flex-direction:column}.mneme-entrail{width:100%;flex:0 1 auto;min-height:0;max-height:min(40vh,280px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2)}.mneme-entrailbody{overscroll-behavior:contain}.mneme-entdetail{padding:16px 14px 24px}.mneme-set{padding:8px 14px 40px}.mneme-status{padding:16px 14px 32px}.mneme-menu{box-sizing:border-box;min-width:0;width:min(200px,calc(100cqw - 32px))}.mneme-impdialog{box-sizing:border-box;width:min(300px,calc(100cqw - 32px))}.mneme-sharedialog{box-sizing:border-box;width:min(340px,calc(100cqw - 32px))}.mneme-graph{padding:10px 12px 12px}.mneme-graphsvg{max-height:min(320px,52vh);touch-action:pan-y}.mneme-glabel{font-size:14px}.mneme-graphside{position:static;width:auto;max-width:100%;max-height:min(200px,30vh);margin-top:8px}}",
+      "@container (max-width: 480px){.mneme-xbar{justify-content:flex-start;padding:0 52px 0 10px}.mneme-vtab{padding:0 10px;flex:none;white-space:nowrap}.mneme-vtabs{min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.mneme-vtabs::-webkit-scrollbar{height:0}.mneme-xmain{flex-direction:column}.mneme-xside{width:100%;flex:0 1 auto;min-height:0;max-height:min(42vh,300px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2);overscroll-behavior:contain}.mneme-xbrowsebar{padding:8px 12px}.mneme-filterbar{padding:8px 12px}.mneme-drawer{width:100%}.mneme-drawerbody{padding:16px 14px 24px}.mneme-cards{padding:14px 12px 24px;overscroll-behavior:contain}.mneme-ent{flex-direction:column}.mneme-entrail{width:100%;flex:0 1 auto;min-height:0;max-height:min(40vh,280px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2)}.mneme-entrailbody{overscroll-behavior:contain}.mneme-entdetail{padding:16px 14px 24px}.mneme-set{padding:8px 14px 40px}.mneme-diary-body{flex-direction:column}.mneme-diary-list{flex:none;flex-direction:row;flex-wrap:wrap;gap:var(--mneme-space-4);overflow:visible;padding:0 0 var(--mneme-space-6);border-right:0}.mneme-persona-body{flex-direction:column}.mneme-persona-col{flex:none;overflow:visible;padding:0 0 var(--mneme-space-6);border-right:0}.mneme-persona-about{max-height:none}.mneme-status{padding:16px 14px 32px}.mneme-menu{box-sizing:border-box;min-width:0;width:min(200px,calc(100cqw - 32px))}.mneme-impdialog{box-sizing:border-box;width:min(300px,calc(100cqw - 32px))}.mneme-sharedialog{box-sizing:border-box;width:min(340px,calc(100cqw - 32px))}.mneme-graph{padding:10px 12px 12px}.mneme-graphsvg{max-height:min(320px,52vh);touch-action:pan-y}.mneme-glabel{font-size:14px}.mneme-graphside{position:static;width:auto;max-width:100%;max-height:min(200px,30vh);margin-top:8px}}",
       // 360 档只做两件事：隐掉 14px 的 tab 图标（.mneme-vtab 带图标时约 109px/个、
       // 4 个约 436px，320px 容器原地就横向溢出），再把正文 padding 收到 12–14px。
       // 页签横向滚动不在这一档、属于 480 主断点，理由见 480 档那条算式。
@@ -3598,6 +3774,117 @@ window.__ModuleLoader__.load({
     }
 
     const h = react.createElement;
+
+    /* panel-geometry:begin
+     * 几何原语层（视觉系统 P1a，docs/plans/2026-11-10-panel-visual-system.md）。
+     * 面板此前没有组件层：每张卡片、每一行都手写 div + 行内 style，同一件事写 180 次、
+     * 180 次各自算间距，于是 padding 长出 107 种取值。这一层只做一件事：把
+     * 「间距/圆角/字号」收成 Token，并让调用点无法绕过它。
+     *
+     * 约定（写代码的人只需要记这一条）：所有几何参数只收 GEOMETRY 表里的键，
+     * 传表外的值（9、10、14、16.5、「8px」）当场抛错。宁可渲染炸掉，也不要
+     * 悄悄画出一个第 108 种间距——后者没人会发现，前者一进测试就红。
+     *
+     * 标记注释不是装饰：test/panel-tokens.test.js 把 begin/end 之间这段抽出来
+     * 直接跑（注入一个假的 createElement），所以这段必须保持纯函数、不许 require。
+     */
+    const GEOMETRY = {
+      space: [0, 2, 4, 6, 8, 10, 12, 16, 20, 24, 40],
+      radius: [4, 8, 12, "pill"],
+      type: [12, 13, 15],
+      weight: [400, 600]
+    };
+    function geometryVar(group, key) {
+      const table = GEOMETRY[group];
+      if (!table) throw new Error("mneme panel: 未知刻度组 " + group);
+      if (!table.includes(key)) {
+        throw new Error(
+          "mneme panel: " + group + " 不接受 " + JSON.stringify(key) +
+          "——只收刻度 " + table.join("/") + "（见 lib/client.js 的 GEOMETRY）"
+        );
+      }
+      return "var(--mneme-" + group + "-" + key + ")";
+    }
+    const space = (key) => geometryVar("space", key);
+    const radius = (key) => geometryVar("radius", key);
+    const fontOf = (key) => geometryVar("type", key);
+    const weightOf = (key) => geometryVar("weight", key);
+
+    function Stack(o) {
+      const p = o || {};
+      const style = Object.assign(
+        { display: "flex", flexDirection: p.direction || "column", gap: space(p.gap == null ? 0 : p.gap), padding: space(p.pad == null ? 0 : p.pad) },
+        p.align ? { alignItems: p.align } : null,
+        p.justify ? { justifyContent: p.justify } : null,
+        p.wrap ? { flexWrap: "wrap" } : null,
+        p.grow ? { flexGrow: 1, minWidth: 0 } : null,
+        p.style || null
+      );
+      return h("div", { className: p.className, style }, p.children);
+    }
+    function Inline(o) {
+      const p = o || {};
+      return Stack(Object.assign({}, p, { direction: "row", align: p.align || "center", gap: p.gap == null ? 6 : p.gap }));
+    }
+    // 唯一允许自己写内距的壳：卡片内距只有两档，dense 给紧凑列表用。
+    function Card(o) {
+      const p = o || {};
+      const head = p.title == null && p.actions == null ? null : h(
+        "div",
+        { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: space(8), marginBottom: space(8) } },
+        h("div", { style: { fontSize: fontOf(13), fontWeight: weightOf(600), color: "var(--dsw-alias-label-primary)", minWidth: 0 } }, p.title),
+        p.actions == null ? null : h("div", { style: { display: "flex", alignItems: "center", gap: space(6), flex: "none" } }, p.actions)
+      );
+      return h(
+        "div",
+        {
+          className: p.className,
+          style: Object.assign(
+            {
+              boxSizing: "border-box",
+              border: "1px solid var(--dsw-alias-border-l2)",
+              borderRadius: radius(8),
+              padding: p.dense ? space(8) : space(12),
+              background: "transparent",
+              minWidth: 0
+            },
+            p.style || null
+          )
+        },
+        head,
+        p.children
+      );
+    }
+    function Section(o) {
+      const p = o || {};
+      return h(
+        "section",
+        { style: Object.assign({ display: "flex", flexDirection: "column", gap: space(8), marginBottom: space(16) }, p.style || null) },
+        p.title == null && p.hint == null ? null : h(
+          "div",
+          { style: { display: "flex", flexDirection: "column", gap: space(2) } },
+          p.title == null ? null : h("h3", { style: { margin: 0, fontSize: fontOf(13), fontWeight: weightOf(600), color: "var(--dsw-alias-label-primary)" } }, p.title),
+          p.hint == null ? null : h("p", { style: { margin: 0, fontSize: fontOf(12), lineHeight: 1.5, color: "var(--mneme-fg-dim)" } }, p.hint)
+        ),
+        p.children
+      );
+    }
+    // 仪表盘栅格：auto-fill 而不是断点，容器宽度变化时自己重排。
+    function Grid(o) {
+      const p = o || {};
+      return h(
+        "div",
+        {
+          style: Object.assign(
+            { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(" + (p.min || 220) + "px,1fr))", gap: space(p.gap == null ? 12 : p.gap) },
+            p.style || null
+          )
+        },
+        p.children
+      );
+    }
+    /* panel-geometry:end */
+
 
     // --- graph view constants ---
     // Entity type → node fill. The host has no palette token for categorical
@@ -4290,51 +4577,73 @@ window.__ModuleLoader__.load({
     // 「重置用户配置」，子项自己勾着的值要留着，也应该能提前设好。同一份关系在
     // 后端 src/config.js 的 INJECT_CHILD_FLAGS（运行时闸门），两侧漂移由
     // test/inject-parent-gate.test.js 钉住。
-    const FEATURE_CHILDREN = { autoInject: ["injectGuidanceEnabled", "continuityRescueEnabled"] };
+    const FEATURE_CHILDREN = {
+      autoInject: ["injectGuidanceEnabled", "continuityRescueEnabled"],
+      // 热度衰减的注入侧乘数（#362）是它的第二口径：数据同源、含义不同
+      // （曲线算没算 vs 排序用没用），缩进子行贴着总闸，父关时标注不生效。
+      heatEnabled: ["injectHeatEnabled"],
+      // 地志的两个子开关贴着总闸（#607 后续）：都是「地志开着才有意义」的
+      // 口径开关——读路径自动重跑 T0、面板按钮能否发起 T1。
+      chorographyEnabled: ["chorographyAutoRefresh", "chorographyT1FromPanel"]
+    };
     // Issue #427 建议 1：折叠线挪到「新手之外」。group.basic 是首屏层，只列新
     // 用户敢动的总开关；group.scope 也在首屏——它回答新用户的第二个必答题
     // 「它记的东西会不会被别的会话看到」。其余组整组收进「全部设置」折叠
     // （showAll）。成员从原组里移走而不是渲染时过滤：同一项永远只渲染一次。
-    // 首屏可点项 = 3 总开关 + autoInject 的 2 个子开关 + scope 2 开关 +
-    // 「全部设置」按钮 = 8。v0.9.0 曾按产品主人点名把 M.O. 独立成组并提进
-    // 首屏（当时豁免 ≤8 软预算，理由记在 test/client.test.js 的同名用例里）；
-    // 本轮主人决定把 M.O. 下架，那一组连同首屏位一起摘掉，预算回到 8。
+    // 首屏可点项 = 3 总开关 + autoInject 的 2 个子开关 + 扩展功能 3 个闸门 +
+    // scope 2 开关 + 「全部设置」按钮 = 11。v0.9.0 曾按产品主人点名把 M.O.
+    // 独立成组并提进首屏（当时豁免 ≤8 软预算，理由记在 test/client.test.js 的
+    // 同名用例里）；v0.13.x 主人决定把 M.O. 下架，预算回到 8。
+    // v0.13.x 第二次豁免（#607 后续）：主人要「一眼看见」仓库地志与知识库这两个
+    // 扩展子系统的总闸——此前一个埋在「全部设置 → 它什么时候写进去」的组尾、
+    // 一个连 FEATURE_GROUPS 都没进（后端全通、面板只有文案没有勾选框），等于
+    // 有功能没入口。为此新开 group.ext 并进首屏，预算 8→11。豁免的是「一眼看见」
+    // 这条产品要求，不是把预算取消：再往首屏塞东西前先问它是不是和这三个闸门
+    // 同级的子系统，不是就留在折叠层。
     // RuntimeProvisionBlock 配好即消失，常态首屏更少。
-    const FEATURE_FIRST_SCREEN = ["group.basic", "group.scope"];
+    const FEATURE_FIRST_SCREEN = ["group.basic", "group.ext", "group.scope"];
     const FEATURE_GROUPS = [
       { key: "group.basic", items: ["autoInject", "autoSummarize", "autoDream"] },
-      { key: "group.core", items: ["hotMemoryEnabled", "injectTimePrefix", "memoryQualityFilter.enabled", "llmAudit.enabled", "writeAdmission.enabled", "writeAdmission.enforce", "preInjectGate.enabled", "preInjectGate.enforce", "sensitiveScanEnabled",
-        // #399 的留存总闸（见下方 distillSub：天数行是它的子块）。放在组末，
-        // 子块才能紧跟在它后面展开——items.map 之后的子块是按组尾渲染的。
+      // 扩展功能（v0.13.x）：mneme 本体只做记忆，仓库地志 / 知识库 / 日记本是
+      // 三个可选子系统，各自的总闸决定「座位、工具、注入块存不存在」。它们此前
+      // 散在 enhance 组尾（choro / diary）或压根不在 FEATURE_GROUPS 里（kb），
+      // 结果是开了才找得到、找不到就没法开——#607 报的「知识库没成型」有一半
+      // 是这个入口问题。单独成组并进首屏，一眼能看见。
+      // 子块（choroSub 档位 / diarySub 定时写）不走「组尾追加」那条老路：ext 组的
+      // 子块紧贴自己那个总闸渲染（见下方 renderGroup 的 subAfter），否则地志的档位
+      // 下拉会隔着「知识库」「日记本」两行出现，读起来像在问知识库每轮付多少。
+      { key: "group.ext", items: ["chorographyEnabled", "kbEnabled", "diaryEnabled"] },
+      // 防线与审计（#427 revamp 重排）：六个「拦什么、记什么」的开关归一处——
+      // 写入准入、注入前判定、敏感信息扫描、LLM 审计账本。它们与「每轮付多少」
+      // 的行为开关不同级：都是防线，动任何一道都改变风险面，所以单独成组。
+      { key: "group.safety", items: ["writeAdmission.enabled", "writeAdmission.enforce", "preInjectGate.enabled", "preInjectGate.enforce", "sensitiveScanEnabled", "llmAudit.enabled"] },
+      // 蒸馏与写入：写进去的东西长什么样——实体抽取（子块：路由与思考强度）、
+      // 编码回溯、文档摘要卡、质量过滤、原文留存（子块：天数）。
+      { key: "group.pipeline", items: ["entityExtractionEnabled", "codingRetrospect", "documentMemoryEnabled", "memoryQualityFilter.enabled",
+        // #399 的留存总闸放组末：distillSub（天数行）经 subAfter 紧贴它渲染。
         "distillRecords.enabled"] },
-      // M.O. 已下架（v0.13.x）：这一组连同首屏位一起摘掉，不是「折进全部设置」。
-      // 反转的是 v0.9.0 时产品主人「别藏在里面」的点名——本轮主人明确要求下架，
+      // 检索与注入：捞什么、排什么序——热记忆、时间前缀、重排、BM25、语义去重、
+      // 热度衰减。resilientModelDownload 是本地嵌入的配套（下载/校验/adopt），
+      // 跟着检索组走。embedProvider 下拉（无开关行的子块）挂本组组尾。
+      { key: "group.retrieve", items: ["hotMemoryEnabled", "injectTimePrefix", "rerankEnabled", "bm25SearchEnabled", "searchSemanticDedup", "heatEnabled", "resilientModelDownload"] },
+      // 个性化（beta 区）：人格注入总闸 + 严格寻址 + 画像草稿 + 自动事实。
+      // 人格内容在「个性化」页的人格卡，这里只有开关。
+      { key: "group.persona", items: ["personaEnabled", "personaStrictAddressing", "profileExtractEnabled", "profileFactsEnabled"] },
+      // M.O. 已下架（v0.13.x）：那一组连同首屏位一起摘掉，不是「折进全部设置」。
+      // 反转的是 v0.9.0 时产品主人「别藏在里面」的点名——主人明确要求下架，
       // 所以反向操作。三个键仍在 config schema 与 settings 白名单里，座位闸门那条
       // effect 也仍在（fail-closed：旗标 false 时一个座位都不注册），随时可恢复：
       // 把这行加回 FEATURE_GROUPS 与 FEATURE_FIRST_SCREEN 即可。
       // 面板不再渲染它，等于只剩配置文件一条入口——这是「下架」的本意。
-      { key: "group.enhance", items: ["entityExtractionEnabled", "codingRetrospect", "rerankEnabled", "resilientModelDownload", "searchSemanticDedup", "bm25SearchEnabled", "heatEnabled", "documentMemoryEnabled",
-        // 人格定义页（beta）：注入总闸。分组随 enhance（行为开关，非座位闸门）；
-        // 人格内容在设置页「个性化」区的人格卡。
-        // 严格寻址是同一条链上的第二个口径开关（只在总闸打开时起作用）。
-        "personaEnabled", "personaStrictAddressing", "profileExtractEnabled",
-        // 自动事实（profile_facts）：dream 后的自动维护闸。展示与人工修正不受它管
-        // （GET/apply 在 flag 关时照常放行，存量事实要能看能改），它只决定「自动做梦
-        // 维护」与面板「立即更新」这两条 LLM 路径开不开。
-        "profileFactsEnabled",
-        // chorography（仓库地志）的暴露闸（M1 就有的键，M3 才上 UI）：它是「是否
-        // 启用这个子系统」而不是「每轮付多少」，所以和上面这些行为开关同组；
-        // 每轮付出多少由紧随组尾的 choroSub 档位管。放组末是因为子块按组尾渲染
-        // ——档位下拉要贴着它的总闸。
-        "chorographyEnabled",
-        // 日记本（v0.13）：右栏座位的闸门。和 M.O. 一样是「开关=座位注册与否」，
-        // 但它属于「它在替你写字」这一类行为开关，所以归 enhance 而不是单开一组。
-        "diaryEnabled"] },
       { key: "group.dream", items: ["sleepModeEnabled", "sleepAffectiveEnabled"] },
       // v0.8.0 A4（issue #17）：作用域隔离组——标注总开关 + 严格硬过滤。
       { key: "group.scope", items: ["scopeEnabled", "strictScope"] }
     ];
-    const FEATURE_ADVANCED_BOOLS = ["hybridInject", "selectiveInjectEnabled", "adaptiveThresholdEnabled", "reflectionUpdateEnabled", "reflectionFailureTracking", "conflictFreezeEnabled", "trustEpistemicWeighting"];
+    // 第二层折叠（「高级」）：更少用的开关。实体召回（#219）与图谱锚定（#24）
+    // 也归这里——默认关、依赖实体抽取产出（pipeline 组），且是进阶检索行为，
+    // 与 retrieve 的常开旋钮不同级。调优类数值键（seedCap/depth/weight* 等）
+    // 刻意不设座位，走配置文件（见 FEATURE_NUMBERS 的同名纪律）。
+    const FEATURE_ADVANCED_BOOLS = ["hybridInject", "selectiveInjectEnabled", "adaptiveThresholdEnabled", "entityRecallEnabled", "graphAnchoringEnabled", "reflectionUpdateEnabled", "reflectionFailureTracking", "conflictFreezeEnabled", "trustEpistemicWeighting"];
     // 字符串键（blur/Enter 提交，空串合法 = 跟随默认）：巩固模型与语义
     // 检索路线。embedProvider 是枚举，用下拉单独渲染。
     const FEATURE_STRINGS = ["dreamProvider", "dreamModel", "sleepProvider", "sleepModel", "entityExtractionProvider", "entityExtractionModel", "localEmbedModel", "ollamaBaseUrl", "ollamaModel",
@@ -4512,6 +4821,9 @@ window.__ModuleLoader__.load({
       // 冻结值并给出 pendingRestart 名单；本面板只负责把它显示出来。
       const pending = new Set((state && state.pendingRestart) || []);
       const flagTag = (k) => {
+        // 徽标只报「需要注意」的两态（#427 建议 3 的收窄，2026-11-11 产品口径）：
+        // 「默认」二字挂满 31 行、几乎永远不变，把真正要看的「已改 / 待重启」
+        // 淹掉了。默认态不再渲染徽标——恢复出厂这件事由开关位置本身表达。
         if (pending.has(k)) {
           return {
             kind: "mneme-badge--pending",
@@ -4519,10 +4831,11 @@ window.__ModuleLoader__.load({
             title: t("memory.features.tagPending.hint")
           };
         }
+        if (!Object.prototype.hasOwnProperty.call(ovr, k)) return null;
         return {
-          kind: Object.prototype.hasOwnProperty.call(ovr, k) ? "mneme-badge--changed" : "mneme-badge--default",
-          text: t(Object.prototype.hasOwnProperty.call(ovr, k) ? "memory.features.tagChanged" : "memory.features.tagDefault"),
-          title: t(Object.prototype.hasOwnProperty.call(ovr, k) ? "memory.features.tagChanged.hint" : "memory.features.tagDefault.hint")
+          kind: "mneme-badge--changed",
+          text: t("memory.features.tagChanged"),
+          title: t("memory.features.tagChanged.hint")
         };
       };
       const boolRow = (k, opts = {}) => h(FeatureRow, {
@@ -4849,13 +5162,27 @@ window.__ModuleLoader__.load({
               // 哪里」。renderGroup 是唯一的组渲染路径（含组尾子块），首屏层与
               // 「全部设置」共用它，保证 g.items.map(flagRow) 只写一次、子项
               // 只可能经 flagRow 渲染（test/inject-parent-gate.test.js 的门）。
+              // 扩展组例外：它的子块必须紧贴**自己那个**总闸，不能攒到组尾。
+              // 攒到组尾时，仓库地志的档位下拉会隔着「知识库」「日记本」两行出现，
+              // 读起来像在问知识库每轮付多少。别的组没有这个问题（core/dream 的
+              // 子块本来就只挂在组里最后一行那个总闸上）。
+              const subAfter = {
+                chorographyEnabled: choroSub,
+                diaryEnabled: diarySub,
+                // 子块一律紧贴自己的总闸（#638 在 ext 组确立的例外推广为全局规则）：
+                // 此前 distillSub 挂 core 组尾、entitySub 挂 enhance 组尾、
+                // summarizeSub 挂 core 组尾而它的开关 autoSummarize 在 basic 组——
+                // 子块与开关隔着几行甚至隔着另一个组，读起来像在给别的东西调参数。
+                "distillRecords.enabled": distillSub,
+                entityExtractionEnabled: entitySub,
+                autoSummarize: summarizeSub
+              };
               const renderGroup = (g) => h(react.Fragment, { key: g.key },
                 h("div", { className: "mneme-featgroup" }, t(`memory.features.${g.key}`)),
-                g.items.map(flagRow),
-                // 子块按组尾追加。distillSub 紧跟在 core 组最后一行
-                // （distillRecords.enabled）之后，天数行才贴着它的总闸。
-                g.key === "group.core" && h(react.Fragment, null, distillSub, summarizeSub),
-                g.key === "group.enhance" && h(react.Fragment, null, embedSub, entitySub, diarySub, choroSub),
+                g.items.map((k) => h(react.Fragment, { key: k }, flagRow(k), subAfter[k])),
+                // 没有对应开关行的子块仍走组尾：embedSub 是 embedProvider 的下拉
+                // （枚举键、没有布尔行可贴），dream/sleep 的调参子块组尾即邻位。
+                g.key === "group.retrieve" && h(react.Fragment, null, embedSub),
                 g.key === "group.dream" && h(react.Fragment, null, dreamSub, sleepSub)
               );
               const firstScreen = FEATURE_GROUPS.filter((g) => FEATURE_FIRST_SCREEN.includes(g.key));
@@ -6522,6 +6849,40 @@ window.__ModuleLoader__.load({
       if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
       return String(n);
     };
+    /* panel-chart-scale:begin
+       7 天柱状的纵轴（2026-11 修）。原实现两处错：标签写死 (v/1e6).toFixed(0)+"M"
+       ——750K / 500K / 250K 全变 1M，小库永远看到「1M / 1M / 1M / 0M」；上限又被
+       1e6 的地板钉死，日用量 7 万时柱子只有 7% 高。等于用量越大越正常，反了。
+       这里按 1 / 2 / 2.5 / 5 × 10^n 挑步长，四格刚好盖住峰值、不浪费超过一半高度；
+       标签按 K / M 分档，整百万不带小数（toFixed(1) 会写成「1.0M」）。抽成纯函数并
+       留标记，测试用 new Function 直接跑（同 panel-geometry 的先例）。 */
+    function chartScale(dayMax) {
+      const d = Number(dayMax);
+      // 全零 / 未加载 → null：调用方画空态或骨架，不画一条假轴。
+      if (!Number.isFinite(d) || d <= 0) return null;
+      const exp = Math.pow(10, Math.floor(Math.log10(d / 4)));
+      // 只收整数步长：2.5×10^0 = 2.5 会把整 token 轴切成小数（exp >= 10 时仍是整数）。
+      const steps = [1, 2, 2.5, 5, 10].map((m) => m * exp).filter((s) => Number.isInteger(s));
+      let step = steps[steps.length - 1];
+      for (const s of steps) {
+        if (s * 4 >= d) { step = s; break; }
+      }
+      return { step, max: step * 4, labels: [4, 3, 2, 1].map((k) => k * step) };
+    }
+    function chartAxisLabel(n) {
+      const v = Number(n);
+      if (!Number.isFinite(v)) return "";
+      if (Math.abs(v) >= 1e6) {
+        const m = v / 1e6;
+        return m % 1 === 0 ? `${m}M` : `${m.toFixed(1)}M`;
+      }
+      if (Math.abs(v) >= 1e3) {
+        const k = v / 1e3;
+        return k % 1 === 0 ? `${k}K` : `${k.toFixed(1)}K`;
+      }
+      return String(v);
+    }
+    /* panel-chart-scale:end */
     // 热力分档：固定阈值（75万/150万/250万）在低用量库里整片落在 l1，档位失真
     // （复验第三轮「颜色不怎么明显」）。改按 56 天窗口内的非零日做三分位切四档
     // ——GitHub 贡献图同思路，档次随库的实际用量自适应拉开；全零/无数据退化
@@ -6654,9 +7015,10 @@ window.__ModuleLoader__.load({
             return { day: key, total: rawDayMap.get(key) ?? 0 };
           })
         : [];
-      const dayMax = Math.max(1, ...days.map((d) => d.total));
-      const niceMax = Math.max(1e6, Math.ceil(dayMax / 1e6) * 1e6);
-      const gridVals = [niceMax, niceMax * 0.75, niceMax * 0.5, niceMax * 0.25];
+      const dayMax = Math.max(0, ...days.map((d) => d.total));
+      // scale 为 null 有两种来源：还没加载（rawDays 为 null，画骨架）与已知为空
+      // （七天全零，画空态文案）。两者不能混——加载中先说「没有记录」就是撒谎。
+      const scale = rawDays ? chartScale(dayMax) : null;
       // 8 周热力：数据必须来自 56 天窗口（heatStats），右缘对齐该窗口最后一天
       // （UTC），左侧补齐到周一；数据窗口之外的格子隐藏留形。日期一律走 UTC——
       // by_day 的 day 就是 UTC 日期。用 heatStats 而非 stats：否则 56 格里
@@ -6815,23 +7177,33 @@ window.__ModuleLoader__.load({
                 )
               ),
           h("h3", { className: "mneme-xcolhead" }, t("memory.status.token.days")),
-          h("div", { className: "mneme-bars" },
-            gridVals.map((v, i) => h("div", { key: v, className: "mneme-gridline", style: { top: `${i * 25}%` } },
-              h("span", { className: "mneme-gridlabel" }, `${(v / 1e6).toFixed(0)}M`)
-            )),
-            h("div", { className: "mneme-barcols" },
-              days.map((d) => h("div", { className: "mneme-barcol", key: d.day },
-                h("div", {
-                  className: "mneme-bar",
-                  style: { height: `${Math.max((d.total / niceMax) * 100, 0.4)}%` },
-                  title: `${d.day} · ${d.total.toLocaleString()}`
-                })
-              ))
-            )
-          ),
-          h("div", { className: "mneme-barlabels" },
-            days.map((d) => h("span", { key: d.day }, d.day.slice(5)))
-          ),
+          statsError
+            ? h("div", { className: "mneme-statuscap", style: { color: "var(--mneme-danger)" } }, t("memory.status.error"))
+            : rawDays === null
+              // 未加载：留空骨架，不画柱也不刷文案（stats 与 statsError 都不作数时）。
+              ? h("div", { className: "mneme-bars" }, h("div", { className: "mneme-barcols" }))
+              : scale
+                ? h("div", { className: "mneme-bars" },
+                    scale.labels.map((v, i) => h("div", { key: v, className: "mneme-gridline", style: { top: `${i * 25}%` } },
+                      h("span", { className: "mneme-gridlabel" }, chartAxisLabel(v))
+                    )),
+                    h("div", { className: "mneme-barcols" },
+                      days.map((d) => h("div", { className: "mneme-barcol", key: d.day },
+                        h("div", {
+                          className: "mneme-bar",
+                          style: { height: `${Math.max((d.total / scale.max) * 100, 0.4)}%` },
+                          title: `${d.day} · ${d.total.toLocaleString()}`
+                        })
+                      ))
+                    )
+                  )
+                // 已知为空（rawDays 有值、七天全零）：明确说没有，不留七根贴地柱。
+                : h("div", { className: "mneme-statuscap", style: { marginTop: "12px" } }, t("memory.status.token.daysEmpty")),
+          scale && !statsError
+            ? h("div", { className: "mneme-barlabels" },
+                days.map((d) => h("span", { key: d.day }, d.day.slice(5)))
+              )
+            : null,
           // 热力与沉淀并排两列：热力只有约 745px，右侧原本整块空着。两列
           // 在窄容器里回落单列（见 .mneme-flowrow 的 @container）。
           h("div", { className: "mneme-flowrow" },
@@ -6919,7 +7291,7 @@ window.__ModuleLoader__.load({
         h("div", { className: "mneme-statusnum", style: { fontSize: "16px", lineHeight: "24px" } },
           t("memory.status.skippedTitle").replace("{n}", String(total))),
         h("div", { className: "mneme-statuscap", style: { marginBottom: "6px" } }, t("memory.status.skippedHint")),
-        h("ul", { style: { margin: 0, paddingLeft: "18px", fontSize: "12px", lineHeight: "18px" } },
+        h("ul", { style: { margin: 0, paddingLeft: space(16), fontSize: "12px", lineHeight: "18px" } },
           list.slice(0, 4).map((bucket, i) =>
             h("li", { key: i, style: { color: "var(--mneme-fg-dim)" } },
               (bucket.action ? bucket.action + " · " : "") + bucket.reason + " ×" + String(bucket.count)))),
@@ -7075,10 +7447,10 @@ window.__ModuleLoader__.load({
             h("span", null, r.label),
             h("span", { className: "mneme-statrowval", title: String(r.value) }, String(r.value))))),
         foot ? h("div", { className: "mneme-statfoot" }, foot) : null,
-        h("div", { style: { marginTop: 10 } },
+        h("div", { style: { marginTop: space(10) } },
           (snap.entries || []).length === 0
             ? h("div", { className: "mneme-statuscap" }, t("memory.status.injectPreview.empty"))
-            : (snap.entries || []).map((m) => h("div", { key: m.id, style: { display: "flex", gap: 8, alignItems: "baseline", fontSize: 12, padding: "2px 0" } },
+            : (snap.entries || []).map((m) => h("div", { key: m.id, style: { display: "flex", gap: space(8), alignItems: "baseline", fontSize: 12, padding: space(2) + " 0" } },
                 h("span", { className: "mneme-xcolhead" }, typeLabel(t, m.type)),
                 h("span", { style: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, m.title || "—"),
                 h("span", { className: "mneme-xcolhead" },
@@ -7478,7 +7850,7 @@ window.__ModuleLoader__.load({
                 }))),
               h("div", { className: "mneme-statrows" },
                 tiers.map(([tier, n, label]) => h("div", { className: "mneme-statrow", key: tier },
-                  h("span", { style: { display: "flex", alignItems: "center", gap: 6 } },
+                  h("span", { style: { display: "flex", alignItems: "center", gap: space(6) } },
                     h("span", { className: `mneme-heatdot mneme-heatdot${tier}`, "aria-hidden": "true" }),
                     label),
                   h("span", { className: "mneme-statrowval" }, String(n))))),
@@ -11306,8 +11678,7 @@ window.__ModuleLoader__.load({
     const DIARY_BOOKS = [
       { key: "plain", label: "memory.diary.book.plain" },
       { key: "ruled", label: "memory.diary.book.ruled" },
-      { key: "grid", label: "memory.diary.book.grid" },
-      { key: "kraft", label: "memory.diary.book.kraft" }
+      { key: "grid", label: "memory.diary.book.grid" }
     ];
     const DIARY_BOOK_KEY = "dsh-mneme-diary-book";
 
@@ -12063,6 +12434,9 @@ window.__ModuleLoader__.load({
           : draft.byAgent[editing] || emptyPersonaCard();
 
       const save = async (next) => {
+        // 每次保存前先把上一次的「已保存」收回去：否则改完字段它仍挂着，
+        // 先成功后失败时还会与「保存失败」并存——两种都是假成功。
+        setSavedAt(0);
         try {
           const res = await apiFetch("/api/dsh-mneme/persona", {
             method: "PUT",
@@ -12081,6 +12455,7 @@ window.__ModuleLoader__.load({
 
       const setField = (key, value) => {
         if (!ready) return;
+        setSavedAt(0);
         if (editing === "default") {
           setDraft({ ...draft, default: { ...draft.default, [key]: value } });
           return;
@@ -12099,6 +12474,7 @@ window.__ModuleLoader__.load({
       // 开关即存（与设置页同语义），但仍走三维全量：只换自己这一维。
       const toggleEnabled = (checked) => {
         if (!ready) return;
+        setSavedAt(0);
         const nextCard = { ...current, enabled: checked };
         const next = editing === "default"
           ? { ...draft, default: nextCard }
@@ -12545,11 +12921,26 @@ window.__ModuleLoader__.load({
           phase: "loading", repos: [], repo: null, modules: [], edges: [], page: null,
           hits: [], q: "", selected: null, disabled: false, error: null,
           rebuilding: false, rebuildNote: null, path: "", flags: null, t1: null, toast: "",
-          cliCommand: null, copied: false
+          cliCommand: null, copied: false,
+          // autoRefreshNote：读页时服务端说「这次自动刷新我主动没做」。它不是错误，
+          // 所以不塞进 error、也不进 toast（toast 2.5s 就没了，用户看不到原因）。
+          autoRefreshNote: null,
+          // autoRefreshError：服务端**真的**试过刷新但失败了。与上面那条严格分开：
+          // 把「主动没做」和「做了没成」合成一句，面板就会把一次正确的拒绝说成故障，
+          // 也会把一次真故障说成没事（src/api.js 两个字段分开就是为了这个）。
+          autoRefreshError: null,
+          // 证据复核（Grounded Claims）的两样状态：drift 是 /choro/claims 的
+          // 回体，driftPhase 区分「还没查」「查着」「查出三种结局」。
+          drift: null, driftPhase: "idle"
         });
         // T1 跑完要重读当前仓库的模块树，但轮询的闭包里拿不到最新的 state.repo：
         // 用 ref 记住加载成功的仓库 id，避免把整棵树塞进 effect 依赖里。
         const repoIdRef = useRef(null);
+        // 证据复核的请求代次：切仓库 / 重新 load 时 +1。checkDrift 发出前记下当时的
+        // 代次，回来时代次已经变了就直接丢弃结果——否则「在甲仓库上发的 diff，在切到
+        // 乙仓库之后才回来」会把甲仓库的「需要复核」写到乙仓库的页签下，而用户看到的
+        // 是一个根本不属于当前页面的判定（比不显示更糟）。
+        const driftGenRef = useRef(0);
         // apiFetch 是裸 fetch：非 2xx 不抛错，返回 Response。这里统一解 JSON 并把
         // 状态码带回来——409 disabled（用户没开）/ 503 unavailable（装配缺件）
         // 各有各的空态文案（#497 的语义分叉在这里接住）。
@@ -12596,12 +12987,38 @@ window.__ModuleLoader__.load({
             // （/choro/modules 的 repo 只有 id/name，没有 stale）。
             const loaded = mod.data.repo;
             repoIdRef.current = loaded && loaded.id != null ? loaded.id : ref;
-            setState((s) => ({ ...s, phase: "ready", repos, repo: loaded, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null }));
+            // 切仓库时证据复核的旧结果必须清掉：它是按上一个仓库的 diff 算的，
+            // 留着就会把甲仓库的「需要复核」挂在乙仓库的页签下。
+            // 代次 +1 之后，任何在途的 checkDrift 结果都会被丢弃（见 driftGenRef）。
+            driftGenRef.current += 1;
+            setState((s) => ({ ...s, phase: "ready", repos, repo: loaded, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null, drift: null, driftPhase: "idle", autoRefreshNote: null, autoRefreshError: null }));
           } catch (err) {
             setState((s) => ({ ...s, phase: "error", error: String(err?.message ?? err) }));
           }
         }, []);
         useEffect(() => { load(); loadFlags(); }, [load, loadFlags]);
+        // 证据复核：手动触发、不自动跑。理由是它要跑一次 git diff（大仓库几十
+        // 毫秒到几秒），每切一页就重算会把浏览拖慢；而「上次生成之后代码变没变」
+        // 这件事用户自己知道什么时候关心。三种结局各自渲染，绝不让「没算出来」
+        // 长得像「一条都没事」（#607 的病根）。
+        const checkDrift = useCallback(async () => {
+          const ref = repoIdRef.current;
+          if (ref == null) return;
+          const gen = driftGenRef.current;
+          const writeIfCurrent = (patch) => setState((s) => (driftGenRef.current === gen ? { ...s, ...patch } : s));
+          writeIfCurrent({ driftPhase: "loading" });
+          // 只写「还是同一次请求、还是同一个仓库」的结果。
+          try {
+            const { status, data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/claims?repo=${encodeURIComponent(ref)}`));
+            if (status !== 200 || data.error) {
+              writeIfCurrent({ driftPhase: "failed", drift: { error: data.error ?? `claims ${status}` } });
+              return;
+            }
+            writeIfCurrent({ driftPhase: "done", drift: data });
+          } catch (err) {
+            writeIfCurrent({ driftPhase: "failed", drift: { error: String(err?.message ?? err) } });
+          }
+        }, []);
         const openPage = useCallback(async (slug) => {
           const repo = state.repo;
           if (!repo) return;
@@ -12609,7 +13026,21 @@ window.__ModuleLoader__.load({
           try {
             const { status, data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/page?repo=${encodeURIComponent(repo.id)}&slug=${encodeURIComponent(slug)}`));
             if (status !== 200 || data.error) { setState((s) => ({ ...s, page: { error: data.error ?? `page ${status}` } })); return; }
-            setState((s) => ({ ...s, page: data.page }));
+            // 自动刷新被主动跳过：这条要说出来。不说的话，用户看到的是「代码已变」
+            // 徽章一直亮着、页面还是旧的，只会以为刷新坏了（#607 那类假成功的反面）。
+            // 文案自己拼而不直接用服务端那句：那句话是中文的，进不了英文界面；
+            // 页数用服务端算出的 enrichedPages，只有它缺的时候才退回服务端原话。
+            const skipped = data.autoRefreshSkipped === "t1-loss"
+              ? (Number(data.repo?.enrichedPages ?? 0) > 0
+                ? t("wiki.autoRefresh.skipped").replace("{n}", String(data.repo.enrichedPages))
+                : (data.autoRefreshSkipNote || t("wiki.autoRefresh.skippedGeneric")))
+              : null;
+            // 真失败要单独带上：刷新没成时页面还是旧的、徽章还亮着，不说出来
+            // 就是「点了、看起来正常、其实是上次的内容」。
+            const refreshError = typeof data.autoRefreshError === "string" && data.autoRefreshError
+              ? data.autoRefreshError
+              : null;
+            setState((s) => ({ ...s, page: data.page, autoRefreshNote: skipped, autoRefreshError: refreshError }));
           } catch (err) {
             setState((s) => ({ ...s, page: { error: String(err?.message ?? err) } }));
           }
@@ -12645,6 +13076,9 @@ window.__ModuleLoader__.load({
             setState((s) => ({
               ...s,
               rebuilding: false,
+              // 重建已经真的发生了，那条「自动刷新没做」的提示就该退场。
+              autoRefreshNote: null,
+              autoRefreshError: null,
               rebuildNote: `${t("wiki.rebuild.done")}: ${r.moduleCount ?? "?"} ${t("wiki.rebuild.modules")} / ${r.pageCount ?? "?"} ${t("wiki.rebuild.pages")}${loss ? ` — ${loss}` : ""}`
             }));
             await load(repo.id);
@@ -12849,9 +13283,48 @@ window.__ModuleLoader__.load({
               onClick: () => load(r.id)
             }, `${r.name}`)));
         }
+        // 证据复核的三种结局在这里一次性判完，渲染层不再现算：
+        // 「基线就是 HEAD」和「算不出来」必须走两条不同的分支，屏幕上也要是两句
+        // 不同的话——把两者显示成同一个样子，等于把「没算」当成「没事」。
+        const drift = state.drift;
+        const driftBySlug = new Map();
+        if (drift && Array.isArray(drift.pages)) {
+          for (const dp of drift.pages) driftBySlug.set(dp.slug, dp);
+        }
+        const driftDone = state.driftPhase === "done" && drift && !drift.error;
+        const driftClean = driftDone && drift.clean === true;
+        const driftAnchorStale = driftDone && drift.anchorStale === true;
+        // 「git 读不到」与「基线提交没了」是两种完全不同的处境：前者是仓库不是 git 目录
+        // 或不可读（去修环境），后者是 force-push/浅克隆把起点截断了（去重建骨架）。
+        // 两句 i18n 早就写好了，只是原来没接上，一律说成后者。
+        const driftGitUnreadable = driftAnchorStale && drift.reason === "git-unreadable";
+        const driftTotals = (driftDone && drift.totals) || null;
+        const driftRisk = driftTotals ? driftTotals.atRiskClaims : 0;
+        // 「比不了」的页数（验证基线认不出 + 从来没记过 + 有语义段却没 claims）单独计数：
+        // 它们一条都不判，不能混进「0 条需要复核」里当成没事。inconsistentPages 原来
+        // 完全没进这个汇总，于是「所有页都是残局」也会显示成「这次改动没碰到任何结论」。
+        const driftUndecidable = driftTotals
+          ? (driftTotals.baselineUnknownPages || 0)
+            + (driftTotals.anchorStalePages || 0)
+            + (driftTotals.inconsistentPages || 0)
+          : 0;
+        // 提交号显示前 7 位就够认，长 sha 会把这一行挤爆（完整值仍在 title 里）。
+        const shortSha = (sha) => String(sha ?? "").slice(0, 7);
+        // 四种命中原因各自一句：混成「失效」会让只是行号挪了的结论也被喊去重写，
+        // 喊几次就没人信这个标记了。
+        const driftReasonText = (c) => {
+          if (c.reason === "touched") return t("wiki.drift.touched");
+          if (c.reason === "shifted") return t("wiki.drift.shifted").replace("{n}", String(c.shift ?? 0));
+          if (c.reason === "deleted") return t("wiki.drift.deleted");
+          if (c.reason === "unverifiable") return t("wiki.drift.unverifiable");
+          return String(c.reason ?? "");
+        };
         const tree = [];
         for (const mod of state.modules) {
           const depth = (mod.slug.match(/-/g) || []).length;
+          // 树里直接挂「这页有几条要复核」：用户不用先点开才知道哪页被改动碰到。
+          const dp = driftBySlug.get(mod.slug);
+          const riskN = dp && dp.atRisk ? dp.atRisk.length : 0;
           tree.push(h("button", {
             key: mod.slug,
             type: "button",
@@ -12859,13 +13332,49 @@ window.__ModuleLoader__.load({
             style: { paddingLeft: `${8 + Math.min(depth, 4) * 14}px` },
             title: mod.title,
             onClick: () => openPage(mod.slug)
-          }, mod.slug));
+          }, mod.slug,
+            riskN > 0 && h("span", { className: "mneme-badge mneme-badge--pending mneme-wikidriftn" }, String(riskN)),
+            !riskN && dp && dp.inconsistent && h("span", { className: "mneme-wikidriftn mneme-wikidriftn--flat" }, "!"),
+            // 这页比不了时挂个问号：什么都不挂会让它和「比过、干净」长得一样。
+            !riskN && dp && !dp.inconsistent && (dp.baselineUnknown || dp.anchorStale) &&
+              h("span", {
+                className: "mneme-wikidriftn mneme-wikidriftn--unknown",
+                title: dp.baselineUnknown ? t("wiki.drift.verifiedUnknown") : t("wiki.drift.anchorStalePage")
+              }, "?")));
         }
         const pageBody = state.page
           ? (state.page.error
             ? h("div", { className: "mneme-wikiempty" }, state.page.error === "page-missing" ? t("wiki.state.pageMissing") : state.page.error)
             : renderWikiMarkdown(state.page.content))
           : h("div", { className: "mneme-wikiempty" }, t("wiki.state.pickPage"));
+        // 当前这页的证据复核结果：放在正文上方而不是塞进正文，因为它是「关于
+        // 正文的事实」，不是正文本身——混进 MD 渲染里会被下次重建覆盖掉。
+        const selectedDrift = state.selected ? driftBySlug.get(state.selected) : null;
+        // 「这页对着哪个提交验证的」是常驻信息（不论有没有风险都该看到），所以它是
+        // 正文上方单独一行，而不是塞进下面那张「有风险才出现」的卡里。
+        const pageProvenance = driftDone && selectedDrift
+          ? (selectedDrift.verifiedBaseline
+            ? h("div", { className: "mneme-wikidriftverified", title: selectedDrift.verifiedBaseline },
+              t("wiki.drift.verified").replace("{sha}", shortSha(selectedDrift.verifiedBaseline)))
+            // 老数据：没有逐页验证点，退到全仓基线比对。必须说清这是**保底起点**，
+            // 不能长成「对着 xxxx 验证」——那是把近似值冒充成真值。
+            : (selectedDrift.baselineApprox && selectedDrift.diffBaseline
+              ? h("div", { className: "mneme-wikidriftverified", title: selectedDrift.diffBaseline },
+                t("wiki.drift.verifiedApprox").replace("{sha}", shortSha(selectedDrift.diffBaseline)))
+              : (selectedDrift.claims > 0
+                ? h("div", { className: "mneme-wikidriftverified" }, t("wiki.drift.verifiedUnknown"))
+                : null)))
+          : null;
+        const pageDrift = selectedDrift && selectedDrift.atRisk && selectedDrift.atRisk.length > 0
+          ? h("div", { className: "mneme-wikidriftpage", role: "note" },
+            h("div", { className: "mneme-wikidriftpagehead" },
+              `${t("wiki.drift")} · ${selectedDrift.atRisk.length}`),
+            selectedDrift.atRisk.map((c) => h("div", { key: String(c.claimId ?? c.statement), className: "mneme-wikidriftrow" },
+              h("span", { className: "mneme-wikidriftwhy" }, driftReasonText(c)),
+              h("span", { className: "mneme-wikidriftpath" },
+                `${c.sourcePath}${c.startLine ? `:${c.startLine}${c.endLine && c.endLine !== c.startLine ? `-${c.endLine}` : ""}` : ""}`),
+              h("div", { className: "mneme-wikidriftstmt" }, c.statement))))
+          : null;
         const flags = state.flags || {};
         const t1Running = !!(state.t1 && state.t1.state === "running");
         return h("div", { className: "mneme-panel" },
@@ -12919,7 +13428,41 @@ window.__ModuleLoader__.load({
               title: t("memory.features.chorographyT1FromPanel.hint"),
               onClick: startT1
             }, t1Running ? t("wiki.t1.running") : t("wiki.t1")),
+            // 证据复核是只读动作（一次 git diff + 库内比对，不调模型），所以它
+            // 和「重建骨架」并列、不用二次确认；但绝不自动跑，见 checkDrift。
+            h("button", {
+              type: "button",
+              className: "mneme-wikibtn",
+              disabled: state.driftPhase === "loading",
+              title: t("wiki.drift.hint"),
+              onClick: checkDrift
+            }, state.driftPhase === "loading" ? t("wiki.drift.loading") : t("wiki.drift")),
             state.rebuildNote && h("span", { className: "mneme-wikirebuildnote" }, state.rebuildNote)),
+          // 「自动刷新我主动没做」的提示条。放在顶栏下面而不是 toast 里：它描述的
+          // 是一个仍然成立的状态（库里还有富化页），不是一次性的动作回执。
+          state.autoRefreshNote && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            state.autoRefreshNote),
+          // 「试过刷新但失败了」单独一条：它不是无事发生，也不是「主动没做」。
+          // 旧实现在这里整段丢字段，用户的感受就是「点了没反应」。
+          state.autoRefreshError && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            `${t("wiki.autoRefresh.failed")}: ${state.autoRefreshError}`),
+          // 证据复核回执条：三种结局三种说法，「比对失败」单独一条 --
+          // 它既不是「没事」也不是「有风险」，混进任何一边都是撒谎。
+          state.driftPhase === "failed" && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            `${t("wiki.drift.blocked")}: ${(state.drift && state.drift.error) || ""}`),
+          driftDone && driftAnchorStale && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            driftGitUnreadable ? t("wiki.drift.gitUnreadable") : t("wiki.drift.anchorStale")),
+          driftDone && !driftAnchorStale && driftClean && h("div", { className: "mneme-wikidriftbar", role: "status" },
+            t("wiki.drift.clean")),
+          driftDone && !driftAnchorStale && !driftClean && h("div", { className: "mneme-wikidriftbar", role: "status" },
+            t("wiki.drift.summary")
+              .replace("{pages}", String(driftTotals.pages))
+              .replace("{claims}", String(driftTotals.claims))
+              .replace("{risk}", String(driftRisk)),
+            driftRisk === 0 && driftUndecidable === 0 && h("span", { className: "mneme-wikidriftnone" }, ` · ${t("wiki.drift.none")}`),
+            // 有页比不了时，回执条必须自己说出来：否则「0 条需要复核」会被读成没事。
+            driftUndecidable > 0 && h("span", { className: "mneme-wikidriftnone" },
+              ` · ${t("wiki.drift.undecidable").replace("{n}", String(driftUndecidable))}`)),
           h("div", { className: "mneme-wikibody" },
             h("nav", { className: "mneme-wikitree", "aria-label": t("wiki.tree.title") }, tree),
             h("div", { className: "mneme-wikipage" },
@@ -12931,6 +13474,12 @@ window.__ModuleLoader__.load({
                   onClick: () => { setState((s) => ({ ...s, hits: [] })); openPage(hit.slug); }
                 }, `${hit.slug} · ${hit.section} · L${hit.line}: ${hit.excerpt}`)),
                 h("button", { type: "button", className: "mneme-wikihitsclose", onClick: () => setState((s) => ({ ...s, hits: [] })) }, "×")),
+              pageProvenance,
+              pageDrift,
+              // 正文有语义段、库里零条结论：这页的证据根本无从核对，必须自己说
+              // 出来，否则它会永远显示成「干净」——那是最坏的一种假成功。
+              selectedDrift && selectedDrift.inconsistent && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "note" },
+                t("wiki.drift.inconsistent")),
               pageBody)),
           // T1 进度：只在一个 job 活着时出现。数字来自 /choro/t1/status 的
           // modules 汇总，不再由面板自己数模块——那是任务侧的真相。

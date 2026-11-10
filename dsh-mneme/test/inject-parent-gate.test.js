@@ -88,13 +88,16 @@ test("#249 第二批：面板的父子关系与后端同源（漏一处就静默
   // 渲染点：子项靠 flagRow 展开。只断言「声明与文案出现过」是恒真检查——把
   // 2236 行改回 g.items.map(boolRow)，子项既不在 group.core 的 items 里、也不经
   // flagRow 渲染，面板上彻底消失，而字符串断言全绿。这一条才是那道门。
-  assert.ok(/g\.items\.map\(flagRow\)/.test(client), "分组渲染必须走 flagRow，否则子项不渲染");
+  // #427 revamp：渲染形态从 map(flagRow) 升级为 map + subAfter（子块紧贴总闸），
+  // 门锁的是「每个 items 键都经 flagRow 渲染」这件事本身。
+  assert.ok(/g\.items\.map\(\(k\) => h\(react\.Fragment, \{ key: k \}, flagRow\(k\), subAfter\[k\]\)\)/.test(client),
+    "分组渲染必须走 flagRow（经 subAfter 内联），否则子项不渲染");
   const children = client.match(/const FEATURE_CHILDREN = (\{[^}]*\})/)?.[1] ?? "";
   assert.ok(children.includes("autoInject"), "面板未声明父开关 autoInject");
-  const core = client.match(/\{ key: "group\.core", items: \[([^\]]*)\]/)?.[1] ?? "";
+  const allItems = [...client.matchAll(/items: \[([^\]]*)\]/g)].map((m) => m[1]).join("\n");
   for (const child of CHILDREN) {
     assert.ok(children.includes(`"${child}"`), `面板 FEATURE_CHILDREN 漏了 ${child}`);
-    assert.ok(!core.includes(`"${child}"`), `${child} 同时在 items 与 FEATURE_CHILDREN 里，会被渲染两次`);
+    assert.ok(!allItems.includes(`"${child}"`), `${child} 同时在 items 与 FEATURE_CHILDREN 里，会被渲染两次`);
     // 双语文案：与 test/client.test.js 的路由键同款计数（zh + en 各一份 = 2）。
     const named = client.split(`"memory.features.${child}"`).length - 1;
     const hinted = client.split(`"memory.features.${child}.hint"`).length - 1;
