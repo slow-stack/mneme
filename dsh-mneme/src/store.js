@@ -955,6 +955,10 @@ function toRow(row) {
     // isImportedRow）——这两格只回答「来自哪个包 / 幂等键是什么」，不回答身份。
     share_pack_id: row.share_pack_id ?? undefined,
     share_external_id: row.share_external_id ?? undefined,
+    // Issue #641 取代链：NULL 读作 undefined（未被取代），与 archived_at 同款
+    // 「时刻不可知就不编值」。
+    superseded_by: row.superseded_by ?? undefined,
+    superseded_at: row.superseded_at ?? undefined,
     content_history: parseJsonArray(row.content_history),
     evidence: parseJsonArray(row.evidence),
     doc_path: row.doc_path ?? undefined,
@@ -1373,6 +1377,15 @@ export function createStore(path) {
   // 唯一性（第二条本地行就撞响），而存量行零重写、读侧 undefined = 「不是外来行」。
   addColumn("memories", "share_pack_id", "ALTER TABLE memories ADD COLUMN share_pack_id TEXT");
   addColumn("memories", "share_external_id", "ALTER TABLE memories ADD COLUMN share_external_id TEXT");
+  // Issue #641（beta 第三阶段，取代链）：T3（时序演进）的处置不归档——旧行写
+  // superseded_by 指向取代它的新行，检索侧降权、注入不再选中，但行本身保持
+  // 活跃、随时可人工恢复。存量行两列皆 NULL：历史裁决走的是「归档」路径，
+  // 反推不出该指给谁（receipt_chain 有 winner/loser，但那是另一套语义），宁可
+  // 不填也不猜。superseded_at 是裁决时刻（服务器单调时钟），与内容时间无关。
+  addColumn("memories", "superseded_by", "ALTER TABLE memories ADD COLUMN superseded_by TEXT");
+  addColumn("memories", "superseded_at", "ALTER TABLE memories ADD COLUMN superseded_at TEXT");
+  // 部分索引：降权查询只关心「已被取代」的行；未取代行（绝大多数）不进索引。
+  db.exec("CREATE INDEX IF NOT EXISTS idx_memories_superseded ON memories(superseded_by) WHERE superseded_by IS NOT NULL;");
   // 索引建在加列之后而非写进 SCHEMA（本文件 content_hash 那段：存量库打开时 CREATE TABLE
   // 是 no-op，列还不存在就建索引会直接 no such column）。
   // 部分索引（WHERE ... IS NOT NULL）是刻意的，但它承重的地方要说准：SQLite 的 UNIQUE
@@ -4115,6 +4128,21 @@ export function createStore(path) {
     return res.changes > 0;
   }
 
+  /**
+   * 取代链落笔（issue #641，T3 时序演进的处置）：旧行 superseded_by → 新行。
+   * 只动这两列，刻意不走 updateMemory 的完整写路径——syncMirror/notifyWrite/
+   * updated_at 都不该被一个纯元数据标注触发（正文一个字节没变，镜像无 diff
+   * 可同步；bump updated_at 反而会误导「已审过」的宽松代理判定）。已归档/
+   * 已遗忘的行不落链（它们已经退场，再标注是给幽灵记账）；重复写同一指向
+   * 是无害的幂等 no-op，换指向以最后一次为准。
+   */
+  function supersedeChain(loserId, winnerId) {
+    const res = db.prepare(
+      "UPDATE memories SET superseded_by = ?, superseded_at = ? WHERE id = ? AND archived = 0 AND forgotten = 0"
+    ).run(winnerId, nowIso(), loserId);
+    return res.changes > 0;
+  }
+
   /** Triage rows for the panel/analysis views, newest detection first. */
   function listConflictLedger({ limit = 200, offset = 0, tier, status } = {}) {
     const lim = Math.max(1, Math.min(5000, limit | 0));
@@ -5716,6 +5744,7 @@ export function createStore(path) {
     listConflictReviewed,
     saveConflictLedgerEntry,
     setConflictLedgerStatus,
+    supersedeChain,
     listConflictLedger,
     countConflictLedger,
     saveScopeChange,

@@ -3145,6 +3145,10 @@ export function createService({ store, mirror, config, onWrite, logger, document
     setConflictLedgerStatus: (a, b, s) => store.setConflictLedgerStatus(a, b, s),
     listConflictLedger: (opts) => store.listConflictLedger(opts),
     countConflictLedger: (opts) => store.countConflictLedger(opts),
+    // #641 T3 取代链：与上面 ledger 同一条 bookkeeping 纪律——纯元数据标注绝不
+    // 触发 write hooks（正文零变化，镜像无 diff；bump updated_at 会污染
+    // 「这一对刚判过」的宽松代理判定）。
+    supersedeChain: (loserId, winnerId) => store.supersedeChain(loserId, winnerId),
     // Recall evaluation trail (方案 B): audit-bookkeeping semantics like the
     // dream/recall passthroughs above — a recall_evals write is a snapshot, not
     // a memory mutation, so it never triggers write hooks.

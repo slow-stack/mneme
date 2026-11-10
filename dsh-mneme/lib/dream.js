@@ -1538,6 +1538,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     }
     if (ledgerEnforce) {
       let t1Resolved = 0;
+      let t3Chained = 0;
       let marked = 0;
       for (const d of decisions.filter((x) => x.action === "conflict")) {
         const a = snapshot.get(d.winner);
@@ -1564,6 +1565,22 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
               // CAS 没过（两侧在快照后被改过）：不冒险自动处置，落账本留观察。
               service.saveConflictLedgerEntry({ run_id: runId, memory_a: a.id, memory_b: b.id, tier: verdict.tier, similarity: verdict.signals.similarity, signals: verdict.signals });
             }
+          } else if (verdict.tier === "evolution") {
+            // T3 取代链（与 sleep enforce 同款）：旧行 superseded_by → 新行，
+            // 不归档、不进 applyList。快照行可能缺 created_at（老决策），缺了
+            // 就退回纯记账——宁可少处置，不编造时间方向。
+            const newer = (a.created_at ?? "") >= (b.created_at ?? "") ? a : b;
+            const older = newer === a ? b : a;
+            try {
+              if (service.supersedeChain(older.id, newer.id)) {
+                t3Chained += 1;
+                service.setConflictLedgerStatus(a.id, b.id, "superseded");
+              } else {
+                service.saveConflictLedgerEntry({ run_id: runId, memory_a: a.id, memory_b: b.id, tier: verdict.tier, similarity: verdict.signals.similarity, signals: verdict.signals });
+              }
+            } catch (error) {
+              logger?.warn?.(`dsh-mneme dream: ledger T3 chain failed for ${a.id}/${b.id}: ${String(error)}`);
+            }
           } else {
             service.saveConflictLedgerEntry({ run_id: runId, memory_a: a.id, memory_b: b.id, tier: verdict.tier, similarity: verdict.signals.similarity, signals: verdict.signals });
           }
@@ -1573,7 +1590,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
         }
       }
       if (marked > 0) {
-        logger?.info?.(`[dsh-mneme] dream: ledger enforce marked ${marked} conflict decision(s), ${t1Resolved} deterministically superseded`);
+        logger?.info?.(`[dsh-mneme] dream: ledger enforce marked ${marked} conflict decision(s), ${t1Resolved} superseded, ${t3Chained} chained`);
       }
     }
     const applyList = ledgerEnforce
