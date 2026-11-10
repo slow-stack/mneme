@@ -129,7 +129,7 @@ jobs:
             echo
             echo "- [ ] dsh-mneme/CHANGELOG.md 新节里的条目（现在只有一条「- （待填）」）"
             echo "- [ ] 两个 README 里新占位行的主题描述"
-            echo "- [ ] 根 README 的「📰 最近更新」/「📰 Recent updates」表各加一行头条"
+            echo "- [ ] 根 README 的「📰 最近更新」/「📰 Recent updates」段落的头条（现在是标题式散文，不是表格）"
             echo "- [ ] 跨 minor 时确认 README 路线图上新 minor 行的主题（占位行只写了「（待填）」）"
             echo "- [ ] 跨 minor 时把 SECURITY.md 中英两张支持版本表挪一格（活跃开发 / 尽力维护 / 不支持三段一起挪，含停止维护那段通知）"
           } > commit-msg.txt
@@ -146,7 +146,7 @@ jobs:
             echo
             echo "- [ ] CHANGELOG 新节的条目（dsh-mneme/CHANGELOG.md，现在只有一条「- （待填）」）"
             echo "- [ ] 两个 README 里新占位行的主题描述"
-            echo "- [ ] 根 README 的「📰 最近更新」与「📰 Recent updates」表各加一行头条"
+            echo "- [ ] 根 README 的「📰 最近更新」与「📰 Recent updates」段落的头条（现在是标题式散文，不是表格）"
             echo "- [ ] 跨 minor 时确认路线图新 minor 行的主题（占位行只写了「（待填）」）"
             echo "- [ ] 跨 minor 时把 SECURITY.md 中英两张支持版本表挪一格（活跃开发 / 尽力维护 / 不支持三段一起挪，含停止维护那段通知）——不挪的话，本 PR 的 CI 会在 security-doc.test.js 上红"
             echo

@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/@modusensus/dsh-mneme?color=blue&label=npm)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Awesome](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
-[![tests](https://img.shields.io/badge/tests-3154%20total-success)](https://github.com/slow-stack/mneme)
+[![tests](https://img.shields.io/badge/tests-3262%20total-success)](https://github.com/slow-stack/mneme)
 [![CI](https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml)](https://github.com/slow-stack/mneme/actions)
 [![node](https://img.shields.io/badge/node-22%2B-blue)](https://nodejs.org)
 [![npm downloads](https://img.shields.io/npm/d18m/@modusensus/dsh-mneme.svg?color=blue&label=downloads)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
@@ -279,26 +279,28 @@ v0.3.0 起新增**记忆基因**层：从记忆里抽取**命名实体**、**带
 - **选择性注入**：query 向量可用时注入候选按主题相似度重排（`selectiveInjectEnabled` 可关）；**搜索时语义去重**为激进选项（`searchSemanticDedup=true` 显式开启，近重复行 Rerank 前丢弃）
 - **召回基准**（`scripts/benchmark-recall.js`）：标准查询集驱动，计算 Recall@5 与 MRR，`legacy`（三特性全关）vs `fused`（默认配置）双跑对比
 
-## 📜 版本历史与路线图
+## 📜 版本历史
 
-> 完整版本说明见 [CHANGELOG](CHANGELOG.md) 与各版本 [GitHub Release](https://github.com/slow-stack/mneme/releases)；当前特性以本 README 正文与[配置表](#-配置)为准。早期版本中的实验性功能（Wiki-Link、tag 系统等）已在 v0.7.11 移除，详见 CHANGELOG 对应条目。
+🧬 基因 → 🛡️ 审计加固 → 💤 睡眠巩固 → 🕸️ 召回融合与图谱 → 🌡️ 自进化 → 🔐 作用域隔离 → 🌐 MCP 生态 → 🧭 M.O. → 💭 情绪归因 → 📔 日记本
 
-🧬 Gene → 🛡️ 审计加固 → 💤 Sleep Mode → 🕸️ 召回融合与图谱 → ✨ 面板体验 → 🌡️ 自进化记忆 → 🔐 作用域隔离 → 🌐 MCP 生态 → 🧭 M.O.（项目级工作流，v0.9 beta）
+当前版本的能力以本 README 正文的配置章节为准——**这张表只留一句话头条**，每一版具体怎么实现见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/slow-stack/mneme/releases)。
 
-| 版本 | 主题 |
+| 版本 | 头条 |
 |------|------|
-| **v0.9.0**（2026-10-17） | M.O.（Modus Operandi）beta：工作流本体住 `<项目>/.mneme/pipelines/`、候选分层与升格判据、面板清单与图同屏（`actionPipelineEnabled` 默认关）；设置面板折叠线挪到「新手之外」并按人话重写 22 个条目名（#427）；安全与供应链加固（39 条路由声明式鉴权、OSV 有漏洞即失败、发布带 provenance） |
-| **v0.9.1**（2026-10-18） | M.O. 从「看得见」跑到「跑得出账」：执行窗口由 `/mo-run start` / `/mo-run stop` 显式划开、运行账落 `<项目>/.mneme/pipelines/<id>.runs.jsonl`（账本坏了与从没跑过严格分开）、归属只出候选、观察旁挂与脱节检出、步骤 `assert` / `optional`、R1/R2 提议；沉淀链从真实会话日志挖 draft 工作流（判据恒 `null`，答案只能由人补）；人格定义页 v1 → v1.2（按 agent 寻址多卡，默认关）；面板、向量与检查更新的一圈修复（#448 / #450 / #460）；Release 正文改分层渲染 |
-| **v0.9.2**（2026-10-19） | 让「看不见的失败」显形：功能开关的第三态「待重启」把「面板显示已改 ≠ 运行时已改」摆到界面上（#481）；作用域级可逆闸门让一路记忆能被单独按下与松开、不必改配置重启（#471，默认关）；巩固用的 `dreamMaxTokens` 默认值撞服务商上限、八天 180 次全失败，面板现在能改、超上限还会自动降级重试（#478）；CLI 把 `--` 开头的值当新旗标的真实缺陷（一次 1/4096 概率的 CI 红揪出来的）、人格卡删除 × 永远不可见、自动蒸馏写入的行 100% 拿不到向量（#477） |
-| **v0.9.3**（2026-10-20） | M.O. 从「挖得出来」到「会被叫去挖」：沉淀链算法自 v0.9.1 起就完整实现（多帧 zstd → 重复序列 → 缺席对照 → draft 草稿），运行时却没有任何调用点——机器挖得出来、却永远不会被叫去挖。这一版把归属与触发接上：按会话头 `cwd` 反查项目桶（桶名是路径的有损变形，查不到整跑跳过而不是降级成全局普查）、挂 `turn/end`、冷却 10 分钟、单次预算 4 秒、延到宏任务、一次一个项目、抛错只 `warn`，**只产提议不产草稿**（`actionNudgeEnabled`，beta，默认关）；面板加「现在沉淀一次」，与自动跑同一条入口，区别只有它不改仓库；另修作用域反查自 v0.8.0 起每次都抛错走降级（#487）、`/nudge` 三处「没看全」被报成「确实没有」（#489 评审）、多帧 zstd 反证断言绑了 Node 整块解语义（#490），并把整个 M.O. 的「手法」改回「工作流」 |
-| **v0.9.4**（2026-10-21） | 三条链各自补上「最后一环」——东西早就造好了，只差没人能叫它：**agent 主动整理**（`memory_organize`，先 dryRun 出比对报告 → agent 判断 → apply 落库，筛除只归档不删、全程留审计回执；`organizeEnabled` 默认关，关时工具根本不注册）；**画像提取草稿**（面板按钮读活跃记忆 + 一次模型调用，产一段「助手眼中的用户」草稿，`profileExtractEnabled` 默认关）——**只出草稿**，采用是用户再点一次，手写的画像原文不会被模型改写，空库与解析失败都直接报错、绝不回空草稿冒充「没提炼出东西」；**人格寻址收口**（`default` 卡以前无条件落给所有没建卡的身份，宿主里自带身份的 bot 每帧收到两句「你是谁」；`personaStrictAddressing` 默认关，把「没建卡」与「卡被显式关掉」都收回为不注入）。同版补蒸馏的**转录围栏 + 解析失败护栏**（#494：一条会话被同一窗口卡死、重试 20 次越试越贵的根因；失败行现在恒带原始输出形状），把面板自称「注入生效文本」的只读区改成后端单源渲染（并修它从不显示人格行），评审另收掉两处「坏了却不报」：整理报告侧的存在性探测口（`strictScope` 下按调用方可见性过滤落点并重算计数）、画像保存不判 `res.ok` 却提示已保存 |
-| **v0.9.5**（2026-10-30） | 记忆能安全地递给别人，也能整包收回来：**分享包 `mneme.share/v1`**（`dsh-mneme share` / `receive` / `undo-share`，面板「⋯」里同一批三件事）只含活跃行，scope 与 home 前缀不进包，命中密钥 / PII 的行整条不进；出包先给报告再给文件，超 3 MiB 水位回 413、按 `--type` / `--tag` 分批；入包一条不合格整包拒、干跑为默认、按 `share_external_id` 幂等，整包退出走物删。「本机巩固不许改写别人导入的原文」由单一谓词 `isImportedRow` 守在汇流口与九个行池上。同版给记忆来源加了读出口 `GET /memory/provenance`（#421，@z2Ace0107 实现；409 = 用户关了、503 = 装配坏了），修掉同标题重复入库（#505）、扫描谎报「没东西可扫」（#515）、五处未围栏的巩固 prompt（#501）与 dream 合并护栏整类误拦（#521），面板新增设置页分组目录（#518） |
-| **v0.10.0**（2026-11-02） | 归因与闸门——给已经发生的事补上它自己的身份：**蒸馏有了运行身份**（窗口级 `distill_runs` 记 `ok`/`degraded`/`noop`/`failed`/`aborted` 与 `audit_id`，行级 `memory_mints` 记「这条记忆出生自哪一轮巩固」；历史行留空**不猜**，失败轮也真记一行），此前归因只到「会话区间」——那是输入的坐标不是运行的身份；**溯源补上反方向** `GET /memory/provenance?sessionId=`（两个主键互斥，`limit` 越界 400 不静默截断，撞上限带 `truncated: true`）；**会话级无痕闸门** `sessionGateEnabled`（指定会话与子代理不进不出，其余会话照常；子代理判据只认宿主委派标记，`parentSession` 不是判据——本机 641 个会话头实测会误判 3 个 fork 主会话）；**防谄媚补到写入面**（蒸馏与总览加「立场纪律」四条与「叙述纪律」，排在与时间换算的指令之前）。另修 `differentiate` 正反馈闭环（注记改落 `differentiated_pairs` 账本、正文一个字节都改不了，实测单条曾堆 19 段）、sleep 冲突相位的输入侧预算与续排（分批后不再隔夜才轮到）、面板「最近巩固」区分 organize 回执（#495）、面板首次有移动端与 481–519px 中间带断点（#542） |
-| **v0.10.1**（2026-11-03） | 打开记忆详情不再崩掉整个宿主：0.10.0 里点开侧边栏任意一条记忆的详情抽屉，渲染进程立刻抛 `ReferenceError: provenance is not defined`，整个宿主跟着重启、进行中的会话被打断，100% 复现（#553）。根因是两个隔了三千多行的组件——`MemoryDrawer` 的归因 effect 与渲染块在读 `provenance` / `setProvenance`，而那句 `useState` 落在了同文件**上一个**组件 `EntityPanel` 里，在那里是纯死代码（整个函数体除声明外对 `provenance` 零引用）。这个形状躲得过眼睛、语法检查与原有用例，所以补的不是「锁一个名字」的用例，而是按组件扫「调了 `setXxx(` 却没有声明」。同版带上 v0.10.0 之后合入的图谱锚定层收尾（#24）：Tag 与向量两路起点接线（`normalizePath` 补回通路身份、`findEntitiesByTags` 走全等匹配并按 500 分块、反查改 UNION 三源以覆盖只看关系不建 attr 行的记忆、向量路复用同一份 query 向量并滤掉 0 分种子），以及被动确认的复核出口（`GET /semantic/graph/boosted-relations` 按「合法抬升量 > 0」列出、ego 边补 `weight`/`source`、面板默认收起的审计视角） |
-| **v0.11.0**（2026-11-05） | 仓库地志（chorography）落地并接到消费面：读一个 JS/TS 仓库，把文件树与 import 图编译成模块划分与 `.chorography/` 下的 Markdown 地志页——T0 骨架全程零模型零网络、`plan.yaml` 正面控制、`CHORO:HUMAN` 保留区跨重生成逐字节存活；T1 逐模块一次 headless 会话补架构/约定/技术栈/构建四段语义正文并落可核验的 claims（三重上限、编造锚点整轮拒）。消费面三张脸：面板第二座位 `dsh-mneme-wiki`、三个只读工具、`/choro/*` 读路由，外加每轮开局一小块标题级提纲注入（`chorographyInject` = light/full/off）与只读 `/choro` 命令（过期只提示、绝不自动重跑）。`chorographyEnabled` opt-in 默认关。wiki 行与记忆行物理隔离，永不进巩固/质量过滤任何行池。另修 #573：宽态侧栏的记忆入口落在「更多」行下面、被展开的菜单盖住 |
-| **v0.12.0**（2026-11-07） | pin 从「按类型推断」变成你亲手钉的显式事实：另开 `pinned_memories` 表 + `memory_pin`（取消钉选是同一个工具传 `unpin: true`，没有单独的 unpin 工具），钉住的行在注入里优先占位，不再依赖它恰好是 `constraint` / `preference`；顺带修掉两处旁路——pin 筛选发生在 hybrid 合并之后、而合并结果已按 `poolSize` 封顶（生产 10 条），规则窗口里的 pin 行一条都进不了候选池（真库副本 pin 注入 2/5 → 5/5、总数 7 → 10，原有条目只后移无一条被挤出），判据也从「表里有几行」改成「有几条能用」（pin 行会在记忆侧被归档 / 遗忘 / 硬删而 pin 表一无所知，旧判据只要剩一行就永不回落；`pinnedStats.source` 分 `explicit` / `fallback-none-usable` / `type-fallback` 三档）。`pinnedInjectBudget` **默认 0，即默认状态下 pin 池整体关闭**——钉住不等于会抢占注入位次，要显式设成正数才启用，关着时注入序列与改前逐条相同。同版带上「Agent 眼中的你」自动事实（`profileFactsEnabled` 默认关，按身份分卡维护、参与注入、面板可管）、向量解析缓存从恒 0% 命中到跟工作集自适应（真库四轮 0.0% → 第二轮起 100%，A/B 1.8–2.4s → 370–424ms，存储换 `Float32Array` 55.5MB → 29.7MB，并摘掉「只取 id 却带 `embedding != ''`」的谓词）、[#579](https://github.com/slow-stack/mneme/issues/579) 地志工具改走宿主错误路径且检索不再把「读不到」答成「没匹配」（@Oscar-Williams）、[#590](https://github.com/slow-stack/mneme/issues/590) 严格寻址不再把「一张卡都没建」判成「没有这张卡」，以及面板跨组件广播 `mneme:store-changed`、chorography 收尾（面板「重建骨架」+ 页级向量检索）。 |
+| **v0.13.0**（2026-11-10） | 情绪终于有地方可放：`affective_context` 带情绪词与归因，三个独立会话才升成稳定倾向，不足就降级不丢弃 |
+| **v0.12.0**（2026-11-07） | pin 从「按类型猜」变成你亲手钉的事实；向量缓存从恒 0% 命中改为跟工作集自适应（1.8–2.4s → 370–424ms） |
+| **v0.11.0**（2026-11-05） | 记忆读得懂仓库：文件树与 import 图编译成模块划分与地志页 |
+| **v0.10.1**（2026-11-03） | 打开记忆详情不再崩掉整个宿主 |
+| **v0.10.0**（2026-11-02） | 记忆开始按「哪一轮」算账：蒸馏有了运行身份，溯源补上反方向 |
+| **v0.9.5**（2026-10-30） | 记忆能安全地递出去，也能整包收回来 |
+| **v0.9.4**（2026-10-21） | 三条链各自补上「最后一环」：主动整理、画像提取草稿、人格寻址收口 |
+| **v0.9.3**（2026-10-20） | M.O. 从「挖得出来」跑到「会被叫去挖」 |
+| **v0.9.2**（2026-10-19） | 让「看不见的失败」显形 |
+| **v0.9.1**（2026-10-18） | M.O. 从「看得见」跑到「跑得出账」 |
+| **v0.9.0**（2026-10-17） | M.O.（工作流）进入 beta：工作流住进项目仓库、可提交可 diff |
+| **v0.8.x** | 作用域隔离（agent / workspace 双维）、冲突队列人工裁决、stdio MCP server、图召回轴、冷启动 |
 
-| **v0.8.x** | 作用域隔离（agent / workspace 双维 + opt-in 硬过滤）、冲突队列人工裁决、生态化（stdio MCP server / 图召回轴 / 冷启动 / 注入截断） |
+> 早期版本中的实验性功能（Wiki-Link、tag 系统等）已在 v0.7.11 移除，详见 CHANGELOG 对应条目。
 
 ## 📦 安装
 
@@ -380,6 +382,31 @@ dsh plugin --profile web add "C:/path/to/modusensus-dsh-mneme-0.9.0.tgz"
     dreamThresholdChars: 5000
     dreamDelayMs: 2000
 ```
+
+## 怎么升级（设置不会丢）
+
+**升级只动代码，不动你的记忆和设置。**
+
+设置与记忆是**同一个 SQLite 文件**里的表（`user_settings` 与 `memories` 等），文件位置由 `memoryDir` 决定，默认在 `~/.dsh/memory`——**不在插件安装目录下**。所以卸插件、装插件都不碰它。
+
+升级就是覆盖安装，装完重启一次：
+
+```bash
+# --profile 后面写你当初安装它时用的那个名字，默认是 web
+dsh plugin --profile web remove @modusensus/dsh-mneme
+dsh plugin --profile web add @modusensus/dsh-mneme
+dsh web
+```
+
+> 上面是 npm 来源的装法；当初从 Git、tarball 或本地目录装的，按下同一种来源重装即可。唯一要求是**先 remove 再 add**。
+> 不用重装 DSH。重装 DSH 动的是 profile，是更大范围的改动，与插件版本无关。
+> 也不要只 `add` 不 `remove`——宿主可能拿到缓存的旧副本，版本号没变就说明没换成。
+
+**这件事是实测过的，不是推断**：用 v0.12.0 的代码建库、写入画像、规则、人格卡与四个功能开关，再换成本次发布的代码打开同一个库——四项全部原样读回。反向也测了：新代码写的库，v0.12.0 同样读得出来。
+
+**但有两处不对称要提前知道**：人格卡的按会话分配（`bySession`）以及 `scenario` / `mesExample` 两个字段，v0.12.0 都不认识——用旧版打开新版写的库，这些键读不出来，旧版再写回时可能把它们覆盖掉。所以**回退前先备份整个记忆库目录**（复制 `memoryDir`，默认 `~/.dsh/memory`），需要回退时把库一起退。另外，撤销某个开关只影响之后的行为，不保证把已经写下的数据（例如已经铸出的情绪倾向）一并回滚——要真正清掉得手动删对应条目。
+
+唯一会让你丢数据的是**把库指进 profile 作用域**（形如 `…/profiles/<名字>/…`），宿主清理 profile 时会连带带走——把 `memoryDir` 保持在 profile 之外即可（默认就是），要迁移库则：停止写入 → 复制整个目录 → 改配置指向新位置 → 重启。
 
 ## ⚙️ 配置
 
@@ -734,7 +761,7 @@ src/
 ├── api.js            # HTTP 路由（Web 面板数据通道，含 /conflicts 冲突队列）
 └── index.js          # 插件接线
 lib/                  # src 的同步分发产物（npm run sync，prepack 钩子在发布时自动跑；一致性由 scripts/check-sync.js 在 CI 与 release.yml 校验——它只查不同步；唯一手写例外 lib/client.js——Web 面板 bundle，sync 不覆盖）
-test/                 # 3154 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
+test/                 # 3262 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
 scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压测 · sync-lib.js 同步 · check-sync.js 发布闸门 · benchmark-recall.js / benchmark-embed.js / benchmark-rerank.js 基准 · sync-test-badge.mjs 测试徽章 · build-runtime-manifest.mjs 运行时清单
 ```
 
@@ -743,7 +770,7 @@ scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压
 ```bash
 cd dsh-mneme
 npm install        # 安装 peer 依赖（以 devDependencies 形式，用于本地测试）
-npm test           # 运行 3154 个测试
+npm test           # 运行 3262 个测试
 npm run stress     # 三轴线压测：长会话检索 / 冲突仲裁 / 多 Agent 并发（离线 mock LLM）
 npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动执行）
 ```

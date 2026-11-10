@@ -10,11 +10,11 @@ We actively maintain the latest minor version. Security fixes are backported to 
 
 | Version | Supported | Status |
 |---|---|---|
-| 0.12.x | ✅ Yes | Active development |
-| 0.11.x | ⚠️ Best-effort | Critical fixes only |
-| < 0.11.0 | ❌ No | Please upgrade to 0.12.x |
+| 0.13.x | ✅ Yes | Active development |
+| 0.12.x | ⚠️ Best-effort | Critical fixes only |
+| < 0.12.0 | ❌ No | Please upgrade to 0.13.x |
 
-**End-of-life notice**: 0.11.x is in best-effort maintenance (critical fixes only). Its end-of-life date will be announced in advance; after that date no security fixes will be provided for 0.11.x. Security support for 0.10.x and below has ended — please upgrade to 0.12.x.
+**End-of-life notice**: 0.12.x is in best-effort maintenance (critical fixes only). Its end-of-life date will be announced in advance; after that date no security fixes will be provided for 0.12.x. Security support for 0.11.x and below has ended — please upgrade to 0.13.x.
 
 ---
 
@@ -408,11 +408,11 @@ This project is licensed under the **MIT License**. See [LICENSE](https://github
 
 | 版本 | 支持状态 | 说明 |
 |---|---|---|
-| 0.12.x | ✅ 支持 | 活跃开发中 |
-| 0.11.x | ⚠️ 尽力维护 | 仅关键修复 |
-| < 0.11.0 | ❌ 不支持 | 请升级至 0.12.x |
+| 0.13.x | ✅ 支持 | 活跃开发中 |
+| 0.12.x | ⚠️ 尽力维护 | 仅关键修复 |
+| < 0.12.0 | ❌ 不支持 | 请升级至 0.13.x |
 
-**停止维护通知**：0.11.x 处于尽力维护阶段（仅关键修复）。停止维护的具体日期将提前公布；该日期之后将不再提供 0.11.x 的安全修复。0.10.x 及更早版本的安全支持已终止——请升级至 0.12.x。
+**停止维护通知**：0.12.x 处于尽力维护阶段（仅关键修复）。停止维护的具体日期将提前公布；该日期之后将不再提供 0.12.x 的安全修复。0.11.x 及更早版本的安全支持已终止——请升级至 0.13.x。
 
 ---
 
