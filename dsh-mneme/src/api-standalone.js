@@ -478,7 +478,10 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
         const listFilters = { includeArchived, ...(occurredFrom ? { occurredFrom } : {}), ...(occurredTo ? { occurredTo } : {}) };
         const items = service.toApiList(service.list({ type, limit, offset, order, minImportance, source, ...listFilters }));
         // Total honors the same filters so pager math stays correct.
-        sendJson(res, 200, { items, total: service.count(type, { minImportance, source, ...listFilters }) });
+        // #597：typeCounts 与宿主内 /list 同口径（同一份筛选、不带 type 的全库分布），
+        // 两张面只许剩鉴权与路径不同。
+        const countFilters = { minImportance, source, ...listFilters };
+        sendJson(res, 200, { items, total: service.count(type, countFilters), typeCounts: service.countByType(countFilters) });
         return;
       }
 

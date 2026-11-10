@@ -88,7 +88,7 @@ test("deleteEmbedding clears the cached vector; getEmbedding reflects it", () =>
   assert.deepEqual(vectorIndex.getEmbedding(m.id), [0, 0, 1]);
 });
 
-test("rebuildIndex embeds only rows missing an embedding and marks the model", async () => {
+test("rebuildIndex re-embeds rows with no vector and rows with no provenance", async () => {
   const { store, vectorIndex } = setup();
   // One memory already embedded, two missing.
   addMemory(store, { title: "已有向量", content: "A", vector: [0, 1, 0] });
@@ -101,19 +101,58 @@ test("rebuildIndex embeds only rows missing an embedding and marks the model", a
   embedder.embedSingle = async (text) => { seen.push(text); return [1, 0, 0]; };
 
   const result = await vectorIndex.rebuildIndex(embedder, { limit: 100 });
-  assert.equal(result.indexed, 2, "two missing embeddings written");
+  // #604: the selector is model-aware, so the row that already carried a vector
+  // but no fingerprint (embedding_model NULL) is selected too — without this it
+  // stayed permanently unattributed and the boot sweep re-embedded it forever.
+  assert.equal(result.indexed, 3, "all three rows written with provenance");
+  assert.equal(result.failed, 0);
   assert.equal(result.skipped, 0);
+  assert.equal(result.remaining, 0, "nothing left for this model");
   assert.equal(vectorIndex.getStats().embeddedCount, 3, "all rows embedded after rebuild");
-  assert.equal(seen.length, 2, "embedSingle called once per missing row");
+  assert.equal(seen.length, 3, "embedSingle called once per selected row");
+  assert.equal(store.needsEmbeddingFor("mock#rebuild").length, 0, "provenance recorded, nothing stale");
 
-  // Rebuild is a no-op once everything is embedded.
+  // Rebuild is a no-op once everything carries this model's fingerprint.
   const again = await vectorIndex.rebuildIndex(embedder, { limit: 100 });
   assert.equal(again.indexed, 0);
   assert.equal(again.skipped, 0);
+  assert.equal(again.remaining, 0);
 
   // Model fingerprint marked from the rebuild embedder.
   assert.equal(vectorIndex.modelHash(), "mock#rebuild");
   assert.equal(vectorIndex.dimension(), 3);
+});
+
+test("rebuildIndex picks up rows embedded by a previous model (#604)", async () => {
+  const { store, vectorIndex } = setup();
+  // Every row already has a vector — from modelA. needsEmbedding() (the old
+  // selector) matches only empty vectors, so it would select nothing here and
+  // report a successful no-op.
+  const a = addMemory(store, { title: "旧模型1", content: "A" });
+  const b = addMemory(store, { title: "旧模型2", content: "B" });
+  store.setEmbedding(a.id, [0, 1, 0], "modelA#aaa");
+  store.setEmbedding(b.id, [0, 1, 0], "modelA#aaa");
+  assert.equal(store.needsEmbedding().length, 0, "no row is missing a vector");
+  assert.equal(store.needsEmbeddingFor("modelB#bbb").length, 2, "both rows belong to modelA");
+
+  const embedder = rebuildEmbedder({ vector: [1, 0, 0], modelHash: "modelB#bbb", dimension: 3 });
+  const result = await vectorIndex.rebuildIndex(embedder, { limit: 100 });
+
+  assert.equal(result.indexed, 2, "model switch is what reindex is for");
+  assert.equal(result.remaining, 0);
+  assert.equal(store.needsEmbeddingFor("modelB#bbb").length, 0, "provenance now says modelB");
+  assert.equal(store.needsEmbeddingFor("modelA#aaa").length, 2, "modelA's vectors are the stale ones now");
+});
+
+test("rebuildIndex reports remaining work when the limit truncates the batch", async () => {
+  const { store, vectorIndex } = setup();
+  for (let i = 0; i < 5; i++) addMemory(store, { title: `行${i}`, content: `C${i}` });
+
+  const embedder = rebuildEmbedder({ vector: [1, 0, 0], modelHash: "mock#limit", dimension: 3 });
+  const result = await vectorIndex.rebuildIndex(embedder, { limit: 2 });
+
+  assert.equal(result.indexed, 2, "limit bounds the batch");
+  assert.equal(result.remaining, 3, "remaining counts what the same predicate still selects");
 });
 
 test("rebuildIndex handles a throwing embedder without failing the batch", async () => {
@@ -133,7 +172,11 @@ test("rebuildIndex handles a throwing embedder without failing the batch", async
 
   const result = await vectorIndex.rebuildIndex(embedder, { limit: 100 });
   assert.equal(result.indexed, 1, "only the successful row is indexed");
-  assert.equal(result.skipped, 2, "thrown + empty rows count as skipped");
+  // #604: a thrown embed and an empty vector are failures, not "skipped" — the
+  // old single bucket made them indistinguishable from "did not fit the limit".
+  assert.equal(result.failed, 2, "thrown + empty rows count as failures");
+  assert.equal(result.skipped, 0, "nothing was skipped for lack of room");
+  assert.equal(result.remaining, 2, "failed rows stay selected");
   assert.equal(vectorIndex.getStats().embeddedCount, 1);
 });
 
@@ -142,7 +185,11 @@ test("rebuildIndex guard: embedder with no embed method at all is ignored", asyn
   addMemory(store, { title: "缺向量", content: "A" });
   const bare = { modelHash: "mock#bare", dimension: 3 };
   const result = await vectorIndex.rebuildIndex(bare, { limit: 100 });
-  assert.deepEqual(result, { indexed: 0, skipped: 0 }, "guard returns early when neither embed nor embedSingle is available");
+  assert.deepEqual(
+    result,
+    { indexed: 0, failed: 0, skipped: 0, remaining: 0, error: "no-embedder" },
+    "guard returns early when neither embed nor embedSingle is available"
+  );
   assert.equal(vectorIndex.modelHash(), undefined, "no model marked");
 });
 
@@ -218,4 +265,71 @@ test("search returns empty when nothing is embedded", () => {
   addMemory(store, { title: "无向量", content: "A" });
   addMemory(store, { title: "也无向量", content: "B" });
   assert.deepEqual(vectorIndex.search([1, 0, 0], { limit: 10 }), []);
+});
+
+test("rebuildIndex prefers a detailed adapter so a provider outage is not reported as a dead row (#604)", async () => {
+  const { store, vectorIndex } = setup();
+  addMemory(store, { title: "甲", content: "A" });
+  addMemory(store, { title: "乙", content: "B" });
+
+  let detailedCalls = 0;
+  let plainCalls = 0;
+  const embedder = {
+    // A 503 from the provider: transient, and only the detailed path can say so.
+    embedSingleDetailed: async () => {
+      detailedCalls++;
+      return { vector: null, reason: "http-503" };
+    },
+    embedSingle: async () => {
+      plainCalls++;
+      return null;
+    },
+    modelHash: "mock#detailed",
+    dimension: 3
+  };
+
+  const result = await vectorIndex.rebuildIndex(embedder, { limit: 100 });
+  assert.equal(detailedCalls, 2, "every row went through the detailed entry point");
+  assert.equal(plainCalls, 0, "the reason-dropping path was not used");
+  assert.equal(result.indexed, 0);
+  assert.equal(result.failed, 2);
+  assert.deepEqual(
+    result.failureReasons,
+    { "error:http-503": 2 },
+    "the button path keeps the provider reason instead of flattening it"
+  );
+});
+
+test("rebuildIndex separates a permanent row from a transient one on the same run (#604)", async () => {
+  const { store, vectorIndex } = setup();
+  addMemory(store, { title: "甲", content: "A" });
+  addMemory(store, { title: "乙", content: "B" });
+
+  let calls = 0;
+  const embedder = {
+    embedSingleDetailed: async () => {
+      calls++;
+      // First row cannot ever embed; second row is a provider hiccup.
+      return calls === 1 ? { vector: null, reason: "response-no-vector" } : { vector: null, reason: "http-503" };
+    },
+    modelHash: "mock#mixed",
+    dimension: 3
+  };
+
+  const result = await vectorIndex.rebuildIndex(embedder, { limit: 100 });
+  assert.equal(result.failed, 2);
+  assert.deepEqual(result.failureReasons, {
+    "error:response-no-vector": 1,
+    "error:http-503": 1
+  });
+});
+
+test("rebuildIndex still names the plain path's failure when no detailed adapter exists (#604)", async () => {
+  const { store, vectorIndex } = setup();
+  addMemory(store, { title: "甲", content: "A" });
+
+  const embedder = { embedSingle: async () => null, modelHash: "mock#plain", dimension: 3 };
+  const result = await vectorIndex.rebuildIndex(embedder, { limit: 100 });
+  assert.equal(result.failed, 1);
+  assert.deepEqual(result.failureReasons, { "empty-vector": 1 });
 });

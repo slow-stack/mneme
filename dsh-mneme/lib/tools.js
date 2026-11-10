@@ -462,7 +462,11 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
       name: "memory_forget",
       description:
         "Stop a memory from being auto-injected and from appearing in searches and lists without deleting it. " +
-        "The entry stays in storage; pass forgotten: false to restore it.",
+        "The entry stays in storage; pass forgotten: false to restore it. " +
+        "#532: suppression is per ROW - facts fused into the same entry leave visibility together. " +
+        "When the request targets one fact among several held by a row, inspect the row first (memory_get), " +
+        "split it with memory_update if needed, or say in your reply what else the suppression took down " +
+        "(docs/FORGET.md records the supersession gap behind this).",
       parameters: {
         id: { type: "string", required: true },
         forgotten: { type: "boolean", description: "Suppress (true, default) or restore (false) the entry's visibility" }

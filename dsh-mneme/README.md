@@ -518,6 +518,7 @@ dsh plugin --profile web add "C:/path/to/modusensus-dsh-mneme-0.9.0.tgz"
 | `writeAdmission` | `{enabled:false, enforce:false}` | 写入准入（issue #254，默认关）：把「这条该不该进库」前移到 LLM 之前。第 1 级是零 LLM 的确定性判据——空白 / 纯噪声 + 密钥 / PII（判据来源是 #164 A2，经 `sensitiveScan` 注入，本批只定义接口）。`enabled` 跑判据并落审计行（`llm_audit_logs` 的 `metadata.deny`），`enforce` 才真的拒（`store.save` 之前返回，`memory_save` 返回 `action:"denied"` + `reason`）；只开 `enabled` = 仅告警、写入不拦。去重键命中不进第 1 级（归 write-update 放行），G1/G2 阈值只计量。也走 feature_flags 白名单 |
 | `preInjectGate` | `{enabled:false, enforce:false}` | 注入前判定（issue #380，默认关）：每帧注入候选出池后、进入 system prompt 前，一次池级 LLM 调用判出「会向本次请求注入意见/立场」的记忆（判定协议与 E12 实验同源；实测过滤把谄媚 26.9%→2.5%，且判定结果绝不进模型上下文——给模型看标记的线已被 E2/E3 关闭）。`enabled` 跑判定并落审计行（真实 token 用量 + 被标记记忆 id），`enforce` 才在缓存命中帧真滤除；冷缓存首帧降级为原样注入（宿主注入渲染是同步回调，判定走 prefetch+cache）。pin 池与检索线索行豁免；判定失败原样注入不阻塞；整池被标记时放弃本次滤除（fail-open）；判定连续失败 3 次熔断一个冷却期；无默认路由时审计行 `model_id` 落 `unknown` 占位；`llmAudit` 关闭时本闸不运行；lightMode 强制关。也走 feature_flags 白名单 |
 | `distillRecords` | `{enabled:false, retentionDays:90}` | 蒸馏原文留存 + 记忆级溯源（issue #399，默认关）：把蒸馏从「替换」降级为「叠加索引」——蒸过的窗口原文旁路落 `distill_records`（一个事件一行，主键 `(session_id, seq)`，`INSERT OR IGNORE` 幂等），每条新记忆落 `memory_provenance` 回指来源窗口（`(memory_id, session_id, seq_start, seq_end)` 唯一）。**渲染与落盘共用同一隐私谓词**：私有推理链、插件注入的机器内容（AGENTS.md / skill 正文 / 文件变更通知）两条路都不进；工具调用入参与结果、code 输出**只进渲染、不落盘**（渲染是 `codingRetrospect` 的输入，落盘只留对话）。留存文本**不受** `distillMaxChars` / 工具裁剪约束（原文就是原文）。到期裁剪只删 `distill_records`，溯源链接保留指向空区间（面板显示「来源已过期」），**绝不级联删记忆**；删记忆时显式清链接。无历史回填、从未蒸馏的窗口不留记录。进 `dsh-mneme reclaim` 报告第三项；lightMode 强制关。也走 feature_flags 白名单 |
+| `capacityWarning` | `{dbSizeWarnMb:256, archivedRowsWarn:5000, archivedRatioWarn:0.95}` | 容量预警（issue #275，空间维度）：库体积 / 归档区规模过线时在 `GET /api/dsh-mneme/health` 的 `capacity` 块与面板「库体积」卡上报。三道阈值都是**观察口**，不是动作触发——没有周期性消费者，预警也永不自动归档 / 删除（真删由人显式确认），出口是维护卡的无损回收（`dsh-mneme reclaim`）。阈值判 `>=` 过线、**0 = 关掉该条检查**；判级 fail-safe（读失败显式 unknown，绝不伪装 ok）。默认值锚定 #275 议题的形态区间（活跃数百 / 归档数千；占比健康区就在 0.8~0.9，故 0.95 起才算过线）。答复只带数字、不带库文件路径；归档净增速率是 recall-stats `archive` 块的第五指标，不在这里重复。也走 feature_flags 白名单（改动启动快照生效，面板显示「待重启」） |
 | `conflictFreezeEnabled` | `false` | 冲突冻结（v0.4.4）：dream 发现矛盾对不自动裁决，冻结进冲突队列；状态页「冲突队列」支持并排对比与人工确认（保留 A / 保留 B / 仅标记已处理，v0.8.0） |
 | `conflictFreezeMaxPending` | `100` | 冲突冻结队列最大挂起数（1-1000）：超出后不再入队（防队列无限膨胀） |
 | `escapePromptVariables` | `true` | 注入文本花括号转义（v0.8.0 恢复，issue #162）：注入边界把 `{{...}}` 转义，防止 hot memory / 记忆原文里的 Go template / Vue 语法触发宿主 interpolate 抛错卡死会话（v0.7.4 曾修复、v0.7.11 误删） |
@@ -764,6 +765,7 @@ npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动
 - [连续性抢救（#249 N3）：触发器口径与事件契约](docs/CONTINUITY.md)
 - [Sleep Mode：空闲四阶段深度维护](docs/SLEEP.md)
 - [存储与回收：表结构、保留期、`dsh-mneme reclaim`](docs/STORAGE.md)
+- [选择性遗忘与事实更正：行粒度契约与失效关系缺口（#532）](docs/FORGET.md)
 - [记忆分享包：出包与收包的口径、信任边界与实测（`dsh-mneme share` / `receive` / `undo-share`）](docs/SHARE.md)
 - [独立服务 daemon（`dsh-mneme-serve`）](docs/DAEMON.md)
 - [与 Zep / Graphiti / Mem0 / Letta / Hindsight 的能力对比](../docs/COMPARISON.md)
