@@ -377,6 +377,61 @@ M6d 是刻意留的：它证明第 6 条源级守卫不是摆设——去掉它�
 - 图：`C:/Users/石晴/AppData/Local/Temp/kb-preview/cmp-sink-light.png` / `cmp-sink-dark.png`
   （上=改前，下=改后）、`cmp-donut-light.png` / `cmp-donut-dark.png`。
 
+### 5.H 落地记录（设置 / 人格 / 日记三页，2026-11-11 已实现）
+
+桉桉 m06427：「继续美化修改设置页面和人格、日记页面。日记那几种风格毫无变化，需要修改，
+要么直接取消哪几种风格」——四名 reviewer 各自实测，三处独立复现同一个根因。
+
+**根因（不是「风格没做完」）**：四条风格规则 `.mneme-diary-paper--ruled/--grid/--kraft/--plain`
+（`lib/client.js:3468-3471`）与基线 `.mneme-diary-paper`（`:3472`）同为单类选择器 (0,1,0)，
+基线在 CSS 数组里更靠后、且用 `background` **简写** → 把前四条的 `background-image` /
+`background-color` 全部复位。Edge headless 取 computed style 实测：四种纸
+`background-image: none`、底色同为 3% label-primary，逐值相同。第二层是线色：
+`--dsw-alias-border-l1` 在纸面上只有 **1.09:1（浅）/ 1.20:1（深）**，1px 线可辨阈值约 1.5:1。
+第三层是相位：`background-origin` 默认 padding-box、纸 padding-top 12px、正文行高 26px，
+所以格线从来没落在行高网格上——注释里「格线正好落在 26px 行高上」的意图一次都没生效。
+
+**裁决**（四人分歧，取多数 + 结构理由）
+
+| 项 | 决定 | 理由 |
+| --- | --- | --- |
+| 修法 | 纹路挪到 `.mneme-diary-paper--ruled .mneme-diary-text` / `--grid .mneme-diary-text` | 后代选择器与基线不再是同一元素，级联冲突结构性消失，不靠源码顺序；纸内两处渲染（右栏 DiaryPane 纸里第一个孩子就是 text，面板 tab 先是 paperhead）同一个 background-position 一处要 12px 一处要 32px，永远对不齐——挂到拥有 26px 行高的正文上相位天然对齐 |
+| 基线 | `background` 简写 → `background-color` | 这是防复发点：顺序修一次会被后续改动踩回去，简写才是那个「一次复位全部」的东西 |
+| 线色 | 新令牌 `--mneme-rule: color-mix(in srgb, var(--dsw-alias-label-primary) 20%, transparent)` | 1.55:1 / 1.88:1；14% 偏淡（1.35/1.55），26% 开始压字 |
+| 保留几种 | 素纸 / 横线 / 点阵三种，**删牛皮** | kraft 只是「同一层上色换色相」，与素纸差 1.01:1，且是这块唯一硬编码 hex；grid 与 kraft 在四人里 2:2 打平，但 grid 是独立的结构维度，它的可读性问题源于相位 bug，随本次修法一并解决 |
+| 点阵 | 「方格」→「点阵」（`radial-gradient` 点，26×26） | 3x 渲染实测：竖线会从 14px 中文衬线字中间穿过（20% 线色下尤其明显）。点阵保留二维结构又不压正文。**localStorage 值仍叫 `grid`，只改显示文案（zh 点阵 / en Dots），零迁移** |
+| 段距 | p / ul / ol / blockquote `13px` → `1lh` | `1lh` 在 Edge/Chromium 上算出来正好 26px（p 继承 line-height:26px），做到「整行」而**不新增任何 px**（13px→26px 会撞棘轮） |
+
+**其余同期改的**（都是四人点出、零新增 px）：paperhead 的分隔线由 solid 改 dashed（与全页虚线语言一致）；
+`.mneme-diary` 与 `.mneme-persona` 去掉 `padding:10px 12px`（水平内边距只归 `.mneme-set` 一处，
+切 tab 不再横跳 12px）；删 `.mneme-set` 第二条逐字重复规则；三个圆角回刻度
+（`.mneme-set-row` 10→radius-8、`.mneme-set-card` 12→radius-12、`.mneme-set-tocchip` 13→radius-pill）；
+`.mneme-persona-pick` 字号 12.5→12px；选中态 border-color 从 `--dsw-alias-state-business-primary`
+改 `--mneme-accent`（与同页日记选中态同源）；「已保存」哨兵改为 save 开头 / setField / toggleEnabled
+三处清零（原 `savedAt` 只写不清：先成功后失败会「已保存」+「保存失败」并存，两种都是假成功）；
+窄容器（480 档）补日记与人格的上下堆叠、页签 `white-space:nowrap`（400px 侧栏下原来正文纸被挤到
+250px、人格编辑区只剩 180px，六个页签各自折成两行）；规则行删除键 `opacity:0` → `.45` 常显
+（悬停/聚焦才满不透明——彻底隐藏等于在窄侧栏和触摸设备上没有删除入口）。
+
+**新增锁**（`test/client.test.js`，3 例）：① 基线规则必须是 `background-color` 且纹理挂在
+`.mneme-diary-text` 上、kraft 文案不许回来；② `setSavedAt(0)` 至少三处且成功路径仍有时间戳；
+③ 480 档必须含日记/人格堆叠与页签不折行。**变异自证 4 条全部红**：M1 基线退回 `background:`、
+M2 纹理退回基础类、M3 删掉 `setField` 的清零（剩 2 处）、M4 去掉堆叠。px 棘轮一度红
+（`1px: 131→133, 4px: 46→47, 6px: 83→84`）——因为窄容器那两条新加了边框线与裸 px，
+最后改成 `var(--mneme-space-4/6)` 并放弃新增发丝线，棘轮回到绿。
+
+**视觉复核**（Edge headless + 真 tokens.css + 真 client bundle）
+
+- 三种纸同屏对比：横线 26px 贴行、点阵不切字、素纸干净——三者现在肉眼可分。
+  图：`C:/Users/石晴/AppData/Local/Temp/kb-preview/cmp-diary-books-light.png`
+- 窄容器 400px：日记 `column 372×384`、纸 373px 满宽；人格 `column 372×1008`；
+  页签单行、横向可滚。图：`narrow-diary-400.png` / `narrow-persona-400.png` / `cmp-narrow-tabs.png`
+- 设置页卡片实测：规则卡整卡 177px、空态 padding 18px、子项间距正常——首屏那张「很空」是缩图错觉，
+  未改。图：`page-settings-light.png`
+
+**这一片没做**（留给 P1c/P1d，或她另说）：设置页 TOC 无当前态（要 scroll spy）；14 处
+`h("div")` 当标题（视觉无差、属语义层）；字号阶里 11/12/13 混用未收。
+
 ---
 
 ## 六、迁移分片（每片独立可验证，可停在任意一片）
@@ -442,6 +497,14 @@ P1b 已达成（2026-11-10，见 §5.E）：
 - ✅ 色槽各有其主：三家族锁 1 例（`contrast.test.js` 共 6 例），五条变异（四条红、一条刻意绿）。
 - ✅ `chart-6` 从三份内联收回单一令牌；沉淀图与 donut 视觉像素差 **0.00%**（深浅两主题）。
 - ✅ 全量 `npm test` **3,276 / 3,275 pass / 1 skip**；`check-sync` ✓（119 个文件）。
+
+三页改版已达成（2026-11-11 凌晨，见 §5.H）：
+
+- ✅ 日记「四种纸面毫无变化」按根因修好：纹理挂 `.mneme-diary-text`、基线改 `background-color`、
+  线色新令牌 `--mneme-rule`；四种纸收成三种（牛皮删）、方格改点阵，零迁移。
+- ✅ 设置/人格两页同期收口：重复规则删除、圆角回刻度、切 tab 横跳 12px、已保存哨兵、窄容器堆叠。
+- ✅ 新增 3 例锁 + 4 条变异全部按预期红；px 棘轮回到零增长（新增几何全走 `--mneme-space-*`）。
+- ✅ 全量 `npm test` **3,279 / 3,278 pass / 1 skip**；`check-sync` ✓（119 个文件）。
 
 仍在 P1c–P1d（每片做完再定下一片）：
 

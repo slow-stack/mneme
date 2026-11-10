@@ -2637,9 +2637,10 @@ test("diary book: paper choice is one shared setting across both entries", () =>
     "a same-page change must be broadcast, storage events never fire in the same document");
   assert.ok(clientSource.includes('addEventListener("mneme:diary-book-changed"'),
     "the other entry must listen for that broadcast");
-  // 四种纸都要有文案，否则按钮上是裸 key。
+  // 三种纸都要有文案，否则按钮上是裸 key（牛皮已删：它只是同一层上色的换色相，
+  // 与素纸差 1.01:1，且是这块唯一硬编码 hex）。
   for (const key of ["memory.diary.bookLabel", "memory.diary.book.plain", "memory.diary.book.ruled",
-    "memory.diary.book.grid", "memory.diary.book.kraft"]) {
+    "memory.diary.book.grid"]) {
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
@@ -2650,6 +2651,51 @@ test("diary book: paper choice is one shared setting across both entries", () =>
     "the diary body needs a serif typeface to read like a notebook");
   assert.ok(clientSource.includes("background-size:100% 26px"),
     "the ruled texture must be locked to the 26px line height");
+});
+
+// 2026-11-11 查出来的真 bug：四条纸面风格（--ruled/--grid/--kraft/--plain）与基础规则
+// `.mneme-diary-paper` 同为 (0,1,0)、基础规则在数组里更靠后、且用 background 简写——
+// 前四条设的 background-image/color 被整条重置，四种纸实测全是 background-image:none，
+// 所以「几种风格毫无变化」不是没做完。修法两层：纹理挪到 .mneme-diary-text（后代选择器，
+// 结构上不再和基础规则抢同一个元素），基础规则只用 background-color。
+test("diary paper: 纹理挂在正文元素上，基础规则不许退回 background 简写", () => {
+  const at = clientSource.indexOf('".mneme-diary-paper{');
+  assert.ok(at > -1, "the base paper rule must exist");
+  const rule = clientSource.slice(at + 1, clientSource.indexOf('",', at));
+  assert.ok(rule.includes("background-color:"),
+    "the base rule must paint its tint with background-color");
+  assert.ok(!/(^|;|\s)background:/.test(rule),
+    "the base rule must not use the background shorthand — it resets every texture above it");
+  for (const key of ["--ruled", "--grid"]) {
+    assert.ok(clientSource.includes(".mneme-diary-paper" + key + " .mneme-diary-text{"),
+      "the " + key + " texture must hang off .mneme-diary-text, not off the base class");
+  }
+  assert.ok(clientSource.includes("--mneme-rule:"),
+    "the rule colour needs its own token (border-l1 is 1.09:1 on paper — invisible)");
+  assert.ok(!clientSource.includes("memory.diary.book.kraft"),
+    "kraft was removed; it only differed from plain by hue (1.01:1) and carried the block's only hardcoded hex");
+});
+
+// 走查发现：savedAt 只写不清 —— 保存成功后再改字段仍显示「已保存」，先成功后失败会
+// 「已保存」+「保存失败」两行并存。三处清零缺一处就会复现，所以按处数锁。
+test("persona save: 改任何字段都把「已保存」收回去（假成功回归锁）", () => {
+  const zeros = (clientSource.match(/setSavedAt\(0\)/g) || []).length;
+  assert.ok(zeros >= 3, "save 开头 / setField / toggleEnabled 三处都要清零（现有 " + zeros + " 处）");
+  assert.ok(clientSource.includes("setSavedAt(Date.now())"), "the success path still stamps the time");
+});
+
+// 窄侧栏（约 400px）下日记与人格原来是横向分栏：正文纸被挤到 250px、人格编辑区
+// 只剩 180px；六个页签还会各自折成两行。这两条都在 480 档容器查询里修，锁住防回退。
+test("窄容器：日记与人格上下堆叠，页签不折行", () => {
+  const at = clientSource.indexOf('"@container (max-width: 480px){');
+  assert.ok(at > -1, "the 480 container query must exist");
+  const block = clientSource.slice(at, clientSource.indexOf('"', at + 2));
+  assert.ok(block.includes(".mneme-diary-body{flex-direction:column}"),
+    "the diary list + paper must stack in a narrow panel");
+  assert.ok(block.includes(".mneme-persona-body{flex-direction:column}"),
+    "the persona card rail + editor must stack in a narrow panel");
+  assert.ok(block.includes("white-space:nowrap}"),
+    "panel tabs must not wrap their label onto two lines");
 });
 
 // 日记本不再占侧边栏座位（2026-11-09 桉桉：还保留旧版本的侧边栏打开，这个要去掉）。

@@ -934,8 +934,7 @@ window.__ModuleLoader__.load({
         "memory.diary.bookLabel": "纸和字",
         "memory.diary.book.plain": "素纸",
         "memory.diary.book.ruled": "横线",
-        "memory.diary.book.grid": "方格",
-        "memory.diary.book.kraft": "牛皮",
+        "memory.diary.book.grid": "点阵",
         "memory.diary.count": "共 {n} 篇",
         "memory.diary.writtenOk": "写好了：{path}",
   "memory.diary.exportOk": "已存到 {path}",
@@ -2001,8 +2000,7 @@ window.__ModuleLoader__.load({
         "memory.diary.bookLabel": "Paper and type",
         "memory.diary.book.plain": "Plain",
         "memory.diary.book.ruled": "Ruled",
-        "memory.diary.book.grid": "Grid",
-        "memory.diary.book.kraft": "Kraft",
+        "memory.diary.book.grid": "Dots",
         "memory.diary.count": "{n} entries",
         "memory.diary.writtenOk": "Written: {path}",
   "memory.diary.exportOk": "Saved to {path}",
@@ -2796,11 +2794,13 @@ window.__ModuleLoader__.load({
       ".mneme-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-btn:disabled{opacity:.5;cursor:default}",
       ".mneme-saved{font-size:12px;color:var(--mneme-ok)}",
-      // rule rows: numbered chips + hover-revealed delete
-      ".mneme-set-row{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;margin-bottom:8px;background:var(--dsw-alias-bg-base,transparent)}",
+      // rule rows: numbered chips + 常显的淡删除键（悬停/聚焦才满不透明）。
+      // 曾经彻底 opacity:0，只有鼠标扫过才出现——在窄侧栏和触摸设备上等于没有删除入口，
+      // 用户只能靠猜。留 .45 的常显态，噪声换可发现性。
+      ".mneme-set-row{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-8);margin-bottom:8px;background:var(--dsw-alias-bg-base,transparent)}",
       ".mneme-set-idx{flex:none;width:20px;height:20px;border-radius:50%;border:1px solid var(--dsw-alias-border-l2);color:var(--mneme-fg-dim);font-size:11px;line-height:18px;display:inline-flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}",
       ".mneme-set-ruletext{flex:1;min-width:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);word-break:break-word}",
-      ".mneme-set-del{flex:none;opacity:0;transition:opacity .12s;border:none;background:none;color:var(--mneme-fg-dim);cursor:pointer;font-size:14px;line-height:20px;padding:0 4px;border-radius:6px}",
+      ".mneme-set-del{flex:none;opacity:.45;transition:opacity .12s;border:none;background:none;color:var(--mneme-fg-dim);cursor:pointer;font-size:14px;line-height:20px;padding:0 4px;border-radius:6px}",
       ".mneme-set-row:hover .mneme-set-del,.mneme-set-row:focus-within .mneme-set-del{opacity:1}",
       ".mneme-set-del:hover{color:var(--mneme-danger);background:var(--dsw-alias-interactive-bg-hover)}",
       // 人格卡删除 × 独立类：不复用 mneme-set-del——其 opacity:0 仅在
@@ -2814,7 +2814,6 @@ window.__ModuleLoader__.load({
       ".mneme-set-cmdname{font-size:13px;font-weight:600;color:var(--mneme-accent)}",
       ".mneme-set-cmddesc{font-size:12px;line-height:17px;color:var(--mneme-fg-dim);margin-top:1px;word-break:break-word}",
       // --- settings sub-view ---
-      ".mneme-set{flex:1;min-height:0;overflow-y:auto;padding:8px 24px 48px;box-sizing:border-box}",
       // --- 宿主中列整页面板（sidebar.panellist + main 成对座位）---
       // 宿主把 main 槽渲染在三列 grid 的中列里，那一层只给了 min-width:0 与
       // overflow:hidden，没有任何尺寸约束——注册者必须自己铺满并自管滚动，
@@ -3262,7 +3261,7 @@ window.__ModuleLoader__.load({
       // --- settings cards: boxed cards for the runtime-mode and external-API
       // sections — each card owns its fetch/PUT state, so it renders as a
       // self-contained unit inside the stacked settings view ---
-      ".mneme-set-card{border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:16px;margin-bottom:10px}",
+      ".mneme-set-card{border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:16px;margin-bottom:10px}",
       // 设置页分组标题（个性化 / 记忆引擎 / 搜索 / 连接与安全 / 帮助）：
       // 先给「这一段在管什么」，卡片才是具体选项；scroll-margin-top 是给 #518 的粘顶目录（实测约 74px 高）留的跳转余量
       // ——没有它，点 chip 滚过去的标题就停在目录背面
@@ -3275,7 +3274,7 @@ window.__ModuleLoader__.load({
       ".mneme-set-toc{position:sticky;top:0;z-index:2;background:var(--dsw-alias-bg-base,var(--dsw-alias-bg-layer-1));padding:8px 0 10px;margin-bottom:4px;border-bottom:1px solid var(--dsw-alias-border-l2)}",
       ".mneme-set-toclabel{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin-bottom:6px}",
       ".mneme-set-toclist{display:flex;gap:6px;overflow-x:auto;padding:3px}", // 不 wrap：chip flex:none，窄屏横向滚；3px 给 focus ring 留位（滚动容器会裁掉描边）
-      ".mneme-set-tocchip{flex:none;height:26px;padding:0 10px;border-radius:13px;border:1px solid var(--dsw-alias-border-l2);background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:12px;line-height:24px;transition:border-color .12s,color .12s}",
+      ".mneme-set-tocchip{flex:none;height:26px;padding:0 10px;border-radius:var(--mneme-radius-pill);border:1px solid var(--dsw-alias-border-l2);background:none;color:var(--dsw-alias-label-secondary);cursor:pointer;font-family:inherit;font-size:12px;line-height:24px;transition:border-color .12s,color .12s}",
       ".mneme-set-tocchip:hover{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary)}",
       ".mneme-set-tocchip:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
       ".mneme-set-token{font-family:monospace;font-size:12px;padding:7px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base,transparent);color:var(--dsw-alias-label-primary);word-break:break-all;user-select:all}",
@@ -3484,14 +3483,18 @@ window.__ModuleLoader__.load({
         "--mneme-accent:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
         "--mneme-danger:color-mix(in srgb,var(--dsw-alias-state-error-primary) 80%,var(--dsw-alias-label-primary));" +
         "--mneme-warn:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 65%,var(--dsw-alias-label-primary));" +
-        "--mneme-ok:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 65%,var(--dsw-alias-label-primary))" +
+        "--mneme-ok:color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 65%,var(--dsw-alias-label-primary));" +
+        // 格线专用：纸面合成色上 1px 线要看得见但不抢字。宿主 border-l1 只有 3.9%/5.9%，
+        // 与纸的对比 1.09:1（浅）/1.20:1（深），1px 线在这个量级等于没有；20% 是
+        // 1.55:1 / 1.88:1，14% 偏淡（1.35/1.55），26% 开始压字。深浅各开一支不值。
+        "--mneme-rule:color-mix(in srgb,var(--dsw-alias-label-primary) 20%,transparent)" +
       "}",
       // 手绘风只靠**形状**做，不靠颜色：四角不对称的圆角（每边一个数会写成
       // 「横向/纵向」两组百分比）、比常规粗一点的 1.5px 描边、虚线分隔、以及
       // 正负 0.3deg 的轻微歪斜——这些都不碰对比度，深浅主题下一样成立。
       // 想加纸纹就用 repeating-linear-gradient：它不是 color 声明，主锁不看；
       // 反过来**别在这里加 color**，任何新色值都要先过 #178 的 AA 主锁。
-      ".mneme-diary{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;padding:10px 12px;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary);box-sizing:border-box}",
+      ".mneme-diary{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary);box-sizing:border-box}",
       ".mneme-diary-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}",
       ".mneme-diary-title{font-size:15px;line-height:21px;font-weight:700;letter-spacing:.3px;color:var(--dsw-alias-label-primary)}",
       ".mneme-diary-note{font-size:12px;line-height:17px;color:var(--mneme-fg-dim)}",
@@ -3528,29 +3531,43 @@ window.__ModuleLoader__.load({
       // 不另起弹层——面板里已经有纸张在动，再多一层浮层会盖住正文。
       ".mneme-diary-notice{flex:none;font-size:12px;line-height:18px;padding:5px 9px;border-radius:6px;border-left:3px solid var(--mneme-accent);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);word-break:break-word}",
       ".mneme-diary-notice--bad{border-left-color:var(--mneme-danger);color:var(--mneme-danger)}",
-      ".mneme-diary-paperhead{display:flex;align-items:baseline;gap:8px;padding-bottom:6px;margin-bottom:6px;border-bottom:1px solid var(--dsw-alias-border-l1)}",
+      ".mneme-diary-paperhead{display:flex;align-items:baseline;gap:8px;padding-bottom:6px;margin-bottom:6px;border-bottom:1px dashed var(--dsw-alias-border-l1)}",
       ".mneme-diary-papername{font-size:13px;line-height:19px;font-weight:600;color:var(--mneme-accent);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".mneme-diary-paperdate{font-size:11px;line-height:16px;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums;flex:none}",
-      // 纸地：素纸 / 横线 / 方格 / 牛皮。横线与方格用 background-size 让格线正好
-      // 落在 26px 行高上，行距一改就得同步改这两个数，否则字会压在线上。
-      ".mneme-diary-paper--ruled{background-image:repeating-linear-gradient(to bottom,transparent 0 25px,var(--dsw-alias-border-l1) 25px 26px);background-size:100% 26px;background-position:0 0}",
-      ".mneme-diary-paper--grid{background-image:repeating-linear-gradient(to bottom,transparent 0 25px,var(--dsw-alias-border-l1) 25px 26px),repeating-linear-gradient(to right,transparent 0 25px,var(--dsw-alias-border-l1) 25px 26px);background-size:100% 26px,26px 100%;background-position:0 0,0 0}",
-      ".mneme-diary-paper--kraft{background:color-mix(in srgb,var(--dsw-static-amber-600,#dd8629) 8%,transparent)}",
-      ".mneme-diary-paper--plain{background:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
-      ".mneme-diary-paper{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.18deg);background:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
+      // 纸地：素纸 / 横线 / 点阵。（牛皮已删：它只是「给纸面上 3%→8% 同一层色」，
+      // 与素纸平均通道差 5.7 级、浅色下只差 1.01:1，且是这块唯一硬编码 hex。）
+      //
+      // 纹路挂在**正文元素**上而不是纸上，这是这段唯一的非常规处，两个理由：
+      // ① 挂在纸上时，这几条与下面那条基础规则是**同一个类选择器**、特异性打平，
+      //    基础规则在数组里更靠后且用的是 background 简写，会把 background-image 与
+      //    background-color 一起复位——「四种纸面一模一样」就是这么来的，注释里
+      //    「格线正好落在 26px 行高上」的好意从来没生效过。换成后代选择器后两者
+      //    不再是同一个元素，冲突从结构上消失，不靠源码顺序。
+      // ② 纸面在两处渲染：右栏 pane 里纸内第一个孩子直接是 .mneme-diary-text，面板
+      //    tab 里纸内先是 .mneme-diary-paperhead——同一个 background-position 一处要
+      //    12px、另一处要 32px，挂在纸上永远对不齐一处；挂在拥有 26px 行高的元素上，
+      //    纹路跟着行盒走，两处天然对齐。行高若改，这里的 25px/26px 要同步。
+      ".mneme-diary-paper--ruled .mneme-diary-text{background-image:repeating-linear-gradient(to bottom,transparent 0 25px,var(--mneme-rule) 25px 26px);background-size:100% 26px;background-repeat:repeat}",
+      // 点阵：横竖都 26px 一个点，点落在行盒正中。选点阵不选方格，是因为 14px 中文
+      // 衬线正文里竖线会从字中间穿过去（20% 时尤其明显），点只占一个行盒中心，
+      // 二维结构还在，正文不受干扰。点半径用 em 而不是 px：随字号走，也不进 px 棘轮。
+      ".mneme-diary-paper--grid .mneme-diary-text{background-image:radial-gradient(circle at 50% 50%,var(--mneme-rule) 0 .08em,transparent .1em);background-size:26px 26px;background-repeat:repeat}",
+      // 素纸没有纹路，只靠这层 3% 纸色。**必须写 background-color**：简写会把上面两条
+      // 的 background-image 清掉，这正是这个 bug 的形状，别再写回去。
+      ".mneme-diary-paper{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.18deg);background-color:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
       // 日记正文用衬线：本子上写字不该像聊天记录。四套纸共用一套字，行高 26px
       // 与 --ruled/--grid 的格线对齐；行高一改必须同步上面两条 background-size。
-      ".mneme-diary-text{margin:0;word-break:break-word;font-family:Georgia,\"Times New Roman\",\"Songti SC\",\"Noto Serif SC\",serif;font-size:14px;line-height:26px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-diary-text{margin:0;min-height:100%;box-sizing:border-box;word-break:break-word;font-family:Georgia,\"Times New Roman\",\"Songti SC\",\"Noto Serif SC\",serif;font-size:14px;line-height:26px;color:var(--dsw-alias-label-primary)}",
       // 正文是渲染过的排版（renderDiaryBody），不再是 <pre> 原文：段落、小标题、
       // 列表各归各位。行高 26px 必须贯穿所有块级元素，否则格线会和字错开。
-      ".mneme-diary-text p{margin:0 0 13px}",
+      ".mneme-diary-text p{margin:0 0 1lh}",
       ".mneme-diary-text p:last-child{margin-bottom:0}",
-      ".mneme-diary-text h2,.mneme-diary-text h3,.mneme-diary-text h4,.mneme-diary-text h5{margin:13px 0 6px;font-family:inherit;font-weight:600;line-height:26px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-diary-text h2,.mneme-diary-text h3,.mneme-diary-text h4,.mneme-diary-text h5{margin:1lh 0 0;font-family:inherit;font-weight:600;line-height:26px;color:var(--dsw-alias-label-primary)}",
       ".mneme-diary-text h2{font-size:16px}",
       ".mneme-diary-text h3{font-size:15px}",
-      ".mneme-diary-text ul,.mneme-diary-text ol{margin:0 0 13px;padding-left:22px}",
+      ".mneme-diary-text ul,.mneme-diary-text ol{margin:0 0 1lh;padding-left:22px}",
       ".mneme-diary-text li{margin:0;line-height:26px}",
-      ".mneme-diary-text blockquote{margin:0 0 13px;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2);color:var(--mneme-fg-dim)}",
+      ".mneme-diary-text blockquote{margin:0 0 1lh;padding-left:12px;border-left:2px solid var(--dsw-alias-border-l2);color:var(--mneme-fg-dim)}",
       ".mneme-diary-text code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;background:var(--dsw-alias-interactive-bg-active);border-radius:4px;padding:1px 4px}",
       ".mneme-diary-sheet{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
       ".mneme-diary-empty{padding:14px 0;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
@@ -3565,7 +3582,7 @@ window.__ModuleLoader__.load({
       // 刻意**不新开一份 --mneme-* 语义色层**：contrast.test.js 按首次出现的
       // 「--mneme-fg-dim」定义解析色值（:118），再来一份就得保证顺序，收益却为零。
       // 这一页只用第一份色层已经覆盖到的宿主 token 与既有 -dim 类名，靠形状做手绘感。
-      ".mneme-persona{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;padding:10px 12px;box-sizing:border-box;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-persona{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;box-sizing:border-box;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
       ".mneme-persona-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none}",
       ".mneme-persona-title{font-size:15px;line-height:21px;font-weight:700;letter-spacing:.3px;color:var(--dsw-alias-label-primary)}",
       ".mneme-persona-spacer{flex:1 1 auto;min-width:0}",
@@ -3575,10 +3592,10 @@ window.__ModuleLoader__.load({
       // 左列身份卡：宽度固定，卡片是「贴纸」而不是菜单行。
       ".mneme-persona-col{flex:0 0 190px;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;padding-right:2px;border-right:1px dashed var(--dsw-alias-border-l2)}",
       ".mneme-persona-card{display:flex;align-items:center;gap:2px}",
-      ".mneme-persona-pick{flex:1 1 auto;min-width:0;text-align:left;border:1.5px solid transparent;background:0 0;cursor:pointer;font-family:inherit;font-size:12.5px;line-height:18px;padding:5px 10px;border-radius:12px 8px 13px 9px;color:var(--mneme-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+      ".mneme-persona-pick{flex:1 1 auto;min-width:0;text-align:left;border:1.5px solid transparent;background:0 0;cursor:pointer;font-family:inherit;font-size:12px;line-height:18px;padding:5px 10px;border-radius:12px 8px 13px 9px;color:var(--mneme-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".mneme-persona-pick:hover{background:var(--dsw-alias-interactive-bg-hover)}",
       ".mneme-persona-pick:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
-      ".mneme-persona-pick--on{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
+      ".mneme-persona-pick--on{border-color:var(--mneme-accent);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
       ".mneme-persona-del{flex:none;border:0;background:0 0;cursor:pointer;font-family:inherit;font-size:13px;line-height:18px;padding:2px 6px;border-radius:8px;color:var(--mneme-fg-dim)}",
       ".mneme-persona-del:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--mneme-danger)}",
       ".mneme-persona-del:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
@@ -3627,7 +3644,7 @@ window.__ModuleLoader__.load({
       // sharedialog 自己不带 padding：它和 impdialog 同挂一条 div（见 JSX 里的
       // `className:"mneme-impdialog mneme-sharedialog"`），盒模型由 impdialog 带过来，
       // 所以它同样 +30px；宽度取哪一条由源码顺序决定，故两条都得是 border-box。
-      "@container (max-width: 480px){.mneme-xbar{justify-content:flex-start;padding:0 52px 0 10px}.mneme-vtab{padding:0 10px}.mneme-vtabs{min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.mneme-vtabs::-webkit-scrollbar{height:0}.mneme-xmain{flex-direction:column}.mneme-xside{width:100%;flex:0 1 auto;min-height:0;max-height:min(42vh,300px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2);overscroll-behavior:contain}.mneme-xbrowsebar{padding:8px 12px}.mneme-filterbar{padding:8px 12px}.mneme-drawer{width:100%}.mneme-drawerbody{padding:16px 14px 24px}.mneme-cards{padding:14px 12px 24px;overscroll-behavior:contain}.mneme-ent{flex-direction:column}.mneme-entrail{width:100%;flex:0 1 auto;min-height:0;max-height:min(40vh,280px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2)}.mneme-entrailbody{overscroll-behavior:contain}.mneme-entdetail{padding:16px 14px 24px}.mneme-set{padding:8px 14px 40px}.mneme-status{padding:16px 14px 32px}.mneme-menu{box-sizing:border-box;min-width:0;width:min(200px,calc(100cqw - 32px))}.mneme-impdialog{box-sizing:border-box;width:min(300px,calc(100cqw - 32px))}.mneme-sharedialog{box-sizing:border-box;width:min(340px,calc(100cqw - 32px))}.mneme-graph{padding:10px 12px 12px}.mneme-graphsvg{max-height:min(320px,52vh);touch-action:pan-y}.mneme-glabel{font-size:14px}.mneme-graphside{position:static;width:auto;max-width:100%;max-height:min(200px,30vh);margin-top:8px}}",
+      "@container (max-width: 480px){.mneme-xbar{justify-content:flex-start;padding:0 52px 0 10px}.mneme-vtab{padding:0 10px;flex:none;white-space:nowrap}.mneme-vtabs{min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.mneme-vtabs::-webkit-scrollbar{height:0}.mneme-xmain{flex-direction:column}.mneme-xside{width:100%;flex:0 1 auto;min-height:0;max-height:min(42vh,300px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2);overscroll-behavior:contain}.mneme-xbrowsebar{padding:8px 12px}.mneme-filterbar{padding:8px 12px}.mneme-drawer{width:100%}.mneme-drawerbody{padding:16px 14px 24px}.mneme-cards{padding:14px 12px 24px;overscroll-behavior:contain}.mneme-ent{flex-direction:column}.mneme-entrail{width:100%;flex:0 1 auto;min-height:0;max-height:min(40vh,280px);border-right:0;border-bottom:1px solid var(--dsw-alias-border-l2)}.mneme-entrailbody{overscroll-behavior:contain}.mneme-entdetail{padding:16px 14px 24px}.mneme-set{padding:8px 14px 40px}.mneme-diary-body{flex-direction:column}.mneme-diary-list{flex:none;flex-direction:row;flex-wrap:wrap;gap:var(--mneme-space-4);overflow:visible;padding:0 0 var(--mneme-space-6);border-right:0}.mneme-persona-body{flex-direction:column}.mneme-persona-col{flex:none;overflow:visible;padding:0 0 var(--mneme-space-6);border-right:0}.mneme-persona-about{max-height:none}.mneme-status{padding:16px 14px 32px}.mneme-menu{box-sizing:border-box;min-width:0;width:min(200px,calc(100cqw - 32px))}.mneme-impdialog{box-sizing:border-box;width:min(300px,calc(100cqw - 32px))}.mneme-sharedialog{box-sizing:border-box;width:min(340px,calc(100cqw - 32px))}.mneme-graph{padding:10px 12px 12px}.mneme-graphsvg{max-height:min(320px,52vh);touch-action:pan-y}.mneme-glabel{font-size:14px}.mneme-graphside{position:static;width:auto;max-width:100%;max-height:min(200px,30vh);margin-top:8px}}",
       // 360 档只做两件事：隐掉 14px 的 tab 图标（.mneme-vtab 带图标时约 109px/个、
       // 4 个约 436px，320px 容器原地就横向溢出），再把正文 padding 收到 12–14px。
       // 页签横向滚动不在这一档、属于 480 主断点，理由见 480 档那条算式。
@@ -11506,8 +11523,7 @@ window.__ModuleLoader__.load({
     const DIARY_BOOKS = [
       { key: "plain", label: "memory.diary.book.plain" },
       { key: "ruled", label: "memory.diary.book.ruled" },
-      { key: "grid", label: "memory.diary.book.grid" },
-      { key: "kraft", label: "memory.diary.book.kraft" }
+      { key: "grid", label: "memory.diary.book.grid" }
     ];
     const DIARY_BOOK_KEY = "dsh-mneme-diary-book";
 
@@ -12263,6 +12279,9 @@ window.__ModuleLoader__.load({
           : draft.byAgent[editing] || emptyPersonaCard();
 
       const save = async (next) => {
+        // 每次保存前先把上一次的「已保存」收回去：否则改完字段它仍挂着，
+        // 先成功后失败时还会与「保存失败」并存——两种都是假成功。
+        setSavedAt(0);
         try {
           const res = await apiFetch("/api/dsh-mneme/persona", {
             method: "PUT",
@@ -12281,6 +12300,7 @@ window.__ModuleLoader__.load({
 
       const setField = (key, value) => {
         if (!ready) return;
+        setSavedAt(0);
         if (editing === "default") {
           setDraft({ ...draft, default: { ...draft.default, [key]: value } });
           return;
@@ -12299,6 +12319,7 @@ window.__ModuleLoader__.load({
       // 开关即存（与设置页同语义），但仍走三维全量：只换自己这一维。
       const toggleEnabled = (checked) => {
         if (!ready) return;
+        setSavedAt(0);
         const nextCard = { ...current, enabled: checked };
         const next = editing === "default"
           ? { ...draft, default: nextCard }
