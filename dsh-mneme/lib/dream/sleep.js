@@ -1161,7 +1161,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       messages: [
         {
           role: "system",
-          content: [{ type: "text", text: STR.prompts.affective[language].replaceAll("N", String(traitMinSessions)) }],
+          content: [{ type: "text", text: STR.prompts.affective[language].replaceAll("{{MIN_SESSIONS}}", String(traitMinSessions)) }],
           source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" }
         },
         { role: "user", content: [{ type: "text", text: fenceListBody(language, `${entityNames}\n---\n${listText}`) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
@@ -1266,7 +1266,15 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
         ? meta.evidence
         : (edge.memory_id ? [edge.memory_id] : []);
       const priorSessions = sessionsFor(priorEvidence);
-      const sameOccasion = [...priorSessions].some((s) => currentSessions.has(s));
+      // "Same occasion" is judged on session keys first. Only when either side
+      // has no session key at all does it fall back to an evidence intersection:
+      // memory_save writes memories without provenance (1671 of 8517 active rows
+      // in the live database have none), so sessionsFor returns an empty set and
+      // a session-only test would write the same edge again on every sleep pass,
+      // inflating sessionCount past the real number of occasions.
+      const sameOccasion = [...priorSessions].some((s) => currentSessions.has(s))
+        || ((priorSessions.size === 0 || currentSessions.size === 0)
+          && priorEvidence.some((id) => evidence.includes(id)));
       if (!sameOccasion) continue;
       mergedInto = { edge, priorEvidence, priorSessions };
       break;
@@ -1337,6 +1345,13 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
   let failures = [];
   let conflicts = [];
   let ok = true;
+  // Candidates beyond the cap are otherwise neither minted, demoted, nor
+  // recorded: they simply vanish, while `traits` still counts them and a reader
+  // concludes they were handled. Record them the same way `relation cap` records
+  // edges, so "everything that disappears is accounted for" holds for traits.
+  for (const t of traits.slice(maxTraits)) {
+    dropped.push({ reason: "trait cap", person: t.person, target: t.target });
+  }
   if (traits.length > 0) {
     const decisions = traits.slice(0, maxTraits).map((t) => ({
       action: "create",

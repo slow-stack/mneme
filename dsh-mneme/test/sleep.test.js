@@ -1329,3 +1329,90 @@ test("sleep: a refresh-only trait run reports refreshed, not ok with zero mints"
   assert.equal(store.mintsFor(pattern.id).length, 1, "两轮下来只有一条出生记录");
   store.close();
 });
+
+test("sleep: the affective prompt does not corrupt JSON while filling the threshold", async () => {
+  // 占位符原来是一个裸的 `N`，而 prompt 正文里还写着「只输出 JSON 数组」。
+  // replaceAll("N", …) 于是把 JSON 换成了 JSO3——模型收到的是「只输出 JSO3 数组」，
+  // 而这一相位的唯一出口就是那个数组。这不是理论风险：zh 与 en 两版都中。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  makeMemory(service, "答辩前一晚", "答辩前一晚他很焦虑");
+  const seen = [];
+  const ctx = {
+    logger: { warn: () => {}, info: () => {} },
+    agentDefaultModel: { currentSelection: () => ({ provider: "mock", model: "affective-model" }) },
+    llm: {
+      async *stream(options) {
+        if (options.purpose === "sleep-affective") {
+          const system = options.messages.find((m) => m.role === "system")?.content?.[0]?.text ?? "";
+          seen.push(system);
+        }
+        yield { type: "text-delta", index: 0, text: "[]" };
+        yield { type: "finish", reason: { kind: "stop" } };
+      }
+    }
+  };
+  await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(seen.length, 1, "情感相位确实调了一次模型");
+  const system = seen[0];
+  assert.ok(!system.includes("JSO3"), `prompt 里的 JSON 被阈值替换吃掉了：${system.slice(0, 200)}`);
+  assert.ok(system.includes("JSON"), "「只输出 JSON 数组」这句必须原样到达模型");
+  assert.ok(!system.includes("{{MIN_SESSIONS}}"), "占位符必须被填掉，不能把字面量发给模型");
+  assert.ok(system.includes("3"), "阈值默认 3 要出现在 prompt 里");
+  store.close();
+});
+
+test("sleep: evidence without provenance still counts as the same occasion", async () => {
+  // memory_save 写下的记忆没有 provenance，sessionsFor 返回空集。纯会话判据在
+  // 这种情况下永远判不出「同一场合」，同一批证据会在每一轮 sleep 里再写一条边，
+  // 把 sessionCount 抬得比真实场合数高。落不着会话键时退回 evidence 交集。
+  const { service, store } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const target = service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前一晚", "答辩前一晚他很焦虑");
+  const payload = [
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [mem.id], why: "就这一次" }
+  ];
+  const run = () => {
+    const ctx = affectiveCtx(payload);
+    return runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  };
+  const first = await run();
+  assert.equal(first.phases.affective.relations, 1, "第一轮写了一条边");
+  const second = await run();
+  assert.equal(second.phases.affective.relations, 0, "第二轮不许再写一条");
+  assert.equal(second.phases.affective.merged, 1, "认成同一场合，合并进既有边");
+  const rels = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  assert.equal(rels.length, 1, "库里仍只有一条");
+  assert.equal(rels[0].to_entity, target.id);
+  store.close();
+});
+
+test("sleep: trait candidates pushed out by the cap are recorded as dropped", async () => {
+  // traits.slice(0, maxTraits) 把超出的候选截掉，它们既不铸、也不降级、也不进
+  // dropped，而 traits 仍把它们算进候选数——读者会以为都处理过了。与边的
+  // `relation cap` 同一口径记一笔。
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  const payload = [];
+  for (const [i, target] of ["答辩", "面试", "汇报", "截止日期"].entries()) {
+    service.createEntity({ name: target, type: "concept" });
+    const ids = [];
+    for (const session of ["s1", "s2", "s3"]) {
+      const mem = makeMemory(service, `${target}-${session}-${i}`, `第 ${session} 次${target}前都失眠`);
+      linkSession(service, mem.id, `${target}-${session}`);
+      ids.push(mem.id);
+    }
+    payload.push({ person: "桉桉", target, emotion: "焦虑", attribution: "trait", evidence: ids, why: `三次${target}前都这样` });
+  }
+  const ctx = affectiveCtx(payload);
+  const result = await runSleep(ctx, service, affectiveConfig({ sleepMaxPatternPerRun: 2, sleepPatternMinMemories: 20 }), ctx.logger, { embedder, vectorIndex: null }, null);
+  const phase = result.phases.affective;
+  assert.equal(phase.traits, 4, "四条 trait 候选都被识别出来");
+  assert.equal(phase.applied, 2, "上限内两条落库");
+  const capped = phase.dropped.filter((d) => d.reason === "trait cap");
+  assert.equal(capped.length, 2, "被上限截掉的两条必须记账，不能静默消失");
+  assert.ok(capped.every((d) => typeof d.target === "string" && d.target), "每条都要能看出是哪条结论被截");
+  store.close();
+});
