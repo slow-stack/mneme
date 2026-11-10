@@ -1130,6 +1130,37 @@ test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys"
   assert.deepEqual(settings.getFeatureFlags(), data.overrides, "rejected writes persist nothing");
 });
 
+test("GET/PUT /api/dsh-mneme/features 带 invalidPeakHours（#622：时段串解析失败在面板可见）", async () => {
+  const { routes } = setup(undefined, "", FLAGS_CFG);
+  const route = routes.find((r) => r.path === "/api/dsh-mneme/features");
+  // 默认配置（空串）与合法串：不报——不骚扰没配错峰的用户（验收第 2 条）
+  const get0 = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/features"), get0);
+  assert.deepEqual(JSON.parse(get0.body).invalidPeakHours, []);
+  await route.handler(req("/api/dsh-mneme/features", "PUT", { summarizePeakHours: "09:00-18:00" }), new FakeRes());
+  await route.handler(req("/api/dsh-mneme/features", "PUT", { summarizePeakHours: "" }), new FakeRes());
+  const get1 = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/features"), get1);
+  assert.deepEqual(JSON.parse(get1.body).invalidPeakHours, []);
+  // 非法串（越界 / 点号当冒号——#621 归一救不了的那类）经 PUT 存进去后要被点名
+  await route.handler(req("/api/dsh-mneme/features", "PUT", { summarizePeakHours: "24:00-08:00" }), new FakeRes());
+  const get2 = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/features"), get2);
+  assert.deepEqual(JSON.parse(get2.body).invalidPeakHours, ["summarizePeakHours"]);
+  await route.handler(req("/api/dsh-mneme/features", "PUT", { dreamPeakHours: "09.00-18.00" }), new FakeRes());
+  const get3 = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/features"), get3);
+  assert.deepEqual([...JSON.parse(get3.body).invalidPeakHours].sort(), ["dreamPeakHours", "summarizePeakHours"]);
+  // PUT 答复同走 featureSnapshot：保存后提示立即跟着换（改回合法值即消失）
+  const put = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/features", "PUT", { dreamPeakHours: "23:00-06:00" }), put);
+  assert.deepEqual(JSON.parse(put.body).invalidPeakHours, ["summarizePeakHours"]);
+  // 校验只读 effective：不因提示改任何行为面（空 patch 依旧 400，语义零变化）
+  const empty = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/features", "PUT", {}), empty);
+  assert.equal(empty.statusCode, 400);
+});
+
 test("PUT /api/dsh-mneme/features rejects unknown keys, bad types and bad ranges with 400", async () => {
   const { routes, settings } = setup(undefined, "", FLAGS_CFG);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/features");
