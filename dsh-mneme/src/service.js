@@ -7,6 +7,7 @@ import { STR, langOf } from "./lang.js";
 import { computeHeat } from "./heat.js";
 import { recallStats } from "./recall-stats.js";
 import { evaluateMemoryQuality } from "./quality-filter.js";
+import { CAPACITY_WARNING_DEFAULTS } from "./config.js";
 // 外来行（source='imported'，导入路径落的来源）的身份判定只许有一个定义处——本文件的
 // 两处汇流口与巩固/降级那些读侧行池都调这同一个谓词，避免各处自己写字符串比较然后各自漂移。
 import { isImportedRow } from "./memory-source.js";
@@ -2667,6 +2668,71 @@ export function createService({ store, mirror, config, onWrite, logger, document
     }
   }
 
+  // getCapacityHealth：容量预警（#275 空间维度）——库体积 / 归档区规模是否过线。
+  // 与 getMirrorHealth 同款 fail-safe：读失败显式 unknown，绝不伪装成 ok，也绝不
+  // 向外抛（/health 还有镜像那半张答复，容量不能把整张健康面拖塌）。
+  // 阈值读 config.capacityWarning；config 缺席（直连调用方 / 测试传裸对象）时退回
+  // config.js 的同一份常量，不另立一套数字。答复里只有数字，**绝不带 storageStats
+  // 的 path**——那是本机文件系统布局，/health 是半张对外面。
+  function getCapacityHealth() {
+    const unknown = () => ({
+      status: "unknown",
+      file_bytes: null,
+      freelist_bytes: null,
+      active_rows: null,
+      archived_rows: null,
+      archived_ratio: null,
+      checks: []
+    });
+    try {
+      const cfg = { ...CAPACITY_WARNING_DEFAULTS, ...(config?.capacityWarning ?? {}) };
+      const stats = store.storageStats();
+      const counts = store.capacityStats();
+      const total = counts.active + counts.archived;
+      const ratio = total > 0 ? counts.archived / total : null;
+      const checks = [];
+      // 每条检查：阈值 > 0 才启用（0 = 显式关掉这一条），过线判 >= ——「到阈值」
+      // 即报警（#275 口径）。没法评的检查直接缺席而不是伪装 ok：file_bytes 为
+      // null（:memory: 库）时体积检查进不了列表，total 为 0 时占比检查同理。
+      if (cfg.dbSizeWarnMb > 0 && stats.fileBytes !== null) {
+        checks.push({
+          key: "db_size",
+          status: stats.fileBytes >= cfg.dbSizeWarnMb * 1048576 ? "warn" : "ok",
+          value_bytes: stats.fileBytes,
+          threshold_bytes: cfg.dbSizeWarnMb * 1048576
+        });
+      }
+      if (cfg.archivedRowsWarn > 0) {
+        checks.push({
+          key: "archived_rows",
+          status: counts.archived >= cfg.archivedRowsWarn ? "warn" : "ok",
+          value: counts.archived,
+          threshold: cfg.archivedRowsWarn
+        });
+      }
+      if (cfg.archivedRatioWarn > 0 && ratio !== null) {
+        checks.push({
+          key: "archived_ratio",
+          status: ratio >= cfg.archivedRatioWarn ? "warn" : "ok",
+          value: Math.round(ratio * 1000) / 1000,
+          threshold: cfg.archivedRatioWarn
+        });
+      }
+      return {
+        status: checks.some((c) => c.status === "warn") ? "warn" : "ok",
+        file_bytes: stats.fileBytes,
+        freelist_bytes: stats.freelistCount * stats.pageSize,
+        active_rows: counts.active,
+        archived_rows: counts.archived,
+        archived_ratio: ratio === null ? null : Math.round(ratio * 1000) / 1000,
+        checks
+      };
+    } catch (error) {
+      logger?.warn?.("getCapacityHealth failed:", error);
+      return unknown();
+    }
+  }
+
   // 返回字面量与内部裁决器（resolveConflictPending → applyDecisions 的 conflict
   // 处置）共用的写路径：mirror 同步、写通知、嵌入调度全部同源，不能各写一份。
   function updateMemory(id, p, ctx = {}) {
@@ -2820,6 +2886,7 @@ export function createService({ store, mirror, config, onWrite, logger, document
     organize,
     recoverMirror,
     getMirrorHealth,
+    getCapacityHealth,
     getMirrorState: () => store.getMirrorState(),
     injectCandidates,
     mergeHumanEdits,

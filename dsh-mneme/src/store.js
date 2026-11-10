@@ -3744,6 +3744,18 @@ export function createStore(path) {
   }
 
   /**
+   * 容量预警的行数口径（#275 空间维度）：活跃 / 归档各一格。体积与空闲页在
+   * storageStats()，这里只补行数——两条 COUNT 的成本，挂在 /health 的按需读上，
+   * 没有周期性消费者。归档增速（净增速率）是 recall-stats 的 archive 块（第五
+   * 指标，按精确 archived_at 算），这里刻意不算速率：同一个数字长两处就会分叉。
+   */
+  function capacityStats() {
+    const active = db.prepare("SELECT COUNT(*) AS n FROM memories WHERE archived = 0").get().n;
+    const archived = db.prepare("SELECT COUNT(*) AS n FROM memories WHERE archived = 1").get().n;
+    return { active, archived };
+  }
+
+  /**
    * 整库 VACUUM（#275 的手动步骤）：代价 O(库大小) 且需要排他写锁，所以只在显式
    * 入口里跑，绝不挂启动路径、也不开 auto_vacuum。
    *
@@ -5488,6 +5500,7 @@ export function createStore(path) {
     archivedEmbeddingStats,
     clearArchivedEmbeddings,
     storageStats,
+    capacityStats,
     vacuum,
     saveFailure,
     listFailures,
