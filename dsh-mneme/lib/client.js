@@ -2571,7 +2571,35 @@ window.__ModuleLoader__.load({
         "--mneme-heat-1:color-mix(in srgb,var(--dsw-alias-state-business-primary) 85%,var(--dsw-alias-label-primary));" +
         "--mneme-heat-2:color-mix(in srgb,var(--dsw-alias-state-business-primary) 70%,var(--dsw-alias-label-primary));" +
         "--mneme-heat-3:color-mix(in srgb,var(--dsw-alias-state-business-primary) 55%,var(--dsw-alias-label-primary));" +
-        "--mneme-heat-4:color-mix(in srgb,var(--dsw-alias-state-business-primary) 40%,var(--dsw-alias-label-primary))" +
+        "--mneme-heat-4:color-mix(in srgb,var(--dsw-alias-state-business-primary) 40%,var(--dsw-alias-label-primary));" +
+        // 几何刻度层（视觉系统 P0，docs/plans/2026-11-10-panel-visual-system.md）：
+        // 颜色有 16 个 token 兜住，空间此前一个都没有——于是 padding 长出 107 种
+        // 取值、只有 41.7% 落在 4 网格上、29% 是奇数像素。刻度按**像素值命名**
+        // （--mneme-space-8 就是 8px），而不是 0..8 的档位号：
+        // 档位号会让 gap:"4" 等于 8px，写的人要背一张表，读的人没法核对；
+        // 值命名让调用点自解释，也让 test/panel-tokens.test.js 能用「允许的 px 集」
+        // 直接校验，不需要第二份映射表。2 与 6 是 inline 半档（图标与文字之间）。
+        "--mneme-space-0:0;" +
+        "--mneme-space-2:2px;" +
+        "--mneme-space-4:4px;" +
+        "--mneme-space-6:6px;" +
+        "--mneme-space-8:8px;" +
+        "--mneme-space-12:12px;" +
+        "--mneme-space-16:16px;" +
+        "--mneme-space-20:20px;" +
+        "--mneme-space-24:24px;" +
+        // 圆角：全文件此前 borderRadius 声明 0 处（圆角全靠宿主，各页不统一）。
+        "--mneme-radius-4:4px;" +
+        "--mneme-radius-8:8px;" +
+        "--mneme-radius-pill:999px;" +
+        // 字号：现有 12/13/15 三种覆盖了绝大多数文本，把既有事实写成 token；
+        // 10/14/18 仍散落在 133/61/52 处，属待迁移，不在此列（迁移要逐页视觉复核，
+        // 全局替换会把紧凑列表撑开）。
+        "--mneme-type-12:12px;" +
+        "--mneme-type-13:13px;" +
+        "--mneme-type-15:15px;" +
+        "--mneme-weight-400:400;" +
+        "--mneme-weight-600:600" +
       "}",
       ".mneme-x{flex:1;min-height:0;height:100%;width:100%;box-sizing:border-box;display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);container-type:inline-size}",
       // 窄容器（better-sidebar 工作台 ~500px）下中央 vtabs 会与右缘悬浮的
@@ -3598,6 +3626,117 @@ window.__ModuleLoader__.load({
     }
 
     const h = react.createElement;
+
+    /* panel-geometry:begin
+     * 几何原语层（视觉系统 P1a，docs/plans/2026-11-10-panel-visual-system.md）。
+     * 面板此前没有组件层：每张卡片、每一行都手写 div + 行内 style，同一件事写 180 次、
+     * 180 次各自算间距，于是 padding 长出 107 种取值。这一层只做一件事：把
+     * 「间距/圆角/字号」收成 Token，并让调用点无法绕过它。
+     *
+     * 约定（写代码的人只需要记这一条）：所有几何参数只收 GEOMETRY 表里的键，
+     * 传表外的值（9、10、14、16.5、「8px」）当场抛错。宁可渲染炸掉，也不要
+     * 悄悄画出一个第 108 种间距——后者没人会发现，前者一进测试就红。
+     *
+     * 标记注释不是装饰：test/panel-tokens.test.js 把 begin/end 之间这段抽出来
+     * 直接跑（注入一个假的 createElement），所以这段必须保持纯函数、不许 require。
+     */
+    const GEOMETRY = {
+      space: [0, 2, 4, 6, 8, 12, 16, 20, 24],
+      radius: [4, 8, "pill"],
+      type: [12, 13, 15],
+      weight: [400, 600]
+    };
+    function geometryVar(group, key) {
+      const table = GEOMETRY[group];
+      if (!table) throw new Error("mneme panel: 未知刻度组 " + group);
+      if (!table.includes(key)) {
+        throw new Error(
+          "mneme panel: " + group + " 不接受 " + JSON.stringify(key) +
+          "——只收刻度 " + table.join("/") + "（见 lib/client.js 的 GEOMETRY）"
+        );
+      }
+      return "var(--mneme-" + group + "-" + key + ")";
+    }
+    const space = (key) => geometryVar("space", key);
+    const radius = (key) => geometryVar("radius", key);
+    const fontOf = (key) => geometryVar("type", key);
+    const weightOf = (key) => geometryVar("weight", key);
+
+    function Stack(o) {
+      const p = o || {};
+      const style = Object.assign(
+        { display: "flex", flexDirection: p.direction || "column", gap: space(p.gap == null ? 0 : p.gap), padding: space(p.pad == null ? 0 : p.pad) },
+        p.align ? { alignItems: p.align } : null,
+        p.justify ? { justifyContent: p.justify } : null,
+        p.wrap ? { flexWrap: "wrap" } : null,
+        p.grow ? { flexGrow: 1, minWidth: 0 } : null,
+        p.style || null
+      );
+      return h("div", { className: p.className, style }, p.children);
+    }
+    function Inline(o) {
+      const p = o || {};
+      return Stack(Object.assign({}, p, { direction: "row", align: p.align || "center", gap: p.gap == null ? 6 : p.gap }));
+    }
+    // 唯一允许自己写内距的壳：卡片内距只有两档，dense 给紧凑列表用。
+    function Card(o) {
+      const p = o || {};
+      const head = p.title == null && p.actions == null ? null : h(
+        "div",
+        { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: space(8), marginBottom: space(8) } },
+        h("div", { style: { fontSize: fontOf(13), fontWeight: weightOf(600), color: "var(--dsw-alias-label-primary)", minWidth: 0 } }, p.title),
+        p.actions == null ? null : h("div", { style: { display: "flex", alignItems: "center", gap: space(6), flex: "none" } }, p.actions)
+      );
+      return h(
+        "div",
+        {
+          className: p.className,
+          style: Object.assign(
+            {
+              boxSizing: "border-box",
+              border: "1px solid var(--dsw-alias-border-l2)",
+              borderRadius: radius(8),
+              padding: p.dense ? space(8) : space(12),
+              background: "transparent",
+              minWidth: 0
+            },
+            p.style || null
+          )
+        },
+        head,
+        p.children
+      );
+    }
+    function Section(o) {
+      const p = o || {};
+      return h(
+        "section",
+        { style: Object.assign({ display: "flex", flexDirection: "column", gap: space(8), marginBottom: space(16) }, p.style || null) },
+        p.title == null && p.hint == null ? null : h(
+          "div",
+          { style: { display: "flex", flexDirection: "column", gap: space(2) } },
+          p.title == null ? null : h("h3", { style: { margin: 0, fontSize: fontOf(13), fontWeight: weightOf(600), color: "var(--dsw-alias-label-primary)" } }, p.title),
+          p.hint == null ? null : h("p", { style: { margin: 0, fontSize: fontOf(12), lineHeight: 1.5, color: "var(--mneme-fg-dim)" } }, p.hint)
+        ),
+        p.children
+      );
+    }
+    // 仪表盘栅格：auto-fill 而不是断点，容器宽度变化时自己重排。
+    function Grid(o) {
+      const p = o || {};
+      return h(
+        "div",
+        {
+          style: Object.assign(
+            { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(" + (p.min || 220) + "px,1fr))", gap: space(p.gap == null ? 12 : p.gap) },
+            p.style || null
+          )
+        },
+        p.children
+      );
+    }
+    /* panel-geometry:end */
+
 
     // --- graph view constants ---
     // Entity type → node fill. The host has no palette token for categorical
