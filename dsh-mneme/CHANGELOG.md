@@ -4,6 +4,14 @@
 
 ## 🆕 新增
 
+- **错峰时段串写错不再静默：启动日志告警 + 面板红色提示（#622，可观测性）**。`parsePeakSpec` 的失败语义是「整串视为未配置」——排程是省钱手段，绝不因为写错格式把蒸馏/巩固停掉，这个契约不动。但它的代价是配置写错的唯一症状是「功能悄悄没生效」：用户明明写了 `summarizePeakHours` / `dreamPeakHours`，排程却回到全天候，日志、面板、审计里没有任何痕迹（#424 主楼的排查只能靠「高峰期还在巩固」倒推）。#621 的全角归一收掉了等价类写法，但 24:00 越界、点号当冒号这类只能靠可见性。
+
+  - **启动告警（`src/index.js`）**：cfg 装配后对两个时段键各跑一次解析——**非空**且解析为 null 时 `logger.warn` 一条（键名 + 原串 + 正确写法示例）。空串是合法的未配置，不告警（否则每个没配错峰的用户开机都被警告一遍，验收第 2 条）；行为零变化，只 log，不改 cfg。
+  - **面板提示（`lib/client.js` + `src/api.js`）**：`GET/PUT /features` 答复新增 `invalidPeakHours`（服务端用同一份 `parsePeakSpec` 算好，面板只渲染——独立 bundle 复制解析器必然漂移，与 config-keys 卡「分类在服务端算好」同一纪律）。两个时段键的输入行下，值非法时出红色提示行（含正确写法）；保存（PUT 同走 `featureSnapshot`）后提示立即跟着换。
+  - **单一口径（`src/peak-hours.js`）**：新增 `PEAK_SPEC_KEYS` + `invalidPeakSpecs(cfg)`——告警点与提示点认同一份键表，helper 只转述 `parsePeakSpec` 的话：等价类归一（PR #621，评审中）落地后救得了的写法自然不再告警，两批无需联动。
+  - **验证**：`test/peak-hours-observability.test.js` 新增 3 条（helper 只报「非空且解析失败」+ 接线锁：启动告警读装配后的 cfg 且不改写它 + 解析语义原样未动）；`test/api.test.js` 新增 1 条（GET/PUT 的 `invalidPeakHours` 与 helper 同源、合法/空串不报）；`test/client.test.js` 新增面板锁（提示行走服务端字段、反拷贝锁匹配调用形态、i18n 双语键）。全量 3159 用例 / 3158 通过 / 0 失败 / 1 跳过；check-sync 通过。
+
+
 - **记忆面板的「共 N 条」与分类 chip 改读服务端真分布（#597）**。浏览页被 type 筛过又分了页，页内现数两头都数不出真分布：页头「共 N 条」用 `visible.length`（滚动一次后恒停在 200），分类 chip 从已加载页现数——选中任一类后其它类计数为 0 被整条滤掉，分类栏塌剩两枚、数字从 5 跳到 200。
 
   - **服务端**：`store.count()` 的 WHERE 构造抽成共用的 `pushCountFilters`，新增 `countByType(opts)`（同一份筛选、**不带 type**，一次 GROUP BY 拿全库分布）；宿主内 `/api/dsh-mneme/list` 与 Bearer `/memories` 两张面同口径补 `typeCounts` 格（按 id 取单条的答复不带——分布无意义，客户端据此降级）。

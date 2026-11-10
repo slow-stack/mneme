@@ -15,6 +15,7 @@ import { EFFORT_REJECT_RE, describeStreamFailure, resolveRoute, withEffortFallba
 // decisions.js，与产生这些 error 的校验器同一文件，避免措辞漂移）。
 import { summarizeSkipped } from "./dream/decisions.js";
 import { getInjectionSnapshot } from "./inject.js";
+import { invalidPeakSpecs } from "./peak-hours.js";
 import { renderUserSettingsBlock } from "./user-settings.js";
 import { parseProvenanceSelector, provenanceReply } from "./provenance-http.js";
 import { describeLocalRuntime, publicRuntimeStatus } from "./runtime/loader.js";
@@ -341,7 +342,14 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         if (value !== undefined) effective[key] = value;
       }
     }
-    return { overrides, effective, pendingRestart: pendingRestartKeys(overrides) };
+    // #622 可观测性：错峰时段串解析失败的面板可见化。校验在这里（服务端）做而不在
+    // 面板做——parsePeakSpec 只许有一份，面板是独立 bundle 复制一份解析器必然漂移；
+    // 与 config-keys 卡「分类在服务端算好、面板只渲染」同一纪律。校验对象是
+    // effective（overrides 压过 cfg 后的最终值）：输入框显示的就是它，提示行跟它
+    // 对齐——改完保存（PUT 也走 featureSnapshot）提示立即跟着换。GET 与 PUT 共用
+    // 本函数，两个字段自动同源。
+    const invalidPeakHours = Object.keys(invalidPeakSpecs(effective));
+    return { overrides, effective, invalidPeakHours, pendingRestart: pendingRestartKeys(overrides) };
   }
 
   // Ensure the service has an embedder when the API layer was handed one
