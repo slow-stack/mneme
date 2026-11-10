@@ -13,7 +13,10 @@ import { join, resolve, sep } from "node:path";
 // 面板侧不另造一套判据——两套判据迟早会对同一仓库给出两个答案。
 import { gitHead } from "./t0.js";
 import { loadPlanFromRepo } from "./plan.js";
-import { TEMPLATE_VERSION } from "./render.js";
+import { TEMPLATE_VERSION, T1_SECTION_START } from "./render.js";
+// claim 失效判定的纯函数（借 openwiki 的 Grounded Claims）：解析 diff + 逐条比对
+// 三列证据。放独立模块是因为它零 DB、零 IO（除 diffSince 那一次 git），可单测。
+import { diffSince, summarizeClaims } from "./claims.js";
 
 // 页正文去 frontmatter / CHORO 标记行后作为嵌入文本（P40：嵌页级全文）。
 function pageEmbedText(content) {
@@ -94,8 +97,25 @@ export function createChoroQueries({ store }) {
       // legacy = 这个仓库里有页面是用旧模板（或 M0 的 NULL）渲染的：重跑一次 T0 就
       // 会把它们升级成当前模板，面板据此提示「建议重建」而不是让用户自己比对版本。
       legacy: legacyPages(row.id) > 0,
+      // enrichedPages：已经富化过（页面里有 T1 语义段、库里有 claims）的页数。
+      // 自动刷新要看它：这类页重跑 T0 会退回骨架，所以那条路必须先问一句。
+      enrichedPages: enrichedPageCount(row.id),
       lastRunAt: row.updated_at ?? null
     };
+  }
+
+  /**
+   * 已富化的页数。判据取库里的 status（T1 成功后会写 enriched），而不是读盘找
+   * T1 标记——这是条给面板列表用的轻查询，几百页也不该逐文件 readFileSync。
+   * 两边可能短暂不一致（例如有人手改了 MD），但「要不要提醒」这种提示用途，
+   * 库里的账本就是最合适的真源；真正判断「会丢什么」的仍是 T0 的 collectT1Loss（读盘）。
+   */
+  function enrichedPageCount(repoId) {
+    const hit = db.prepare(
+      `SELECT COUNT(*) AS n FROM choro_pages p JOIN choro_modules m ON p.module_id = m.id
+        WHERE m.repo_id = ? AND p.status = 'enriched'`
+    ).get(repoId);
+    return Number(hit?.n ?? 0);
   }
 
   function legacyPages(repoId) {
@@ -368,6 +388,152 @@ export function createChoroQueries({ store }) {
     };
   }
 
+  /**
+   * Claim 粒度的失效清单（借 openwiki 的 Grounded Claims）：把「仓库代码变过就整仓过期」
+   * 降成「这 2 页里的 5 条结论被改动碰过」。
+   *
+   * 为什么放读侧而不写成后台任务：判据是纯机械的（git diff 的 hunk 区间 × claims 的
+   * 三列证据），不需要模型，一次 diff 几十毫秒——面板打开时现算，永远比任何落库的
+   * 缓存新鲜。写路径一条不加，红线不动。
+   *
+   * **比对起点是每页自己的 verified_baseline，不是全仓 git_baseline。** claims 的行号
+   * 是那页被富化的那一刻记下的；全仓基线是 T0 的时点。若 T1 晚于 T0（常态），用全仓
+   * 基线起算就会把「T1 之前就发生、claim 早已算进去」的改动也算进 diff，误报 touched。
+   * 所以按 verified_baseline 分组、每组各跑一次 git diff（同一起点只跑一次）。
+   *
+   * 五种「说不清」要分开说，别混成一个空清单：
+   *   - repo 不存在                      → null（调用方 404）
+   *   - git 读不到 HEAD                  → 全仓 anchorStale + reason "git-unreadable"
+   *   - 某页基线认不出（浅克隆/force-push）→ 该页 anchorStale，**其余页照常判**
+   *   - 某页没记过验证基线（老数据/拿不到 HEAD）→ 该页 baselineUnknown，一条不判
+   *   - 起点 == HEAD                     → 那组真没变，clean
+   */
+  function claimDrift(repoId) {
+    const repo = db.prepare("SELECT id, root_path, name, git_baseline FROM choro_repos WHERE id = ?").get(repoId);
+    if (!repo) return null;
+    const rootPath = String(repo.root_path ?? "");
+    const rows = db.prepare(
+      `SELECT c.id, c.statement, c.kind, c.source_path, c.start_line, c.end_line,
+              m.slug AS page_slug, m.title AS page_title, p.rel_path
+         FROM choro_claims c
+         JOIN choro_pages p ON c.page_id = p.id
+         JOIN choro_modules m ON p.module_id = m.id
+        WHERE m.repo_id = ? ORDER BY m.slug, c.id`
+    ).all(repoId);
+    // 页面清单单算：hasT1 只能读盘（标记写在正文里，库里没有这一列）；验证基线在库里。
+    const pageRows = db.prepare(
+      `SELECT m.slug, m.title, p.rel_path, p.verified_baseline, p.verified_at
+         FROM choro_pages p
+         JOIN choro_modules m ON p.module_id = m.id WHERE m.repo_id = ? ORDER BY m.slug`
+    ).all(repoId);
+    const head = rootPath === "" ? null : gitHead(rootPath);
+    const baseline = String(repo.git_baseline ?? "").trim();
+    // 每组验证基线只跑一次 diff：富化往往成批完成，同一基线的页占多数。
+    const diffCache = new Map();
+    const diffFor = (verified) => {
+      if (head === null) return null;
+      const key = String(verified ?? "").trim();
+      if (key === "") return null; // 没记过起点 → 判不了，别拿别的页的起点凑
+      if (diffCache.has(key)) return diffCache.get(key);
+      let value = null;
+      if (key === head) value = { ok: true, files: new Map(), deleted: [] };
+      else {
+        const diff = diffSince(rootPath, key, head);
+        value = diff.ok ? diff : { ok: false, reason: diff.reason };
+      }
+      diffCache.set(key, value);
+      return value;
+    };
+    const pages = pageRows.map((p) => {
+      let hasT1 = false;
+      try {
+        hasT1 = readFileSync(join(rootPath, p.rel_path), "utf8").includes(T1_SECTION_START);
+      } catch { hasT1 = false; }
+      const verifiedBaseline = String(p.verified_baseline ?? "").trim() || null;
+      const verifiedAt = p.verified_at ?? null;
+      // 老数据（本功能之前富化的页）只有全仓基线可依。退到它是**保守**方向：它早于
+      // 那页被富化的时刻，diff 会把「T1 之前就发生」的改动也算进来，只会多报不会漏报。
+      // 记 baselineApprox 是为了面板能说清「这是退而求其次的起点」，不是当真的验证点。
+      //
+      // 但「验证过、却没记下基线」不是老数据，是**验证没留下凭据**（T1 那次富化写了
+      // verified_at 却没写 verified_baseline，比如中途失败）。这种情况退到全仓基线
+      // 就会把「富化之后才发生」的改动当成「富化之前就有的」而放过——方向是漏报，
+      // 与上面那条恰好相反。所以判成 baselineUnknown：不知道起点，就不装作知道。
+      const verifyWithoutBaseline = verifiedBaseline === null && verifiedAt !== null;
+      const effective = verifyWithoutBaseline ? null : (verifiedBaseline ?? (baseline || null));
+      const computed = diffFor(effective);
+      return {
+        slug: p.slug,
+        title: p.title,
+        hasT1,
+        verifiedBaseline,
+        verifiedAt,
+        diffBaseline: effective,
+        baselineApprox: !verifyWithoutBaseline && verifiedBaseline === null && effective !== null,
+        baselineUnknown: effective === null,
+        anchorStale: computed !== null && computed.ok === false,
+      };
+    });
+    const claims = rows.map((r) => ({
+      id: r.id,
+      statement: r.statement,
+      kind: r.kind,
+      sourcePath: r.source_path,
+      startLine: r.start_line,
+      endLine: r.end_line,
+      pageSlug: r.page_slug,
+      pageTitle: r.page_title,
+    }));
+    const base = {
+      repo: { id: repo.id, name: repo.name, rootPath, gitBaseline: baseline || null },
+      head: head ?? null,
+      baseline: baseline || null,
+    };
+    if (head === null) {
+      return { ...base, clean: false, anchorStale: true, reason: "git-unreadable", ...summarizeClaims(claims, null, { pages }) };
+    }
+    // 仓库级 anchorStale 保留原来的语义：**骨架**（T0 页的文件清单、模块划分）记下的
+    // 那次基线还认不认得出。它和逐页 claims 的起点是两件事，面板上也是两句话——
+    // 「骨架要重建」不等于「结论都过时」。两条都算，谁也不掩盖谁。
+    let repoStale = false;
+    let repoStaleReason = null;
+    if (baseline !== "" && baseline !== head) {
+      const repoDiff = diffSince(rootPath, baseline, head);
+      if (!repoDiff.ok) { repoStale = true; repoStaleReason = repoDiff.reason; }
+    }
+    const diffByPage = (slug) => {
+      const page = pages.find((p) => p.slug === slug);
+      if (!page) return null;
+      const computed = diffFor(page.diffBaseline);
+      return computed !== null && computed.ok ? { files: computed.files, deleted: computed.deleted } : null;
+    };
+    const summary = summarizeClaims(claims, null, { pages, diffByPage });
+    // clean 的判据：每条结论都真判过、且一条都没被碰到。
+    // 「有结论但起点认不出 / 没记过」不算 clean——那是不知道，不是没事（#607 的病根）；
+    // 一条结论都没有时也没有「没事」可说（那是「还没富化」，不是「全部干净」）。
+    // 仓库基线 == HEAD → 整仓一条提交都没发生，任何 claims 都不可能被碰过。这一条既短路
+    // 「逐页基线没记」的老数据（缺列不是判不了），也覆盖「刚跑完 T0、还没有 conclusion」
+    // 的情形：没变就是没变，不必等富化完才敢说。
+    // 不是这个情形时才逐页看：有哪页判不了就不说 clean，一条结论都没有也不说 clean
+    // （那是「还没富化」，不是「全部干净」——面板上这两句不一样）。
+    const repoAtHead = baseline !== "" && baseline === head;
+    const undecidable = summary.totals.baselineUnknownPages + summary.totals.anchorStalePages > 0;
+    // inconsistentPages 不参与 repoAtHead 的短路：它说的不是「起点认不出」，而是
+    // **页面有语义正文、库里却一条 claims 都没有**（上次 T1 没写完的残局）。这种页的
+    // 证据根本无法核对，与仓库有没有新提交无关；只要还有这种页，就不能说「全部干净」，
+    // 否则面板会把一次没落库的富化说成没事。
+    const clean = summary.totals.atRiskClaims === 0
+      && summary.totals.inconsistentPages === 0
+      && (repoAtHead || (summary.totals.claims > 0 && !undecidable && !repoStale));
+    return {
+      ...base,
+      clean,
+      anchorStale: repoStale,
+      reason: repoStale ? repoStaleReason : null,
+      ...summary,
+    };
+  }
+
   // --- chorography 向量（收尾档 P37–P39）---------------------------------
   // 惰性物化（P37）：只在 host 侧检索路径调用（embedder 由 index.js 注入）；
   // CLI 环境没有 embedder → 向量永不物化，检索退关键词。staleness 两维：
@@ -468,7 +634,7 @@ export function createChoroQueries({ store }) {
 
   return {
     listRepos, listRepoFacts, repoFacts, repoFactsById, repoFromRow, listRepoRow, repoByRoot,
-    resolveRepo, moduleMap, readPage, search, repoByCwd, outline,
+    resolveRepo, moduleMap, readPage, search, repoByCwd, outline, claimDrift,
     embedPageVectors, searchSemantic, embedQueryText, semanticTopN,
   };
 }

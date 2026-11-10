@@ -23,6 +23,80 @@ export const HUMAN_END = "<!-- CHORO:HUMAN:END -->";
 export const T1_SECTION_START = "<!-- CHORO:T1:START -->";
 export const T1_SECTION_END = "<!-- CHORO:T1:END -->";
 
+// 验证溯源的两个 frontmatter 键（issue #615 之后的 ①：语义段带上「对着哪次提交验证的」）。
+// 只有 T1 写它们，T0 渲染时一个字节都不产出——骨架页没有语义段，也就没有「哪次验证的」
+// 这回事；反过来说，T0 重建整页时这两个键随 T1 正文一起消失，与「T0 丢弃语义段」是
+// 同一件事，不新增语义。放在这里而不是 t1.js：frontmatter 的形状属于页面格式。
+export const FM_VERIFIED_BASELINE = "verifiedBaseline";
+export const FM_VERIFIED_AT = "verifiedAt";
+
+/** frontmatter 边界：首行 --- 与下一个 --- 的行号；不存在返回 null。 */
+function frontmatterBounds(lines) {
+  if (String(lines[0] ?? "").trim() !== "---") return null;
+  for (let i = 1; i < lines.length; i++) {
+    if (String(lines[i]).trim() === "---") return { open: 0, close: i };
+  }
+  return null;
+}
+
+/**
+ * 取 frontmatter 里某个顶层键的字符串值。
+ *
+ * 只认顶层键（`key: value`），缩进的列表项（`  - x`）不会误命中；值两侧的引号剥掉
+ * （yamlScalar 会给含特殊字符的值加引号，读回来要还原成原文）。
+ * 没有 frontmatter、键不存在、值为空 → 一律 null：调用方据此说「没记下」，
+ * 而不是把空串当成一个合法的提交号。
+ */
+export function readFrontmatterKey(pageText, key) {
+  const lines = String(pageText ?? "").split("\n");
+  const bounds = frontmatterBounds(lines);
+  if (!bounds) return null;
+  const re = new RegExp(`^${escapeRegExp(key)}\\s*:\\s*(.*)$`);
+  for (let i = bounds.open + 1; i < bounds.close; i++) {
+    const m = re.exec(lines[i]);
+    if (!m) continue;
+    let v = m[1].trim();
+    if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+      try { v = JSON.parse(v); } catch { v = v.slice(1, -1); }
+    }
+    return v === "" ? null : v;
+  }
+  return null;
+}
+
+/**
+ * 就地设置 frontmatter 顶层键：有则覆盖、无则追加在收尾 --- 之前（按传入顺序）。
+ *
+ * value 为 null / undefined / 空串 = **删掉**这个键，不留 `key:` 空行——「这一页是哪次
+ * 提交验证的，T1 没记下来」本身要能在文件里查得出来，而不是显示成一片空白。
+ * 没有 frontmatter 的正文原样返回：绝不给人写的坏文件凭空造一个块。
+ *
+ * @param {string} pageText
+ * @param {Array<[string, string|null]>} entries
+ */
+export function setFrontmatterKeys(pageText, entries) {
+  const lines = String(pageText ?? "").split("\n");
+  const bounds = frontmatterBounds(lines);
+  if (!bounds) return String(pageText ?? "");
+  const pending = new Map(entries.map(([k, v]) => [k, v === undefined || v === null || String(v).trim() === "" ? null : String(v)]));
+  const out = lines.slice(0, bounds.open + 1);
+  for (let i = bounds.open + 1; i < bounds.close; i++) {
+    const m = /^([A-Za-z_][\w-]*)\s*:/.exec(lines[i]);
+    if (m && pending.has(m[1])) {
+      const v = pending.get(m[1]);
+      pending.delete(m[1]);
+      if (v !== null) out.push(`${m[1]}: ${v}`);
+      continue;
+    }
+    out.push(lines[i]);
+  }
+  for (const [k, v] of pending) {
+    if (v !== null) out.push(`${k}: ${v}`);
+  }
+  out.push(...lines.slice(bounds.close));
+  return out.join("\n");
+}
+
 /** 抽出全部保留区。返回 { blocks: string[]（含标记本身，原样）, count }。 */
 export function extractHumanBlocks(pageText) {
   if (typeof pageText !== "string") return { blocks: [], count: 0 };

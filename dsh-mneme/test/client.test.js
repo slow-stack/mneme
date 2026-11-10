@@ -255,6 +255,76 @@ test("choro page wires the two feature toggles, the T1 job and the stale marker"
   );
 });
 
+// 证据复核（Grounded Claims）：用 git diff 判「哪条结论被改动碰到了」。
+// 这条锁的是三件在屏幕上看不见但一错就骗人的事：
+//  · 三种结局（干净 / 基线找不到 / 比对失败）必须走三条分支，不能并成一句；
+//  · 四种命中原因各自有文案，尤其 touched 与 shifted 不许混成一个「失效」；
+//  · 「没算」不许长得像「没事」——#607 的病根就是把没做成说成做成了。
+test("claim evidence check reports three distinct outcomes instead of one reassuring blob", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(fn.includes("/api/dsh-mneme/choro/claims?repo="), "the check must read the /choro/claims route");
+  // 手动触发，不进 useEffect：每次切页都跑 git diff 会把浏览拖慢，而且这个面板
+  // 第一次就自动跑的话，「没点过」和「点过没事」在屏幕上就长一个样了。
+  assert.ok(
+    !/useEffect\(\(\) => \{[^}]*checkDrift/.test(fn),
+    "the check must not run automatically on mount — an unasked check cannot be told apart from an unrun one"
+  );
+  for (const key of ["wiki.drift.clean", "wiki.drift.anchorStale", "wiki.drift.blocked", "wiki.drift.summary"]) {
+    assert.ok(fn.includes(`t("${key}")`), `each outcome needs its own sentence, missing ${key}`);
+  }
+  for (const key of ["wiki.drift.touched", "wiki.drift.shifted", "wiki.drift.deleted", "wiki.drift.unverifiable"]) {
+    assert.ok(fn.includes(`t("${key}")`), `each hit reason needs its own sentence, missing ${key}`);
+  }
+  // touched 与 shifted 分家：混成「失效」会让只是行号挪了的结论也被喊去重写。
+  assert.ok(
+    fn.includes('c.reason === "touched"') && fn.includes('c.reason === "shifted"'),
+    "touched and shifted must stay two verdicts"
+  );
+  // 正文有语义段、库里零条结论（T1 落盘非原子留下的残局）要单独说出来，
+  // 否则这页会永远显示成干净。
+  assert.ok(fn.includes('t("wiki.drift.inconsistent")'), "a page with prose but no claims must say so");
+  // 每页的条数挂在树里，用户不用先点开才知道哪页被改动碰到。
+  assert.ok(fn.includes("mneme-wikidriftn"), "the tree must carry a per-page count badge");
+
+  // 文案本身也要能区分「没算」与「没事」：干净那句必须提到 HEAD/基线，
+  // 失败那句必须提到失败——两者措辞相同就等于没区分。
+  const clean = [...clientSource.matchAll(/"wiki\.drift\.clean":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  const blocked = [...clientSource.matchAll(/"wiki\.drift\.blocked":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  assert.equal(clean.length, 2, "wiki.drift.clean must exist in both dictionaries");
+  assert.equal(blocked.length, 2, "wiki.drift.blocked must exist in both dictionaries");
+  for (const line of clean) {
+    assert.ok(/HEAD|基线|baseline/.test(line), "the clean copy must say what it compared against");
+  }
+  for (const line of blocked) {
+    assert.ok(/失败|failed/i.test(line), "the blocked copy must admit the comparison did not happen");
+  }
+  assert.notEqual(clean[0], blocked[0], "the two outcomes must not share copy");
+});
+
+// 自动刷新被主动跳过（仓库里有富化页）。这条锁的是「拒绝不许长得像失败」：
+// 服务端已经把 autoRefreshSkipped 与 autoRefreshError 分成两个字段，面板必须
+// 跟着分——合成一句「刷新失败」就是在报一个没发生过的故障，而真正的后果
+// （语义段还在、快照还是旧的）反而没人说。
+test("auto-refresh skip is shown as a standing reason, not as a failure toast", () => {
+  const fn = sliceComponent("WikiMainPanel");
+  assert.ok(fn.includes("autoRefreshSkipped"), "the panel must read the skip signal");
+  assert.ok(fn.includes("autoRefreshNote"), "the skip reason needs a visible home");
+  assert.ok(
+    !/autoRefreshError[^\n]*autoRefreshSkipped|autoRefreshSkipped[^\n]*autoRefreshError/.test(fn),
+    "skipped and error must not be merged into one branch"
+  );
+  // 提示条不能只在 toast 里：toast 2.5 秒就没了，而「为什么没刷」是一个
+  // 仍然成立的状态（库里还有富化页），用户回头还要能看到。
+  assert.ok(fn.includes("mneme-wikidriftbar") && fn.includes("state.autoRefreshNote"),
+    "the skip note must render as a bar, not a self-clearing toast");
+  const zh = [...clientSource.matchAll(/"wiki\.autoRefresh\.skipped":\s*"((?:[^"\\]|\\.)+)"/g)].map((m) => m[1]);
+  const en = zh.length;
+  assert.equal(en, 2, "wiki.autoRefresh.skipped must exist in both dictionaries");
+  assert.ok(/没.*做|没有做/.test(zh[0]), "the Chinese copy must say it did not happen");
+  assert.ok(!/失败/.test(zh[0]), "the skip copy must not claim a failure");
+  assert.ok(/skipped/i.test(zh[1]), "the English copy must say skipped");
+});
+
 // 知识库页（契约 §3.6）。这条锁的是「路由与就近文案都在」，不是布局：
 //  · 409/503 各有自己的空态，不把裸状态码丢屏幕上；
 //  · disabled 那句必须说清去哪儿开（#607 的教训：只说「未启用」等于没说）；
@@ -1220,8 +1290,8 @@ test("consolidation chart: own 56-day window, null-vs-empty split, and a narrow-
     "two columns must collapse to one in a narrow container"
   );
   // 两根柱的语义色必须走语义层，不能直接拿宿主 label token 当填充色（#178）。
-  assert.ok(clientSource.includes(".mneme-sinkbar--added{background:var(--mneme-chart-3)}"));
-  assert.ok(clientSource.includes(".mneme-sinkbar--merged{background:var(--mneme-chart-2)}"));
+  assert.ok(clientSource.includes(".mneme-sinkbar--added{background:var(--mneme-sink-added)}"));
+  assert.ok(clientSource.includes(".mneme-sinkbar--merged{background:var(--mneme-sink-merged)}"));
 });
 
 // 巩固/睡眠模型路由 UI：下拉数据来自宿主侧已注册适配器（/llm-providers，
@@ -1540,11 +1610,18 @@ test("scope isolation ships panel switches and provenance surfaces (A4)", () => 
 // 继续藏。**v0.13.x 反转**：主人决定把 M.O. 下架，那一组连同首屏位一起摘掉，
 // 预算回到 8，本锁随之收紧回两组。反转是产品决策、不是放宽，注释留档防下次
 // 有人照着旧注释把组加回来。
+// **v0.13.x 第二次产品豁免（#607 后续）**：首屏加 group.ext（仓库地志 / 知识库 /
+// 日记本三个扩展子系统的总闸），可点项预算 8→11（3 总开关 + autoInject 2 子 +
+// 扩展 3 闸 + scope 2 + 「全部设置」按钮）。理由：这三个子系统此前分别散在
+// enhance 组尾（choro/diary）或压根没进 FEATURE_GROUPS（kb），用户「开了才
+// 找得到、找不到就没法开」——#607 报的「知识库没成型」一半是入口问题。它们
+// 是「装不装这个子系统」而非「每轮付多少」，与 enhance 的行为开关不同级，
+// 所以单列一组并提到首屏。**再往首屏塞东西前先问：它是不是同级子系统？**
 test("settings card folds everything beyond the first screen behind All settings (issue #427)", () => {
-  // ① 首屏层组成：两组都要在（basic 总开关 / scope 必答题），
+  // ① 首屏层组成：三组都要在（basic 总开关 / ext 子系统总闸 / scope 必答题），
   // 且 basic 的成员是从 core/dream 移走的。
-  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.scope"\];/.test(clientSource),
-    "the first screen must be exactly the basic and scope groups (M.O. was taken down in v0.13.x)");
+  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.ext", "group\.scope"\];/.test(clientSource),
+    "the first screen must be the basic, ext and scope groups (M.O. taken down in v0.13.x; ext added as the second product exemption)");
   // M.O. 下架锁：组从 FEATURE_GROUPS 摘掉 ≠ 只把首屏位去掉。少了这一条，下次
   // 有人「顺手把组加回来」时会折进「全部设置」，测试照绿而 M.O. 又出现在面板上。
   assert.ok(!/\{ key: "group\.mo", items: \[/.test(clientSource),
@@ -1554,8 +1631,31 @@ test("settings card folds everything beyond the first screen behind All settings
     "the M.O. flags must remain reachable (config + settings whitelist) so the takedown stays reversible");
   assert.ok(/key: "group\.basic", items: \["autoInject", "autoSummarize", "autoDream"\]/.test(clientSource),
     "group.basic must carry exactly the three master switches");
-  assert.ok(!/key: "group\.core", items: \["autoInject/.test(clientSource) && !/key: "group\.dream", items: \["autoDream/.test(clientSource),
-    "basic members must be MOVED out of their old groups (render-once), not filtered at render time");
+  // 扩展组必须同时收三个子系统的总闸，且一个都不能漏：漏掉哪个，那个子系统就
+  // 退回 #607 的状态——后端接好了、面板上没有入口，用户只能靠改配置文件打开。
+  assert.ok(/key: "group\.ext", items: \["chorographyEnabled", "kbEnabled", "diaryEnabled"\]/.test(clientSource),
+    "group.ext must carry the three subsystem master switches (chorography / kb / diary)");
+  // 迁移锁：choro/diary 从 enhance 组移出（render-once，同一项只渲染一次）。
+  // 只把首屏位加上而不移成员，会让两个开关同时出现在两组里，状态还可能不同步。
+  // #427 revamp（2026-11-11）：group.enhance 进一步拆成 safety/pipeline/retrieve/
+  // persona——它曾是设置页「难找难看」的重灾区（14 个异质开关混装），拆完不许
+  // 有人顺手把旧组名加回来。
+  assert.ok(!/group\.enhance", items: \[/.test(clientSource),
+    "group.enhance must stay split into safety/pipeline/retrieve/persona (the revamp's core move)");
+  assert.ok(!/group\.core", items: \[/.test(clientSource),
+    "group.core must stay split too (its audit/defense rows moved to group.safety)");
+  for (const moved of ["chorographyEnabled", "diaryEnabled"]) {
+    const extItems = clientSource.match(/key: "group\.ext", items: \[([^\]]*)\]/)?.[1] ?? "";
+    assert.ok(extItems.includes(`"${moved}"`), `${moved} must stay in group.ext`);
+    const occurrencesInGroups = [...clientSource.matchAll(/items: \[([^\]]*)\]/g)]
+      .filter((m) => m[1].includes(`"${moved}"`)).length;
+    assert.equal(occurrencesInGroups, 1, `${moved} must render exactly once across all groups (render-once)`);
+  }
+  // 四个新组都在：少了哪个，那批开关就退回「没座位」状态。
+  for (const groupKey of ["group.safety", "group.pipeline", "group.retrieve", "group.persona"]) {
+    assert.ok(clientSource.includes(`key: "${groupKey}", items: [`),
+      `${groupKey} must exist in FEATURE_GROUPS (the revamp's regrouping)`);
+  }
   // ② 两层折叠的接线：restGroups 只在 showAll 展开后渲染；「高级」按钮出现在
   // 「全部设置」之后（同一渲染分支内），showAdv 展开的条目走第二层。
   assert.ok(/showAll && h\(react\.Fragment, null,\s*restGroups\.map\(renderGroup\)/.test(clientSource),
@@ -1563,16 +1663,24 @@ test("settings card folds everything beyond the first screen behind All settings
   const allBtn = clientSource.indexOf('t("memory.features.allToggle")');
   const advBtn = clientSource.indexOf('t("memory.features.advancedToggle")');
   assert.ok(allBtn >= 0 && advBtn > allBtn, "the advanced fold must be nested after All settings");
-  assert.equal(clientSource.match(/const FEATURE_ADVANCED_BOOLS = \[([^\]]*)\];/)[1].split(",").filter((s) => s.trim()).length, 7,
-    "the advanced second tier must hold exactly the 7 rarer switches the label promises");
+  assert.equal(clientSource.match(/const FEATURE_ADVANCED_BOOLS = \[([^\]]*)\];/)[1].split(",").filter((s) => s.trim()).length, 9,
+    "the advanced second tier must hold exactly the 9 rarer switches the label promises (entityRecall + graphAnchoring joined in the revamp)");
   // ③ 徽标：两类各一套中英文案；判定读 overrides 本地判，不引入后端字段。
-  for (const key of ["memory.features.tagDefault", "memory.features.tagChanged",
+  // #427 revamp：tagDefault 的徽标不再渲染（默认态由开关位置本身表达），i18n
+  // 键随之下线——这里锁的是「不再渲染」这件事本身，防止有人把灰字墙加回来。
+  for (const key of ["memory.features.tagChanged", "memory.features.tagPending",
     "memory.features.group.basic", "memory.features.allToggle", "memory.features.advancedToggle"]) {
     const occurrences = clientSource.split("\"" + key + "\"").length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
   assert.ok(clientSource.includes("Object.prototype.hasOwnProperty.call(ovr, k)"),
-    "the default/changed badge must be decided from overrides, not a new backend field");
+    "the changed badge must be decided from overrides, not a new backend field");
+  // 「默认」徽标的下线锁：flagTag 对默认态必须 return null（CSS 类本身保留——
+  // 事实卡的 actor 徽标还用它），禁的是功能开关行再挂灰字墙。
+  assert.ok(/if \(!Object\.prototype\.hasOwnProperty\.call\(ovr, k\)\) return null;/.test(clientSource),
+    "flagTag must return null on default rows (no more always-grey 「默认」 chips)");
+  assert.ok(!clientSource.includes("memory.features.tagDefault"),
+    "the tagDefault copy must stay deleted along with its render site");
 });
 
 // #481：面板开关「改了不生效」的体验坑。开关在宿主启动时合并进冻结 cfg，
@@ -2315,12 +2423,12 @@ test("client bundle parses: 面板产物必须是合法 JS（无重复声明等�
 test("distill retention switches are reachable from the panel (#399)", () => {
   // 认「组里有没有」不要用 `"key"]` 这种子串——`eff["distillRecords.enabled"]`
   // 也长这样，把组里那一项删掉它照样命中（变异验证实测：删项后仍全绿）。
-  // 必须把 core 组的 items 数组抠出来单独看。
-  const coreGroup = clientSource.match(/key: "group\.core", items: \[([\s\S]*?)\]/);
-  assert.ok(coreGroup, "the core group must be declared");
+  // 必须把所属组的 items 数组抠出来单独看。#427 revamp 后归属 pipeline 组。
+  const pipelineGroup = clientSource.match(/key: "group\.pipeline", items: \[([\s\S]*?)\]/);
+  assert.ok(pipelineGroup, "the pipeline group must be declared");
   assert.ok(
-    coreGroup[1].includes('"distillRecords.enabled"'),
-    "distillRecords.enabled must be an item of the core group, not merely referenced elsewhere"
+    pipelineGroup[1].includes('"distillRecords.enabled"'),
+    "distillRecords.enabled must be an item of the pipeline group, not merely referenced elsewhere"
   );
   // 数值清单会随新键增长（v0.13 加了 diaryWriteEveryMinutes），所以钉「这三个都在、
   // 且顺序不变」，不钉整行字面量——否则每加一个数值键这条锁就假红一次。
@@ -2342,15 +2450,19 @@ test("distill retention switches are reachable from the panel (#399)", () => {
     /const distillSub = eff\["distillRecords\.enabled"\] && h\("div", \{ className: "mneme-featsub" \},\s*\n\s*numRow\("distillRecords\.retentionDays"\)/.test(clientSource),
     "the retention-days row must be gated on the parent switch and live in its sub-block"
   );
-  // 定义了不等于接线了：把 distillSub 从组尾子块里摘掉，上面每条断言照样全绿
-  // （变异验证实测：摘掉后仍全绿）。子块是在 items.map 之后按组尾追加的，所以必须确认
-  // 它真的出现在那一个渲染点上。
-  const coreTail = clientSource.match(/g\.key === "group\.core" && h\(react\.Fragment, null, ([^)]*)\)/);
-  assert.ok(coreTail, "the core group must append its sub-blocks at the group tail");
+  // 定义了不等于接线了：把 distillSub 从 subAfter 里摘掉，上面每条断言照样全绿
+  // （变异验证实测：摘掉后仍全绿）。#427 revamp 后子块一律走 subAfter 紧贴自己的
+  // 总闸（core 组已拆、组尾挂法退役），所以锁的是 subAfter 这条接线本身。
+  const subAfterMap = clientSource.match(/const subAfter = \{([^}]*)\}/);
+  assert.ok(subAfterMap, "the subAfter map must exist (sub-blocks ride next to their master switches)");
   assert.ok(
-    /\bdistillSub\b/.test(coreTail[1]),
-    "distillSub must be rendered at the core group tail, not merely declared above"
+    /\bdistillSub\b/.test(subAfterMap[1]) && subAfterMap[1].includes('"distillRecords.enabled"'),
+    "distillSub must be wired to distillRecords.enabled via subAfter, not merely declared above"
   );
+  for (const wired of ["entitySub", "summarizeSub", "choroSub", "diarySub"]) {
+    assert.ok(new RegExp(`\\b${wired}\\b`).test(subAfterMap[1]),
+      `${wired} must ride next to its master switch via subAfter (detached sub-blocks are the old mess)`);
+  }
   assert.ok(
     /if \(!\/\^\\d\+\$\/\.test\(raw\)\) \{\s*\n\s*setNums\(\(c\) => \(\{ \.\.\.c, \[key\]: String\(eff\[key\] \?\? ""\) \}\)\);\s*\n\s*return;\s*\n\s*\}/.test(clientSource),
     "a non-integer draft must be rejected locally and reverted to the effective value"
@@ -2637,9 +2749,10 @@ test("diary book: paper choice is one shared setting across both entries", () =>
     "a same-page change must be broadcast, storage events never fire in the same document");
   assert.ok(clientSource.includes('addEventListener("mneme:diary-book-changed"'),
     "the other entry must listen for that broadcast");
-  // 四种纸都要有文案，否则按钮上是裸 key。
+  // 三种纸都要有文案，否则按钮上是裸 key（牛皮已删：它只是同一层上色的换色相，
+  // 与素纸差 1.01:1，且是这块唯一硬编码 hex）。
   for (const key of ["memory.diary.bookLabel", "memory.diary.book.plain", "memory.diary.book.ruled",
-    "memory.diary.book.grid", "memory.diary.book.kraft"]) {
+    "memory.diary.book.grid"]) {
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
@@ -2650,6 +2763,51 @@ test("diary book: paper choice is one shared setting across both entries", () =>
     "the diary body needs a serif typeface to read like a notebook");
   assert.ok(clientSource.includes("background-size:100% 26px"),
     "the ruled texture must be locked to the 26px line height");
+});
+
+// 2026-11-11 查出来的真 bug：四条纸面风格（--ruled/--grid/--kraft/--plain）与基础规则
+// `.mneme-diary-paper` 同为 (0,1,0)、基础规则在数组里更靠后、且用 background 简写——
+// 前四条设的 background-image/color 被整条重置，四种纸实测全是 background-image:none，
+// 所以「几种风格毫无变化」不是没做完。修法两层：纹理挪到 .mneme-diary-text（后代选择器，
+// 结构上不再和基础规则抢同一个元素），基础规则只用 background-color。
+test("diary paper: 纹理挂在正文元素上，基础规则不许退回 background 简写", () => {
+  const at = clientSource.indexOf('".mneme-diary-paper{');
+  assert.ok(at > -1, "the base paper rule must exist");
+  const rule = clientSource.slice(at + 1, clientSource.indexOf('",', at));
+  assert.ok(rule.includes("background-color:"),
+    "the base rule must paint its tint with background-color");
+  assert.ok(!/(^|;|\s)background:/.test(rule),
+    "the base rule must not use the background shorthand — it resets every texture above it");
+  for (const key of ["--ruled", "--grid"]) {
+    assert.ok(clientSource.includes(".mneme-diary-paper" + key + " .mneme-diary-text{"),
+      "the " + key + " texture must hang off .mneme-diary-text, not off the base class");
+  }
+  assert.ok(clientSource.includes("--mneme-rule:"),
+    "the rule colour needs its own token (border-l1 is 1.09:1 on paper — invisible)");
+  assert.ok(!clientSource.includes("memory.diary.book.kraft"),
+    "kraft was removed; it only differed from plain by hue (1.01:1) and carried the block's only hardcoded hex");
+});
+
+// 走查发现：savedAt 只写不清 —— 保存成功后再改字段仍显示「已保存」，先成功后失败会
+// 「已保存」+「保存失败」两行并存。三处清零缺一处就会复现，所以按处数锁。
+test("persona save: 改任何字段都把「已保存」收回去（假成功回归锁）", () => {
+  const zeros = (clientSource.match(/setSavedAt\(0\)/g) || []).length;
+  assert.ok(zeros >= 3, "save 开头 / setField / toggleEnabled 三处都要清零（现有 " + zeros + " 处）");
+  assert.ok(clientSource.includes("setSavedAt(Date.now())"), "the success path still stamps the time");
+});
+
+// 窄侧栏（约 400px）下日记与人格原来是横向分栏：正文纸被挤到 250px、人格编辑区
+// 只剩 180px；六个页签还会各自折成两行。这两条都在 480 档容器查询里修，锁住防回退。
+test("窄容器：日记与人格上下堆叠，页签不折行", () => {
+  const at = clientSource.indexOf('"@container (max-width: 480px){');
+  assert.ok(at > -1, "the 480 container query must exist");
+  const block = clientSource.slice(at, clientSource.indexOf('"', at + 2));
+  assert.ok(block.includes(".mneme-diary-body{flex-direction:column}"),
+    "the diary list + paper must stack in a narrow panel");
+  assert.ok(block.includes(".mneme-persona-body{flex-direction:column}"),
+    "the persona card rail + editor must stack in a narrow panel");
+  assert.ok(block.includes("white-space:nowrap}"),
+    "panel tabs must not wrap their label onto two lines");
 });
 
 // 日记本不再占侧边栏座位（2026-11-09 桉桉：还保留旧版本的侧边栏打开，这个要去掉）。
@@ -2866,12 +3024,13 @@ test("panel copy and icons must not silently vanish (missing dict lines, unregis
 // 人格定义页（beta）面板面回归：形状沿用 A4 的「分组 + i18n 双语 occurrences ≥ 2
 // + 关键接线」断言风格（只做源码断言，不挂 React 渲染环境）。
 test("persona page is a panel tab, not a settings card (beta v2)", () => {
-  // 开关进 FEATURE_GROUPS 的 enhance 组（行为开关非座位闸门）。按组解析成员再逐个点名，
-  // 而不是把某一行写成字面量正则——那样往组里加第二个键就会把这条护栏弄红（实测踩过）。
-  const enhance = clientSource.match(/group\.enhance", items: \[((?:[^\]]|\n)*)\]/);
-  assert.ok(enhance, "FEATURE_GROUPS group.enhance must be parseable");
+  // 开关进 FEATURE_GROUPS 的 persona 组（#427 revamp：从 enhance 拆出）。按组解析
+  // 成员再逐个点名，而不是把某一行写成字面量正则——那样往组里加第二个键就会把
+  // 这条护栏弄红（实测踩过）。
+  const personaGroup = clientSource.match(/group\.persona", items: \[((?:[^\]]|\n)*)\]/);
+  assert.ok(personaGroup, "FEATURE_GROUPS group.persona must be parseable");
   for (const flag of ["personaEnabled", "personaStrictAddressing"]) {
-    assert.ok(enhance[1].includes(`"${flag}"`), `FEATURE_GROUPS group.enhance must carry ${flag}`);
+    assert.ok(personaGroup[1].includes(`"${flag}"`), `FEATURE_GROUPS group.persona must carry ${flag}`);
   }
   // i18n 键中英双语齐备（occurrences ≥ 2 模式；label + .hint 两路由字典锁统一覆盖）
   for (const key of [
@@ -3066,8 +3225,8 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
-  assert.ok(/group\.enhance[\s\S]{0,700}"profileExtractEnabled"/.test(clientSource),
-    "FEATURE_GROUPS group.enhance must carry profileExtractEnabled");
+  assert.ok(/group\.persona[\s\S]{0,700}"profileExtractEnabled"/.test(clientSource),
+    "FEATURE_GROUPS group.persona must carry profileExtractEnabled");
 
   // 位置锁（2026-11-09 再改口径）：提取按钮属于「用户画像」卡，而画像卡本身
   // 已经从设置页搬进记忆面板的「人格」页（桉桉：mneme 设置里面的个性化还没移走）。
@@ -3155,8 +3314,8 @@ test("profile facts card ships management UI, run outcomes and never touches the
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
-  assert.ok(/group\.enhance[\s\S]{0,1200}"profileFactsEnabled"/.test(clientSource),
-    "FEATURE_GROUPS group.enhance must carry profileFactsEnabled");
+  assert.ok(/group\.persona[\s\S]{0,1200}"profileFactsEnabled"/.test(clientSource),
+    "FEATURE_GROUPS group.persona must carry profileFactsEnabled");
 
   // 位置锁（2026-11-09 改口径）：画像卡与事实卡一起搬进了人格页，事实卡仍是画像卡
   // 之后的一张。切段比较，防止设置页的规则卡把顺序骗过去；设置页里两张卡都不许再有。
