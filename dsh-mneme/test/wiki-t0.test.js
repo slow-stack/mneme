@@ -257,6 +257,41 @@ test("重跑 T0 覆盖已富化的页：必须先出声（t1Loss 清点 + warnin
   }
 });
 
+// 读不出来 ≠ 没有：清点靠读盘，读失败就先不知道那页有没有语义段。旧实现在 catch 里
+// 直接当「没有」，guard 于是放行，replaceChoroGraph 把读不到的页连同它可能有的语义段
+// 一起退回骨架、claims 清空——一次权限错误就能静默抹掉一整页富化成果。
+// 这条锁的是：读失败必须进 unreadable、必须拒绝刷新、必须在 receipt 里说出来。
+test("collectT1Loss 读页失败：进 unreadable，guard 拒绝刷新，绝不静默放行", () => {
+  const root = makeFixture();
+  const store = createStore(":memory:");
+  try {
+    runChoroT0({ repoRoot: root, store, apply: true, now: FIXED_NOW });
+    const pagePath = join(root, ".chorography", "modules", "src.md");
+    writeFileSync(pagePath,
+      `${readFileSync(pagePath, "utf8")}\n${T1_SECTION_START}\n## 架构\n\na.js 是入口。\n${T1_SECTION_END}\n`,
+      "utf8");
+    // 用「同名目录顶掉文件」制造真实的读失败：existsSync 为真（目录存在），
+    // readFileSync 抛 EISDIR。比 chmod 稳（Windows 上 chmod 不生效），也不依赖权限。
+    rmSync(pagePath, { force: true });
+    mkdirSync(pagePath, { recursive: true });
+
+    const dry = runChoroT0({ repoRoot: root, store, now: FIXED_NOW });
+    assert.ok(Array.isArray(dry.t1Loss.unreadable) && dry.t1Loss.unreadable.length > 0,
+      "读不出来的页必须被点名，不能当成「没有 T1 段」");
+    assert.equal(dry.t1Loss.unreadable[0].reason, "EISDIR", "记下读失败的原因，便于归因");
+    assert.ok(dry.warnings.some((w) => w.includes("读不出来")), "dry-run 也要如实说一声");
+
+    assert.throws(
+      () => runChoroT0({ repoRoot: root, store, apply: true, guardT1Loss: true, now: () => "2026-11-09T00:00:00.000Z" }),
+      (err) => err instanceof ChoroRefusal && err.code === "would-drop-t1" && /读不出来/.test(err.message),
+      "读不出内容时无法证明它没有语义段 → 拒绝刷新，而不是赌一把"
+    );
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
 // guardT1Loss（自动刷新专用）：读侧「顺手」重跑 T0 会在用户只点开一页的时候
 // 替他丢掉语义段与 claims——那是破坏性写盘，不是刷新。这条锁三件事：
 // ① 有 T1 段时 apply 整轮拒绝（would-drop-t1），一个字节都不写、claims 一条不少；

@@ -292,6 +292,43 @@ test("resolveCliJs：DSH NEXT 布局优先于旧布局，且 DSH_CLI_JS 压过�
   }
 });
 
+test("resolveCliJs：DSH_CLI_JS 明确指定但路径不存在 → 直接失败，绝不回退到其它候选", () => {
+  const root = mkdtempSync(join(tmpdir(), "choro-t1-explicit-"));
+  try {
+    const exe = join(root, "DSH NEXT.exe");
+    writeFileSync(exe, "", "utf8");
+    // 这份「看起来能用」的布局候选真的存在：如果没有显式指定的短路，
+    // resolveCliJs 会安静地挑中它，用户以为自己的 DSH_CLI_JS 生效了。
+    const asarLib = join(root, "resources", "app.asar", "lib");
+    mkdirSync(asarLib, { recursive: true });
+    writeFileSync(join(asarLib, "desktop-cli.js"), "", "utf8");
+
+    const missing = join(root, "不存在的", "desktop-cli.js");
+    const picked = resolveCliJs(exe, { DSH_CLI_JS: missing });
+    assert.equal(picked.path, null, "显式指定失败就是失败：回退会让人以为设置生效了");
+    assert.equal(picked.verified, false);
+    assert.equal(picked.explicitMissing, missing, "把用户写的那个路径原样带回来，好让他改");
+    assert.ok(picked.candidates.includes(missing), "候选清单里仍是第一位");
+  } finally {
+    for (let i = 0; i < 5; i++) {
+      try { rmSync(root, { recursive: true, force: true }); break; } catch { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200); }
+    }
+  }
+});
+
+test("runner：DSH_CLI_JS 指定不存在的路径时，错误信息指向那个路径而不是布局", () => {
+  const run = makeHeadlessRunner({
+    locateExe: () => "D:\\fake\\DSH.exe",
+    resolveCli: () => ({ path: null, candidates: ["D:\\fake\\cli.js"], verified: false, explicitMissing: "D:\\my\\cli.js" }),
+  });
+  return run({ cwd: ".", task: "x", model: "p/m" }).then((res) => {
+    assert.equal(res.ok, false);
+    assert.equal(res.kind, "environment");
+    assert.ok(res.reason.includes("D:\\my\\cli.js"), "要点名用户写的路径");
+    assert.ok(res.reason.includes("不会回退"), "要说清它不会自动改用别的候选，否则用户会去查布局");
+  });
+});
+
 test("resolveCliJs：全都不在时交回旧布局路径但标 verified:false，候选清单完整", () => {
   // verified:false 是失败信息里那句「这次没探测」的依据：宁可说清楚「我没看到」
   // 也不假装自己确认过路径存在。

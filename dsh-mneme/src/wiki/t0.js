@@ -178,17 +178,32 @@ export function runChoroT0({ repoRoot, store = null, apply = false, guardT1Loss 
       + "要留住语义段就别在这里重跑 T0；需要时再用 --t1 重新富化。"
     );
   }
+  if (t1Loss.unreadable.length > 0) {
+    warnings.push(
+      `${t1Loss.unreadable.length} 页读不出来`
+      + `（${t1Loss.unreadable.slice(0, 3).map((u) => u.relPath).join("、")}${t1Loss.unreadable.length > 3 ? " 等" : ""}），`
+      + "无法确认其中是否有 T1 语义段；自动刷新会因此拒绝，手动重建会按骨架重写这些页。"
+    );
+  }
   // guardT1Loss（自动刷新专用）：读路径上「顺手」重跑 T0 会把用户花模型调用换来的
   // 语义段和 claims 一起清掉——那不是顺手，那是在用户只点开一页的时候替他做了一次
   // 破坏性写盘。手动重建不受此限：用户点了按钮，回执里的 warnings 会如实列出丢了什么。
   //
   // 拒绝而不是「跳过有语义段的那几页」：T0 的整仓 replaceChoroGraph 是一次事务，
   // 只保几页会留下「页面有 T1 正文、库里 claims 已被清空」的半截状态，比整体不写更糟。
-  if (guardT1Loss && t1Loss.pages.length > 0) {
+  //
+  // 读不出来的页同样要拒绝：清点靠读盘，读失败就先不知道它有没有语义段。放行等于
+  // 赌它没有，赌输就是把它那份语义段和 claims 一起抹掉；拒绝只是这次不刷新。
+  if (guardT1Loss && (t1Loss.pages.length > 0 || t1Loss.unreadable.length > 0)) {
     const names = t1Loss.pages.slice(0, 3).join("、");
+    const blockedBy = t1Loss.unreadable.length > 0
+      ? `另有 ${t1Loss.unreadable.length} 页读不出来（${t1Loss.unreadable.slice(0, 3).map((u) => u.relPath).join("、")}`
+        + `${t1Loss.unreadable.length > 3 ? " 等" : ""}），无法确认它们有没有语义段。`
+      : "";
     throw new ChoroRefusal(
       "would-drop-t1",
       `这个仓库有 ${t1Loss.pages.length} 页已经富化过（${names}${t1Loss.pages.length > 3 ? " 等" : ""}）。`
+      + blockedBy
       + "自动刷新会退回骨架、清空 claims，所以这次没有动："
       + "要保留语义段就先别刷新，确实要重建骨架请在面板里手动点「重建骨架」（回执会列出丢了哪几页）。"
     );
@@ -212,7 +227,7 @@ export function runChoroT0({ repoRoot, store = null, apply = false, guardT1Loss 
       skippedFiles: graph.skipped,
       unresolvedCount: unresolvedTotal,
       humanBlocksSeen: countExistingHumanBlocks(rootPath, pageTargets),
-      t1Loss: { pages: t1Loss.pages, orphanEvidence: t1Loss.orphanEvidence },
+      t1Loss: { pages: t1Loss.pages, unreadable: t1Loss.unreadable, orphanEvidence: t1Loss.orphanEvidence },
       wouldWrite: [...pageTargets.map((p) => ({ path: p.relPath, bytes: Buffer.byteLength(p.content, "utf8") })),
         { path: indexRelPath, bytes: Buffer.byteLength(indexContent, "utf8") },
         { path: `${CHORO_DIR}/state.json`, bytes: 0 }],
@@ -298,7 +313,7 @@ export function runChoroT0({ repoRoot, store = null, apply = false, guardT1Loss 
     unresolvedCount: unresolvedTotal,
     humanBlocksPreserved,
     bytes,
-    t1Loss: { pages: t1Loss.pages, orphanEvidence: t1Loss.orphanEvidence },
+    t1Loss: { pages: t1Loss.pages, unreadable: t1Loss.unreadable, orphanEvidence: t1Loss.orphanEvidence },
     warnings,
     moduleSummary: modules.map((m) => ({
       slug: m.slug, title: m.title, fileCount: m.fileCount,
@@ -437,13 +452,19 @@ function existingHumanBlockCount(absPath) {
 // 引用者。两者都是「会失去什么」的清点，不构成阻止：丢弃是设计意图，静默才是 bug。
 function collectT1Loss(rootPath, pageTargets) {
   const pages = [];
+  const unreadable = [];
   for (const target of pageTargets) {
     const abs = join(rootPath, target.relPath);
     if (!existsSync(abs)) continue;
     try {
       if (readFileSync(abs, "utf8").includes(T1_SECTION_START)) pages.push(target.relPath);
-    } catch {
-      /* 读不了就当没有：清点不该让 T0 失败 */
+    } catch (err) {
+      // **读不了不等于没有**：权限、占用、编码错误都会走到这里，而「有没有 T1 语义段」
+      // 恰恰要靠读那一眼才知道。吞成「没有」的直接后果是 guard 放行，然后一整仓
+      // replaceChoroGraph 把读不到的页连同它可能有的语义段一起退回骨架、清空 claims。
+      // 清点本身不该让 T0 失败（下面 warnings 只如实记一笔），但**守卫**必须把它当成
+      // 「有会丢的东西、但我数不清」而拒绝——见 guardT1Loss 分支。
+      unreadable.push({ relPath: target.relPath, reason: String(err?.code ?? err?.message ?? err) });
     }
   }
   let orphanEvidence = 0;
@@ -453,7 +474,7 @@ function collectT1Loss(rootPath, pageTargets) {
   } catch {
     orphanEvidence = 0;
   }
-  return { pages, orphanEvidence };
+  return { pages, unreadable, orphanEvidence };
 }
 
 function countExistingHumanBlocks(rootPath, pageTargets) {

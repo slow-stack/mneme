@@ -89,13 +89,12 @@ export function makeHeadlessRunner({
     }
     const cli = resolveCli(exe);
     if (!cli.path) {
-      return {
-        ok: false,
-        kind: "environment",
-        // 把试过的路径全列出来：只报「找不到」的话，用户连自己装的是哪种布局都不知道
-        // （issue #578 里那位用户只能靠读源码猜）。
-        reason: `在 ${dirname(exe)} 下找不到 headless CLI。试过：${cli.candidates.join("、") || "(无候选)"}。DSH NEXT 布局可用环境变量 DSH_CLI_JS 直接指定 cli 路径`,
-      };
+      // 显式指定（DSH_CLI_JS / --dsh-cli）但路径不存在，与「哪种布局都找不到」是两件
+      // 事：前者是人写错了一个字符，后者是布局没覆盖。分开说，否则用户会去改布局。
+      const reason = cli.explicitMissing
+        ? `DSH_CLI_JS 指定的 headless CLI 不存在：${cli.explicitMissing}（这是显式指定，不会回退到其它候选；改正它或取消指定）`
+        : `在 ${dirname(exe)} 下找不到 headless CLI。试过：${cli.candidates.join("、") || "(无候选)"}。DSH NEXT 布局可用环境变量 DSH_CLI_JS 直接指定 cli 路径`;
+      return { ok: false, kind: "environment", reason };
     }
     const cliJs = cli.path;
     const [provider, modelName] = String(model).split("/");
@@ -119,7 +118,10 @@ export function makeHeadlessRunner({
       // 探测不可用时（普通 node 看不进 asar）走的是旧布局的老路径，这条提示只在真失败时
       // 附上——成功时多说一句只会让人以为哪里没配好。
       if (!result.ok && !cli.verified && result.kind === "environment") {
-        result.reason += `（CLI 路径未经探测：当前进程看不进 asar，按旧布局 ${cliJs} 处理；若是 DSH NEXT 请设 DSH_CLI_JS）`;
+        // 候选清单一起带上：只说「未经探测」等于让人重新猜一遍布局，而这轮已经把
+        // 探测过哪些路径算出来了（#578 那位用户当初只能靠读源码猜）。
+        result.reason += `（CLI 路径未经探测：当前进程看不进 asar，按旧布局 ${cliJs} 处理；`
+          + `已探测：${(cli.candidates ?? []).join("、") || "(无候选)"}。若是 DSH NEXT 请设 DSH_CLI_JS）`;
       }
       return result;
     } catch (err) {
@@ -164,12 +166,21 @@ export function locateDshExe(env = process.env, execPath = process.execPath) {
 export function resolveCliJs(exe, env = process.env) {
   const base = dirname(exe);
   const asar = join(base, "resources", "app.asar");
+  // DSH_CLI_JS 是**人明确指定**的答案，不是一条待排序的候选：指定了就不许再猜。
+  // 回退到别的候选会让人以为自己的设置生效了——实际跑的却是另一份 CLI，症状是
+  // 「我明明指了 NEXT 的 cli，报错里还是旧布局路径」。指定了但不存在 → 直接失败，
+  // 让错误信息如实指向他写的那个路径。
+  const explicit = typeof env.DSH_CLI_JS === "string" && env.DSH_CLI_JS !== "" ? env.DSH_CLI_JS : null;
   const candidates = [
-    env.DSH_CLI_JS ?? null,
+    explicit,
     join(asar, "lib", "desktop-cli.js"),
     join(asar, "dsh", "node_modules", "@deepseek-ai", "dsh-desktop-host", "lib", "cli.js"),
     join(asar, "node_modules", "@deepseek-ai", "dsh-desktop-host", "lib", "cli.js"),
   ].filter((c) => typeof c === "string" && c !== "");
+  if (explicit !== null) {
+    if (existsSync(explicit)) return { path: explicit, candidates, verified: true };
+    return { path: null, candidates, verified: false, explicitMissing: explicit };
+  }
   for (const candidate of candidates) {
     if (existsSync(candidate)) return { path: candidate, candidates, verified: true };
   }

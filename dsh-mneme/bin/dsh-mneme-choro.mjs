@@ -146,7 +146,11 @@ async function main() {
       // --apply 才真开会话花钱。三重上限与降级表在 createT1 里。
       // --dsh-cli 走环境变量而不是新参数：探测层（resolveCliJs）本来就认 DSH_CLI_JS，
       // 再加一条平行的传参链只会让「两种说法哪个赢」变成新的坑。
-      if (flags["dsh-cli"]) process.env.DSH_CLI_JS = flags["dsh-cli"];
+      //
+      // 必须 resolve 成绝对路径：resolveCliJs 用 existsSync 判存在，而 existsSync 是
+      // 相对**当时进程 cwd** 解析的——T1 会 spawn 子进程到仓库目录去跑，相对路径进来
+      // 就变成对着另一个目录找文件，原本存在的 cli 会被判成不存在。
+      if (flags["dsh-cli"]) process.env.DSH_CLI_JS = resolve(flags["dsh-cli"]);
       const t1 = createT1({ store });
       const receipt = await t1.runT1({
         repoRoot: repoPath,

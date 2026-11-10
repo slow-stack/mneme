@@ -450,19 +450,26 @@ export function createChoroQueries({ store }) {
         hasT1 = readFileSync(join(rootPath, p.rel_path), "utf8").includes(T1_SECTION_START);
       } catch { hasT1 = false; }
       const verifiedBaseline = String(p.verified_baseline ?? "").trim() || null;
+      const verifiedAt = p.verified_at ?? null;
       // 老数据（本功能之前富化的页）只有全仓基线可依。退到它是**保守**方向：它早于
       // 那页被富化的时刻，diff 会把「T1 之前就发生」的改动也算进来，只会多报不会漏报。
       // 记 baselineApprox 是为了面板能说清「这是退而求其次的起点」，不是当真的验证点。
-      const effective = verifiedBaseline ?? (baseline || null);
+      //
+      // 但「验证过、却没记下基线」不是老数据，是**验证没留下凭据**（T1 那次富化写了
+      // verified_at 却没写 verified_baseline，比如中途失败）。这种情况退到全仓基线
+      // 就会把「富化之后才发生」的改动当成「富化之前就有的」而放过——方向是漏报，
+      // 与上面那条恰好相反。所以判成 baselineUnknown：不知道起点，就不装作知道。
+      const verifyWithoutBaseline = verifiedBaseline === null && verifiedAt !== null;
+      const effective = verifyWithoutBaseline ? null : (verifiedBaseline ?? (baseline || null));
       const computed = diffFor(effective);
       return {
         slug: p.slug,
         title: p.title,
         hasT1,
         verifiedBaseline,
-        verifiedAt: p.verified_at ?? null,
+        verifiedAt,
         diffBaseline: effective,
-        baselineApprox: verifiedBaseline === null && effective !== null,
+        baselineApprox: !verifyWithoutBaseline && verifiedBaseline === null && effective !== null,
         baselineUnknown: effective === null,
         anchorStale: computed !== null && computed.ok === false,
       };
@@ -511,7 +518,12 @@ export function createChoroQueries({ store }) {
     // （那是「还没富化」，不是「全部干净」——面板上这两句不一样）。
     const repoAtHead = baseline !== "" && baseline === head;
     const undecidable = summary.totals.baselineUnknownPages + summary.totals.anchorStalePages > 0;
+    // inconsistentPages 不参与 repoAtHead 的短路：它说的不是「起点认不出」，而是
+    // **页面有语义正文、库里却一条 claims 都没有**（上次 T1 没写完的残局）。这种页的
+    // 证据根本无法核对，与仓库有没有新提交无关；只要还有这种页，就不能说「全部干净」，
+    // 否则面板会把一次没落库的富化说成没事。
     const clean = summary.totals.atRiskClaims === 0
+      && summary.totals.inconsistentPages === 0
       && (repoAtHead || (summary.totals.claims > 0 && !undecidable && !repoStale));
     return {
       ...base,

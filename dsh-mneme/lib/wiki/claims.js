@@ -12,11 +12,36 @@
 // 只算「相对上次生成基线改了什么」，不判断代码本体——结论要留给读它的人。
 import { execFileSync } from "node:child_process";
 
+// git 对「含非 ASCII / 控制字符」的路径会加双引号并按 C 风格转义（core.quotepath 默认
+// 就是开的），例如中文名会写成 "a/\344\270\255\346\226\207.js"。只脱引号不解转义的话，
+// 归一出来的字符串永远对不上 choro_claims.source_path，这些文件上的结论就再也判不成
+// touched —— **漏判**比误判更难发现，因为它看起来一切正常。
+const GIT_PATH_ESCAPES = { a: "\x07", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", '"': '"', "\\": "\\" };
+
+function unescapeQuotedGitPath(s) {
+  if (!s.includes("\\")) return s;
+  const bytes = [];
+  const pushStr = (str) => { for (const b of Buffer.from(str, "utf8")) bytes.push(b); };
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i];
+    if (ch !== "\\" || i === s.length - 1) { pushStr(ch); continue; }
+    const octal = /^[0-7]{3}/.exec(s.slice(i + 1));
+    if (octal) { bytes.push(parseInt(octal[0], 8) & 0xff); i += 3; continue; }
+    const escaped = GIT_PATH_ESCAPES[s[i + 1]];
+    if (escaped !== undefined) { pushStr(escaped); i += 1; continue; }
+    pushStr(ch);
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
 // 路径归一：choro_claims.source_path 存的是仓库相对路径（正斜杠）；git 侧也是正斜杠，
-// 但 `--- a/x` `+++ b/x` 带前缀，可能需要去掉。
+// 但 `--- a/x` `+++ b/x` 带前缀，可能需要去掉。转义只出现在被引号包起来的那种写法里，
+// 所以解转义严格跟着「这次是否脱过引号」走——不能对未加引号的路径无条件解，
+// 否则 Windows 风格的反斜杠会被当成转义序列吃掉。
 function normDiffPath(p) {
   let s = String(p ?? "").trim();
-  if (s.startsWith('"') && s.endsWith('"')) s = s.slice(1, -1);
+  const quoted = s.length >= 2 && s.startsWith('"') && s.endsWith('"');
+  if (quoted) s = unescapeQuotedGitPath(s.slice(1, -1));
   if (s.startsWith("a/") || s.startsWith("b/")) s = s.slice(2);
   return s.replace(/\\/g, "/");
 }
@@ -28,8 +53,11 @@ function normDiffPath(p) {
  * 因为 hunk 头必须匹配完整形状。两个计数都要——旧侧计数是新旧行坐标的唯一来源，
  * claims 的行号记在**旧侧**（写 claim 时那一版就是 HEAD）。
  *
- * 不传 -M：重命名按「删旧 + 增新」处理，旧路径上的 claim 落进 deleted 是对的
- * （锚点跟着文件走了，得重新指），而新路径没有 claim 自然也不会误报。
+ * 不传 -M 还不够：git 在 `--unified=0` 下**仍会**自动开重命名检测（实测输出
+ * `similarity index 100% / rename from / rename to`，既不出 hunk 也不进 /dev/null），
+ * 于是重命名后旧路径上的 claim 会被判成「没事」。必须显式 `--no-renames`，让重命名
+ * 按「删旧 + 增新」处理：旧路径上的 claim 落进 deleted 是对的（锚点跟着文件走了，得
+ * 重新指），新路径没有 claim 自然也不会误报。
  *
  * 返回 { files: Map<path, [{oldStart, oldCount, newStart, newCount}]>, deleted: string[] }。
  */
@@ -76,7 +104,10 @@ export function diffSince(repoRoot, baseline, head) {
   try {
     const text = execFileSync(
       "git",
-      ["diff", "--unified=0", "--no-color", "--no-ext-diff", `${baseline}..${head}`],
+      ["diff", "--unified=0", "--no-color", "--no-ext-diff", "--no-renames", `${baseline}..${head}`],
+      // --no-renames 是必需的，不是保险：git 会按配置自动开重命名检测（实测在
+      // --unified=0 下也开），一旦识别成 rename 就既不产生 hunk、也不产生 /dev/null，
+      // 旧路径上的 claim 会被静默判成 untouched。见本函数上方 parseDiffRanges 的说明。
       // stdio 显式接管 stderr：execFileSync 默认把子进程 stderr 直接漏到父进程，
       // 「不是 git 仓库」那条几十行的 usage 会污染面板日志，也会在测试输出里刷屏。
       { cwd: repoRoot, encoding: "utf8", maxBuffer: 32 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] }
@@ -124,7 +155,14 @@ export function assessClaims(claims, diff) {
     let shift = 0;
     for (const h of sorted) {
       const hOldEnd = h.oldCount === 0 ? h.oldStart : h.oldStart + h.oldCount - 1;
-      const overlaps = h.oldCount > 0 && start <= hOldEnd && end >= h.oldStart;
+      // 纯插入（`@@ -a,0 +c,d @@`，oldCount === 0）没有「旧行区间」，但它插在旧第 a 行
+      // 之后、第 a+1 行之前。落进 claim 区间内部（a >= start 且 a < end）就是真碰到了，
+      // 与「删除/替换」一样算 touched；插在 claim 首行之前只是把它推下去，仍算 shifted。
+      // 老写法 `h.oldCount > 0 && ...` 让纯插入永远不算相交——多行结论被插进新行时，
+      // 结论原文已被改变却报「没事」。
+      const overlaps = h.oldCount > 0
+        ? start <= hOldEnd && end >= h.oldStart
+        : h.oldStart >= start && h.oldStart < end;
       if (overlaps) return { ...claim, reason: "touched", shift };
       if (hOldEnd < start) shift += h.newCount - h.oldCount;
     }

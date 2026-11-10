@@ -380,6 +380,7 @@ window.__ModuleLoader__.load({
         // 做了会丢东西」，而不是「刷新失败」——失败是另一种情况，另一种文案。
         "wiki.autoRefresh.skipped": "自动刷新这次没有做：这仓库有 {n} 页已经富化过，重跑骨架会把语义段和结论一起清掉。要新快照请手动点「重建骨架」（会先告诉你丢哪几页）。",
         "wiki.autoRefresh.skippedGeneric": "自动刷新这次没有做：这仓库已有富化过的页，重跑骨架会把语义段和结论一起清掉。要新快照请手动点「重建骨架」。",
+        "wiki.autoRefresh.failed": "自动刷新试过但失败了",
         "wiki.run.pathRequired": "先填仓库目录的绝对路径",
         "wiki.run.failed": "生成失败",
         "wiki.run.notAbsolute": "要给绝对路径（例如 D:\\code\\my-repo）：相对路径会按服务端进程的当前目录解析，同一个请求换个启动位置就落到别的目录。",
@@ -1508,6 +1509,7 @@ window.__ModuleLoader__.load({
         // because doing it would lose something", never as "refresh failed".
         "wiki.autoRefresh.skipped": "Auto-refresh was skipped: {n} page(s) in this repository are already enriched, and rebuilding the skeleton would wipe their prose and claims. Click Rebuild skeleton yourself if you want a new snapshot (it tells you which pages it drops).",
         "wiki.autoRefresh.skippedGeneric": "Auto-refresh was skipped: this repository already has enriched pages, and rebuilding the skeleton would wipe their prose and claims. Click Rebuild skeleton yourself if you want a new snapshot.",
+        "wiki.autoRefresh.failed": "Auto-refresh was attempted but failed",
         "wiki.run.pathRequired": "Enter the repository's absolute path first",
         "wiki.run.failed": "Generate failed",
         "wiki.run.notAbsolute": "Give an absolute path (for example /home/me/code/my-repo): relative paths resolve against the server process's working directory, so the same request can land somewhere else depending on how the host was started.",
@@ -12653,6 +12655,10 @@ window.__ModuleLoader__.load({
           // autoRefreshNote：读页时服务端说「这次自动刷新我主动没做」。它不是错误，
           // 所以不塞进 error、也不进 toast（toast 2.5s 就没了，用户看不到原因）。
           autoRefreshNote: null,
+          // autoRefreshError：服务端**真的**试过刷新但失败了。与上面那条严格分开：
+          // 把「主动没做」和「做了没成」合成一句，面板就会把一次正确的拒绝说成故障，
+          // 也会把一次真故障说成没事（src/api.js 两个字段分开就是为了这个）。
+          autoRefreshError: null,
           // 证据复核（Grounded Claims）的两样状态：drift 是 /choro/claims 的
           // 回体，driftPhase 区分「还没查」「查着」「查出三种结局」。
           drift: null, driftPhase: "idle"
@@ -12660,6 +12666,11 @@ window.__ModuleLoader__.load({
         // T1 跑完要重读当前仓库的模块树，但轮询的闭包里拿不到最新的 state.repo：
         // 用 ref 记住加载成功的仓库 id，避免把整棵树塞进 effect 依赖里。
         const repoIdRef = useRef(null);
+        // 证据复核的请求代次：切仓库 / 重新 load 时 +1。checkDrift 发出前记下当时的
+        // 代次，回来时代次已经变了就直接丢弃结果——否则「在甲仓库上发的 diff，在切到
+        // 乙仓库之后才回来」会把甲仓库的「需要复核」写到乙仓库的页签下，而用户看到的
+        // 是一个根本不属于当前页面的判定（比不显示更糟）。
+        const driftGenRef = useRef(0);
         // apiFetch 是裸 fetch：非 2xx 不抛错，返回 Response。这里统一解 JSON 并把
         // 状态码带回来——409 disabled（用户没开）/ 503 unavailable（装配缺件）
         // 各有各的空态文案（#497 的语义分叉在这里接住）。
@@ -12708,7 +12719,9 @@ window.__ModuleLoader__.load({
             repoIdRef.current = loaded && loaded.id != null ? loaded.id : ref;
             // 切仓库时证据复核的旧结果必须清掉：它是按上一个仓库的 diff 算的，
             // 留着就会把甲仓库的「需要复核」挂在乙仓库的页签下。
-            setState((s) => ({ ...s, phase: "ready", repos, repo: loaded, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null, drift: null, driftPhase: "idle", autoRefreshNote: null }));
+            // 代次 +1 之后，任何在途的 checkDrift 结果都会被丢弃（见 driftGenRef）。
+            driftGenRef.current += 1;
+            setState((s) => ({ ...s, phase: "ready", repos, repo: loaded, modules: mod.data.modules ?? [], edges: mod.data.edges ?? [], page: null, selected: null, drift: null, driftPhase: "idle", autoRefreshNote: null, autoRefreshError: null }));
           } catch (err) {
             setState((s) => ({ ...s, phase: "error", error: String(err?.message ?? err) }));
           }
@@ -12721,16 +12734,19 @@ window.__ModuleLoader__.load({
         const checkDrift = useCallback(async () => {
           const ref = repoIdRef.current;
           if (ref == null) return;
-          setState((s) => ({ ...s, driftPhase: "loading" }));
+          const gen = driftGenRef.current;
+          const writeIfCurrent = (patch) => setState((s) => (driftGenRef.current === gen ? { ...s, ...patch } : s));
+          writeIfCurrent({ driftPhase: "loading" });
+          // 只写「还是同一次请求、还是同一个仓库」的结果。
           try {
             const { status, data } = await readJson(await apiFetch(`/api/dsh-mneme/choro/claims?repo=${encodeURIComponent(ref)}`));
             if (status !== 200 || data.error) {
-              setState((s) => ({ ...s, driftPhase: "failed", drift: { error: data.error ?? `claims ${status}` } }));
+              writeIfCurrent({ driftPhase: "failed", drift: { error: data.error ?? `claims ${status}` } });
               return;
             }
-            setState((s) => ({ ...s, driftPhase: "done", drift: data }));
+            writeIfCurrent({ driftPhase: "done", drift: data });
           } catch (err) {
-            setState((s) => ({ ...s, driftPhase: "failed", drift: { error: String(err?.message ?? err) } }));
+            writeIfCurrent({ driftPhase: "failed", drift: { error: String(err?.message ?? err) } });
           }
         }, []);
         const openPage = useCallback(async (slug) => {
@@ -12749,7 +12765,12 @@ window.__ModuleLoader__.load({
                 ? t("wiki.autoRefresh.skipped").replace("{n}", String(data.repo.enrichedPages))
                 : (data.autoRefreshSkipNote || t("wiki.autoRefresh.skippedGeneric")))
               : null;
-            setState((s) => ({ ...s, page: data.page, autoRefreshNote: skipped }));
+            // 真失败要单独带上：刷新没成时页面还是旧的、徽章还亮着，不说出来
+            // 就是「点了、看起来正常、其实是上次的内容」。
+            const refreshError = typeof data.autoRefreshError === "string" && data.autoRefreshError
+              ? data.autoRefreshError
+              : null;
+            setState((s) => ({ ...s, page: data.page, autoRefreshNote: skipped, autoRefreshError: refreshError }));
           } catch (err) {
             setState((s) => ({ ...s, page: { error: String(err?.message ?? err) } }));
           }
@@ -12787,6 +12808,7 @@ window.__ModuleLoader__.load({
               rebuilding: false,
               // 重建已经真的发生了，那条「自动刷新没做」的提示就该退场。
               autoRefreshNote: null,
+              autoRefreshError: null,
               rebuildNote: `${t("wiki.rebuild.done")}: ${r.moduleCount ?? "?"} ${t("wiki.rebuild.modules")} / ${r.pageCount ?? "?"} ${t("wiki.rebuild.pages")}${loss ? ` — ${loss}` : ""}`
             }));
             await load(repo.id);
@@ -13002,12 +13024,19 @@ window.__ModuleLoader__.load({
         const driftDone = state.driftPhase === "done" && drift && !drift.error;
         const driftClean = driftDone && drift.clean === true;
         const driftAnchorStale = driftDone && drift.anchorStale === true;
+        // 「git 读不到」与「基线提交没了」是两种完全不同的处境：前者是仓库不是 git 目录
+        // 或不可读（去修环境），后者是 force-push/浅克隆把起点截断了（去重建骨架）。
+        // 两句 i18n 早就写好了，只是原来没接上，一律说成后者。
+        const driftGitUnreadable = driftAnchorStale && drift.reason === "git-unreadable";
         const driftTotals = (driftDone && drift.totals) || null;
         const driftRisk = driftTotals ? driftTotals.atRiskClaims : 0;
-        // 「比不了」的页数（验证基线认不出 + 从来没记过）单独计数：它们一条都不判，
-        // 不能混进「0 条需要复核」里当成没事。
+        // 「比不了」的页数（验证基线认不出 + 从来没记过 + 有语义段却没 claims）单独计数：
+        // 它们一条都不判，不能混进「0 条需要复核」里当成没事。inconsistentPages 原来
+        // 完全没进这个汇总，于是「所有页都是残局」也会显示成「这次改动没碰到任何结论」。
         const driftUndecidable = driftTotals
-          ? (driftTotals.baselineUnknownPages || 0) + (driftTotals.anchorStalePages || 0)
+          ? (driftTotals.baselineUnknownPages || 0)
+            + (driftTotals.anchorStalePages || 0)
+            + (driftTotals.inconsistentPages || 0)
           : 0;
         // 提交号显示前 7 位就够认，长 sha 会把这一行挤爆（完整值仍在 title 里）。
         const shortSha = (sha) => String(sha ?? "").slice(0, 7);
@@ -13143,12 +13172,16 @@ window.__ModuleLoader__.load({
           // 是一个仍然成立的状态（库里还有富化页），不是一次性的动作回执。
           state.autoRefreshNote && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
             state.autoRefreshNote),
+          // 「试过刷新但失败了」单独一条：它不是无事发生，也不是「主动没做」。
+          // 旧实现在这里整段丢字段，用户的感受就是「点了没反应」。
+          state.autoRefreshError && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
+            `${t("wiki.autoRefresh.failed")}: ${state.autoRefreshError}`),
           // 证据复核回执条：三种结局三种说法，「比对失败」单独一条 --
           // 它既不是「没事」也不是「有风险」，混进任何一边都是撒谎。
           state.driftPhase === "failed" && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
             `${t("wiki.drift.blocked")}: ${(state.drift && state.drift.error) || ""}`),
           driftDone && driftAnchorStale && h("div", { className: "mneme-wikidriftbar mneme-wikidriftbar--warn", role: "status" },
-            t("wiki.drift.anchorStale")),
+            driftGitUnreadable ? t("wiki.drift.gitUnreadable") : t("wiki.drift.anchorStale")),
           driftDone && !driftAnchorStale && driftClean && h("div", { className: "mneme-wikidriftbar", role: "status" },
             t("wiki.drift.clean")),
           driftDone && !driftAnchorStale && !driftClean && h("div", { className: "mneme-wikidriftbar", role: "status" },

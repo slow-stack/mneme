@@ -331,6 +331,62 @@ test("claimDrift：基线认不出时说 anchorStale，不说「都还准」也�
   }
 });
 
+test("claimDrift：验证过却没记下基线（verified_at 有、verified_baseline 空）→ 判不了，不回退全仓基线", () => {
+  const { root, store, q } = setup();
+  try {
+    const repo = q.resolveRepo(undefined);
+    const page = store.choroPageBySlug(repo.id, "src");
+    store.saveChoroPageClaims(page.id, [
+      { statement: "a 依赖 b", kind: "architecture", sourcePath: "src/a.js", startLine: 3, endLine: 3, createdAt: FIXED_NOW() },
+    ]);
+    // 后半段的验证没留下凭据：T1 写了 verified_at，却没写 verified_baseline。
+    store.db.prepare("UPDATE choro_pages SET verified_at = ?, verified_baseline = NULL WHERE id = ?").run(FIXED_NOW(), page.id);
+
+    const drift = q.claimDrift(repo.id);
+    const p = drift.pages.find((x) => x.slug === "src");
+    // 退到全仓基线会把「富化之后才发生」的改动当成「富化之前就有」而放过——漏报。
+    // 不知道起点就不装作知道：diffBaseline 必须为 null，且这一页判 baselineUnknown。
+    assert.equal(p.diffBaseline, null, "没有验证点就不许回退全仓基线");
+    assert.equal(p.baselineApprox, false, "这不是「老数据退而求其次」，别标成约等于");
+    assert.equal(p.baselineUnknown, true);
+    assert.equal(drift.totals.baselineUnknownPages, 1);
+    // 基线 == HEAD 时 clean 仍可为真：一条提交都没发生过，锚点不可能被碰到，
+    // 「验证点没记下」在这里不影响结论（影响的是「变了之后能不能判」）。
+    assert.equal(drift.clean, true, "没变就是没变，不必因为起点没记下而说不知道");
+
+    // 有提交之后就不一样了：起点认不出的页不许被那些提交的改动「顺带放过」。
+    writeFileSync(join(root, "src", "a.js"), 'import { b } from "./b.js";\nexport const a = () => b() + 1;\n', "utf8");
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-am", "change a", "--no-gpg-sign"], { cwd: root, stdio: "pipe" });
+    const after = q.claimDrift(repo.id);
+    assert.equal(after.clean, false, "有判不了的页，就不能说干净");
+    assert.equal(after.totals.baselineUnknownPages, 1);
+    assert.equal(after.totals.atRiskClaims, 0, "判不了不等于有风险，一条都不许判");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
+test("claimDrift：repoAtHead 也不能掩盖 inconsistentPages（有语义段却没 claims 的页）", () => {
+  const { root, store, q } = setup();
+  try {
+    const repo = q.resolveRepo(undefined);
+    // 造一次「T1 落盘不完整」：页里有语义段，库里一条 claims 都没有。
+    // 仓库基线仍等于 HEAD，旧实现在这里会短路成 clean:true——把残局说成没事。
+    const pagePath = join(root, ".chorography", "modules", "src.md");
+    writeFileSync(pagePath, readFileSync(pagePath, "utf8") + "\n<!-- CHORO:T1:START -->\n## 架构\n\na.js 是入口。\n<!-- CHORO:T1:END -->\n", "utf8");
+
+    const drift = q.claimDrift(repo.id);
+    assert.equal(drift.baseline, drift.head, "前提：仓库基线就是 HEAD（走短路分支）");
+    assert.equal(drift.totals.inconsistentPages, 1, "有语义段、零 claims 的页要被数出来");
+    assert.equal(drift.totals.atRiskClaims, 0, "它一条结论都没有，谈不上有风险");
+    assert.equal(drift.clean, false, "残局不许被说成「全部干净」");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
 test("claimDrift：未知仓库返回 null（调用方据此 404，不是空清单）", () => {
   const { root, store, q } = setup();
   try {
