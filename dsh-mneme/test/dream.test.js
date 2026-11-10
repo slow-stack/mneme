@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { validateDecisions, applyDecisions, createDreamScheduler } from "../src/dream.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
-import { mockCtx } from "./helpers/dream-mock.js";
+import { mockCtx, sessionDecisions } from "./helpers/dream-mock.js";
 
 function snapshot(ids, type = "project") {
   return new Map(ids.map((id, i) => [id, { id, type, title: `t${i}`, content: `c${i}`, importance: 3, archived: false, forgotten: false }]));
@@ -902,6 +902,67 @@ test("runDream sliding window keeps the newest N memories and excludes the oldes
   assert.deepEqual(windowIds, expected, "window contains the newest 3 memories");
   assert.ok(!windowIds.includes(ids[0]), "oldest memory excluded from the window");
   assert.equal(result.decisions.length, 3, "decisions cover exactly the window");
+  store.close();
+});
+
+// --- issue #557：dream 审计行输入快照瘦身（dreamInputSummaryEnabled）-----------
+//
+// dream_runs.input 单行体积随记忆量涨（#557 实测平均 40-79 KB/轮，大头是
+// content），轮数又随天数涨，超线性。本组用例锁三件事：
+//   ① 默认关 = 审计行逐字节一致（content 原样落库）；
+//   ② 开启后 auto 轮只落骨架（id/type/title/importance/updated_at），且
+//      input_count / snapshot_hash / receipt / decisions 都不变——瘦身的只是
+//      落库副本，LLM 输入与 receipt 完整性不受影响；
+//   ③ organize 轮的重放载荷不经过 dream.js 的快照构造（结构性分叉），这里锁
+//      auto 路径的形状，organize 侧由 organize.test.js 的 apply 重放用例兜住。
+
+test("issue#557: 默认关 = 审计行快照带 content（行为与改动前一致）", async () => {
+  const { store, service } = dreamSetup();
+  const content = "很长的正文，瘦身前应原样落库。".repeat(20);
+  for (let i = 0; i < 3; i++) {
+    service.saveWithDedupe({ type: "project", title: `主题${i}`, content, importance: 3 });
+  }
+  const ctx = mockCtx({ onConsolidation: sessionDecisions });
+  const dream = createDreamScheduler({ thresholdCount: 1, thresholdChars: 0, delayMs: 0 });
+  await dream.runDream(ctx, service, {
+    dreamProvider: "deepseek", dreamModel: "deepseek-chat"
+  });
+  const run = store.listDreamRuns()[0];
+  assert.equal(run.input_count, 3);
+  assert.deepEqual(
+    Object.keys(run.input[0]).sort(),
+    ["content", "id", "importance", "title", "type", "updated_at"],
+    "默认快照含 content"
+  );
+  assert.equal(run.input[0].content, content, "content 原样落库");
+  store.close();
+});
+
+test("issue#557: dreamInputSummaryEnabled 开启后快照只留骨架，判定与回执不变", async () => {
+  const { store, service } = dreamSetup();
+  for (let i = 0; i < 3; i++) {
+    service.saveWithDedupe({ type: "project", title: `主题${i}`, content: `很长的正文${i}`.repeat(20), importance: 3 });
+  }
+  const ctx = mockCtx({ onConsolidation: sessionDecisions });
+  const dream = createDreamScheduler({ thresholdCount: 1, thresholdChars: 0, delayMs: 0 });
+  const result = await dream.runDream(ctx, service, {
+    dreamProvider: "deepseek", dreamModel: "deepseek-chat",
+    dreamInputSummaryEnabled: true
+  });
+  const run = store.listDreamRuns()[0];
+  assert.equal(run.input_count, 3, "input_count 语义不变");
+  for (const m of run.input) {
+    assert.deepEqual(
+      Object.keys(m).sort(),
+      ["id", "importance", "title", "type", "updated_at"],
+      "瘦身快照不含 content"
+    );
+  }
+  assert.deepEqual(run.input.map((m) => m.title).sort(), ["主题0", "主题1", "主题2"], "骨架字段带出标题");
+  assert.ok(run.snapshot_hash && run.snapshot_hash.length === 64, "snapshot_hash 形状不变（内存里对含 content 快照计算）");
+  assert.match(run.receipt, /^dsh-mneme:run:/, "receipt 形状不变");
+  assert.ok(Array.isArray(run.decisions) && run.decisions.length > 0, "决策不受影响");
+  assert.ok(JSON.stringify(run.input).length < 2048, "骨架行确实小（content 不在）");
   store.close();
 });
 

@@ -2665,6 +2665,30 @@ export function createStore(path) {
     return needsEmbeddingFor(modelHash, 1).length > 0;
   }
 
+  /**
+   * How many rows needsEmbeddingFor() would pick in total.
+   *
+   * A re-index run is bounded by a limit, so "indexed: 0" and "indexed: 3 of
+   * 300" looked identical to the caller. Counting is cheap (no content is
+   * materialised) and is what lets the caller say how much work is left.
+   */
+  function countNeedsEmbeddingFor(modelHash) {
+    if (!modelHash) {
+      return db.prepare(
+        `SELECT count(*) AS c FROM memories
+         WHERE (embedding IS NULL OR embedding = '')
+           AND forgotten = 0 AND archived = 0`
+      ).get().c;
+    }
+    return db.prepare(
+      `SELECT count(*) AS c FROM memories
+       WHERE ((embedding IS NULL OR embedding = '')
+              OR embedding_model IS NULL
+              OR embedding_model != ?)
+         AND forgotten = 0 AND archived = 0`
+    ).get(String(modelHash)).c;
+  }
+
   /** Per-model provenance counts over active rows ('' = unknown origin). */
   function embeddingModelBreakdown() {
     return db.prepare(
@@ -3738,6 +3762,18 @@ export function createStore(path) {
       fileBytes = sizeOf(path) + sizeOf(`${path}-wal`) + sizeOf(`${path}-shm`);
     }
     return { path: typeof path === "string" ? path : null, pageSize, pageCount, freelistCount, fileBytes };
+  }
+
+  /**
+   * 容量预警的行数口径（#275 空间维度）：活跃 / 归档各一格。体积与空闲页在
+   * storageStats()，这里只补行数——两条 COUNT 的成本，挂在 /health 的按需读上，
+   * 没有周期性消费者。归档增速（净增速率）是 recall-stats 的 archive 块（第五
+   * 指标，按精确 archived_at 算），这里刻意不算速率：同一个数字长两处就会分叉。
+   */
+  function capacityStats() {
+    const active = db.prepare("SELECT COUNT(*) AS n FROM memories WHERE archived = 0").get().n;
+    const archived = db.prepare("SELECT COUNT(*) AS n FROM memories WHERE archived = 1").get().n;
+    return { active, archived };
   }
 
   /**
@@ -5427,6 +5463,7 @@ export function createStore(path) {
     embeddedCount,
     needsEmbedding,
     needsEmbeddingFor,
+    countNeedsEmbeddingFor,
     hasStaleEmbedding,
     embeddingModelBreakdown,
     embeddingDimensionBreakdown,
@@ -5485,6 +5522,7 @@ export function createStore(path) {
     archivedEmbeddingStats,
     clearArchivedEmbeddings,
     storageStats,
+    capacityStats,
     vacuum,
     saveFailure,
     listFailures,
