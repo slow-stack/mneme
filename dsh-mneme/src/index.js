@@ -521,6 +521,34 @@ export const apply = (ctx, config) => {
           metadata: JSON.stringify({ count, chars })
         });
       },
+      // Issue #634：归档/删除/合并把活跃量压到上次成功轮的峰值（= 阈值基线）之下
+      // 时，调度器在判定口把基线夹回当前活跃量。这里把「夹回发生过」落进审计——
+      // 修复前这类收缩会变成永久静默停摆（overBase 恒为假且无任何账面），这条行
+      // 就是「为什么 X 天没巩固」的答案。status 与 peak-hours 同用
+      // "skipped"：按状态聚合（store.auditSummary）只做分组计数，不会把这行算进
+      // 成功率的分母口径之外的新桶；成败口径仍以 dream_runs 为准。门禁与写失败的
+      // fail-safe 同 auditPeakSkip（调度器侧还有一层 try/catch 兜底）。
+      auditBaselineClamp: ({ previous, count, chars }) => {
+        if (cfg?.llmAudit?.enabled === false || typeof service?.saveLlmAudit !== "function") return;
+        const modelId = cfg.dreamProvider && cfg.dreamModel ? `${cfg.dreamProvider}:${cfg.dreamModel}` : "";
+        service.saveLlmAudit({
+          timestamp: new Date().toISOString(),
+          trigger_source: "autoDream",
+          operation_type: "dream_consolidate",
+          model_id: modelId,
+          input_tokens: 0,
+          output_tokens: 0,
+          total_tokens: 0,
+          cost_usd: 0,
+          duration_ms: 0,
+          status: "skipped",
+          error_message: "baseline-clamp",
+          related_memory_ids: [],
+          // 观测用：previous = 夹回前的基线（旧峰值），count/chars = 夹回后的
+          // 活跃量（即新基线）——两份放一起，收缩幅度一眼可读。
+          metadata: JSON.stringify({ previous, count, chars })
+        });
+      },
       onRun: () => {
         const run = dream
           ? dream.runDream(ctx, service, cfg)

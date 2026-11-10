@@ -967,7 +967,7 @@ export async function maintainIndexAfterDream(decisions, service, semantic) {
 // 用户配得比这更大的 dreamMinIntervalMinutes 基数压小（见 effectiveMinIntervalMs）。
 const FAILURE_BACKOFF_CAP_MS = 30 * 60 * 1000;
 
-export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChars = 5000, delayMs = 2000, minIntervalMs = 0, failureBackoff = false, logger, semantic = null, lastRunAtSeed = 0, baselineSeed = null, peakHours = "", peakMaxDeferMinutes = 120, auditPeakSkip = null, now = () => Date.now(), setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout }) {
+export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChars = 5000, delayMs = 2000, minIntervalMs = 0, failureBackoff = false, logger, semantic = null, lastRunAtSeed = 0, baselineSeed = null, peakHours = "", peakMaxDeferMinutes = 120, auditPeakSkip = null, auditBaselineClamp = null, now = () => Date.now(), setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout }) {
   let pendingTimer = null;
   // Issue #239（第 4 项）镜像到巩固：高峰顺延定时器。与 pendingTimer 分开——两者
   // 语义不同（一个是「马上要跑」，一个是「等出高峰再跑」），合成一个变量会让
@@ -1006,6 +1006,27 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
 
   function shouldTrigger(service) {
     const { count, chars } = activeStoreSize(service);
+    // Issue #634（基线夹回）：基线只在成功轮前进（见下方 startRun 与 #89 注释），
+    // 而归档/删除/合并把活跃量压下去——活跃量一旦跌破基线，overBase 恒为假，
+    // 从此再也不会巩固，且全程静默（#634 实测停摆 13 天 / 22 小时零轮）。修法：
+    // 判定前把基线夹回当前活跃量（每轴取 min），阈值从新的低点重新起算，归掉的
+    // 量不必重新长回来。只动闭包内存、不落库：下一次成功轮本来就会把当时的规模
+    // 写成新基线（startRun 的 result.baseline / 现场计算），重启后种子若仍是旧峰值，
+    // 第一次判定在这里同样被夹回——所以不需要新的持久化形状。收缩的来源不止归档
+    // （删除、合并、暂停作用域、外来行占比变化同效果），且归档路径不触发
+    // notifyWrite（service.notifyWrite：状态开关不算内容写入），逐写路径维护基线
+    // 碰的面大、漏面也大——只在判定口一处收敛。夹回是罕见事件（每次「收缩→再触发」
+    // 周期至多一次：夹回后基线 == 活跃量，直到下一轮成功把基线抬高），审计照
+    // auditPeakSkip 的 fail-safe 口径走，记的是「这次收缩把阈值起点拉下来了」。
+    if (count < baseline.count || chars < baseline.chars) {
+      const previous = baseline;
+      baseline = { count: Math.min(baseline.count, count), chars: Math.min(baseline.chars, chars) };
+      try {
+        auditBaselineClamp?.({ previous, count: baseline.count, chars: baseline.chars });
+      } catch (error) {
+        logger?.warn?.(`dsh-mneme dream: baseline-clamp audit failed: ${String(error)}`);
+      }
+    }
     const overBase = count >= baseline.count + thresholdCount || chars >= baseline.chars + thresholdChars;
     const overAbs = count >= thresholdCount || chars >= thresholdChars;
     return { trigger: overAbs && overBase, count, chars };
