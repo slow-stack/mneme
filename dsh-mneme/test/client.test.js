@@ -82,33 +82,45 @@ test("memory entry registers the host panel seats and keeps the footer fallback"
   );
 });
 
-// chorography（仓库地志）第二个座位（M1）：与记忆面板同一个 panellist inject 块
-// 里注册，成对规则逐字相同——id 与 main 的 key 必须同为 "dsh-mneme-wiki"，否则
-// 宿主点面板行直接抛 "main panel … is not registered"（#562 在记忆座位上实测过
-// 的同一堵墙）。座位无条件注册（P11）：inject 同名二次注册的 cordis 语义没验证
-// 过，不赌；开关关时由内容层渲染空态（路由 409 disabled），生效走重启纪律。
-test("chorography wiki entry registers its own seat pair in the same panellist block", () => {
-  assert.ok(
-    clientSource.includes('id: "dsh-mneme-wiki"'),
-    "the wiki sidebar seat must use its own id"
-  );
+// chorography（仓库地志）第二个座位（M1）。#598 起成对规则拆成两半：
+// main 的 key 仍逐字同为 "dsh-mneme-wiki" 且无条件注册——#562 的墙（布局存着
+// activePanelId 时少注册，宿主 selectPanel 直接抛）；侧栏 glyph 改读 features
+// 按 chorographyEnabled 决定，与 M.O.（v0.9.0）/日记（v0.13）的座位闸同一形态，
+// fail-closed。默认关的功能不该常驻一个点进去只有「未启用」的入口。
+test("chorography wiki main stays unconditional; the sidebar glyph is feature-gated (#598)", () => {
   assert.ok(
     clientSource.includes('key: "dsh-mneme-wiki"'),
-    "the wiki main seat key must match the wiki sidebar id verbatim"
+    "the wiki main seat key must stay verbatim and unconditional (#562)"
   );
   assert.ok(
     clientSource.includes("h(WikiMainPanel, { t })"),
     "the wiki main seat must render WikiMainPanel"
   );
   assert.ok(
-    clientSource.includes('phase: "disabled"'),
-    "with chorographyEnabled off the wiki page must render the disabled empty state (409 from /choro/repos)"
+    clientSource.includes('id: "dsh-mneme-wiki"'),
+    "the wiki sidebar seat keeps its own id (now registered by the gate)"
   );
-  // wiki 座位与记忆座位的清理在同一把扫帚下：漏一个就留下一个挂着的 glyph，
-  // 宿主折叠该槽后指向一个死面板。
   assert.ok(
-    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);\s*disposeWikiGlyph\(\);\s*disposeWikiMain\(\);/.test(clientSource),
-    "the panellist cleanup must dispose both seat pairs"
+    clientSource.includes('"dsh-mneme: chorography seat gate"'),
+    "the glyph registration must live behind the features gate"
+  );
+  assert.ok(
+    /if \(!\(\(j && j\.effective\) \|\| \{\}\)\.chorographyEnabled\) return;/.test(clientSource),
+    "the gate must fail-closed on the chorographyEnabled flag"
+  );
+  assert.ok(
+    clientSource.includes("chorography seat stays off"),
+    "a failed features fetch must leave the seat off, not guess"
+  );
+  assert.ok(
+    clientSource.includes('phase: "disabled"'),
+    "the disabled empty state must survive for layouts that still point at the wiki panel (#562 keeps main alive for exactly this)"
+  );
+  // wiki glyph 的清理随登记进了座位闸（cordis 上下文销毁时一并回收）；
+  // panellist 回调的扫帚只剩记忆对 + wiki 的 main + kb 对。
+  assert.ok(
+    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);[\s\S]*?disposeWikiMain\(\);/.test(clientSource),
+    "the panellist cleanup must dispose the memory pair and wiki main, in order"
   );
 });
 
@@ -320,8 +332,8 @@ test("knowledge base entry registers its own seat pair in the same panellist blo
     "the kb glyph takes its size from the host"
   );
   assert.ok(
-    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);\s*disposeWikiGlyph\(\);\s*disposeWikiMain\(\);\s*disposeKbGlyph\(\);\s*disposeKbMain\(\);/.test(clientSource),
-    "the panellist cleanup must dispose all three seat pairs"
+    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);[\s\S]*?disposeWikiMain\(\);\s*disposeKbGlyph\(\);\s*disposeKbMain\(\);/.test(clientSource),
+    "the panellist cleanup must dispose the remaining seat pairs (the wiki glyph moved to the feature gate)"
   );
 });
 
@@ -391,10 +403,10 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
     fire(ctx, "sidebar.footer.action");
     assert.equal(disposes.length, 1);
     const ids = (name) => regs.filter((r) => r.alive && r.opts.name === name).map((r) => r.opts.id ?? r.opts.key).sort();
-    assert.equal(alive(regs, "sidebar.panellist"), 3, "memory + wiki + kb glyphs");
-    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "每对座位各自 id 逐字唯一");
-    assert.equal(alive(regs, "main"), 3, "memory + wiki + kb pages");
-    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名");
+    assert.equal(alive(regs, "sidebar.panellist"), 2, "memory + kb glyphs — the wiki glyph is feature-gated (#598), not unconditional");
+    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-kb"], "每对座位各自 id 逐字唯一；wiki glyph 走座位闸，不在无条件集合里");
+    assert.equal(alive(regs, "main"), 3, "memory + wiki + kb pages — wiki main stays unconditional (#562)");
+    assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名（wiki 的 main 无条件保留，#562）");
     assert.equal(alive(regs, "sidebar.footer.action"), 0, "the footer fallback must not mount on a host that has the seat");
   }
 
