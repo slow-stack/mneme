@@ -386,6 +386,32 @@ test("#239-4 高峰时段解析：合法 / 多段 / 跨零点 / 星期前缀 / �
   }
 });
 
+// #424：中文输入法带出来的全角等价符号曾让整串解析成 null——null 的语义是
+// 「未配置 = 不限制」，错峰闸门于是静默失效（用户写的全角逗号把省钱功能整个
+// 关掉，且没有任何提示）。本用例锁两件事：
+//   ① 全角逗号/冒号/数字/波浪号（含 U+301C）与全角星期前缀都归一成半角照常解析，
+//      判定与补跑（isInPeakWindow / nextOffPeakAt）走同一份解析、自动受益；
+//   ② 归一化只做等价映射不救错：值本身越界的写法（24:00）无论半角全角仍然非法，
+//      防的是「归一化顺手放宽了数值边界」这类静默语义漂移。
+test("#424 全角等价符号：归一后照常解析，不改变越界判定", () => {
+  assert.deepEqual(parsePeakSpec("00:00-03:00，04:00-06:00"), {
+    days: null,
+    windows: [{ start: 0, end: 180 }, { start: 240, end: 360 }]
+  }, "全角逗号切段");
+  assert.deepEqual(parsePeakSpec("00：00-03:00").windows, [{ start: 0, end: 180 }], "全角冒号");
+  assert.deepEqual(parsePeakSpec("００:00-03:00").windows, [{ start: 0, end: 180 }], "全角数字");
+  assert.deepEqual(parsePeakSpec("00:00～03:00").windows, [{ start: 0, end: 180 }], "全角波浪号当连接号");
+  assert.deepEqual(parsePeakSpec("00:00〜03:00").windows, [{ start: 0, end: 180 }], "U+301C 波浪号的另一半");
+  assert.deepEqual(parsePeakSpec("ｓａｔ，ｓｕｎ ２３:００-０６:００").days, [6, 7], "整串全角：星期前缀一起归一");
+  // 判定与补跑与解析共用同一入口，全角串在两侧行为一致
+  const at = (h, m) => new Date(2026, 10, 10, h, m, 0);
+  assert.equal(isInPeakWindow(at(1, 0), "００:００～０３:００"), true, "判定侧同一份解析");
+  assert.equal(nextOffPeakAt(at(1, 0), "00:00～03:00").getHours(), 3, "补跑时刻同一份解析");
+  // 归一化不救错：#424 的举例串本身还踩 24:00 越界，跨零点的正写是 04:00-00:00
+  assert.equal(parsePeakSpec("00:00-03:00,04:00-24:00"), null, "24:00 越界不因归一化变合法");
+  assert.equal(parsePeakSpec("２４:００-０６:００"), null, "全角形式不改变越界判定");
+});
+
 test("#239-4 高峰判定与补跑时刻（跨零点、右开区间）", () => {
   const at = (h, m) => new Date(2026, 8, 19, h, m, 30);
   assert.equal(isInPeakWindow(at(10, 0), "09:00-18:00"), true);

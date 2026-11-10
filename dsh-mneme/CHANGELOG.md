@@ -8,6 +8,7 @@
 
   - **本 PR 落地两件零争议的**：① `memory_forget` 工具描述补行粒度警示（抑制的是一行——合流事实连带退出；请求只针对一个事实时先 `memory_get` 看行、`memory_update` 拆分或在回复里说清连带）——这是 #532 对话 5 模型误用的直接对策，模型无从得知语义粒度与能力粒度的落差，除非描述告诉它；② `docs/FORGET.md`（已挂 README 文档表）含**零 LLM 的最小合成轨迹**（议主要求的最小复现：`test/forget-corrections.test.js` 四步断言，存储层等价物，机制修复落地时第 ⑤ 条翻转——注释写明翻转条件，防止被当成「永远该绿」的现状锁）。
   - **验证**：`test/forget-corrections.test.js` 新增 2 条（合成轨迹 + 描述锁锁语义不锁逐字）；全量 3156 用例 / 3155 通过 / 0 失败 / 1 跳过；check-sync 通过。
+- **目录归属文档（#278 第 3 子项）**：新增 [docs/DIRECTORIES.md](docs/DIRECTORIES.md)，把散在注释里的「哪个目录是什么」收成一处总账。开篇钉死三个相似名：`~/.dsh/memory` 是记忆库（SQLite 正本 + 镜像 md + 候选 / 提议 / 观察 / 日记 / 文档目录），`~/.dsh/mneme` 是模型与运行时缓存（**不是记忆库**，可整目录删掉重来），`~/.dsh-mneme` 是 CLI 连接配置——把模型缓存当成记忆库是这个项目真实踩过的坑。每个落点标了拥有者（人改 / 机器写 / 外部只读）与出处文件，另附「删了会怎样」速查、七张路径配置键的展开规则差异（`memoryDir` 一族做 `~` 展开、模型 / 运行时一族不做）、与已知坑（`documents.md` ≠ `documents/`、镜像手改窗口、两个 CLI 的默认落点各站一边）。README 中英文档表与 AGENTS.md 模块地图同步加了索引行。#278 的另两个子项（`~/.dsh` 迁出、统一导出）是大活，按 issue 建议拆批另行落地。
 
 - **会话头顶那个日记入口撤了；「写今天 / 存到这个项目」补进面板**。两处入口同时存在时，用户点哪一个都像「又开了一本」，而右栏那套是旧版遗留下来的：会话头一个按钮 → 右栏页签 → 里面才是写与导出。现在只留一个入口：记忆面板的「日记」标签页。
 
@@ -106,6 +107,10 @@
   - **恢复方式**：把 `{ key: "group.mo", items: ["actionPipelineEnabled", "actionNudgeEnabled"] }` 加回 `FEATURE_GROUPS`，并把 `"group.mo"` 加回 `FEATURE_FIRST_SCREEN`。文案键 `memory.features.group.mo` 中英两条**故意保留**（渲染层已不引用），恢复时不必重写措辞。
   - **下架期间设置只能走配置文件**：面板上没有入口，`actionPipelineEnabled` 等仍可从 `config.yml` / `feature_flags` 改。`docs/CONFIGURATION.md` 在三个键后加了引用块说明。
   - 线上库已先行关旗标（`actionPipelineEnabled` / `actionRunEnabled` / `actionNudgeEnabled` 全 false，`diaryEnabled` 保持 true），写入前 50 键 JSON 备份留档；`actionRunEnabled` 原本不在 kv，本次显式写入 false，故键数 50→51。
+
+## 🐛 修复
+
+- **高峰时段串里的全角等价符号不再让错峰闸门静默失效（#424）**。中文输入法下写 `summarizePeakHours` / `dreamPeakHours`，逗号、冒号、数字常被输入法带成全角（`00:00-03:00，04:00-06:00`）——而 `parsePeakSpec` 只认半角，整串解析成 null，null 的语义是「未配置 = 不限制」，于是巩固/蒸馏静默回到全天候，没有任何提示（用户报的正是「明明写了高峰时段却在高峰期巩固」）。现在解析前先做等价归一：U+FF01–FF5E 折回 ASCII（恒差 0xFEE0，覆盖全角逗号/冒号/数字/连字符/字母，星期前缀一起受益），其中全角～不走折叠（折回是 `~`，而半角 `~` 是契约里故意非法的写法）、与〜（U+301C）一样直接映成 `-`。只做等价映射、不救错：`24:00` 越界这类值写错的串仍按非法处理（跨零点的正写是 `04:00-00:00`），合法写法的解析结果逐字节不变。`test/summarize.test.js` 新增 1 例锁「归一后照常解析 + 越界不放宽」两面。
 
 ## [0.12.0] - 2026-11-07
 
