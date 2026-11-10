@@ -760,25 +760,27 @@ window.__ModuleLoader__.load({
         "memory.tab.document": "文档",
         "memory.features.title": "功能开关",
         "memory.features.desc": "控制插件在后台做哪些事。先看「常用」里的总开关就够了，其余项收在「全部设置」里。改动即时保存，重启 DSH 后生效。",
-        // Issue #427：分组原先按「实现」分（基础/检索与增强/巩固与睡眠/多会话隔离
-        // 是架构图的分区），而人真正会问的是四个问题：它会记住什么、它什么时候
-        // 写进去、它怎么用回来、不同会话会不会串。组名改成人话，术语留在 hint。
+        // Issue #427：组名说人话、术语留在 hint。#427 revamp（2026-11-11）按
+        // 「防线 / 写入 / 检索 / 个性化」重排：core 里「拦什么、记什么」的开关
+        // 与行为开关混在一起、enhance 里检索旋钮与人格画像混在一起，是设置页
+        // 「难找、难看」的主因（产品口径：每组 ≤6 行、性质一致）。
         // group.basic 是首屏层：新用户不读文档就该答得出「会不会自动记」；
         // 「别的会话能不能看到」由同在首屏的 scope 组回答。
-        "memory.features.group.basic": "常用（先动这几个）",
+        "memory.features.group.basic": "常用",
         // group.ext 是 v0.13.x 起的独立分组：mneme 本体只做记忆，仓库地志 /
         // 知识库 / 日记本是三个可选子系统。它们是「装不装这个子系统」而不是
-        // 「每轮付多少」，所以不跟 enhance 的行为开关混在一起——混在一起时
-        // 用户「开了才找得到、找不到就没法开」（#607 的「知识库没成型」一半是
-        // 这个入口问题），故提到首屏单列一组。
-        "memory.features.group.ext": "扩展功能（按需开启）",
-        "memory.features.group.core": "它会记住什么",
+        // 「每轮付多少」（#607 的「知识库没成型」一半是入口问题），故提到
+        // 首屏单列一组。
+        "memory.features.group.ext": "扩展功能",
+        "memory.features.group.safety": "防线与审计",
+        "memory.features.group.pipeline": "蒸馏与写入",
+        "memory.features.group.retrieve": "检索与注入",
+        "memory.features.group.persona": "个性化",
         // group.mo 是 v0.9.0 的独立分组（座位闸门，不是行为开关），现已随 M.O.
         // 下架从 FEATURE_GROUPS 摘掉；这条文案留着是为了恢复时不必再想措辞。
         "memory.features.group.mo": "它的工作流（M.O.）",
-        "memory.features.group.enhance": "它什么时候写进去",
-        "memory.features.group.dream": "它怎么用回来",
-        "memory.features.group.scope": "不同会话之间",
+        "memory.features.group.dream": "巩固与睡眠",
+        "memory.features.group.scope": "会话隔离",
         "memory.features.group.advanced": "高级",
         // 「全部设置」= 第一层折叠（issue #427 建议 1），常显只留 basic + scope
         // 两组；「高级」是它内部的第二层（进阶 7 项）。
@@ -798,8 +800,6 @@ window.__ModuleLoader__.load({
         "memory.features.parentOff": "上一项关闭时不生效",
         // 「默认 / 已改」徽标：overrides 里没有这个键 = 值来自 config schema 的
         // 默认值，一条命令就能退回。徽标让这件事不必去读配置文件才成立。
-        "memory.features.tagDefault": "默认",
-        "memory.features.tagDefault.hint": "这一项用的是出厂默认值，没有被你改过",
         "memory.features.tagChanged": "已改",
         "memory.features.tagChanged.hint": "你改过这一项，它不再用默认值",
         // 「待重启」是第三态，不是「已改」的加强版：#481 之前面板只有「已改」，
@@ -1858,12 +1858,14 @@ window.__ModuleLoader__.load({
         // into the behaviour groups is why "you can only find it once it is already
         // on" (#607's "the knowledge base never took shape" was half an entry-point
         // problem), so they get their own first-screen group.
-        "memory.features.group.ext": "Extensions (turn on as needed)",
-        "memory.features.group.core": "What gets remembered",
+        "memory.features.group.ext": "Extensions",
+        "memory.features.group.safety": "Guardrails & audit",
+        "memory.features.group.pipeline": "Distillation & writing",
+        "memory.features.group.retrieve": "Retrieval & injection",
+        "memory.features.group.persona": "Personalization",
         "memory.features.group.mo": "Its workflow (M.O.)",
-        "memory.features.group.enhance": "When it gets written",
-        "memory.features.group.dream": "How it comes back",
-        "memory.features.group.scope": "Between sessions",
+        "memory.features.group.dream": "Consolidation & sleep",
+        "memory.features.group.scope": "Session isolation",
         "memory.features.group.advanced": "Advanced",
         "memory.features.allToggle": "All settings",
         "memory.features.advancedToggle": "7 rarer switches",
@@ -1877,8 +1879,6 @@ window.__ModuleLoader__.load({
         "memory.features.continuityRescueEnabled": "Snapshot before a long chat gets compacted",
         "memory.features.continuityRescueEnabled.hint": "On: a snapshot of what's in progress / next steps / open questions is stored before compaction, so key context survives it. Off: compaction can crush it",
         "memory.features.parentOff": "Inactive while the switch above is off",
-        "memory.features.tagDefault": "default",
-        "memory.features.tagDefault.hint": "This one is at its factory default — you have not changed it",
         "memory.features.tagChanged": "changed",
         "memory.features.tagChanged.hint": "You changed this one; it no longer uses the default",
         "memory.features.tagPending": "restart pending",
@@ -4331,25 +4331,28 @@ window.__ModuleLoader__.load({
       // 子块紧贴自己那个总闸渲染（见下方 renderGroup 的 subAfter），否则地志的档位
       // 下拉会隔着「知识库」「日记本」两行出现，读起来像在问知识库每轮付多少。
       { key: "group.ext", items: ["chorographyEnabled", "kbEnabled", "diaryEnabled"] },
-      { key: "group.core", items: ["hotMemoryEnabled", "injectTimePrefix", "memoryQualityFilter.enabled", "llmAudit.enabled", "writeAdmission.enabled", "writeAdmission.enforce", "preInjectGate.enabled", "preInjectGate.enforce", "sensitiveScanEnabled",
-        // #399 的留存总闸（见下方 distillSub：天数行是它的子块）。放在组末，
-        // 子块才能紧跟在它后面展开——items.map 之后的子块是按组尾渲染的。
+      // 防线与审计（#427 revamp 重排）：六个「拦什么、记什么」的开关归一处——
+      // 写入准入、注入前判定、敏感信息扫描、LLM 审计账本。它们与「每轮付多少」
+      // 的行为开关不同级：都是防线，动任何一道都改变风险面，所以单独成组。
+      { key: "group.safety", items: ["writeAdmission.enabled", "writeAdmission.enforce", "preInjectGate.enabled", "preInjectGate.enforce", "sensitiveScanEnabled", "llmAudit.enabled"] },
+      // 蒸馏与写入：写进去的东西长什么样——实体抽取（子块：路由与思考强度）、
+      // 编码回溯、文档摘要卡、质量过滤、原文留存（子块：天数）。
+      { key: "group.pipeline", items: ["entityExtractionEnabled", "codingRetrospect", "documentMemoryEnabled", "memoryQualityFilter.enabled",
+        // #399 的留存总闸放组末：distillSub（天数行）经 subAfter 紧贴它渲染。
         "distillRecords.enabled"] },
-      // M.O. 已下架（v0.13.x）：这一组连同首屏位一起摘掉，不是「折进全部设置」。
-      // 反转的是 v0.9.0 时产品主人「别藏在里面」的点名——本轮主人明确要求下架，
+      // 检索与注入：捞什么、排什么序——热记忆、时间前缀、重排、BM25、语义去重、
+      // 热度衰减。resilientModelDownload 是本地嵌入的配套（下载/校验/adopt），
+      // 跟着检索组走。embedProvider 下拉（无开关行的子块）挂本组组尾。
+      { key: "group.retrieve", items: ["hotMemoryEnabled", "injectTimePrefix", "rerankEnabled", "bm25SearchEnabled", "searchSemanticDedup", "heatEnabled", "resilientModelDownload"] },
+      // 个性化（beta 区）：人格注入总闸 + 严格寻址 + 画像草稿 + 自动事实。
+      // 人格内容在「个性化」页的人格卡，这里只有开关。
+      { key: "group.persona", items: ["personaEnabled", "personaStrictAddressing", "profileExtractEnabled", "profileFactsEnabled"] },
+      // M.O. 已下架（v0.13.x）：那一组连同首屏位一起摘掉，不是「折进全部设置」。
+      // 反转的是 v0.9.0 时产品主人「别藏在里面」的点名——主人明确要求下架，
       // 所以反向操作。三个键仍在 config schema 与 settings 白名单里，座位闸门那条
       // effect 也仍在（fail-closed：旗标 false 时一个座位都不注册），随时可恢复：
       // 把这行加回 FEATURE_GROUPS 与 FEATURE_FIRST_SCREEN 即可。
       // 面板不再渲染它，等于只剩配置文件一条入口——这是「下架」的本意。
-      { key: "group.enhance", items: ["entityExtractionEnabled", "codingRetrospect", "rerankEnabled", "resilientModelDownload", "searchSemanticDedup", "bm25SearchEnabled", "heatEnabled", "documentMemoryEnabled",
-        // 人格定义页（beta）：注入总闸。分组随 enhance（行为开关，非座位闸门）；
-        // 人格内容在设置页「个性化」区的人格卡。
-        // 严格寻址是同一条链上的第二个口径开关（只在总闸打开时起作用）。
-        "personaEnabled", "personaStrictAddressing", "profileExtractEnabled",
-        // 自动事实（profile_facts）：dream 后的自动维护闸。展示与人工修正不受它管
-        // （GET/apply 在 flag 关时照常放行，存量事实要能看能改），它只决定「自动做梦
-        // 维护」与面板「立即更新」这两条 LLM 路径开不开。
-        "profileFactsEnabled"] },
       { key: "group.dream", items: ["sleepModeEnabled", "sleepAffectiveEnabled"] },
       // v0.8.0 A4（issue #17）：作用域隔离组——标注总开关 + 严格硬过滤。
       { key: "group.scope", items: ["scopeEnabled", "strictScope"] }
@@ -4532,6 +4535,9 @@ window.__ModuleLoader__.load({
       // 冻结值并给出 pendingRestart 名单；本面板只负责把它显示出来。
       const pending = new Set((state && state.pendingRestart) || []);
       const flagTag = (k) => {
+        // 徽标只报「需要注意」的两态（#427 建议 3 的收窄，2026-11-11 产品口径）：
+        // 「默认」二字挂满 31 行、几乎永远不变，把真正要看的「已改 / 待重启」
+        // 淹掉了。默认态不再渲染徽标——恢复出厂这件事由开关位置本身表达。
         if (pending.has(k)) {
           return {
             kind: "mneme-badge--pending",
@@ -4539,10 +4545,11 @@ window.__ModuleLoader__.load({
             title: t("memory.features.tagPending.hint")
           };
         }
+        if (!Object.prototype.hasOwnProperty.call(ovr, k)) return null;
         return {
-          kind: Object.prototype.hasOwnProperty.call(ovr, k) ? "mneme-badge--changed" : "mneme-badge--default",
-          text: t(Object.prototype.hasOwnProperty.call(ovr, k) ? "memory.features.tagChanged" : "memory.features.tagDefault"),
-          title: t(Object.prototype.hasOwnProperty.call(ovr, k) ? "memory.features.tagChanged.hint" : "memory.features.tagDefault.hint")
+          kind: "mneme-badge--changed",
+          text: t("memory.features.tagChanged"),
+          title: t("memory.features.tagChanged.hint")
         };
       };
       const boolRow = (k, opts = {}) => h(FeatureRow, {
@@ -4873,16 +4880,23 @@ window.__ModuleLoader__.load({
               // 攒到组尾时，仓库地志的档位下拉会隔着「知识库」「日记本」两行出现，
               // 读起来像在问知识库每轮付多少。别的组没有这个问题（core/dream 的
               // 子块本来就只挂在组里最后一行那个总闸上）。
-              const subAfter = { chorographyEnabled: choroSub, diaryEnabled: diarySub };
+              const subAfter = {
+                chorographyEnabled: choroSub,
+                diaryEnabled: diarySub,
+                // 子块一律紧贴自己的总闸（#638 在 ext 组确立的例外推广为全局规则）：
+                // 此前 distillSub 挂 core 组尾、entitySub 挂 enhance 组尾、
+                // summarizeSub 挂 core 组尾而它的开关 autoSummarize 在 basic 组——
+                // 子块与开关隔着几行甚至隔着另一个组，读起来像在给别的东西调参数。
+                "distillRecords.enabled": distillSub,
+                entityExtractionEnabled: entitySub,
+                autoSummarize: summarizeSub
+              };
               const renderGroup = (g) => h(react.Fragment, { key: g.key },
                 h("div", { className: "mneme-featgroup" }, t(`memory.features.${g.key}`)),
-                g.key === "group.ext"
-                  ? g.items.map((k) => h(react.Fragment, { key: k }, flagRow(k), subAfter[k]))
-                  : g.items.map(flagRow),
-                // 子块按组尾追加。distillSub 紧跟在 core 组最后一行
-                // （distillRecords.enabled）之后，天数行才贴着它的总闸。
-                g.key === "group.core" && h(react.Fragment, null, distillSub, summarizeSub),
-                g.key === "group.enhance" && h(react.Fragment, null, embedSub, entitySub),
+                g.items.map((k) => h(react.Fragment, { key: k }, flagRow(k), subAfter[k])),
+                // 没有对应开关行的子块仍走组尾：embedSub 是 embedProvider 的下拉
+                // （枚举键、没有布尔行可贴），dream/sleep 的调参子块组尾即邻位。
+                g.key === "group.retrieve" && h(react.Fragment, null, embedSub),
                 g.key === "group.dream" && h(react.Fragment, null, dreamSub, sleepSub)
               );
               const firstScreen = FEATURE_GROUPS.filter((g) => FEATURE_FIRST_SCREEN.includes(g.key));

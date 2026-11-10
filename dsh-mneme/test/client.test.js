@@ -1567,14 +1567,25 @@ test("settings card folds everything beyond the first screen behind All settings
     "group.ext must carry the three subsystem master switches (chorography / kb / diary)");
   // 迁移锁：choro/diary 从 enhance 组移出（render-once，同一项只渲染一次）。
   // 只把首屏位加上而不移成员，会让两个开关同时出现在两组里，状态还可能不同步。
-  const enhanceItems = clientSource.match(/group\.enhance", items: \[([^\]]*)\]/);
-  assert.ok(enhanceItems, "group.enhance must be parseable");
+  // #427 revamp（2026-11-11）：group.enhance 进一步拆成 safety/pipeline/retrieve/
+  // persona——它曾是设置页「难找难看」的重灾区（14 个异质开关混装），拆完不许
+  // 有人顺手把旧组名加回来。
+  assert.ok(!/group\.enhance", items: \[/.test(clientSource),
+    "group.enhance must stay split into safety/pipeline/retrieve/persona (the revamp's core move)");
+  assert.ok(!/group\.core", items: \[/.test(clientSource),
+    "group.core must stay split too (its audit/defense rows moved to group.safety)");
   for (const moved of ["chorographyEnabled", "diaryEnabled"]) {
-    assert.ok(!enhanceItems[1].includes(`"${moved}"`),
-      `${moved} must be MOVED to group.ext, not duplicated in group.enhance`);
+    const extItems = clientSource.match(/key: "group\.ext", items: \[([^\]]*)\]/)?.[1] ?? "";
+    assert.ok(extItems.includes(`"${moved}"`), `${moved} must stay in group.ext`);
+    const occurrencesInGroups = [...clientSource.matchAll(/items: \[([^\]]*)\]/g)]
+      .filter((m) => m[1].includes(`"${moved}"`)).length;
+    assert.equal(occurrencesInGroups, 1, `${moved} must render exactly once across all groups (render-once)`);
   }
-  assert.ok(!/key: "group\.core", items: \["autoInject/.test(clientSource) && !/key: "group\.dream", items: \["autoDream/.test(clientSource),
-    "basic members must be MOVED out of their old groups (render-once), not filtered at render time");
+  // 四个新组都在：少了哪个，那批开关就退回「没座位」状态。
+  for (const groupKey of ["group.safety", "group.pipeline", "group.retrieve", "group.persona"]) {
+    assert.ok(clientSource.includes(`key: "${groupKey}", items: [`),
+      `${groupKey} must exist in FEATURE_GROUPS (the revamp's regrouping)`);
+  }
   // ② 两层折叠的接线：restGroups 只在 showAll 展开后渲染；「高级」按钮出现在
   // 「全部设置」之后（同一渲染分支内），showAdv 展开的条目走第二层。
   assert.ok(/showAll && h\(react\.Fragment, null,\s*restGroups\.map\(renderGroup\)/.test(clientSource),
@@ -1585,13 +1596,21 @@ test("settings card folds everything beyond the first screen behind All settings
   assert.equal(clientSource.match(/const FEATURE_ADVANCED_BOOLS = \[([^\]]*)\];/)[1].split(",").filter((s) => s.trim()).length, 7,
     "the advanced second tier must hold exactly the 7 rarer switches the label promises");
   // ③ 徽标：两类各一套中英文案；判定读 overrides 本地判，不引入后端字段。
-  for (const key of ["memory.features.tagDefault", "memory.features.tagChanged",
+  // #427 revamp：tagDefault 的徽标不再渲染（默认态由开关位置本身表达），i18n
+  // 键随之下线——这里锁的是「不再渲染」这件事本身，防止有人把灰字墙加回来。
+  for (const key of ["memory.features.tagChanged", "memory.features.tagPending",
     "memory.features.group.basic", "memory.features.allToggle", "memory.features.advancedToggle"]) {
     const occurrences = clientSource.split("\"" + key + "\"").length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
   assert.ok(clientSource.includes("Object.prototype.hasOwnProperty.call(ovr, k)"),
-    "the default/changed badge must be decided from overrides, not a new backend field");
+    "the changed badge must be decided from overrides, not a new backend field");
+  // 「默认」徽标的下线锁：flagTag 对默认态必须 return null（CSS 类本身保留——
+  // 事实卡的 actor 徽标还用它），禁的是功能开关行再挂灰字墙。
+  assert.ok(/if \(!Object\.prototype\.hasOwnProperty\.call\(ovr, k\)\) return null;/.test(clientSource),
+    "flagTag must return null on default rows (no more always-grey 「默认」 chips)");
+  assert.ok(!clientSource.includes("memory.features.tagDefault"),
+    "the tagDefault copy must stay deleted along with its render site");
 });
 
 // #481：面板开关「改了不生效」的体验坑。开关在宿主启动时合并进冻结 cfg，
@@ -2334,12 +2353,12 @@ test("client bundle parses: 面板产物必须是合法 JS（无重复声明等�
 test("distill retention switches are reachable from the panel (#399)", () => {
   // 认「组里有没有」不要用 `"key"]` 这种子串——`eff["distillRecords.enabled"]`
   // 也长这样，把组里那一项删掉它照样命中（变异验证实测：删项后仍全绿）。
-  // 必须把 core 组的 items 数组抠出来单独看。
-  const coreGroup = clientSource.match(/key: "group\.core", items: \[([\s\S]*?)\]/);
-  assert.ok(coreGroup, "the core group must be declared");
+  // 必须把所属组的 items 数组抠出来单独看。#427 revamp 后归属 pipeline 组。
+  const pipelineGroup = clientSource.match(/key: "group\.pipeline", items: \[([\s\S]*?)\]/);
+  assert.ok(pipelineGroup, "the pipeline group must be declared");
   assert.ok(
-    coreGroup[1].includes('"distillRecords.enabled"'),
-    "distillRecords.enabled must be an item of the core group, not merely referenced elsewhere"
+    pipelineGroup[1].includes('"distillRecords.enabled"'),
+    "distillRecords.enabled must be an item of the pipeline group, not merely referenced elsewhere"
   );
   // 数值清单会随新键增长（v0.13 加了 diaryWriteEveryMinutes），所以钉「这三个都在、
   // 且顺序不变」，不钉整行字面量——否则每加一个数值键这条锁就假红一次。
@@ -2361,15 +2380,19 @@ test("distill retention switches are reachable from the panel (#399)", () => {
     /const distillSub = eff\["distillRecords\.enabled"\] && h\("div", \{ className: "mneme-featsub" \},\s*\n\s*numRow\("distillRecords\.retentionDays"\)/.test(clientSource),
     "the retention-days row must be gated on the parent switch and live in its sub-block"
   );
-  // 定义了不等于接线了：把 distillSub 从组尾子块里摘掉，上面每条断言照样全绿
-  // （变异验证实测：摘掉后仍全绿）。子块是在 items.map 之后按组尾追加的，所以必须确认
-  // 它真的出现在那一个渲染点上。
-  const coreTail = clientSource.match(/g\.key === "group\.core" && h\(react\.Fragment, null, ([^)]*)\)/);
-  assert.ok(coreTail, "the core group must append its sub-blocks at the group tail");
+  // 定义了不等于接线了：把 distillSub 从 subAfter 里摘掉，上面每条断言照样全绿
+  // （变异验证实测：摘掉后仍全绿）。#427 revamp 后子块一律走 subAfter 紧贴自己的
+  // 总闸（core 组已拆、组尾挂法退役），所以锁的是 subAfter 这条接线本身。
+  const subAfterMap = clientSource.match(/const subAfter = \{([^}]*)\}/);
+  assert.ok(subAfterMap, "the subAfter map must exist (sub-blocks ride next to their master switches)");
   assert.ok(
-    /\bdistillSub\b/.test(coreTail[1]),
-    "distillSub must be rendered at the core group tail, not merely declared above"
+    /\bdistillSub\b/.test(subAfterMap[1]) && subAfterMap[1].includes('"distillRecords.enabled"'),
+    "distillSub must be wired to distillRecords.enabled via subAfter, not merely declared above"
   );
+  for (const wired of ["entitySub", "summarizeSub", "choroSub", "diarySub"]) {
+    assert.ok(new RegExp(`\\b${wired}\\b`).test(subAfterMap[1]),
+      `${wired} must ride next to its master switch via subAfter (detached sub-blocks are the old mess)`);
+  }
   assert.ok(
     /if \(!\/\^\\d\+\$\/\.test\(raw\)\) \{\s*\n\s*setNums\(\(c\) => \(\{ \.\.\.c, \[key\]: String\(eff\[key\] \?\? ""\) \}\)\);\s*\n\s*return;\s*\n\s*\}/.test(clientSource),
     "a non-integer draft must be rejected locally and reverted to the effective value"
@@ -2885,12 +2908,13 @@ test("panel copy and icons must not silently vanish (missing dict lines, unregis
 // 人格定义页（beta）面板面回归：形状沿用 A4 的「分组 + i18n 双语 occurrences ≥ 2
 // + 关键接线」断言风格（只做源码断言，不挂 React 渲染环境）。
 test("persona page is a panel tab, not a settings card (beta v2)", () => {
-  // 开关进 FEATURE_GROUPS 的 enhance 组（行为开关非座位闸门）。按组解析成员再逐个点名，
-  // 而不是把某一行写成字面量正则——那样往组里加第二个键就会把这条护栏弄红（实测踩过）。
-  const enhance = clientSource.match(/group\.enhance", items: \[((?:[^\]]|\n)*)\]/);
-  assert.ok(enhance, "FEATURE_GROUPS group.enhance must be parseable");
+  // 开关进 FEATURE_GROUPS 的 persona 组（#427 revamp：从 enhance 拆出）。按组解析
+  // 成员再逐个点名，而不是把某一行写成字面量正则——那样往组里加第二个键就会把
+  // 这条护栏弄红（实测踩过）。
+  const personaGroup = clientSource.match(/group\.persona", items: \[((?:[^\]]|\n)*)\]/);
+  assert.ok(personaGroup, "FEATURE_GROUPS group.persona must be parseable");
   for (const flag of ["personaEnabled", "personaStrictAddressing"]) {
-    assert.ok(enhance[1].includes(`"${flag}"`), `FEATURE_GROUPS group.enhance must carry ${flag}`);
+    assert.ok(personaGroup[1].includes(`"${flag}"`), `FEATURE_GROUPS group.persona must carry ${flag}`);
   }
   // i18n 键中英双语齐备（occurrences ≥ 2 模式；label + .hint 两路由字典锁统一覆盖）
   for (const key of [
@@ -3085,8 +3109,8 @@ test("profile extraction ships its button, distinct outcomes and correct save wi
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
-  assert.ok(/group\.enhance[\s\S]{0,700}"profileExtractEnabled"/.test(clientSource),
-    "FEATURE_GROUPS group.enhance must carry profileExtractEnabled");
+  assert.ok(/group\.persona[\s\S]{0,700}"profileExtractEnabled"/.test(clientSource),
+    "FEATURE_GROUPS group.persona must carry profileExtractEnabled");
 
   // 位置锁（2026-11-09 再改口径）：提取按钮属于「用户画像」卡，而画像卡本身
   // 已经从设置页搬进记忆面板的「人格」页（桉桉：mneme 设置里面的个性化还没移走）。
@@ -3174,8 +3198,8 @@ test("profile facts card ships management UI, run outcomes and never touches the
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
   }
-  assert.ok(/group\.enhance[\s\S]{0,1200}"profileFactsEnabled"/.test(clientSource),
-    "FEATURE_GROUPS group.enhance must carry profileFactsEnabled");
+  assert.ok(/group\.persona[\s\S]{0,1200}"profileFactsEnabled"/.test(clientSource),
+    "FEATURE_GROUPS group.persona must carry profileFactsEnabled");
 
   // 位置锁（2026-11-09 改口径）：画像卡与事实卡一起搬进了人格页，事实卡仍是画像卡
   // 之后的一张。切段比较，防止设置页的规则卡把顺序骗过去；设置页里两张卡都不许再有。
