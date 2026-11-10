@@ -11,6 +11,7 @@
   - **面板「库体积」卡（`lib/client.js`）**：进「库内一览」组，大数字是磁盘足迹，行给活跃 / 归档（含占比）/ 可回收空闲页；过线的检查逐条列出并走 `--mneme-warn` 预警色（新增 `.mneme-statrow--warn` / `.mneme-statusnum--warn` 两层，`StatusCard` 加了 `numWarn` 与逐行 `warn` 两个可选参数，不传的卡渲染逐字节不变）。三种拿不到数据的情况（fetch 失败 / 老宿主没这个块 / 后端 unknown）全部 fail-closed 渲染「未知」。增速刻意不算：归档净增速率是 recall-stats `archive` 块的第五指标，同一个数字长两处就会分叉。
   - **键的三件套成对登记**：`settings.js` 白名单（两个 int 走 `FEATURE_FLAG_INT_RANGES`、占比浮点走 `FEATURE_FLAG_NUMBER_RANGES`）+ `api.js` 的 `NESTED_FLAG_PATHS` 三个点号键 + 计数锁 121 → 124。阈值改动是启动快照（与 `panel_mode` 同节奏），面板显示「待重启」。
   - **文档与验证**：`docs/CONFIGURATION.md` 新增「容量预警」一节、`docs/STORAGE.md` 补「容量预警（#275 空间维度）」节（含三道阈值的过线含义与读法边界）、README 键表补 `capacityWarning` 行（docs-config-keys 的全键闸与键名断言都要过）。`test/capacity-warning.test.js` 新增 9 条（行数口径、schema 边界、三道检查各自的过线与关闭、fail-safe、`/health` 挂载与不泄露路径、没接线时显式 null）；`test/client.test.js` 新增面板卡形状锁（fail-closed 表达式、warn class、i18n 双语键各出现两次）；`test/api.test.js` 往返测试补三个点号键。全量 3164 用例 / 3163 通过 / 0 失败 / 1 跳过；check-sync 通过。
+- **目录归属文档（#278 第 3 子项）**：新增 [docs/DIRECTORIES.md](docs/DIRECTORIES.md)，把散在注释里的「哪个目录是什么」收成一处总账。开篇钉死三个相似名：`~/.dsh/memory` 是记忆库（SQLite 正本 + 镜像 md + 候选 / 提议 / 观察 / 日记 / 文档目录），`~/.dsh/mneme` 是模型与运行时缓存（**不是记忆库**，可整目录删掉重来），`~/.dsh-mneme` 是 CLI 连接配置——把模型缓存当成记忆库是这个项目真实踩过的坑。每个落点标了拥有者（人改 / 机器写 / 外部只读）与出处文件，另附「删了会怎样」速查、七张路径配置键的展开规则差异（`memoryDir` 一族做 `~` 展开、模型 / 运行时一族不做）、与已知坑（`documents.md` ≠ `documents/`、镜像手改窗口、两个 CLI 的默认落点各站一边）。README 中英文档表与 AGENTS.md 模块地图同步加了索引行。#278 的另两个子项（`~/.dsh` 迁出、统一导出）是大活，按 issue 建议拆批另行落地。
 
 - **会话头顶那个日记入口撤了；「写今天 / 存到这个项目」补进面板**。两处入口同时存在时，用户点哪一个都像「又开了一本」，而右栏那套是旧版遗留下来的：会话头一个按钮 → 右栏页签 → 里面才是写与导出。现在只留一个入口：记忆面板的「日记」标签页。
 
@@ -109,6 +110,10 @@
   - **恢复方式**：把 `{ key: "group.mo", items: ["actionPipelineEnabled", "actionNudgeEnabled"] }` 加回 `FEATURE_GROUPS`，并把 `"group.mo"` 加回 `FEATURE_FIRST_SCREEN`。文案键 `memory.features.group.mo` 中英两条**故意保留**（渲染层已不引用），恢复时不必重写措辞。
   - **下架期间设置只能走配置文件**：面板上没有入口，`actionPipelineEnabled` 等仍可从 `config.yml` / `feature_flags` 改。`docs/CONFIGURATION.md` 在三个键后加了引用块说明。
   - 线上库已先行关旗标（`actionPipelineEnabled` / `actionRunEnabled` / `actionNudgeEnabled` 全 false，`diaryEnabled` 保持 true），写入前 50 键 JSON 备份留档；`actionRunEnabled` 原本不在 kv，本次显式写入 false，故键数 50→51。
+
+## 🐛 修复
+
+- **高峰时段串里的全角等价符号不再让错峰闸门静默失效（#424）**。中文输入法下写 `summarizePeakHours` / `dreamPeakHours`，逗号、冒号、数字常被输入法带成全角（`00:00-03:00，04:00-06:00`）——而 `parsePeakSpec` 只认半角，整串解析成 null，null 的语义是「未配置 = 不限制」，于是巩固/蒸馏静默回到全天候，没有任何提示（用户报的正是「明明写了高峰时段却在高峰期巩固」）。现在解析前先做等价归一：U+FF01–FF5E 折回 ASCII（恒差 0xFEE0，覆盖全角逗号/冒号/数字/连字符/字母，星期前缀一起受益），其中全角～不走折叠（折回是 `~`，而半角 `~` 是契约里故意非法的写法）、与〜（U+301C）一样直接映成 `-`。只做等价映射、不救错：`24:00` 越界这类值写错的串仍按非法处理（跨零点的正写是 `04:00-00:00`），合法写法的解析结果逐字节不变。`test/summarize.test.js` 新增 1 例锁「归一后照常解析 + 越界不放宽」两面。
 
 ## [0.12.0] - 2026-11-07
 
