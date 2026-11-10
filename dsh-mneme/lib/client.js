@@ -766,6 +766,12 @@ window.__ModuleLoader__.load({
         // group.basic 是首屏层：新用户不读文档就该答得出「会不会自动记」；
         // 「别的会话能不能看到」由同在首屏的 scope 组回答。
         "memory.features.group.basic": "常用（先动这几个）",
+        // group.ext 是 v0.13.x 起的独立分组：mneme 本体只做记忆，仓库地志 /
+        // 知识库 / 日记本是三个可选子系统。它们是「装不装这个子系统」而不是
+        // 「每轮付多少」，所以不跟 enhance 的行为开关混在一起——混在一起时
+        // 用户「开了才找得到、找不到就没法开」（#607 的「知识库没成型」一半是
+        // 这个入口问题），故提到首屏单列一组。
+        "memory.features.group.ext": "扩展功能（按需开启）",
         "memory.features.group.core": "它会记住什么",
         // group.mo 是 v0.9.0 的独立分组（座位闸门，不是行为开关），现已随 M.O.
         // 下架从 FEATURE_GROUPS 摘掉；这条文案留着是为了恢复时不必再想措辞。
@@ -1846,6 +1852,13 @@ window.__ModuleLoader__.load({
         // group.basic is the first-screen tier; the scope group sits there too so
         // "can other sessions see this?" is answerable without opening anything.
         "memory.features.group.basic": "Common (start here)",
+        // group.ext: mneme proper is memory only; chorography, the knowledge base
+        // and the diary are three optional subsystems. Each switch decides whether
+        // the subsystem exists at all, not how much it costs per turn — mixing them
+        // into the behaviour groups is why "you can only find it once it is already
+        // on" (#607's "the knowledge base never took shape" was half an entry-point
+        // problem), so they get their own first-screen group.
+        "memory.features.group.ext": "Extensions (turn on as needed)",
         "memory.features.group.core": "What gets remembered",
         "memory.features.group.mo": "Its workflow (M.O.)",
         "memory.features.group.enhance": "When it gets written",
@@ -4295,14 +4308,29 @@ window.__ModuleLoader__.load({
     // 用户敢动的总开关；group.scope 也在首屏——它回答新用户的第二个必答题
     // 「它记的东西会不会被别的会话看到」。其余组整组收进「全部设置」折叠
     // （showAll）。成员从原组里移走而不是渲染时过滤：同一项永远只渲染一次。
-    // 首屏可点项 = 3 总开关 + autoInject 的 2 个子开关 + scope 2 开关 +
-    // 「全部设置」按钮 = 8。v0.9.0 曾按产品主人点名把 M.O. 独立成组并提进
-    // 首屏（当时豁免 ≤8 软预算，理由记在 test/client.test.js 的同名用例里）；
-    // 本轮主人决定把 M.O. 下架，那一组连同首屏位一起摘掉，预算回到 8。
+    // 首屏可点项 = 3 总开关 + autoInject 的 2 个子开关 + 扩展功能 3 个闸门 +
+    // scope 2 开关 + 「全部设置」按钮 = 11。v0.9.0 曾按产品主人点名把 M.O.
+    // 独立成组并提进首屏（当时豁免 ≤8 软预算，理由记在 test/client.test.js 的
+    // 同名用例里）；v0.13.x 主人决定把 M.O. 下架，预算回到 8。
+    // v0.13.x 第二次豁免（#607 后续）：主人要「一眼看见」仓库地志与知识库这两个
+    // 扩展子系统的总闸——此前一个埋在「全部设置 → 它什么时候写进去」的组尾、
+    // 一个连 FEATURE_GROUPS 都没进（后端全通、面板只有文案没有勾选框），等于
+    // 有功能没入口。为此新开 group.ext 并进首屏，预算 8→11。豁免的是「一眼看见」
+    // 这条产品要求，不是把预算取消：再往首屏塞东西前先问它是不是和这三个闸门
+    // 同级的子系统，不是就留在折叠层。
     // RuntimeProvisionBlock 配好即消失，常态首屏更少。
-    const FEATURE_FIRST_SCREEN = ["group.basic", "group.scope"];
+    const FEATURE_FIRST_SCREEN = ["group.basic", "group.ext", "group.scope"];
     const FEATURE_GROUPS = [
       { key: "group.basic", items: ["autoInject", "autoSummarize", "autoDream"] },
+      // 扩展功能（v0.13.x）：mneme 本体只做记忆，仓库地志 / 知识库 / 日记本是
+      // 三个可选子系统，各自的总闸决定「座位、工具、注入块存不存在」。它们此前
+      // 散在 enhance 组尾（choro / diary）或压根不在 FEATURE_GROUPS 里（kb），
+      // 结果是开了才找得到、找不到就没法开——#607 报的「知识库没成型」有一半
+      // 是这个入口问题。单独成组并进首屏，一眼能看见。
+      // 子块（choroSub 档位 / diarySub 定时写）不走「组尾追加」那条老路：ext 组的
+      // 子块紧贴自己那个总闸渲染（见下方 renderGroup 的 subAfter），否则地志的档位
+      // 下拉会隔着「知识库」「日记本」两行出现，读起来像在问知识库每轮付多少。
+      { key: "group.ext", items: ["chorographyEnabled", "kbEnabled", "diaryEnabled"] },
       { key: "group.core", items: ["hotMemoryEnabled", "injectTimePrefix", "memoryQualityFilter.enabled", "llmAudit.enabled", "writeAdmission.enabled", "writeAdmission.enforce", "preInjectGate.enabled", "preInjectGate.enforce", "sensitiveScanEnabled",
         // #399 的留存总闸（见下方 distillSub：天数行是它的子块）。放在组末，
         // 子块才能紧跟在它后面展开——items.map 之后的子块是按组尾渲染的。
@@ -4321,15 +4349,7 @@ window.__ModuleLoader__.load({
         // 自动事实（profile_facts）：dream 后的自动维护闸。展示与人工修正不受它管
         // （GET/apply 在 flag 关时照常放行，存量事实要能看能改），它只决定「自动做梦
         // 维护」与面板「立即更新」这两条 LLM 路径开不开。
-        "profileFactsEnabled",
-        // chorography（仓库地志）的暴露闸（M1 就有的键，M3 才上 UI）：它是「是否
-        // 启用这个子系统」而不是「每轮付多少」，所以和上面这些行为开关同组；
-        // 每轮付出多少由紧随组尾的 choroSub 档位管。放组末是因为子块按组尾渲染
-        // ——档位下拉要贴着它的总闸。
-        "chorographyEnabled",
-        // 日记本（v0.13）：右栏座位的闸门。和 M.O. 一样是「开关=座位注册与否」，
-        // 但它属于「它在替你写字」这一类行为开关，所以归 enhance 而不是单开一组。
-        "diaryEnabled"] },
+        "profileFactsEnabled"] },
       { key: "group.dream", items: ["sleepModeEnabled", "sleepAffectiveEnabled"] },
       // v0.8.0 A4（issue #17）：作用域隔离组——标注总开关 + 严格硬过滤。
       { key: "group.scope", items: ["scopeEnabled", "strictScope"] }
@@ -4849,13 +4869,20 @@ window.__ModuleLoader__.load({
               // 哪里」。renderGroup 是唯一的组渲染路径（含组尾子块），首屏层与
               // 「全部设置」共用它，保证 g.items.map(flagRow) 只写一次、子项
               // 只可能经 flagRow 渲染（test/inject-parent-gate.test.js 的门）。
+              // 扩展组例外：它的子块必须紧贴**自己那个**总闸，不能攒到组尾。
+              // 攒到组尾时，仓库地志的档位下拉会隔着「知识库」「日记本」两行出现，
+              // 读起来像在问知识库每轮付多少。别的组没有这个问题（core/dream 的
+              // 子块本来就只挂在组里最后一行那个总闸上）。
+              const subAfter = { chorographyEnabled: choroSub, diaryEnabled: diarySub };
               const renderGroup = (g) => h(react.Fragment, { key: g.key },
                 h("div", { className: "mneme-featgroup" }, t(`memory.features.${g.key}`)),
-                g.items.map(flagRow),
+                g.key === "group.ext"
+                  ? g.items.map((k) => h(react.Fragment, { key: k }, flagRow(k), subAfter[k]))
+                  : g.items.map(flagRow),
                 // 子块按组尾追加。distillSub 紧跟在 core 组最后一行
                 // （distillRecords.enabled）之后，天数行才贴着它的总闸。
                 g.key === "group.core" && h(react.Fragment, null, distillSub, summarizeSub),
-                g.key === "group.enhance" && h(react.Fragment, null, embedSub, entitySub, diarySub, choroSub),
+                g.key === "group.enhance" && h(react.Fragment, null, embedSub, entitySub),
                 g.key === "group.dream" && h(react.Fragment, null, dreamSub, sleepSub)
               );
               const firstScreen = FEATURE_GROUPS.filter((g) => FEATURE_FIRST_SCREEN.includes(g.key));
