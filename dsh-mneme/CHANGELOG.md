@@ -9,6 +9,19 @@
   - **服务端**：`store.count()` 的 WHERE 构造抽成共用的 `pushCountFilters`，新增 `countByType(opts)`（同一份筛选、**不带 type**，一次 GROUP BY 拿全库分布）；宿主内 `/api/dsh-mneme/list` 与 Bearer `/memories` 两张面同口径补 `typeCounts` 格（按 id 取单条的答复不带——分布无意义，客户端据此降级）。
   - **客户端**：页头 = 服务端 `total`（搜索态的 total 本就是命中数）；chips = `typeCounts` 全库分布、缺类补 0（选中一类后分类栏恒定不塌）；「全部」chip = 分布合计（不再从 5 跳到 200）。老服务端没有 `typeCounts` 时退回页内现数——功能不炸，只是回到旧的「只数已加载页」行为。
   - **验证**：`test/store.test.js` +1（分布合计恒等于 `count(undefined)`、筛选同口径）；`test/api.test.js` / `test/standalone-api.test.js` 各 +1（带 type 请求下分布仍全量、合计 = total）；`test/client.test.js` +1 源码断言（服务端源 + 降级路径同时在）。顺带一提：状态页 `MemoriesStatusCard` 的每类一次请求（N+1）是同一痛点的另一处，可后续切到 `typeCounts`，不在本 PR。
+
+- **引导请求不再被 tab 关闭吞掉：任务态搬到模块级，重开标签页回放结果（#558）**。面板「⋯ → 从目录引导」的请求在飞时关掉整个 better-sidebar 标签页，MemoryExplorer 与引导弹层随标签页体一起卸载——keepMounted 覆盖隐藏与切视图、**不含关闭**（它自己的设计文档写明「记录的寿命只由原生 tab 关闭与会话消失回收」）。请求照样跑完、行照样落库（三元组去重 + _overwrite 刷新，重复执行不写坏数据），但成功/失败提示没地方显示、忙碌态也丢了，重开还能再提交一次。
+
+  - **状态住模块级（`lib/client.js`）**：新增 `bootstrapJob` store（phase: idle/running/done/failed + dir/result/error）与 `useBootstrapJob` 订阅钩子——就是 `overlayListeners`/`setOverlayOpen` 的现成形状。busy/msg/err 全部从 store 派生，弹层只是任务态的视图；prop 钻孔链（弹层 → explorer → overlay 的 `onBusyChange` 三段）整条拆掉，MemoryOverlay 的 Esc/背板/✕ 三条关闭守卫改为直接订阅——**顺带修掉 tab 注册路径守卫为空的老缺口**（那条路径没有 onBusyChange，busy 从来报不上去）。
+  - **存活规则一条：「只存活用户没来得及看的那一份」**。卸载发生在 running 时（tab 关闭 / 切视图），结果还没人看过——terminal 化发生在卸载之后，这份留给重开回放；卸载时已是 done/failed（用户见过），explorer 的卸载兜底把它回 idle，保持「重开是干净弹层」的既有行为。人看得见的关闭（取消 / 自动收口 / ⋯ 菜单收起）都显式回 idle 并保留目录（重试同目录是最常见的下一步，输入框从上次的 dir 播种）。
+  - **弹层的两处跟随调整**：① terminal 化只写 store——tab 关闭后结果落地时组件已卸载，写 store 才有人接（这正是要修的路径）；② fresh done 的 900ms 阅读窗锁提交钮但**不锁取消**——旧实现靠 busy 连 cancel 一起锁，那时 busy 是本地 state 必然随组件解锁；现在 done 是 store 态、可能被重开回放，取消若也锁死，旧结果会把弹层永久焊住。
+  - **同步性顺带变强**：旧链的「同步报 busy」靠回调在渲染提交前追那一拍（#4452539705）；现在 `setBootstrapJob(running)` 一落，三处订阅者同步被唤醒，那一拍不存在了。
+  - **验证**：`test/client.test.js` 更新两条旧锁到新形状（⋯ 收起连带回 idle、overlay 从 store 派生 busy）+ 新增 #558 专项锁（模块级 store、弹层为视图、存活规则、fresh-done 与回放的按钮差异、terminal 只写 store）；全量 3155 用例 / 3154 通过 / 0 失败 / 1 跳过；check-sync 通过（client.js 是 lib-only 手写件，无 src 对应物）。
+
+- **选择性遗忘 × 事实更正的根因定案：失效关系在 dream 第一次运行之前不存在（#532，分析文档 + 行粒度警示）**。#532 的现象——更正两个事实、只忘一个、保留的那个答回更正前的旧值——不是某一行写错，而是三段契约的接缝：更正由蒸馏落成**新行**（`(type,title,scope)` 三元组不命中；清理并存的 dream 冲突裁决是阈值门控的，现场 0 次）→ `memory_forget` 是**行粒度**的（接口契约：按 ID 翻 `forgotten` 标志）→ 合流在新值行里的其他事实连带退出可见面，旧值行成了唯一幸存载体。三个确认请求在 `docs/FORGET.md` 逐条给出源码级回答：**Q1** 更正/遗忘的推荐操作顺序（update 原行 / archive 旧行 / 遗忘前先 get 看行里还装着什么）；**Q2** 旧行与新行之间没有任何持久链接——失效关系今天只存在于 document supersede（#230）与 dream 冲突裁决两处，普通蒸馏行在 dream 首跑前无失效关系，历史回溯与当前答案也无法机械区分；**Q3** 配置无遗漏，现象在当前 main 上结构成立。修复方向（蒸馏拆分粒度 / 写侧更正失效关系 / dream 触发前移 / 遗忘回执带同侪提示）的取舍涉及 LLM 判断进哪条路径，按 R2/R3 纪律列表待拍板，本 PR 不擅自实现。
+
+  - **本 PR 落地两件零争议的**：① `memory_forget` 工具描述补行粒度警示（抑制的是一行——合流事实连带退出；请求只针对一个事实时先 `memory_get` 看行、`memory_update` 拆分或在回复里说清连带）——这是 #532 对话 5 模型误用的直接对策，模型无从得知语义粒度与能力粒度的落差，除非描述告诉它；② `docs/FORGET.md`（已挂 README 文档表）含**零 LLM 的最小合成轨迹**（议主要求的最小复现：`test/forget-corrections.test.js` 四步断言，存储层等价物，机制修复落地时第 ⑤ 条翻转——注释写明翻转条件，防止被当成「永远该绿」的现状锁）。
+  - **验证**：`test/forget-corrections.test.js` 新增 2 条（合成轨迹 + 描述锁锁语义不锁逐字）；全量 3156 用例 / 3155 通过 / 0 失败 / 1 跳过；check-sync 通过。
 - **dream 审计行输入快照瘦身（#557 建议 2，opt-in 默认关）**。`dream_runs.input` 的单行体积随记忆量涨（#557 实测平均 40-79 KB/轮，绝大部分是 content），轮数又随天数涨，两者相乘超线性增长（报告库占 43% 的页；`recall_runs` / `llm_audit_logs` 都有保留期与回收口，这张表只有手动 reclaim 一个口）。新增 `dreamInputSummaryEnabled`（默认 false = 审计行逐字节一致）：开启后 auto 轮的快照只落骨架（id/type/title/importance/updated_at，不含 content）。
 
   - **判定与回执不受影响**：巩固的 LLM 输入由记忆库现算、`snapshot_hash` 在内存里对含 content 的快照计算，两者都不经过落库副本——prompt 与 receipt 完整性不变；变的只是离线回放（原文不在库里就重算不出 hash，#512「每一行都能回放一次巩固」对瘦身轮降级为骨架级）。
