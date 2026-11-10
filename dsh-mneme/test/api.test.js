@@ -628,6 +628,33 @@ test("GET /api/dsh-mneme/semantic counts stale-dimension rows as unsearchable wi
   assert.equal(data.vectors.unsearchable, 1, "yet only one is retrievable");
 });
 
+test("GET /api/dsh-mneme/semantic surfaces the #604 backfill/receipt diagnostics", async () => {
+  // #604 的诊断面在 api.js 里一直有出口，但全仓没有一条用例断言过
+  // `data.embeddings`，所以「传参形状不对 → 真机恒为 null」这件事测试看不见。
+  // 这里从 handler 一侧锁住出口本身：semantic 面有 embeddingDiagnostics 就必须透出。
+  const diag = {
+    backfill: { indexed: 12, failed: 1, finishReason: "capped", stillStale: true },
+    receipts: { recent: [{ reason: "http-503" }], totals: { ok: 12, failed: 1 } }
+  };
+  const { routes } = setup(undefined, "", null, {
+    vectorIndex: { getStats: () => ({ embeddedCount: 12, totalCount: 13 }) },
+    embeddingDiagnostics: () => diag
+  });
+  const sem = routes.find((r) => r.path === "/api/dsh-mneme/semantic");
+  const res = new FakeRes();
+  await sem.handler(req("/api/dsh-mneme/semantic"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.deepEqual(data.embeddings, diag, "the diagnostics must reach the panel verbatim");
+
+  // 老 semantic 面（没有这个方法）仍报 null，不伪造空对象。
+  const { routes: plain } = setup(undefined, "", null, { vectorIndex: { getStats: () => ({ embeddedCount: 0, totalCount: 0 }) } });
+  const plainSem = plain.find((r) => r.path === "/api/dsh-mneme/semantic");
+  const plainRes = new FakeRes();
+  await plainSem.handler(req("/api/dsh-mneme/semantic"), plainRes);
+  assert.equal(JSON.parse(plainRes.body).embeddings, null);
+});
+
 // --- Bug8: llm-audit API (pagination + stats) --------------------------------
 
 test("GET /api/dsh-mneme/semantic/llm-audit returns paginated rows", async () => {
@@ -807,9 +834,10 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // v0.13 再新增 diaryEnabled（QQ 日记本：跨天判定 + 手写入口 + 面板页的总闸；
   // 顶层扁平键，不需要 NESTED_FLAG_PATHS 条目）= 120。
   // v0.13 diaryWriteEveryMinutes（日记定时写间隔，走 INT_RANGES 表）= 121。
-  // issue #557 新增 dreamInputSummaryEnabled（dream 审计行输入快照瘦身；顶层布尔键，
-  // 不需要 NESTED_FLAG_PATHS 条目）= 122。
-  assert.equal(Object.keys(data.effective).length, 122);
+  // issue #557 新增 dreamInputSummaryEnabled（顶层布尔键，不需要 NESTED_FLAG_PATHS 条目）
+  // = +1；issue #275 新增 capacityWarning 三个嵌套点号键 = +3。两个 PR 各自把锁从
+  // 121 往上加，合并时只能做加法（选边会写回旧值，锁当场红）。
+  assert.equal(Object.keys(data.effective).length, 125);
   // 三个 kb 新键的默认值单独钉一遍：计数锁只钉数量，钉不住值（缺省值翻转时
   // 面板会静默换上一套授权语义），这里补上值这一层。
   assert.equal(data.effective.chorographyAutoRefresh, false);
@@ -1003,6 +1031,12 @@ test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys"
     // #471：政策轴的两个点号键往返——白名单与 NESTED_FLAG_PATHS 成对缺一即静默缺键。
     "scopeState.enabled": true,
     "scopeState.enforce": true,
+    // #275：三个容量阈值点号键往返——两个 int 走 INT_RANGES、一个浮点走
+    // NUMBER_RANGES，都必须同时进 settings 白名单与 api.js 的 NESTED_FLAG_PATHS
+    //（成对缺一即静默缺键）。
+    "capacityWarning.dbSizeWarnMb": 128,
+    "capacityWarning.archivedRowsWarn": 6000,
+    "capacityWarning.archivedRatioWarn": 0.9,
     // #164 A2：顶层扁平键（不是对象子字段），与上面两个点号键走同一条往返；
     // 它的默认值断言在计数锁那一条里，这里钉的是「PUT 存进去、effective 读得回」。
     sensitiveScanEnabled: true,
@@ -1026,6 +1060,9 @@ test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys"
     "distillRecords.retentionDays": 30,
     "scopeState.enabled": true,
     "scopeState.enforce": true,
+    "capacityWarning.dbSizeWarnMb": 128,
+    "capacityWarning.archivedRowsWarn": 6000,
+    "capacityWarning.archivedRatioWarn": 0.9,
     sensitiveScanEnabled: true,
     embedProvider: "local",
     ollamaBaseUrl: "http://127.0.0.1:11434",
@@ -1045,6 +1082,10 @@ test("PUT /api/dsh-mneme/features round-trips nested, string, url and enum keys"
   // #471：政策轴两个点号键同款往返
   assert.equal(data.effective["scopeState.enabled"], true);
   assert.equal(data.effective["scopeState.enforce"], true);
+  // #275：容量阈值 int 与浮点两类点号键都读得回来
+  assert.equal(data.effective["capacityWarning.dbSizeWarnMb"], 128, "整数点号键也要读得回来");
+  assert.equal(data.effective["capacityWarning.archivedRowsWarn"], 6000);
+  assert.equal(data.effective["capacityWarning.archivedRatioWarn"], 0.9, "浮点点号键同款往返");
   assert.equal(data.effective.sensitiveScanEnabled, true);
   assert.equal(data.effective.embedProvider, "local");
   assert.equal(data.effective.ollamaBaseUrl, "http://127.0.0.1:11434");
