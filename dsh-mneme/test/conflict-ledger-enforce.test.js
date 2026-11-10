@@ -90,7 +90,7 @@ test("issue#641 enforce：T1 dup 走信息量优先 supersede——败者归档�
   const ctx = captureCtx("");
   const result = await runSleep(ctx, service, baseConfig({ conflictLedgerMode: "enforce" }), ctx.logger, { embedder, vectorIndex }, null);
   assert.equal(result.phases.conflicts.status, "ok", "T1 resolved");
-  assert.deepEqual(result.phases.conflicts.enforced, { t1Resolved: 1, t1Failed: 0 });
+  assert.deepEqual(result.phases.conflicts.enforced, { t1Resolved: 1, t1Failed: 0, t3Chained: 0 });
   assert.equal(result.phases.conflicts.ledgerTriage.dup, 1, "分诊统计随相位结果透出");
   const winner = service.getById(long.id);
   const loser = service.getById(short.id);
@@ -117,7 +117,7 @@ test("issue#641 enforce：T4 真矛盾只记账——两条都活着、零处置
   const ctx = captureCtx("");
   const result = await runSleep(ctx, service, baseConfig({ conflictLedgerMode: "enforce" }), ctx.logger, { embedder, vectorIndex }, null);
   assert.equal(result.phases.conflicts.status, "noop", "无 T1 可处置");
-  assert.deepEqual(result.phases.conflicts.enforced, { t1Resolved: 0, t1Failed: 0 });
+  assert.deepEqual(result.phases.conflicts.enforced, { t1Resolved: 0, t1Failed: 0, t3Chained: 0 });
   assert.equal(result.phases.conflicts.ledgerTriage.conflict, 1);
   assert.equal(service.getById(a.id).archived, false, "两侧都活着");
   assert.equal(service.getById(b.id).archived, false);
@@ -153,6 +153,48 @@ test("issue#641 enforce 与 freeze 同开：freeze 让位降级 shadow + warn，
 function rowOf(store, mem) {
   return store.getById(mem.id);
 }
+
+// ---- T3 取代链（beta 第三阶段）----
+
+test("issue#641 enforce：T3 演进走取代链——旧行 superseded_by 指向新行，双双存活不归档", async () => {
+  const { service, store, vectorIndex } = setup();
+  const oldMem = makeMemory(service, "旧方案", "旧方案的内容");
+  const newMem = makeMemory(service, "新方案", "新方案改用了新路径");
+  // 造 30 天间隔：saveWithDedupe 不收时间，store 直改（测试专用）
+  store.db.prepare("UPDATE memories SET created_at = ? WHERE id = ?").run("2026-09-01T00:00:00.000Z", oldMem.id);
+  seedVectorPair(vectorIndex, oldMem, newMem, 1.0);
+  const updatedBefore = service.getById(oldMem.id).updated_at;
+  const ctx = captureCtx("");
+  const result = await runSleep(ctx, service, baseConfig({ conflictLedgerMode: "enforce" }), ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(result.phases.conflicts.status, "ok");
+  assert.deepEqual(result.phases.conflicts.enforced, { t1Resolved: 0, t1Failed: 0, t3Chained: 1 });
+  const older = service.getById(oldMem.id);
+  const newer = service.getById(newMem.id);
+  assert.equal(older.superseded_by, newMem.id, "旧行指向取代它的新行");
+  assert.ok(older.superseded_at, "取代时刻落列");
+  assert.equal(older.updated_at, updatedBefore, "纯元数据标注不 bump updated_at（「已审过」代理判定不被污染）");
+  assert.equal(older.archived, false, "演进不是输赢：不归档");
+  assert.equal(newer.archived, false);
+  assert.ok(vectorIndex.getEmbedding(older.id), "行还活着，向量保留（降权在检索侧做）");
+  assert.equal(store.listConflictPending().length, 0);
+  const row = store.listConflictLedger()[0];
+  assert.equal(row.status, "superseded");
+  store.close();
+});
+
+test("issue#641 supersedeChain：幽灵行不落链，换指向以最后一次为准", () => {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  const a = makeMemory(service, "A", "甲");
+  const b = makeMemory(service, "B", "乙");
+  const c = makeMemory(service, "C", "丙");
+  service.setArchived(b.id, true);
+  assert.equal(service.supersedeChain(b.id, a.id), false, "已归档行不再落链（给幽灵记账没有意义）");
+  assert.equal(service.supersedeChain(a.id, b.id), true);
+  assert.equal(service.supersedeChain(a.id, c.id), true, "换指向以最后一次为准");
+  assert.equal(store.getById(a.id).superseded_by, c.id);
+  store.close();
+});
 
 test("issue#641 supersedeInfoFirstPair：长度优先（与 mint 顺序无关）", () => {
   const store = createStore(":memory:");

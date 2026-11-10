@@ -422,19 +422,38 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
 
   // Issue #641（beta 第二阶段，enforce 档）：确定性处置接线。T1（dup）走
   // supersedeInfoFirstPair（与冻结分支自动档同一条契约，decisions.js 共享实现）；
-  // T2/T3/T4 记账即处置——不停车、不送 LLM、不归档任何一行。人审队列与 LLM
-  // 裁决在本档下都不再消费冲突候选，conflict_pending 恒空。每轮上限沿用
-  // sleepConflictMaxPairsPerRun：处置虽不走 LLM，归档仍是写动作，写预算与
-  // freeze/auto 两档同口径。T3 的真实处置（superseded_by 取代链 + 检索降权）
-  // 与 T4 的惰性消解（检索时排序 + 注入标注）是后续 PR，本档先把人审摘出去。
+  // T1 走信息量优先 supersede、T3 走取代链（superseded_by 指向，不归档）、
+  // T2/T4 记账即处置——不停车、不送 LLM。人审队列与 LLM 裁决在本档下都不再
+  // 消费冲突候选，conflict_pending 恒空。每轮上限沿用
+  // sleepConflictMaxPairsPerRun：处置虽不走 LLM，归档/落链仍是写动作，写预算
+  // 与 freeze/auto 两档同口径。T4 的检索时消解（fuseRecall 矛盾感知 + 注入
+  // 标注）是后续 PR，本档先把人审摘出去。
   if (ledgerMode === "enforce") {
     const perRunCap = config.sleepConflictMaxPairsPerRun ?? 60;
     const pool = perRunCap > 0 ? selected.slice(0, perRunCap) : selected;
     let t1Resolved = 0;
     let t1Failed = 0;
+    let t3Chained = 0;
     const t1VectorFixups = [];
     for (const p of pool) {
       const verdict = triagePair(p.a, p.b, p.similarity, { dupMinSimilarity: config.conflictLedgerDupMinSimilarity });
+      if (verdict.tier === "evolution") {
+        // T3 取代链（beta 第三阶段）：旧行 superseded_by → 新行，检索降权，
+        // **不归档**——演进不是输赢，旧值仍是「曾经为真」的可追溯历史（与
+        // supersede 动作的归档语义不同）。新者胜对演进成立：间隔 ≥7 天的
+        // 同主题对，新记载才反映现状（服务器时钟，内容声称的时间不做键）。
+        const newer = (p.a.created_at ?? "") >= (p.b.created_at ?? "") ? p.a : p.b;
+        const older = newer === p.a ? p.b : p.a;
+        try {
+          if (service.supersedeChain(older.id, newer.id)) {
+            t3Chained += 1;
+            service.setConflictLedgerStatus(p.a.id, p.b.id, "superseded");
+          }
+        } catch (error) {
+          logger?.warn?.(`dsh-mneme sleep: ledger T3 chain failed for ${p.a.id}/${p.b.id}: ${String(error)}`);
+        }
+        continue;
+      }
       if (verdict.tier !== "dup") continue;
       let res = null;
       try {
@@ -472,14 +491,14 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       logger?.warn?.(`dsh-mneme sleep: conflict ledger enforce capped at ${pool.length}/${selected.length} pairs this run`);
     }
     return {
-      status: t1Failed > 0 ? "degraded" : t1Resolved > 0 ? "ok" : "noop",
+      status: t1Failed > 0 ? "degraded" : t1Resolved > 0 || t3Chained > 0 ? "ok" : "noop",
       clean: t1Failed === 0,
       frozen: 0,
       scopeCandidates: 0,
       pairs: selected.length,
       batches: 0,
       ledgerSkipped,
-      enforced: { t1Resolved, t1Failed },
+      enforced: { t1Resolved, t1Failed, t3Chained },
       ...(ledgerTriage ? { ledgerTriage } : {})
     };
   }
