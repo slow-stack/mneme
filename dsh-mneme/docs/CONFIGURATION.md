@@ -116,7 +116,7 @@
 | `summarizeMinWindowChars` | `0` | 窗口可蒸馏文本下限（字符），不足直接跳过 LLM（#239） | 被挡窗口照常消费游标并留 skip 审计 |
 | `summarizeMaxRunsPerSession` | `0` | 每会话蒸馏次数预算，只计真实发起的调用（≤1000） | 0 = 不限；进程内计数，重启清零 |
 | `summarizeParseFailureMaxRetries` | `0` | 连续解析失败几次后放弃当前窗口（0–10，0 = 关，#493） | 达到阈值强制消费游标跳过该窗口；失败行 metadata 恒带 `raw_head`/`raw_has_bracket`/`streak` |
-| `summarizePeakHours` | `""` | 高峰时段串（`"09:00-18:00"` / `"mon-fri 08:00-12:00,14:00-18:00"`，支持跨零点） | 命中高峰不调 LLM、顺延补跑；任一写法非法整串按未配置处理 |
+| `summarizePeakHours` | `""` | 高峰时段串（`"09:00-18:00"` / `"mon-fri 08:00-12:00,14:00-18:00"`，支持跨零点；全角逗号/冒号/数字自动归一，#424） | 命中高峰不调 LLM、顺延补跑；任一写法非法整串按未配置处理 |
 | `summarizePeakMaxDeferMinutes` | `120` | 高峰顺延上限（分钟，≤1440） | 0 = 不设上限；到点仍处高峰照跑（bypassPeak） |
 | `summarizeDedupeMode` | `off` | 落库前去重档位：`off` / `title`（拦完全同名）/ `vector`（同会话语义近邻） | `vector` 复用已有 embedding 列，无 LLM 调用 |
 | `summarizeDedupeMinSim` | `0.92` | `vector` 档并入阈值（0.5–0.99） | 仅 `vector` 档生效 |
@@ -181,7 +181,7 @@
 | `dreamDelayMs` | `2000` | 触发后的延迟（毫秒） | — |
 | `dreamMinIntervalMinutes` | `0` | 两次开跑最小间隔（分钟，≤10080，#89） | 失败/degraded run 也占用；0 = 不限 |
 | `autoDreamFailureBackoff` | `false` | 连续失败指数退避：有效间隔 = 基数 × 2^连败，封顶 30 分钟（#292） | opt-in；基数取 `dreamMinIntervalMinutes`（0 = 无闸可翻倍）；成功一次清零；重启归零 |
-| `dreamPeakHours` | `""` | 巩固错峰，与 `summarizePeakHours` 同一份时段语法（#239） | 命中高峰不做梦、阈值继续累积、留 skip 审计；非法写法按未配置 |
+| `dreamPeakHours` | `""` | 巩固错峰，与 `summarizePeakHours` 同一份时段语法（#239，全角等价符号同样归一） | 命中高峰不做梦、阈值继续累积、留 skip 审计；非法写法按未配置 |
 | `dreamPeakMaxDeferMinutes` | `120` | 巩固顺延上限（分钟） | 0 = 不设上限；到点仍处高峰照跑 |
 | `dreamProvider` / `dreamModel` | 空 | 巩固专用路由（settings「巩固模型」） | 建议非思考模型——思考模型易烧光预算返回空体（#135） |
 | `dreamMaxTokens` | `131072` | 巩固输出预算（256–131072） | 流式计费按实际用量，调大不增加成本；**调小则相反**——撞顶 → 无完整 JSON → 整轮失败 → baseline 不刷新 → 同输入重跑（#135 实测 cap=16384 净成本 +54%） |

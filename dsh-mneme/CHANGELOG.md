@@ -104,6 +104,10 @@
   - **下架期间设置只能走配置文件**：面板上没有入口，`actionPipelineEnabled` 等仍可从 `config.yml` / `feature_flags` 改。`docs/CONFIGURATION.md` 在三个键后加了引用块说明。
   - 线上库已先行关旗标（`actionPipelineEnabled` / `actionRunEnabled` / `actionNudgeEnabled` 全 false，`diaryEnabled` 保持 true），写入前 50 键 JSON 备份留档；`actionRunEnabled` 原本不在 kv，本次显式写入 false，故键数 50→51。
 
+## 🐛 修复
+
+- **高峰时段串里的全角等价符号不再让错峰闸门静默失效（#424）**。中文输入法下写 `summarizePeakHours` / `dreamPeakHours`，逗号、冒号、数字常被输入法带成全角（`00:00-03:00，04:00-06:00`）——而 `parsePeakSpec` 只认半角，整串解析成 null，null 的语义是「未配置 = 不限制」，于是巩固/蒸馏静默回到全天候，没有任何提示（用户报的正是「明明写了高峰时段却在高峰期巩固」）。现在解析前先做等价归一：U+FF01–FF5E 折回 ASCII（恒差 0xFEE0，覆盖全角逗号/冒号/数字/连字符/字母，星期前缀一起受益），其中全角～不走折叠（折回是 `~`，而半角 `~` 是契约里故意非法的写法）、与〜（U+301C）一样直接映成 `-`。只做等价映射、不救错：`24:00` 越界这类值写错的串仍按非法处理（跨零点的正写是 `04:00-00:00`），合法写法的解析结果逐字节不变。`test/summarize.test.js` 新增 1 例锁「归一后照常解析 + 越界不放宽」两面。
+
 ## [0.12.0] - 2026-11-07
 
 ## 🆕 新增
