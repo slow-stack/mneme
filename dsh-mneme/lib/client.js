@@ -153,6 +153,11 @@ window.__ModuleLoader__.load({
       // 所以这条表与用法必须同处出现（见 test/client.test.js 的图标名锁）。
       star: [["polygon", { points: "12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" }]],
       persona: [["path", { d: "M12 3a7 7 0 0 0-7 7c0 4 3 5 3 8h8c0-3 3-4 3-8a7 7 0 0 0-7-7z" }], ["path", { d: "M10 11h.01" }], ["path", { d: "M14 11h.01" }], ["path", { d: "M9.5 15c1.6 1 3.4 1 5 0" }]],
+      // 情绪页与日记页的页签图标（Lucide 数据，同上 ISC 惯例内联）。
+      // 之前两者都掉进三元表达式的 else 分支、跟设置页共用齿轮，页签只能靠
+      // 文字区分；这里补齐名字，并在下面用 TAB_ICONS 把 key 与图标绑死。
+      heart: [["path", { d: "M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" }]],
+      book: [["path", { d: "M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" }]],
     };
     const Icon = ({ name, size = 16, className }) => {
       const parts = ICON_PATHS[name];
@@ -649,7 +654,7 @@ window.__ModuleLoader__.load({
         "memory.time.hours": "{n}小时前",
         "memory.time.days": "{n}天前",
         "memory.affective.title": "情绪归因",
-        "memory.affective.sub": "按「谁 · 对什么 · 什么情绪」汇总，稳定倾向与单独一次分开列。",
+        "memory.affective.sub": "按「谁 · 什么情绪 · 对什么」汇总，稳定倾向与单独一次分开列。",
         "memory.affective.loading": "读取中…",
         "memory.affective.error": "没读到数据 —— 这不等于「没有记录」，是这次请求失败了。",
         "memory.affective.empty": "库里还没有情绪边。开了情感相位并跑过一轮夜间巩固，这里才会有内容。",
@@ -1780,7 +1785,7 @@ window.__ModuleLoader__.load({
         "memory.time.hours": "{n}h ago",
         "memory.time.days": "{n}d ago",
         "memory.affective.title": "Affective attributions",
-        "memory.affective.sub": "Grouped by who · toward what · which emotion; lasting tendencies are listed apart from single occasions.",
+        "memory.affective.sub": "Grouped by who · which emotion · toward what; lasting tendencies are listed apart from single occasions.",
         "memory.affective.loading": "Loading…",
         "memory.affective.error": "Could not load — that is not the same as having nothing recorded; this request failed.",
         "memory.affective.empty": "No affective edges yet. Turn on the affective phase and let one nightly pass run.",
@@ -2856,6 +2861,7 @@ window.__ModuleLoader__.load({
       ".mneme-affective-row{border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:7px 10px}",
       ".mneme-affective-row--trait{border-color:var(--mneme-accent)}",
       ".mneme-affective-main{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px}",
+      ".mneme-affective-person{font-weight:600;color:var(--dsw-alias-label-primary)}",
       ".mneme-affective-emotion{font-weight:600;color:var(--dsw-alias-label-primary)}",
       ".mneme-affective-row--trait .mneme-affective-emotion{color:var(--mneme-accent)}",
       ".mneme-affective-arrow{color:var(--mneme-fg-dim)}",
@@ -7999,6 +8005,11 @@ window.__ModuleLoader__.load({
         if (it.lastSeen) bits.push(t("memory.affective.lastSeen").replace("{time}", formatRelativeTime(it.lastSeen)));
         return h("div", { className: isTrait ? "mneme-affective-row mneme-affective-row--trait" : "mneme-affective-row", key: `${it.personId}-${it.targetId}-${it.emotion}-${it.attribution}-${i}` },
           h("div", { className: "mneme-affective-main" },
+            // 谁：服务端一直带着 person（from_name），此前前端只渲染了「对什么 ·
+            // 什么情绪」，一条「不安」看不出是谁对谁。名字缺失时给占位符，不是
+            // 让 undefined 直接印在界面上。
+            h("span", { className: "mneme-affective-person" }, it.person ?? "?"),
+            h("span", { className: "mneme-affective-arrow" }, "·"),
             h("span", { className: "mneme-affective-emotion" }, it.emotion),
             h("span", { className: "mneme-affective-arrow" }, "·"),
             h("span", { className: "mneme-affective-target" }, it.target ?? "?"),
@@ -9469,6 +9480,20 @@ window.__ModuleLoader__.load({
         setView("memory");
       };
 
+      // 页签 key -> 图标名。原先是一串嵌套三元，新增页签只能落到最后的 else
+      // 分支上、和设置页共用齿轮（情绪页与日记页就是这么哑掉的）。表放在
+      // ICON_PATHS 之外、与 subviews 同处，新增页签时两个数组一左一右，漏登记
+      // 一眼能看出来；test/client.test.js 的图标锁也按这张表核对注册表。
+      const TAB_ICONS = {
+        memory: "database",
+        entity: "waypoints",
+        status: "activity",
+        settings: "settings",
+        persona: "persona",
+        affective: "heart",
+        diary: "book"
+      };
+
       const subviews = [
         { key: "memory", label: t("memory.explorer.tabMemory") },
         { key: "entity", label: t("memory.explorer.tabEntities") },
@@ -9495,7 +9520,7 @@ window.__ModuleLoader__.load({
                 "aria-pressed": String(view === s.key),
                 onClick: () => leaveMemory(s.key)
               },
-                h(Icon, { name: s.key === "memory" ? "database" : s.key === "entity" ? "waypoints" : s.key === "status" ? "activity" : s.key === "persona" ? "persona" : "settings", size: 14, className: "mneme-vtabico" }),
+                h(Icon, { name: TAB_ICONS[s.key] ?? "settings", size: 14, className: "mneme-vtabico" }),
                 s.label
               ))
           ),
