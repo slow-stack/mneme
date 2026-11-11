@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.14.0-beta.2] - 2026-11-11
+
+- **模型从此看得见记忆有多旧（时间线索）：注入行与三个检索工具的回执都带日期，`occurred_at` 优先、缺省回落到 `created_at`**：模型此前拿到的记忆只有标题、类型与正文——`created_at` 从头到尾没进过任何一条渲染路径（`src/inject.js` 全文零命中，`memory_get` 连 `updated_at` 都不给，唯一露出的时间戳是 `renderTimePrefix` 的「当前时间」一句，且默认关）。于是「三天前用户说要 A、昨天改口说 B」在模型眼里是两条等重的陈述，先后关系全靠正文里有没有恰好写着日期。
+  - **为什么年龄必须看 `created_at`**：`updated_at` 会被巩固刷新——实测本库 `updated_at > created_at` 的 4528 行里，2765 行差值不足 1 分钟（插入时两列写同一个毫秒，正常），真漂移（≥1 天）656 行、中位 30 天、最长 51 天。拿 `updated_at` 当年龄，最长会年轻一个半月。
+  - **只给日期不给时分**：注入块预算紧（`MAX_BLOCK = maxContent + 600`），秒级精度在这里没有信息量，`2026-11-11` 足够回答「这是什么时候的」。新增 `src/date-hint.js` 统一切法：只认 `YYYY-MM-DD` 前缀、按 UTC 切、坏值返回空串（不渲染占位符也不抛错）——落库是 ISO UTC，跨机器要确定性，最坏差一天不影响「多旧」的判断。
+  - **改动面 3 个文件 4 个位置**：`src/lang.js` 的 `entryLine` / `graphHintLine` 各加一个可选 `date` 参数（不传时输出逐字节不变，三条旧断言一条没动）；`src/inject.js` 在类型括号后、标题前插入日期，**降级标题行是独立渲染点，同步带上**；`src/tools.js` 三处（`memory_search` / `memory_list` / `memory_get`）由新的 `MEMORY_AGE` 同时给出 `created` 与 `updated`。`MEMORY_PROVENANCE` 一个字节没动——它有「未标注行渲染与 A2 前逐字节一致」的契约，往里加字段会让所有行都变。
+  - **测试**：`test/date-hint.test.js` 8 条（形状、优先级、不传时逐字节不变、传时位置正确、三工具回执同形、降级行、坏值不渲染）。三条变异各自变红：降级行去日期、`MEMORY_AGE` 里 `created` 置空、`entryLine` 不传 `date`。
+- **图像描述档（`imageDescribeEnabled`，默认关）：蒸馏前让一个能看图的模型给每张图写一句描述，把描述并进转录**：图片此前只以 `[图: 文件名 image/png 1543x983]` 占位进蒸馏（#611 补的，`src/attachment-text.js` 明确不调 vision、不读字节、不落原图）。占位能让模型知道「这里有过一张图」，但不知道图里是什么——用户发一张报错截图再问「这个怎么修」，蒸馏出来的记忆只剩「用户发了张图」。库已 273MB，原图档不做是既定口径（`docs/DISTILL.md`），描述档是它的替代。
+  - **不碰图字节**：`@deepseek-ai/dsh-llm` 的 adapter 会按 `modelInfo.inputModalities` 决定编不编——含 `image` 就原样把字节发出去，不含就换 `textOnlyImageText` 占位。所以本档只负责「把 image 块放进一次调用」，不读文件、不做 base64、不需要 attachments store。
+  - **必须独立 provider 槽，留空 = 整档不跑**：蒸馏路由（`summarizeProvider` 或会话主模型）多半是纯文本模型，拿它看图只会换回一句「本模型不支持图片」的占位，白花钱且看不出错。`imageDescribeProvider` / `imageDescribeModel` 两条留空的语义与其它 provider 键**不同**：不是「跟随当前模型」，是「这一档不跑」。
+  - **准入三态，unknown 照发**：`canSeeImages` 返回 `true` / `false` / `unknown`，只有模型**明确声明**不含 image 才跳过；查询能力失败、`inputModalities` 非数组、根本没有 `resolveModelInfo` 全按 `unknown` 处理并照发。理由与宿主一致：对未知能力是不投影，赌它不支持会静默丢掉描述。
+  - **300 字、单行、同附件只描述一次**：四张图各写 800 字会把真正要蒸馏的正文挤出 `trimTranscript` 的尾部窗口，所以压到 300 字并折成单行。同一次蒸馏里同一个 `attachmentId` 只描述一次（按 attachmentId 缓存），重复挂载的图不会产生两行「描述：」。
+  - **描述失败绝不影响蒸馏**：单块 try/catch 吞异常，失败的图退回占位、带 `描述：` 前缀的行不出现；`finish` 报 `error` / `aborted` 就停手。默认关着时蒸馏输出与 0.14.0-beta.1 逐字节一致。
+  - **测试**：`test/image-description.test.js` 14 条（准入三态、只有明确不支持才跳过、能力查询抛错、默认关逐字节不变、路由留空整档不跑、描述进转录且 attachmentId 未被改写、同附件只描述一次、失败退化、300 字截断、换行压平、只替换第一处、imageBlocks 过滤）。变异自证三条，其中「把 `sight !== false` 改成 `sight === true`」第一次跑出假绿——因为用例传 `undefined` 正好落进解构默认值，改成 `null` 才真变红。
+- **设置面板三处「有渲染、没登记」（#656）**：`FEATURE_FIRST_SCREEN` 缺整个 `group.dream`（巩固与睡眠那一组的 `sleepModeEnabled` 是与 `group.ext` 同级的总闸，却整组躺在二级折叠里，首屏可点项 11 → 13）；`affective` / `diary` 两个页签无条件注册，总闸关着时能点进去看一页全关的开关（改成由各自总闸决定，`features` 未到手前先不渲染，拉取失败按全关处理）；`conflictLedgerMode` 那个三档下拉是手写的——**渲染里有、常量表里没有，意味着它被误删也不会有任何测试红**，而它确实被误删过（#641）。收进 `FEATURE_ENUMS` + `enumRow` 后由表驱动，并补上 i18n 完整性测试对枚举行标签与每一档取值的扫描（那四组文案此前从没被任何测试碰过）。
+- **仓库地志两个子开关各渲染两遍（#658）**：`chorographyAutoRefresh` / `chorographyT1FromPanel` 既在 `FEATURE_CHILDREN` 里（`flagRow` 会展开），又由 `choroSub` 手写了一份——5c41d31 先写手写行，5bad8a6 补父关系时没删旧的。面板上这两个开关各出现两行、点上面那行下面不动，看起来像开关失灵；持久值与后端行为一直是正常的。子项回到 `flagRow` 统一展开，顺带补上父关时的「不生效」标注（值保留仍可预置）。**复现条件是地志总闸开着（默认 false）**，所以只影响开了这个功能的用户。附带改掉一句误导人的注释：`FEATURE_CHILDREN` 是面板渲染关系，`INJECT_CHILD_FLAGS` 只收「父关但子项仍有执行路径」的键，两张表本就不必相等。
+
 ## [0.14.0-beta.1] - 2026-11-11
 
 - **冲突裁决改成可查账的账本（#641，beta）：矛盾对先记进 `conflict_ledger` 再按档位处置，`enforce` 档下存储层不再由 LLM 决定谁赢**：此前「两条记忆打架」只有一条路——交给模型判一条留、一条归档（#126 之前的自动裁决），判完只剩结果、没有过程：哪一对判过、按什么理由判的、有没有反复判，库里都看不出来。报告者统计 788 对已裁决里近重复 46%、跨作用域 20%、真矛盾 27%、时序演进 5%，而两侧 `created_at` 差不到 1 天的占 76%——「谁更新谁赢」在这个分布上约等于掷硬币，P(毒胜出) 86.8% 正是这么来的。
