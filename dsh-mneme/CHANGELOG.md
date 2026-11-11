@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.14.0-beta.1] - 2026-11-11
+
+- **冲突裁决改成可查账的账本（#641，beta）：矛盾对先记进 `conflict_ledger` 再按档位处置，`enforce` 档下存储层不再由 LLM 决定谁赢**：此前「两条记忆打架」只有一条路——交给模型判一条留、一条归档（#126 之前的自动裁决），判完只剩结果、没有过程：哪一对判过、按什么理由判的、有没有反复判，库里都看不出来。报告者统计 788 对已裁决里近重复 46%、跨作用域 20%、真矛盾 27%、时序演进 5%，而两侧 `created_at` 差不到 1 天的占 76%——「谁更新谁赢」在这个分布上约等于掷硬币，P(毒胜出) 86.8% 正是这么来的。
+
+  - **新的账本表**：`conflict_ledger` 记 `memory_a / memory_b / tier / status / similarity / reason / first_seen_at / last_seen_at`，四档分诊——T1 近重复（相似度过 `conflictLedgerDupMinSimilarity`，默认 0.9）走取代、T2 跨作用域只记账不处置、T3 时序演进落 `superseded_by` 取代链、T4 真矛盾两条都活。`recordLedgerTriage` 是唯一写入点，同一对重复出现只更新 `last_seen_at`。
+  - **三档开关**：`conflictLedgerMode: "off" | "shadow" | "enforce"`，默认 `off`（行为与 0.13.0 完全一致，不产生任何账本写入）。`shadow` 只记账、不做任何处置——先让账本在真实库上跑一段，看分档分布合不合理再决定是否开处置；`enforce` 才真正归档与落链。与 `conflictFreezeEnabled` 同时开启时降级并 warn（保持 freeze 语义 / shadow 只记账），**不抛错**：这两键都是用户配置，撞车时让既有行为继续跑比让启动失败更安全。
+  - **enforce 档不经过 LLM**：`src/dream/sleep.js` 的 enforce 分支在三道 skip 之后、LLM 调用之前直接返回处置结果，`src/dream.js` 的 applyList 也过滤掉 `action === "conflict"` 的决策——存储层的胜负由确定性判据（信息量 → `updated_at` → id）决定，模型不再参与。冲突条目的 LLM 裁决、人审队列在 enforce 档下都不再消费冲突候选。
+  - **检索侧（T3/T4）**：被取代的行整行不进注入（不是降权，是剔除）；同批出现仍 `open` 的矛盾对按 epistemic 信任级（`observation > inferred > subjective`）排位、平手取新者，两条各自带一句冲突标注（`src/inject.js` 渲染时接在记忆正文后）。取代链一旦成立**不是单向门**：继任者归档或遗忘后，旧行重新可见（`supersededIds()` JOIN 继任者判活）。
+  - **回执不再说谎**：`enforce` 档真实归档 + 落链的数量此前不进 `applied`——库里明明改了，`dream_runs.applied` 与回执都记 0（与 #619 同一形状）。现在 sleep 侧返回 `applied: t1Resolved + t3Chained`，dream 侧 finish 用 `applied + ledgerApplied`。
+  - **幂等**：`supersedeChain` 加了指向守卫，同一对每轮重跑不再刷 `superseded_at`、不再虚增 `t3Chained`；T1/T3 处置前先确保账本行存在（此前 dream 侧只 `UPDATE` 不插行，命中 0 行时状态推进静默丢失）。
+  - **两档暂未接线**：`differentiated` / `zombied` 已进枚举与展示，但暂无写入点，代码与文档都标为预留——不当作已实现宣传。
+  - **测试**：`test/conflict-ledger-enforce.test.js` 19 条（分档、幂等重放、继任者退场后旧行复权、回执计数、互斥降级）；变异自证四轮——删幂等守卫、删 JOIN 判活、删 dream 侧账本写入、把失败退化成空列表，各自都能让对应用例变红。
+
 - **autoDream 永久停摆（#634）：阈值基线只随成功轮前进，归档把活跃量压到基线之下后巩固从此静默失联——修法是判定口夹回基线，归掉的量不必重新长回来**：这不是调度器坏了，是阈值语义里藏了一个单向棘轮。基线（上次成功轮结束时的活跃库规模）只在成功轮刷新（`startRun` 的 `result.baseline` 落 `dream_runs`，#89 半边），而触发判据 `overBase = 活跃 ≥ 基线 + 阈值` 的左侧会被归档/删除/合并压下去——活跃量一旦跌破基线，`overBase` 恒为假，**越整理越不可能再巩固**，且不跑的时候一个字的账都不留（`maybeSchedule` 的阈值不满足分支与 #89 的最小间隔口径一致：静默跳过）。报告者实测两次停摆：13 天与 22 小时零轮，末轮基线 1,475 条/299k 字符，归档后活跃 798 条/261k，门槛永不满足；同期 `sleep` 轮正常，面板只能看到「最近巩固：很久以前」。
 
   - **修法选在判定口（`shouldTrigger`）而不是各写路径**：活跃量跌破基线的轴把基线夹回当前值（每轴独立取 min），阈值从新的低点重新起算。归档路径本就不触发 `notifyWrite`（service 里「状态开关不算内容写入」的既有口径），且收缩的来源不止归档——删除、合并、暂停作用域（`filterPaused`）、外来行占比变化都压 `activeStoreSize` 的读数，逐写路径维护基线碰的面大、漏面也大；调度器判定口是所有收缩来源的必经汇点，一处收敛。夹回后基线 == 活跃量，直到下一轮成功把基线抬高，所以每次「收缩 → 再触发」周期至多夹回一次。

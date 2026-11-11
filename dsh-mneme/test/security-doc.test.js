@@ -34,12 +34,22 @@ function section(heading) {
 }
 
 test("SECURITY.md 的支持版本表跟着 package.json 走（中英各一份）", () => {
+  // 预发布版（0.14.0-beta.1）不占支持表的格：beta 不是受支持的稳定版本，把首行挪成
+  // 0.14.x 等于对外宣称 0.14 已在活跃维护。这里改成「首行必须不是 beta 的 minor」——
+  // 仍是断言，不是跳过：真有人给 beta 挪了格，这条会红。
+  const isPrerelease = version.includes("-");
   for (const heading of ["## Supported Versions", "## 支持版本"]) {
     const body = section(heading);
     // 表第一行就是「当前支持」的那一行；锁它，别锁整表（历史版本行本来就该在）。
     const rows = body.split(/\r?\n/).filter((l) => /^\|\s*[\d<]/.test(l));
     assert.ok(rows.length >= 2, `${heading} 的版本表应至少两行，实际 ${rows.length} 行`);
     const current = rows[0].split("|")[1].trim();
+    if (isPrerelease) {
+      assert.notEqual(current, expectedVersionRow,
+        `${heading} 的首行不该是 ${expectedVersionRow}（package.json 为预发布版 ${version}）——`
+        + "预发布版占格等于宣称它已在活跃维护");
+      continue;
+    }
     assert.equal(current, expectedVersionRow,
       `${heading} 的首行应写 ${expectedVersionRow}（package.json 为 ${version}），实际写了 ${current}`);
   }

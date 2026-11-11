@@ -119,6 +119,14 @@ test("重复跑是幂等的：已有目标的占位行就不再插第二行", ()
 test("SECURITY.md 支持版本表：同 minor 通过，跨 minor 如实报出中英两处", () => {
   const sameMinor = checkSupportTable(securityDoc, version);
   assert.equal(sameMinor.ok, true, `真实 SECURITY.md 应与 package.json ${version} 一致：${sameMinor.problems.join("；")}`);
+  if (version.includes("-")) {
+    // 预发布版不占支持表的格：beta 不是受支持的稳定版本，挪过去等于对外宣称它已活跃维护。
+    // 显式断言 skipped，而不是让它悄悄走 ok 分支——否则「不检查」和「检查通过」长得一样。
+    assert.equal(sameMinor.skipped, "prerelease",
+      `预发布版 ${version} 应显式标 skipped=prerelease，实际 ${sameMinor.skipped}`);
+  } else {
+    assert.equal(sameMinor.skipped, null, `稳定版 ${version} 不该被当成预发布版跳过`);
+  }
 
   const nextMinor = `${version.split(".")[0]}.${Number(version.split(".")[1]) + 1}.0`;
   const crossing = checkSupportTable(securityDoc, nextMinor);
@@ -126,6 +134,18 @@ test("SECURITY.md 支持版本表：同 minor 通过，跨 minor 如实报出中
   assert.equal(crossing.problems.length, 2, "中英两张表各报一条：" + crossing.problems.join("；"));
   assert.ok(crossing.problems.every((p) => p.includes(crossing.expected)),
     "每条问题都要写出期望值，否则人不知道改成什么：" + crossing.problems.join("；"));
+});
+
+test("预发布版不把支持表首行挪到自己头上（beta 不是受支持的稳定版）", () => {
+  const [major, minor] = "0.14.0-beta.1".split(".");
+  const betaRow = `${major}.${minor}.x`;
+  const r = checkSupportTable(securityDoc, "0.14.0-beta.1");
+  assert.equal(r.ok, true);
+  assert.equal(r.expected, betaRow, "expected 仍按 major.minor 算，只是不拿来要求表");
+  const body = securityDoc.slice(securityDoc.indexOf("## Supported Versions"));
+  const firstRow = body.split(/\r?\n/).filter((l) => /^\|\s*[\d<]/.test(l))[0].split("|")[1].trim();
+  assert.notEqual(firstRow, betaRow,
+    `支持表首行不该是 ${betaRow}——预发布版占格等于宣称它已在活跃维护`);
 });
 
 test("SECURITY.md 支持版本表：节缺失或表格形状变了也报错（不能静默通过）", () => {
