@@ -67,6 +67,19 @@ test("findSection：版本号里的点被转义过，不会当成通配", () => 
   assert.equal(findSection(text, "0.8.16"), null, "点若被当通配就会误命中 0x8x16");
 });
 
+test("findSection：预发布版本号（带 -beta.N）能取到自己的小节", () => {
+  // 预发布版本号带 `-` 与额外的点。此前入口正则只认 x.y.z，release job 抽正文这步直接
+  // exit 1，预发布版根本发不出去；findSection 也只转义了点，元字符会被当语义用。
+  const text = SAMPLE.replace(
+    "## [0.8.16] - 2026-10-12",
+    "## [0.14.0-beta.1] - 2026-11-11\n\n- 预发布条目\n\n## [0.8.16] - 2026-10-12"
+  );
+  const sec = findSection(text, "0.14.0-beta.1");
+  assert.ok(sec.includes("预发布条目"), "预发布小节要能取到");
+  assert.equal(sec.includes("旧条目"), false, "不能越过下一版标题");
+  assert.equal(findSection(text, "0.14.0"), null, "0.14.0 不该误命中 0.14.0-beta.1（反之亦然）");
+});
+
 test("parseBullet：拆出标题与正文；非该形状返回 null 由调用方原样保留", () => {
   assert.deepEqual(parseBullet("- **标题**：正文在这里"), { title: "标题", body: "正文在这里" });
   assert.deepEqual(parseBullet("- **只有标题**"), { title: "只有标题", body: "" });
@@ -237,4 +250,16 @@ test("入口：版本号格式不对时直接拒绝", () => {
   const res = spawnSync(process.execPath, [scriptPath, "v1.2"], { encoding: "utf8" });
   assert.notEqual(res.status, 0, "只接受 x.y.z");
   assert.match(res.stderr, /usage: release-notes\.mjs/, "要说清用法，别静默退出");
+});
+
+test("入口：预发布版本号不被当成格式错误（否则 beta 版发不出去）", () => {
+  // 反向验证上面那条守卫没有收紧过头：0.14.0-beta.1 是合法发布版本，此前会被
+  // 「格式不对」拦下。这里走到 findSection，报的必须是「找不到小节」而不是"usage"。
+  const root = mkdtempSync(join(tmpdir(), "mneme-release-notes-"));
+  mkdirSync(join(root, "dsh-mneme"), { recursive: true });
+  writeFileSync(join(root, "dsh-mneme", "CHANGELOG.md"), SAMPLE, "utf8");
+  const res = spawnSync(process.execPath, [scriptPath, "0.14.0-beta.1"], { cwd: root, encoding: "utf8" });
+  assert.notEqual(res.status, 0, "样例 CHANGELOG 里没有这一版，应当非零退出");
+  assert.doesNotMatch(res.stderr, /usage: release-notes\.mjs/, "不许当成格式错误：" + res.stderr);
+  assert.match(res.stderr, /changelog section not found: 0\.14\.0-beta\.1/, "要报找不到小节");
 });

@@ -149,7 +149,10 @@ export function renderNotes(sectionText, opts = {}) {
 /** release.yml 的调用方式：node dsh-mneme/scripts/release-notes.mjs <version>（cwd 为仓库根）。 */
 function main() {
   const v = (process.argv[2] || "").replace(/^v/, "");
-  if (!/^\d+\.\d+\.\d+$/.test(v)) { console.error("usage: release-notes.mjs <version>"); process.exit(1); }
+  // 允许预发布后缀：0.14.0-beta.1 是合法发布版本，此前这条守卫把它当非法用法直接 exit 1，
+  // 于是 release job 在抽正文这步就红了——预发布版根本发不出去。语义校验交给
+  // semver 的形状（x.y.z 后可跟 -标识），不做额外白名单。
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(v)) { console.error("usage: release-notes.mjs <version>"); process.exit(1); }
   const md = readFileSync("dsh-mneme/CHANGELOG.md", "utf8");
   const sec = findSection(md, v);
   if (!sec) { console.error("changelog section not found: " + v); process.exit(1); }
