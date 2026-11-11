@@ -145,9 +145,12 @@ export const STR = {
     zh: (title, importance) => `${title}（重要性 ${importance}）`,
     en: (title, importance) => `${title} (importance ${importance})`
   },
+  // date（可选，第 5 参）：条目日期 `YYYY-MM-DD`，日期缺省时那一格整个消失，
+  // 渲染与加日期前逐字节一致（老调用方不传第 5 参即旧行为）。放在类型括号之后、
+  // 标题之前——`- [type] ` 前缀不动，别处按前缀匹配的断言不受影响。
   entryLine: {
-    zh: (type, verified, title, content) => `- [${type}] ${verified}${title}：${content}`,
-    en: (type, verified, title, content) => `- [${type}] ${verified}${title}: ${content}`
+    zh: (type, verified, title, content, date) => `- [${type}] ${date ? `${date} ` : ""}${verified}${title}：${content}`,
+    en: (type, verified, title, content, date) => `- [${type}] ${date ? `${date} ` : ""}${verified}${title}: ${content}`
   },
   // Issue #164①：注入截断不静默——上限/原长/memory_get 全文指引。
   truncatedHint: {
@@ -166,9 +169,11 @@ export const STR = {
     zh: "[检索线索] 以下为实体图搜索的链路信息，仅供定位参考，非事实断言：",
     en: "[Retrieval hints] Entity-graph link trails below are navigation aids, not factual assertions:"
   },
+  // date 同理（可选第 4 参）：日期缺省时渲染与加日期前逐字节一致，
+  // 老的三参调用（test/graph-inject-budget.test.js 就这么调）保持可用。
   graphHintLine: {
-    zh: (type, title, content) => `- [线索/${type}] ${title}：${content}`,
-    en: (type, title, content) => `- [hint/${type}] ${title}: ${content}`
+    zh: (type, title, content, date) => `- [线索/${type}] ${date ? `${date} ` : ""}${title}：${content}`,
+    en: (type, title, content, date) => `- [hint/${type}] ${date ? `${date} ` : ""}${title}: ${content}`
   },
   userSettingsHeader: {
     zh: "[用户设置] 来自 dsh-mneme 的用户画像与规则：",

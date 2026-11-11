@@ -6,6 +6,7 @@ import { MEMORY_GUIDE_SECTION } from "./guide.js";
 import { adaptiveInjectBudget } from "./search/adaptive.js";
 import { injectChildEnabled } from "./config.js";
 import { safeSlice } from "./safe-slice.js";
+import { memoryDate } from "./date-hint.js";
 
 // Issue #179：注入预览的数据底座。systemPrompt 渲染是同步回调，面板只能事后
 // 拉取，所以在这里旁路缓存「最近一帧组装」——快照就是本次渲染用过的同一份
@@ -299,14 +300,18 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
         ? STR.verified[language]
         : "";
       const title = STR.entryTitle[language](m.title, m.importance);
+      // 条目日期（模型可见时间线索）：occurred_at 优先、缺省回落 created_at。不给
+      // 日期模型只能拿 updated_at 当年龄，而巩固合并会刷新 updated_at —— 见
+      // src/date-hint.js 顶部。
+      const date = memoryDate(m);
       // Issue #641（T4 注入标注）：conflictNote 由 injectCandidates 在 enforce
       // 档下挂上（矛盾对同批时的机械排位说明）。#537 的教训：标注必须进注入
       // 文本本体，不能只留在账本里——消费方看不见的标注等于没标。
       const content = injectMemory(m, pinned ? PINNED_CONTENT_MAX : maxContent)
         + (m.conflictNote ? "\n" + m.conflictNote : "");
       const full = m.graphHint === true
-        ? STR.graphHintLine[language](m.type, title, content)
-        : STR.entryLine[language](m.type, verified, title, content);
+        ? STR.graphHintLine[language](m.type, title, content, date)
+        : STR.entryLine[language](m.type, verified, title, content, date);
       // 线索行引导语插在第一个线索行之前（保持块头语义：先声明「这些不是事实」）。
       if (m.graphHint === true && graphSeen === 1) {
         lines.push(STR.graphHintHeader[language]);
@@ -320,7 +325,7 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
         lines.push(full);
         budget -= full.length;
       } else {
-        lines.push(`- [${m.type}] ${verified}${title}`);
+        lines.push(`- [${m.type}] ${date ? `${date} ` : ""}${verified}${title}`);
       }
       if (pinned && i === pinnedCount - 1) {
         const hidden = Math.max(0, pinnedStats?.suppressed ?? 0);
