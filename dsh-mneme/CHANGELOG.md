@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- **情绪页白屏（beta.1 起的回归，beta.2 仍在）：点开「情感」页整块面板变空白，且此后每次打开都空白**。根因是 `lib/client.js` 的 `AffectivePanel` 里一行 `formatRelativeTime(it.lastSeen)` 漏传第二个参数 `t`——该函数内部要调 `t("memory.time.now")`，缺参就抛 `t is not a function`，而这行跑在 render 里，React 整棵树卸载，日志里什么都不留。引入提交是 #619（`244da66d`），`v0.14.0-beta.1` 与 `v0.14.0-beta.2` 都带它；只有库里存在带 `lastSeen` 的情绪边时才触发，所以不是每个用户都会遇到。修法是补上 `, t`，并加一条静态断言：扫出所有 `formatRelativeTime(` 调用点，逐个做括号配对、数顶层逗号，实参不足 2 个就红。全库只有这一处漏传（`formatDate`/`formatDateShort` 本来只收一个参数，扫描器报的几处是误报）。变异自证：撤掉修复后断言变红并直接指出 `:8168 (argc=1)`。
+- **选了「off（人审队列）」却仍不断刷出待审冲突卡片，原因是「矛盾冻结」优先于档位，此前这条互斥关系只在设置项提示语里，下拉旁边看不到**。档位为 `off` 或 `shadow` 且 `conflictFreezeEnabled` 为真时，判成 conflict 的对照旧停车进 `conflict_pending`，档位选哪一档都不会减少；只有 `enforce` 且冻结关闭时才绕过队列，两者同开时冻结让位（`src/dream.js:1535` 的 `ledgerEnforce`，sleep 侧同款降级）。现在在档位下拉下方直接标一行「⚠ 冻结正在覆盖本档位」，判据与后端同源（`enumOverridden`：仅 `conflictLedgerMode`、仅 `off`/`shadow`、且读 `effective` 里的冻结值），文案中英各一条。**不改默认值、不改语义**——只是把已经在发生的事写明白，用户仍要自己关「矛盾冻结」才会停止新增。
+
 ## [0.14.0-beta.2] - 2026-11-11
 
 - **模型从此看得见记忆有多旧（时间线索）：注入行与三个检索工具的回执都带日期，`occurred_at` 优先、缺省回落到 `created_at`**：模型此前拿到的记忆只有标题、类型与正文——`created_at` 从头到尾没进过任何一条渲染路径（`src/inject.js` 全文零命中，`memory_get` 连 `updated_at` 都不给，唯一露出的时间戳是 `renderTimePrefix` 的「当前时间」一句，且默认关）。于是「三天前用户说要 A、昨天改口说 B」在模型眼里是两条等重的陈述，先后关系全靠正文里有没有恰好写着日期。

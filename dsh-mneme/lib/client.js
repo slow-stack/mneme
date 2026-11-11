@@ -1063,6 +1063,9 @@ window.__ModuleLoader__.load({
         "memory.features.conflictLedgerMode.off": "off（人审队列）",
         "memory.features.conflictLedgerMode.shadow": "shadow（只记账）",
         "memory.features.conflictLedgerMode.enforce": "enforce（确定性处置）",
+        // #661：档位选 off/shadow 但「矛盾冻结」开着时，冲突照样进人审队列——
+        // 冻结优先，档位被覆盖。不写这一行，用户只能反复看到「已选 off 却有卡片」。
+        "memory.features.conflictLedgerMode.frozenOverrides": "「矛盾冻结」正开着，它优先于本档位：判成 conflict 的对仍会进人审队列，档位选 off / shadow 都不会少。要让队列不再新增，先关掉「矛盾冻结」。",
         "memory.features.scopeEnabled": "来源标注",
         "memory.features.scopeEnabled.hint": "每条记忆标上来自哪个 Agent / 工作区。",
         "memory.features.strictScope": "严格隔离",
@@ -2193,6 +2196,8 @@ window.__ModuleLoader__.load({
         "memory.features.conflictLedgerMode.off": "off (review queue)",
         "memory.features.conflictLedgerMode.shadow": "shadow (record only)",
         "memory.features.conflictLedgerMode.enforce": "enforce (deterministic)",
+        // #661: with freeze on, the tier is overridden and conflicts still park.
+        "memory.features.conflictLedgerMode.frozenOverrides": "Conflict freeze is on and takes precedence over this mode: pairs judged conflict still enter the review queue, so off and shadow change nothing. Turn conflict freeze off to stop the queue from growing.",
         "memory.features.scopeEnabled": "Scope tagging",
         "memory.features.scopeEnabled.hint": "Tags each memory with its agent/workspace origin.",
         "memory.features.strictScope": "Strict isolation",
@@ -4935,6 +4940,13 @@ window.__ModuleLoader__.load({
       // 开关换成下拉。取值表来自 FEATURE_ENUM_VALUES，标签按 <key>.<value>
       // 从词典取——所以新增一个枚举档位只改常量表与词典，不动渲染代码。
       // 值缺失时退回首档（与后端默认档一致），不会渲染出一个没有选中的下拉。
+      // #661：冻结优先于档位这条互斥关系，此前只写在设置项提示语里，用户在
+      // 档位下拉旁边看不到；选了 off 却仍刷出待审卡片时无从判断。这里在下拉
+      // 下方直接标出「本档位正被冻结覆盖」，判据与后端同源（见 src/dream.js:1535
+      // 的 ledgerEnforce 与 sleep 侧同款降级），不另造一套语义。
+      const enumOverridden = (k) => k === "conflictLedgerMode"
+        && eff.conflictFreezeEnabled === true
+        && (eff[k] === "off" || eff[k] === "shadow");
       const enumRow = (k) => {
         const values = FEATURE_ENUM_VALUES[k] ?? [];
         return h("div", { className: "mneme-featsub", key: k },
@@ -4948,7 +4960,9 @@ window.__ModuleLoader__.load({
             },
               values.map((v) => h("option", { key: v, value: v }, t(`memory.features.${k}.${v}`))))
           ),
-          h("div", { className: "mneme-featsubhint" }, t(`memory.features.${k}.hint`))
+          h("div", { className: "mneme-featsubhint" }, t(`memory.features.${k}.hint`)),
+          enumOverridden(k) && h("div", { className: "mneme-featsubhint" },
+            "⚠ " + t(`memory.features.${k}.frozenOverrides`))
         );
       };
 
