@@ -209,3 +209,51 @@ test("roundsFromEvents with an empty surface yields no rounds (model sees nothin
   const events = [userEvent(1, "问题"), assistantEvent(2, "回答")];
   assert.equal(roundsFromEvents(events, 5, new Set()).length, 0);
 });
+
+// --- Issue #637：omitPendingRound —— 注入侧不回放「正在组装的这一轮」 ---
+
+test("omitPendingRound drops the trailing in-flight round (the #637 empty-A churn source)", () => {
+  // 本轮刚开了头（提问已落日志、回答还没来）：默认行为渲染空 A: 行——
+  // 宿主「文本变了就追加快照」的契机会让回答落地后这一行抖成正文、再多追一份。
+  const events = [userEvent(1, "第一问"), assistantEvent(2, "第一答"), userEvent(3, "第二问")];
+  const rounds = roundsFromEvents(events, 5, null, { omitPendingRound: true });
+  assert.equal(rounds.length, 1, "the in-flight round is not replayed");
+  assert.equal(rounds[0].query, "第一问");
+  assert.ok(!JSON.stringify(rounds).includes("第二问"), "the current turn's query never reaches hot memory");
+});
+
+test("omitPendingRound keeps a closed round — the block changes exactly once per turn", () => {
+  // 回答落地（轮闭合）是热块在一轮内唯一该变化的时刻：此前所有组装看到同一份
+  // 文本，此刻变成「历史轮 + 刚闭合的轮」→ 宿主恰好追一份快照。
+  const open = [userEvent(1, "第一问"), assistantEvent(2, "第一答"), userEvent(3, "第二问")];
+  const closed = [userEvent(1, "第一问"), assistantEvent(2, "第一答"), userEvent(3, "第二问"), assistantEvent(4, "第二答")];
+  const before = roundsFromEvents(open, 5, null, { omitPendingRound: true });
+  const after = roundsFromEvents(closed, 5, null, { omitPendingRound: true });
+  assert.equal(before.length, 1);
+  assert.equal(after.length, 2);
+  assert.deepEqual(after[1], { query: "第二问", response: "第二答" });
+  // 轮与轮之间（下一轮开头的组装）块不再变：第三轮的提问此刻是 pending，被省略。
+  const nextTurn = roundsFromEvents([...closed, userEvent(5, "第三问")], 5, null, { omitPendingRound: true });
+  assert.deepEqual(nextTurn, after, "the block is stable across the turn boundary — no extra snapshot");
+});
+
+test("omitPendingRound only touches the tail — mid-log abandoned rounds still render empty A", () => {
+  // 双发消息（第二问把第一问顶掉）：第一问是已被放弃的历史提问，渲染成空 A:
+  // 是既有语义，不属于「正在组装的这一轮」。
+  const events = [userEvent(1, "被顶掉的问题"), userEvent(2, "第二轮的问题"), assistantEvent(3, "第二轮的回答"), userEvent(4, "第三问")];
+  const rounds = roundsFromEvents(events, 5, null, { omitPendingRound: true });
+  assert.deepEqual(rounds, [
+    { query: "被顶掉的问题", response: "" },
+    { query: "第二轮的问题", response: "第二轮的回答" }
+  ]);
+});
+
+test("omitPendingRound works with the surface projection (rewind-shadowed tail not special)", () => {
+  // 撤回遮蔽过的事件不参与配对，也不影响「尾部 pending」的判定：可见面上最后
+  // 一条 user/message 是第二问，它才是本轮。
+  const events = [userEvent(1, "已被撤回的问题"), assistantEvent(2, "已被撤回的回答"), userEvent(3, "第一问"), assistantEvent(4, "第一答"), userEvent(5, "第二问")];
+  const visible = new Set([3, 4, 5]);
+  const rounds = roundsFromEvents(events, 5, visible, { omitPendingRound: true });
+  assert.deepEqual(rounds, [{ query: "第一问", response: "第一答" }]);
+});
+

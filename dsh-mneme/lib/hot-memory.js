@@ -60,7 +60,19 @@ export function createHotMemory({ maxRounds = 5, maxTokens = 2000 } = {}) {
 // 配对规则与 inject.js 原实现一致：user/message（source.kind 缺省或 "user"）开启
 // 新一轮；下一条 assistant 起源的事件关闭该轮。tool/system 等携带正文的事件不得
 // 冒充模型回复；rewind 标记（source.kind = "dsh-rewind"）不是用户提问。
-export function roundsFromEvents(events, maxRounds, visibleSeqs = null) {
+//
+// omitPendingRound（Issue #637）：尾部 pending 轮是「正在组装的这一轮」——它的
+// 提问已经以真实 user message 出现在 prompt 里，热记忆再渲染一份只有空 `A:` 的
+// 行是纯冗余；更糟的是回答落地后这一行会从空 `A:` 抖成正文，而宿主对动态
+// systemPrompt context 的契约是「文本变了就追加一份快照」（旧份永久留在会话
+// 历史里），于是同一轮内注入块反复变体、旧快照越积越多（报告实测 4 轮 → 10 份
+// runtime-context、75% 重复率，其中记忆与设置两段是恒定的，抖动全来自热记忆）。
+// 只省略尾部这一条；循环中途被新 user/message 顶掉的历史 pending 是已被放弃的
+// 提问，渲染成空 `A:` 是既有语义，不动。注入侧传 true：一轮内块文本恒定，回答
+// 落地时块恰好变一次 = 每轮一份快照（该机制下的理论最小值）。默认 false = 既有
+// 行为逐字节不变——后台渲染与直调方（含既有测试锁的「已完成日志渲染」形状）
+// 照旧拿到 pending 轮。
+export function roundsFromEvents(events, maxRounds, visibleSeqs = null, { omitPendingRound = false } = {}) {
   const rounds = [];
   let pendingQuery = null;
   const textOf = (event) => {
@@ -102,6 +114,6 @@ export function roundsFromEvents(events, maxRounds, visibleSeqs = null) {
     rounds.push({ query: pendingQuery, response: safeSlice(body, 800) });
     pendingQuery = null;
   }
-  if (pendingQuery) rounds.push({ query: pendingQuery, response: "" });
+  if (pendingQuery && !omitPendingRound) rounds.push({ query: pendingQuery, response: "" });
   return rounds.slice(-maxRounds);
 }

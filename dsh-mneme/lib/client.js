@@ -845,6 +845,8 @@ window.__ModuleLoader__.load({
         "memory.features.autoSummarize.hint": "对话结束后自动提炼成长期记忆。",
         "memory.features.hotMemoryEnabled": "带上最近几轮原话",
         "memory.features.hotMemoryEnabled.hint": "注入附带最近几轮对话原文，不写进长期记忆。",
+        "memory.features.injectRotationTurns": "记忆换着来：最近几轮用过的先靠后",
+        "memory.features.injectRotationTurns.hint": "填 0–20：最近 N 轮已经注入过的记忆本轮不再优先，让排后面的也有露脸机会；0 = 关（每轮都取最相关的同一批，默认）。#637 的重复注入主要来自热记忆快照抖动（已修），这个窗口解决的是另一件事：同一批记忆长期占位",
         "memory.features.injectTimePrefix": "注入日期星期",
         "memory.features.injectTimePrefix.hint": "新会话第一轮带一次日期，「今天」更稳。",
         "memory.features.entityExtractionEnabled": "实体抽取",
@@ -1960,6 +1962,8 @@ window.__ModuleLoader__.load({
         "memory.features.autoSummarize.hint": "Conversations are distilled into long-term memories automatically.",
         "memory.features.hotMemoryEnabled": "Recent turns verbatim",
         "memory.features.hotMemoryEnabled.hint": "Injects the last few raw turns; never written to long-term memory.",
+        "memory.features.injectRotationTurns": "Rotate memories: ones used in recent turns rank lower",
+        "memory.features.injectRotationTurns.hint": "0–20: memories injected in the last N turns lose priority so lower-ranked ones get a turn; 0 = off (the same top batch repeats every turn, default). The #637 duplicate-injection flood mostly came from hot-memory snapshot churn (fixed); this window addresses the other half: the same batch holding the slot forever",
         "memory.features.injectTimePrefix": "Inject date & weekday",
         "memory.features.injectTimePrefix.hint": "One date line at session start — 'today' gets reliable.",
         "memory.features.entityExtractionEnabled": "Entity extraction",
@@ -5120,6 +5124,14 @@ window.__ModuleLoader__.load({
         h("div", { className: "mneme-featsubhint" }, t("memory.features.diaryWriteEveryMinutes.hint"))
       );
 
+      // Issue #637：注入轮换窗口（0 = 关）。挂在 autoInject 下（它是注入姿态，
+      // 总闸关掉就没有「每轮带什么」可谈），随 group.basic 首屏渲染。键此前不在
+      // 后端白名单，用户只能写宿主 patch 文件——面板上连它存在都看不见。
+      const rotationSub = eff.autoInject && h("div", { className: "mneme-featsub" },
+        numRow("injectRotationTurns"),
+        h("div", { className: "mneme-featsubhint" }, t("memory.features.injectRotationTurns.hint"))
+      );
+
       const choroSub = eff.chorographyEnabled && h("div", { className: "mneme-featsub" },
         h("div", { className: "mneme-featnum" },
           h("span", { className: "mneme-featnumlabel" }, t("memory.features.chorographyInject")),
@@ -5181,7 +5193,11 @@ window.__ModuleLoader__.load({
                 // 子块与开关隔着几行甚至隔着另一个组，读起来像在给别的东西调参数。
                 "distillRecords.enabled": distillSub,
                 entityExtractionEnabled: entitySub,
-                autoSummarize: summarizeSub
+                autoSummarize: summarizeSub,
+                // #637：注入轮换窗口挂在自己的总闸 autoInject 上（#638 确立的
+                // 「子块紧贴总闸」规则），不攒到 basic 组尾——那会让它和
+                // autoSummarize/autoDream 挤在一起，看不出是谁的调参。
+                autoInject: rotationSub
               };
               const renderGroup = (g) => h(react.Fragment, { key: g.key },
                 h("div", { className: "mneme-featgroup" }, t(`memory.features.${g.key}`)),

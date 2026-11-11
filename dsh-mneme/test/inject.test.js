@@ -155,6 +155,65 @@ test("Issue #129: 扁平的 data.content 形状仍被兼容", () => {
   assert.ok(text.includes("扁平形状的回答"), "flat content shape still supported");
 });
 
+// ---- issue #637: 轮内快照洪泛 ----
+// 宿主对动态 systemPrompt context 的契约是「文本变了就追加一份 runtime-context
+// 快照，旧份永久留在会话历史」。热记忆此前把「正在组装的这一轮」也配对渲染：
+// 提问先以空 A: 出现（与 prompt 里的真实 user message 重复一遍），回答落地后
+// 这一行再抖成正文——同一轮内注入块至少变两次，报告实测 4 轮 → 10 份快照、
+// 75% 重复率。注入侧省略尾部 pending 轮后，一轮内热块文本恒定，快照数降到
+// 每轮一份（回答落地时恰好变一次）。
+
+test("issue #637: the in-flight turn's query is not duplicated into the hot block", () => {
+  const { contexts } = setup();
+  // 本轮刚开头：上一轮已完成，本轮提问已落日志、回答还没来。
+  const session = {
+    id: "s1",
+    snapshotEvents: () => [
+      { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "第一问" }] } },
+      { type: "assistant/message", data: { message: { content: [{ type: "text", text: "第一答" }] } } },
+      { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "第二问" }] } }
+    ]
+  };
+  const text = contexts[0].text({ agent: { session } });
+  assert.ok(text.includes("第一问") && text.includes("第一答"), "completed previous round replays");
+  assert.ok(!text.includes("第二问"), "the current turn's query stays only in the real user message — no empty-A duplicate");
+  assert.ok(!/\nA:\s*\n/.test(text) && !text.includes("A: \n"), "no empty-A line in the rendered block");
+});
+
+test("issue #637: renders within one turn are byte-identical (the snapshot-flood lock)", () => {
+  const { contexts } = setup();
+  const log = [
+    { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "第一问" }] } },
+    { type: "assistant/message", data: { message: { content: [{ type: "text", text: "第一答" }] } } }
+  ];
+  const render = (events) => contexts[0].text({ agent: { session: { id: "s1", snapshotEvents: () => events } } });
+  // 本轮的第一次组装：提问已落日志（回答未落地）。
+  const first = render([...log, { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "第二问" }] } }]);
+  // 工具循环中的再次组装：日志里多了 tool/assistant 中间事件，但本轮仍未闭合——
+  // 修复前这里已经是第二份快照（回答一落地就是第三份）。
+  const midTurn = render([...log,
+    { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "第二问" }] } },
+    { type: "tool/result", data: { message: { content: [{ type: "text", text: "工具输出" }] } } }
+  ]);
+  assert.equal(first, midTurn, "every assembly of the same turn renders the identical block");
+  assert.ok(first.length > 0, "the hot block still carries the completed previous round");
+});
+
+test("issue #637: the reply landing is the one change per turn; the next turn starts stable", () => {
+  const { contexts } = setup();
+  const render = (events) => contexts[0].text({ agent: { session: { id: "s1", snapshotEvents: () => events } } });
+  const u = (t) => ({ type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: t }] } });
+  const a = (t) => ({ type: "assistant/message", data: { message: { content: [{ type: "text", text: t }] } } });
+  const turnOpen = render([u("第一问")]);
+  const replyLanded = render([u("第一问"), a("第一答")]);
+  assert.ok(turnOpen === "", "the first turn renders no hot block (nothing completed yet)");
+  assert.ok(replyLanded.includes("第一问") && replyLanded.includes("第一答"), "the reply landing adds the round — the single snapshot of the turn");
+  // 下一轮开头：第三问此刻是 pending 被省略，块与上一轮收尾完全一致 → 宿主不再追快照。
+  const nextTurnOpen = render([u("第一问"), a("第一答"), u("第二问")]);
+  assert.equal(nextTurnOpen, replyLanded, "the block is stable across the turn boundary");
+});
+
+
 // ---- issue #162: 注入边界花括号转义(v0.7.4 #40 修复被 v0.7.11 误删后恢复) ----
 
 test("issue #162: {{...}} in memory content is escaped at the injection boundary", () => {
