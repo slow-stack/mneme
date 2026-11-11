@@ -269,7 +269,7 @@
 | `conflictFreezeMaxPending` | `100` | 冻结队列上限（≤1000） | — |
 | `conflictAutoResolveEnabled` | `false` | 相似度极高的**同 scope** 重复对自动裁决（保留新条、归档旧条），不进人工队列 | opt-in。会归档记忆，所以默认关；跨 scope 对永不自动（归属是用户的决定，#170）。用 supersede 而非 conflict：注记写在被归档侧，幸存记忆正文不动 |
 | `conflictAutoResolveMinSimilarity` | `0.95` | 自动裁决的相似度门槛（0.85–1） | 实测 live 库 345 条有相似度的历史行里 ≥0.95 只占 5.8%、≥0.94 占 8.1%——这一档减的是峰值，不是把队列清零。低于 0.85 就不是「重复」而是「相似」，不该自动归档任何一条 |
-| `conflictLedgerMode` | `off` | 冲突分诊账本档位（`off` / `shadow`） | beta 第一阶段（#641）。`shadow` = 每轮巩固对冲突候选对做确定性分诊（近重复/跨作用域/演进/真矛盾四档，判据见 `src/dream/triage.js`）并落 `conflict_ledger` 账本，**冻结/LLM 路径零变化**——先测一周真实分布，预注册判据过了才切 enforce（处置接线在后续 PR）。现阶段枚举里没有 enforce：不存在「设了但没行为」的档位。不进 lightMode 强制关闭清单：shadow 只多一张 bookkeeping 表的写入，无 LLM 调用无注入物（同 `actionPipelineEnabled` 的定性） |
+| `conflictLedgerMode` | `off` | 冲突分诊账本档位（`off` / `shadow` / `enforce`） | beta（#641）。`shadow` = 每轮巩固对冲突候选对做确定性分诊（近重复/跨作用域/演进/真矛盾四档，判据见 `src/dream/triage.js`）并落 `conflict_ledger` 账本，**冻结/LLM 路径零变化**——先测一周真实分布再切档。`enforce` = 确定性处置：近重复对走信息量优先 supersede（败者归档、胜者正文不动），跨作用域重复与真矛盾只记账（不停车、不送 LLM、不动正文），时序演进落取代链（旧行 `superseded_by`/`superseded_at` 指向新行，两行都留着、正文都不动，检索侧降权），人审队列消失。与 `conflictFreezeEnabled` 同开时 freeze 让位（降级 + warn，#616 父子绑定不继承）。不进 lightMode 强制关闭清单：shadow 只多一张 bookkeeping 表的写入，enforce 零 LLM 调用（同 `actionPipelineEnabled` 的定性） |
 | `conflictLedgerDupMinSimilarity` | `0.9` | 分诊 T1（近重复）档的相似度下限（0.85–1） | 检测阈值（0.85）与自动档（0.95）之间的空带由它接管：真实库 788 对的相似度回声集中在 0.85–0.93，恰好是自动档开了也接不住的那段 |
 
 ## 实体

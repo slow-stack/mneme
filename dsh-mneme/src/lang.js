@@ -130,6 +130,17 @@ export const STR = {
     en: "[Memory] Cross-session memories from dsh-mneme (user preferences and high-priority project/decision entries):"
   },
   verified: { zh: "[verified] ", en: "[verified] " },
+  // Issue #641（T4 注入标注）：矛盾对同批时的机械排位说明。#537 教训的落地——
+  // 区分信息必须进注入文本本体（谁较新/更可信、以谁为准、何时检出），不能只
+  // 留在账本里让消费方猜。
+  conflictPairPreferred: {
+    zh: (otherTitle, detected) => `⚠ 本批「${otherTitle}」与本条矛盾：本条较新/更可信，以其为准（检出 ${detected}）`,
+    en: (otherTitle, detected) => `⚠ Conflicts with "${otherTitle}" in this batch: this entry is newer/more trusted and takes precedence (detected ${detected})`
+  },
+  conflictPairSecondary: {
+    zh: (preferredTitle, detected) => `⚠ 本条与「${preferredTitle}」矛盾且居次，采用时以那条为准（检出 ${detected}）`,
+    en: (preferredTitle, detected) => `⚠ Conflicts with "${preferredTitle}" (newer/more trusted) — prefer that entry (detected ${detected})`
+  },
   entryTitle: {
     zh: (title, importance) => `${title}（重要性 ${importance}）`,
     en: (title, importance) => `${title} (importance ${importance})`

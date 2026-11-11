@@ -11,7 +11,7 @@ export const ACTIONS = new Set(["keep", "merge", "archive", "conflict", "update"
 // Epistemic trust (v0.4.5): when config.trustEpistemicWeighting is on, merge
 // keepSource and conflict winners prefer the higher-trust memory. Higher value
 // = preferred. observation (measured) > inferred (derived) > subjective (guess).
-const EPISTEMIC_PRIORITY = { observation: 3, inferred: 2, subjective: 1 };
+export const EPISTEMIC_PRIORITY = { observation: 3, inferred: 2, subjective: 1 };
 
 // Issue #104 方向 2：archive 类型护栏的长保留类型集合——这些类型的存在意义
 // 就是长期保存（踩坑记录、约束、用户偏好、挖掘出的模式），LLM 以「价值判断」
@@ -764,6 +764,44 @@ function applyConflict(d, service, snapshot, config = {}) {
     service.setArchived(d.loser, true);
   });
   return { applied: 1, committed: { action: "conflict", winner: d.winner, loser: d.loser, count_before: 2, count_after: 1 } };
+}
+
+/**
+ * 确定性信息量优先 supersede（issue #641 enforce 档的 T1 处置，供 sleep/dream
+ * 两条链路共用）。与冻结分支自动裁决档（#603 第 4 层，sleep.js 内联实现）同一
+ * 条契约，本函数是它的共享出口：
+ *   · 保留**信息量更大**的那条，不是更新的——#616 实测 55-57% 的新条反而更短
+ *     （蒸馏压缩过的一版常常更新），留新条等于把更完整的那条归档掉；
+ *   · 长度相同才退回 updated_at，再退回 id——三级兜底保证同一对每次判出同一个
+ *     赢家（重放不翻面）；
+ *   · trustEpistemicWeighting 显式关：自动处置的承诺必须是确定的，可信度换位
+ *     不让结果随 epistemic_status 数据漂移；
+ *   · 赢家正文一字不动——supersede 的可追溯注记落在被归档侧（#126 原设计）。
+ *     E13b 证明 conflict 动作的「败者前 100 字追加进赢家」是值级泄漏通道，
+ *     确定性处置一律走 supersede、不走 conflict。
+ * CAS 快照 + 事务 + 幂等（败者已归档 → applied 0）全部沿用 applyDecisions，
+ * 不另写第二份裁决路径。
+ *
+ * @param {{a: object, b: object}} p 候选对（完整记忆行：id/title/content/updated_at）
+ * @returns {{applied: boolean, winnerId: string, loserId: string, winner: object, loser: object}}
+ */
+export function supersedeInfoFirstPair(p, service, logger = null, config = {}) {
+  const an = p.a.content?.length ?? 0;
+  const bn = p.b.content?.length ?? 0;
+  const [winner, loser] = an !== bn
+    ? (an > bn ? [p.a, p.b] : [p.b, p.a])
+    : (p.a.updated_at ?? "") !== (p.b.updated_at ?? "")
+      ? ((p.a.updated_at ?? "") > (p.b.updated_at ?? "") ? [p.a, p.b] : [p.b, p.a])
+      : (p.a.id > p.b.id ? [p.a, p.b] : [p.b, p.a]);
+  const snapshot = new Map();
+  for (const m of [winner, loser]) {
+    snapshot.set(m.id, { updated_at: m.updated_at, content: m.content, title: m.title });
+  }
+  const { applied } = applyDecisions(
+    [{ action: "supersede", winner: winner.id, loser: loser.id }],
+    service, logger, snapshot, { ...config, trustEpistemicWeighting: false }
+  );
+  return { applied: applied > 0, winnerId: winner.id, loserId: loser.id, winner, loser };
 }
 
 /**

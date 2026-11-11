@@ -955,6 +955,10 @@ function toRow(row) {
     // isImportedRow）——这两格只回答「来自哪个包 / 幂等键是什么」，不回答身份。
     share_pack_id: row.share_pack_id ?? undefined,
     share_external_id: row.share_external_id ?? undefined,
+    // Issue #641 取代链：NULL 读作 undefined（未被取代），与 archived_at 同款
+    // 「时刻不可知就不编值」。
+    superseded_by: row.superseded_by ?? undefined,
+    superseded_at: row.superseded_at ?? undefined,
     content_history: parseJsonArray(row.content_history),
     evidence: parseJsonArray(row.evidence),
     doc_path: row.doc_path ?? undefined,
@@ -1373,6 +1377,15 @@ export function createStore(path) {
   // 唯一性（第二条本地行就撞响），而存量行零重写、读侧 undefined = 「不是外来行」。
   addColumn("memories", "share_pack_id", "ALTER TABLE memories ADD COLUMN share_pack_id TEXT");
   addColumn("memories", "share_external_id", "ALTER TABLE memories ADD COLUMN share_external_id TEXT");
+  // Issue #641（beta 第三阶段，取代链）：T3（时序演进）的处置不归档——旧行写
+  // superseded_by 指向取代它的新行，检索侧降权、注入不再选中，但行本身保持
+  // 活跃、随时可人工恢复。存量行两列皆 NULL：历史裁决走的是「归档」路径，
+  // 反推不出该指给谁（receipt_chain 有 winner/loser，但那是另一套语义），宁可
+  // 不填也不猜。superseded_at 是裁决时刻（服务器单调时钟），与内容时间无关。
+  addColumn("memories", "superseded_by", "ALTER TABLE memories ADD COLUMN superseded_by TEXT");
+  addColumn("memories", "superseded_at", "ALTER TABLE memories ADD COLUMN superseded_at TEXT");
+  // 部分索引：降权查询只关心「已被取代」的行；未取代行（绝大多数）不进索引。
+  db.exec("CREATE INDEX IF NOT EXISTS idx_memories_superseded ON memories(superseded_by) WHERE superseded_by IS NOT NULL;");
   // 索引建在加列之后而非写进 SCHEMA（本文件 content_hash 那段：存量库打开时 CREATE TABLE
   // 是 no-op，列还不存在就建索引会直接 no such column）。
   // 部分索引（WHERE ... IS NOT NULL）是刻意的，但它承重的地方要说准：SQLite 的 UNIQUE
@@ -4070,6 +4083,9 @@ export function createStore(path) {
 
   // --- conflict triage ledger（issue #641，shadow 档）-----------------------
 
+  // 四态里 superseded（已被取代）与 open 有写入点；differentiated（人审判为不同事、
+  // 不必再问）与 zombied（两条都已退场、无从消解）是预留位，当前没有任何代码路径
+  // 会写它们——留着是为了状态机与面板筛选口径完整，别当成「已实现但没数据」。
   const LEDGER_STATUSES = new Set(["open", "superseded", "differentiated", "zombied"]);
   const LEDGER_TIERS = new Set(["dup", "cross-scope-dup", "evolution", "conflict"]);
 
@@ -4113,6 +4129,63 @@ export function createStore(path) {
       "UPDATE conflict_ledger SET status = ? WHERE memory_a = ? AND memory_b = ?"
     ).run(status, a, b);
     return res.changes > 0;
+  }
+
+  /**
+   * 取代链落笔（issue #641，T3 时序演进的处置）：旧行 superseded_by → 新行。
+   * 只动这两列，刻意不走 updateMemory 的完整写路径——syncMirror/notifyWrite/
+   * updated_at 都不该被一个纯元数据标注触发（正文一个字节没变，镜像无 diff
+   * 可同步；bump updated_at 反而会误导「已审过」的宽松代理判定）。已归档/
+   * 已遗忘的行不落链（它们已经退场，再标注是给幽灵记账）；重复写同一指向
+   * 是无害的幂等 no-op，换指向以最后一次为准。
+   *
+   * 幂等守卫（#650 评审）：上面那句「无害的 no-op」只对指向成立——superseded_at
+   * 每次都会刷成新的 nowIso()，返回值又按 changes > 0 判，于是同一对每轮都报
+   * 「刚处理过」：t3Chained 虚增，取代时刻被改写成最近一次巩固的时间（挂账时长
+   * 一类指标随之失真）。先读当前指向，已指向同一 winner 就直接返回 false 且不
+   * 写库，只有首次落链或换指向才真正落笔。
+   */
+  function supersedeChain(loserId, winnerId) {
+    const current = db.prepare("SELECT superseded_by FROM memories WHERE id = ?").get(loserId);
+    // 行不存在 / 已指向同一继任者：no-op，不刷时间戳、不计入变更数。
+    if (!current || current.superseded_by === winnerId) return false;
+    const res = db.prepare(
+      "UPDATE memories SET superseded_by = ?, superseded_at = ? WHERE id = ? AND archived = 0 AND forgotten = 0"
+    ).run(winnerId, nowIso(), loserId);
+    return res.changes > 0;
+  }
+
+  /**
+   * 已被取代行的 id 清单（issue #641，T3 检索侧降权用）。走部分索引，未落链
+   * 的库上是空查询。返回数组而非 Set——集合语义由调用方决定。
+   *
+   * 只认「继任者仍活着」的旧行（#650 评审）：链是一次性写下的指向，而继任者
+   * 之后仍可能被归档/遗忘/删除。若只判 superseded_by IS NOT NULL，那种情况下
+   * 旧行会被当成「已有新版本」从注入里摘掉，可它自己明明是活的、且它指向的
+   * 那条已经退场——数据在库里却永远不再出现，是一种沉默的不可逆失效。JOIN 到
+   * 继任者上要求 archived=0 且 forgotten=0，继任者退场即自动恢复旧行可见性。
+   */
+  function supersededIds() {
+    return db.prepare(
+      `SELECT m.id AS id
+         FROM memories m
+         JOIN memories w ON w.id = m.superseded_by
+        WHERE m.superseded_by IS NOT NULL
+          AND w.archived = 0
+          AND w.forgotten = 0`
+    ).all().map((r) => r.id);
+  }
+
+  /**
+   * 仍未消解的真矛盾对（issue #641，T4 注入侧感知用）。只取 tier=conflict 且
+   * status=open 的行——superseded/differentiated 已消解，zombied 已被 heat 兜底；
+   * shadow 档记下的观察对也在其中（注入侧标注以 enforce 档为门，见 injectCandidates）。
+   * 按最近观察排序，上限 2000：账本对的量级是个位数到几十，上限只为防御性兜底。
+   */
+  function openConflictPairs(limit = 2000) {
+    return db.prepare(
+      "SELECT memory_a, memory_b, first_seen_at AS detected FROM conflict_ledger WHERE tier = 'conflict' AND status = 'open' ORDER BY last_seen_at DESC LIMIT ?"
+    ).all(Math.max(1, Math.min(2000, limit | 0)));
   }
 
   /** Triage rows for the panel/analysis views, newest detection first. */
@@ -5716,6 +5789,9 @@ export function createStore(path) {
     listConflictReviewed,
     saveConflictLedgerEntry,
     setConflictLedgerStatus,
+    supersedeChain,
+    supersededIds,
+    openConflictPairs,
     listConflictLedger,
     countConflictLedger,
     saveScopeChange,

@@ -299,7 +299,11 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
         ? STR.verified[language]
         : "";
       const title = STR.entryTitle[language](m.title, m.importance);
-      const content = injectMemory(m, pinned ? PINNED_CONTENT_MAX : maxContent);
+      // Issue #641（T4 注入标注）：conflictNote 由 injectCandidates 在 enforce
+      // 档下挂上（矛盾对同批时的机械排位说明）。#537 的教训：标注必须进注入
+      // 文本本体，不能只留在账本里——消费方看不见的标注等于没标。
+      const content = injectMemory(m, pinned ? PINNED_CONTENT_MAX : maxContent)
+        + (m.conflictNote ? "\n" + m.conflictNote : "");
       const full = m.graphHint === true
         ? STR.graphHintLine[language](m.type, title, content)
         : STR.entryLine[language](m.type, verified, title, content);

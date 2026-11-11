@@ -595,22 +595,28 @@ export const Config = z.object({
   conflictAutoResolveEnabled: z.boolean().default(false),
   conflictAutoResolveMinSimilarity: z.number().min(0.85).max(1).default(0.95),
 
-  // --- conflict ledger（issue #641，beta 第一阶段）--------------------------
+  // --- conflict ledger（issue #641，beta）-----------------------------------
   // 冲突分诊账本的档位。真实库 788 对人审队列的全量分类：46% 近重复 + 20% 跨作用域
   // 重复 + 5% 时序演进，真矛盾只有 ~27%——现行窄 prompt 把前 71% 全逼成了「输赢」，
   // 再由人逐对裁决（≈30 条/天，且 92% 的对从未两侧同场）。分诊把「谁该机械处理、
   // 谁才是真矛盾」从 LLM 手里拿回来（E13b：winner-take-all 裁决 P(毒胜出)=86.8%）。
   //
-  //   "off"    默认。不分类、不记账，conflict 相位与 v0.13.0 逐字节一致。
-  //   "shadow" 只分类 + 落 conflict_ledger 账本（bookkeeping，不触发 write hooks），
-  //            freeze/LLM 路径零变化——beta 实验的测量期：shadow 一周拿真实分诊
-  //            分布，验证是否复现 46/20/5/27，预注册判据过了才切 enforce（处置接线
-  //            是后续 PR：T1 送合并、T2 去重账本、T3 取代链、T4 惰性消解）。
+  //   "off"     默认。不分类、不记账，conflict 相位与本键引入前逐字节一致。
+  //   "shadow"  只分类 + 落 conflict_ledger 账本（bookkeeping，不触发 write hooks），
+  //             freeze/LLM 路径零变化——beta 实验的测量期：shadow 一周拿真实分诊
+  //             分布，验证是否复现 46/20/5/27。
+  //   "enforce" 确定性处置：T1（dup）走信息量优先 supersede（supersedeInfoFirstPair，
+  //             败者归档、胜者正文不动、可追溯注记在被归档侧）；T2（跨作用域重复）
+  //             与 T4（真矛盾）只记账——不停车、不送 LLM、不动正文；T3（时序演进）
+  //             落取代链：旧行 superseded_by/superseded_at 指向新行，两行都留着、
+  //             正文都不动，检索侧按降权处理。人审队列与 LLM 裁决都不再消费冲突
+  //             候选；与 conflictFreezeEnabled 同开时 freeze 让位（降级 shadow
+  //             + warn，#616 父子绑定不继承）。
   //
-  // 现阶段枚举里不放 "enforce"：宁可让配置挡住手滑，也不要一个「设了但没行为」的
-  // 档位——#616 的「假成功」教训（autoMin 0.95 在现库覆盖为 0，开了等于没开，用户
-  // 以为功能坏了）。判据唯一实现在 src/dream/triage.js。
-  conflictLedgerMode: z.union([z.const("off"), z.const("shadow")]).default("off"),
+  // 判据唯一实现在 src/dream/triage.js；处置共享实现在 decisions.js 的
+  // supersedeInfoFirstPair。每个档位的行为都真实存在——#616 的「假成功」教训
+  // （autoMin 0.95 在现库覆盖为 0，开了等于没开）。
+  conflictLedgerMode: z.union([z.const("off"), z.const("shadow"), z.const("enforce")]).default("off"),
   // T1（dup）档的相似度下限。检测阈值（normal 0.85）与自动档 autoMin（0.95）之间
   // 的空带由它接管：真实库 reason 相似度回声集中在 0.85-0.93，正好落在两个阈值
   // 之间、自动档开了也接不住的那一段。下界与检测阈值同源。

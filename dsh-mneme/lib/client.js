@@ -1058,6 +1058,11 @@ window.__ModuleLoader__.load({
         "memory.features.bm25SearchEnabled.hint": "关键词一路的词法检索，与语义互补。",
         "memory.features.conflictFreezeEnabled": "矛盾冻结",
         "memory.features.conflictFreezeEnabled.hint": "整理发现矛盾先冻结待确认，不自动裁决。",
+        "memory.features.conflictLedgerMode": "矛盾处理档位",
+        "memory.features.conflictLedgerMode.hint": "off：矛盾走人审队列（现状）。shadow：分诊只记账零处置，先跑一周看分布。enforce：确定性处置（近重复自动归档、演进落取代链、矛盾注入标注），人审与 LLM 裁决退出。与「矛盾冻结」互斥，同开时冻结让位。",
+        "memory.features.conflictLedgerMode.off": "off（人审队列）",
+        "memory.features.conflictLedgerMode.shadow": "shadow（只记账）",
+        "memory.features.conflictLedgerMode.enforce": "enforce（确定性处置）",
         "memory.features.scopeEnabled": "来源标注",
         "memory.features.scopeEnabled.hint": "每条记忆标上来自哪个 Agent / 工作区。",
         "memory.features.strictScope": "严格隔离",
@@ -1276,6 +1281,15 @@ window.__ModuleLoader__.load({
         "memory.status.conflictQueue.markReviewed": "仅标记已处理",
         "memory.status.conflictQueue.applyHint": "确认后：保留方正文追加已否决注记，另一方归档。",
         "memory.status.conflictQueue.missing": "（该记忆已不存在）",
+        "memory.status.ledger.title": "矛盾账本（分诊 · 只读）",
+        "memory.status.ledger.dist": "分诊分布：",
+        "memory.status.ledger.total": "累计",
+        "memory.status.ledger.status": "状态",
+        "memory.status.ledger.loadError": "账本加载失败",
+        "memory.status.ledger.tier.dup": "近重复",
+        "memory.status.ledger.tier.cross-scope-dup": "跨作用域",
+        "memory.status.ledger.tier.evolution": "时序演进",
+        "memory.status.ledger.tier.conflict": "真矛盾",
         "memory.status.conflictQueue.goto": "查看待确认冲突队列",
         "memory.status.conflictQueue.resolved": "已裁决：保留{name}",
         "memory.status.conflictQueue.refresh": "刷新队列",
@@ -2166,6 +2180,11 @@ window.__ModuleLoader__.load({
         "memory.features.bm25SearchEnabled.hint": "Lexical keyword retrieval alongside semantics.",
         "memory.features.conflictFreezeEnabled": "Conflict freeze",
         "memory.features.conflictFreezeEnabled.hint": "Freezes contradictions for review instead of auto-deciding.",
+        "memory.features.conflictLedgerMode": "Conflict handling mode",
+        "memory.features.conflictLedgerMode.hint": "off: conflicts go to the human review queue (status quo). shadow: triage only records — zero disposition; run a week and inspect the distribution first. enforce: deterministic resolution (near-dups auto-archived, evolution chained, conflict pairs annotated); human review and LLM adjudication step out. Mutually exclusive with conflict freeze — freeze yields when both are on.",
+        "memory.features.conflictLedgerMode.off": "off (review queue)",
+        "memory.features.conflictLedgerMode.shadow": "shadow (record only)",
+        "memory.features.conflictLedgerMode.enforce": "enforce (deterministic)",
         "memory.features.scopeEnabled": "Scope tagging",
         "memory.features.scopeEnabled.hint": "Tags each memory with its agent/workspace origin.",
         "memory.features.strictScope": "Strict isolation",
@@ -2384,6 +2403,15 @@ window.__ModuleLoader__.load({
         "memory.status.conflictQueue.markReviewed": "Mark reviewed only",
         "memory.status.conflictQueue.applyHint": "On confirm: a veto note is appended to the kept side and the other side is archived.",
         "memory.status.conflictQueue.missing": "(memory no longer exists)",
+        "memory.status.ledger.title": "Conflict ledger (triage · read-only)",
+        "memory.status.ledger.dist": "Triage distribution:",
+        "memory.status.ledger.total": "total",
+        "memory.status.ledger.status": "status",
+        "memory.status.ledger.loadError": "Ledger failed to load",
+        "memory.status.ledger.tier.dup": "Near-dup",
+        "memory.status.ledger.tier.cross-scope-dup": "Cross-scope",
+        "memory.status.ledger.tier.evolution": "Evolution",
+        "memory.status.ledger.tier.conflict": "Conflict",
         "memory.status.conflictQueue.goto": "View pending conflict queue",
         "memory.status.conflictQueue.resolved": "Resolved: kept {name}",
         "memory.status.conflictQueue.refresh": "Refresh queue",
@@ -5236,7 +5264,26 @@ window.__ModuleLoader__.load({
                       h(Icon, { name: showAdv ? "chevronDown" : "chevronRight", size: 12 }),
                       t("memory.features.advancedToggle"))
                   ),
-                  showAdv && FEATURE_ADVANCED_BOOLS.map((k) => boolRow(k))
+                  showAdv && h(react.Fragment, null,
+                    FEATURE_ADVANCED_BOOLS.map((k) => boolRow(k)),
+                    // conflictLedgerMode（#641）：三档枚举，紧挨 conflictFreezeEnabled
+                    // 摆——两者语义关联（enforce 与 freeze 互斥，同开时冻结让位），
+                    // 隔开摆放会让人以为各自独立。枚举键没有通用渲染器，手写下拉
+                    // （choroSub 同款）。
+                    h("div", { className: "mneme-featsub" },
+                      h("div", { className: "mneme-featnum" },
+                        h("span", { className: "mneme-featnumlabel" }, t("memory.features.conflictLedgerMode")),
+                        h("select", {
+                          className: "mneme-select",
+                          value: eff.conflictLedgerMode || "off",
+                          disabled: busy,
+                          onChange: (e) => put({ conflictLedgerMode: e.target.value })
+                        },
+                          ["off", "shadow", "enforce"].map((v) => h("option", { key: v, value: v }, t(`memory.features.conflictLedgerMode.${v}`))))
+                      ),
+                      h("div", { className: "mneme-featsubhint" }, t("memory.features.conflictLedgerMode.hint"))
+                    )
+                  )
                 )
               );
             })()
@@ -7676,6 +7723,44 @@ window.__ModuleLoader__.load({
         }));
     }
 
+    // --- 矛盾分诊账本（#641，状态页只读卡）----------------------------------
+    // 与上面的冲突队列互补：队列是「等人来」的待办（freeze 模式），账本是
+    // 「机器观察/处置过什么」的只读面（shadow 记账、enforce 处置）。行不是
+    // 待办——处置由 enforce 档自动完成，这里只回答「账本里有什么、分布如何」。
+    // 空账本整块不渲染（与冲突队列同款：不打扰无矛盾实例）。
+    function ConflictLedger({ t }) {
+      const [data, setData] = useState(null);
+      const [loadError, setLoadError] = useState(false);
+      const load = () => {
+        apiFetch("/api/dsh-mneme/conflicts/ledger?limit=50")
+          .then((res) => { if (!res.ok) throw new Error("http"); return res.json(); })
+          .then((d) => { setData(d); setLoadError(false); })
+          .catch(() => { setData(null); setLoadError(true); });
+      };
+      useEffect(() => { load(); }, []);
+      if (loadError) {
+        return h("div", { className: "mneme-statuscard mneme-set-hint" }, t("memory.status.ledger.loadError"));
+      }
+      if (!data) return null;
+      const counts = data.counts || {};
+      const total = typeof data.total === "number" ? data.total : 0;
+      if (total === 0) return null;
+      const tierKey = (v) => "memory.status.ledger.tier." + v;
+      const tiers = [["dup"], ["cross-scope-dup"], ["evolution"], ["conflict"]];
+      const rows = (data.items || []).slice(0, 8);
+      return h("div", { className: "mneme-statuscard" },
+        h("div", { className: "mneme-set-h3" }, t("memory.status.ledger.title")),
+        h("div", { className: "mneme-set-hint" },
+          t("memory.status.ledger.dist")
+          + " " + tiers.map(([k]) => `${t(tierKey(k))} ${counts[k] ?? 0}`).join(" · ")
+          + " · " + t("memory.status.ledger.total") + " " + total),
+        h("div", { className: "mneme-conflictq" },
+          rows.map((r) => h("div", { key: r.memory_a + "|" + r.memory_b, className: "mneme-conflict-item" },
+            h("div", { className: "mneme-conflict-reason" },
+              `${t(tierKey(r.tier))} · ${t("memory.status.ledger.status")}: ${r.status} · ${String(r.first_seen_at || "").slice(0, 10)}`))))
+      );
+    }
+
     // --- 状态页工作台：让用户切实看见插件在干活 ---
     // 活动流合并 llm_audit 里 autoDream/autoSummarize 的后台调用（状态、
     // token、沉淀条数）；沉淀记忆列表用 audit 行携带的 related_memory_ids
@@ -8099,6 +8184,7 @@ window.__ModuleLoader__.load({
         h("div", { className: "mneme-statushead" }, t("memory.status.sec.maintenance")),
         h("div", { className: "mneme-statusgrid" }, h(MaintenanceCard, { t })),
         h("div", { ref: queueRef }, h(ConflictsQueue, { t })),
+        h(ConflictLedger, { t }),
         h(WorkbenchSection, { t, onBrowse })
       );
     }

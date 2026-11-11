@@ -446,10 +446,10 @@ const FEATURE_FLAG_ENUMS = {
   // M3 开局注入档位（spec §7）：轻量档在消费侧压成 off，见 wiki/inject.js 的
   // resolveInjectTier——LIGHT_MODE_OFF 对平铺键一律赋 false，枚举值进去会静默失效。
   chorographyInject: ["off", "light", "full"],
-  // Issue #641：冲突分诊账本档位。现阶段只放 off/shadow——「设了但没行为」的档位
-  // 不进枚举（#616「假成功」教训：阈值覆盖为 0 时开了等于没开，用户以为功能坏了）；
-  // enforce（处置接线）随其实现 PR 一起进枚举。
-  conflictLedgerMode: ["off", "shadow"]
+  // Issue #641：冲突分诊账本档位。off（默认，零行为）/ shadow（只记账）/ enforce
+  // （确定性处置：T1 信息量优先 supersede，T2-T4 记账不停车不送 LLM）。三个档位
+  // 都有真实行为——「设了但没行为」的档位不进枚举（#616「假成功」教训）。
+  conflictLedgerMode: ["off", "shadow", "enforce"]
 };
 const FEATURE_FLAG_STRING_MAX = 200;
 

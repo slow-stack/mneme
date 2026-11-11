@@ -11,7 +11,7 @@ import { CAPACITY_WARNING_DEFAULTS } from "./config.js";
 // 外来行（source='imported'，导入路径落的来源）的身份判定只许有一个定义处——本文件的
 // 两处汇流口与巩固/降级那些读侧行池都调这同一个谓词，避免各处自己写字符串比较然后各自漂移。
 import { isImportedRow } from "./memory-source.js";
-import { applyDecisions } from "./dream/decisions.js";
+import { applyDecisions, EPISTEMIC_PRIORITY } from "./dream/decisions.js";
 import { createDocumentRegistrar } from "./document.js";
 import { createOrganizer } from "./organize.js";
 import { createShareImport } from "./share-import.js";
@@ -835,7 +835,7 @@ export function createService({ store, mirror, config, onWrite, logger, document
    * Returns { merged, signals }, where signals is Map<id, {keyword, vector,
    * bm25}> so searchMemories can decorate rows when signalTransparency is on.
    */
-  function fuseRecall({ keyword, vector, bm25, entity, lim, mode, wv, wk, wb, we }) {
+  function fuseRecall({ keyword, vector, bm25, entity, lim, mode, wv, wk, wb, we, supersededIds = null }) {
     const recipe = config?.recallFusion ?? "blend";
 
     // Per-source scores are recorded for every recipe so signalTransparency
@@ -976,6 +976,22 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // 且带 seen 去重与容量控制），不该由收尾段替别的配方代劳。删掉后 rrf/minmax
     // 的 auto 排序就是它们各自算出来的排序。
 
+    // #641（T3 取代链的检索侧，beta 第三阶段）：已被取代的行整体降权后重排——
+    // 它仍是「曾经为真」的可追溯历史，显式搜索照样能找到，但不该与取代它的
+    // 那行竞争注入名次。乘 0.5 的语义是「同卷必排继任者之后」，不是隐藏；
+    // 取代链只会在 enforce 档下落笔，链没落过时本段与从前逐字节一致。
+    // keyword 短路在前面已 return——那是人的显式检索动作，保留完整可见性与
+    // 原始排序。已知边界：各分支已按 lim 截断，这里只重排不再回填——极端
+    // 情况下一个刚挤进末位的被取代行会占住名额，但它被压到继任者之后，按
+    // 名次消费的注入实际效果等价；把降权挪进各分支截断前是显式重构，等
+    // 召回基准跑过一轮再决定值不值。行形状随来源不一（向量源可能是瘦行），
+    // 所以按 id 集合判定而不是读行上的 superseded_by。
+    if (supersededIds?.size) {
+      merged = merged
+        .map((m) => (supersededIds.has(m.id) ? { ...m, score: (m.score ?? 0) * 0.5 } : m))
+        .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    }
+
     return { merged, signals };
   }
 
@@ -1090,7 +1106,9 @@ export function createService({ store, mirror, config, onWrite, logger, document
     const wv = config?.hybridSearchVectorWeight ?? DEFAULT_HYBRID_WEIGHTS.vector;
     const wk = config?.hybridSearchKeywordWeight ?? DEFAULT_HYBRID_WEIGHTS.keyword;
 
-    const { merged: fusedMerged, signals } = fuseRecall({ keyword, vector, bm25, entity, lim, mode, wv, wk, wb, we: wb });
+    // T3 降权的判定集：一次部分索引查询拿全部已取代行 id（通常为空或个位数）。
+    const supersededIds = new Set(store.supersededIds());
+    const { merged: fusedMerged, signals } = fuseRecall({ keyword, vector, bm25, entity, lim, mode, wv, wk, wb, we: wb, supersededIds });
     let merged = fusedMerged;
     // v0.8.0 A3（issue #17）：strictScope 硬过滤——他 scope 的候选直接出局
     // （区别于 A2 的降权保留可见）；未标注行与命中行保留。strict 与 A2 加权
@@ -2097,7 +2115,49 @@ export function createService({ store, mirror, config, onWrite, logger, document
     }
     // #249 第一批：pin 前置到块内相关性排序之前（验收项），且不占 maxItems 名额。
     // pinned 为空时 selected 就是 general 本身——关闭态与改动前逐字节一致。
-    const selected = pinned.length > 0 ? [...pinned, ...general] : general;
+    let selected = pinned.length > 0 ? [...pinned, ...general] : general;
+    // Issue #641（T3/T4 注入侧，beta 第三阶段）：取代链行不进注入——继任者携带
+    // 现状，旧值注入只会浪费名额、冒着被采用的风险（supersedeChain 只由 enforce
+    // 落笔，shadow/关闭态下集合恒空，本过滤与从前逐字节一致）。矛盾对（tier=
+    // conflict 且仍 open）同批时按「可信度 → 新者」排位并互相标注：#537 的教训
+    // 是标注必须把区分信息带进注入文本，否则重演「记账了但没用上」；标注再显式
+    // 门控在 enforce 档——shadow 只记账零处置。
+    const supersededIdSet = new Set(store.supersededIds());
+    if (supersededIdSet.size) {
+      selected = selected.filter((m) => !supersededIdSet.has(m.id));
+    }
+    if (config.conflictLedgerMode === "enforce" && selected.length > 1) {
+      const language = langOf(config);
+      const byId = new Map(selected.map((m) => [m.id, m]));
+      for (const p of store.openConflictPairs()) {
+        const ma = byId.get(p.memory_a);
+        const mb = byId.get(p.memory_b);
+        if (!ma || !mb) continue;
+        // 确定性排位：可信度（observation > inferred > subjective，与
+        // applyConflict 的换位同序）优先，平手退回服务器时钟新者。多对并存时
+        // 逐一交换以相对次序为准——矛盾对是稀有事件，交换足够且可预测。
+        const rank = (m) => EPISTEMIC_PRIORITY[m.epistemic_status] ?? 0;
+        let preferred = ma;
+        let other = mb;
+        const ra = rank(ma);
+        const rb = rank(mb);
+        if (ra !== rb) {
+          if (rb > ra) { preferred = mb; other = ma; }
+        } else if ((mb.created_at ?? "") > (ma.created_at ?? "")) {
+          preferred = mb;
+          other = ma;
+        }
+        const detected = String(p.detected ?? "").slice(0, 10);
+        preferred.conflictNote = STR.conflictPairPreferred[language](String(other.title ?? "").slice(0, 24), detected);
+        other.conflictNote = STR.conflictPairSecondary[language](String(preferred.title ?? "").slice(0, 24), detected);
+        const pi = selected.indexOf(preferred);
+        const oi = selected.indexOf(other);
+        if (pi > oi) {
+          selected.splice(pi, 1);
+          selected.splice(oi, 0, preferred);
+        }
+      }
+    }
     if (pinnedStats) {
       // 「未展示」只数**真的没进块**的 pin 类条目：被 pin 预算挤下来的条目会回到
       // 候选池，仍可能被 general 槽选中——那就是展示了。按 eligible - pinned 直接
@@ -3145,6 +3205,10 @@ export function createService({ store, mirror, config, onWrite, logger, document
     setConflictLedgerStatus: (a, b, s) => store.setConflictLedgerStatus(a, b, s),
     listConflictLedger: (opts) => store.listConflictLedger(opts),
     countConflictLedger: (opts) => store.countConflictLedger(opts),
+    // #641 T3 取代链：与上面 ledger 同一条 bookkeeping 纪律——纯元数据标注绝不
+    // 触发 write hooks（正文零变化，镜像无 diff；bump updated_at 会污染
+    // 「这一对刚判过」的宽松代理判定）。
+    supersedeChain: (loserId, winnerId) => store.supersedeChain(loserId, winnerId),
     // Recall evaluation trail (方案 B): audit-bookkeeping semantics like the
     // dream/recall passthroughs above — a recall_evals write is a snapshot, not
     // a memory mutation, so it never triggers write hooks.

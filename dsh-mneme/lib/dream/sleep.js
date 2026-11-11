@@ -23,7 +23,8 @@ import { STR, langOf } from "../lang.js";
 import { randomUUID, createHash } from "node:crypto";
 import { validateDecisions, applyDecisions, ACTIONS } from "./decisions.js";
 import { findPotentialConflicts, cosineSimilarity } from "./clustering.js";
-import { recordLedgerTriage } from "./triage.js";
+import { triagePair, recordLedgerTriage } from "./triage.js";
+import { supersedeInfoFirstPair } from "./decisions.js";
 import { scopeKeyOf } from "../scope.js";
 import { buildReceipt, describeStreamFailure, resolveDreamEffort, withEffortFallback, withMaxTokensFallback, maintainIndexAfterDream, fenceListBody, parseFailureMeta } from "../dream.js";
 import { computeHeat } from "../heat.js";
@@ -377,7 +378,18 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
     if (!rec?.judged_at) return false;
     return (p.a.updated_at ?? "") <= rec.judged_at && (p.b.updated_at ?? "") <= rec.judged_at;
   };
-  const selectionPairs = config.conflictFreezeEnabled === true
+  // Issue #641（beta 第二阶段）：分诊账本的档位。#616 点名的父子绑定不继承——
+  // enforce 与 freeze 同开时 freeze 让位（本相位降级 shadow + warn）：freeze 照常
+  // 停车（shadow 语义 = 只记账零处置），绝不出现两套处置语义同时生效。宁可少处置，
+  // 不在打架的配置下跑。
+  let ledgerMode = config.conflictLedgerMode ?? "off";
+  if (ledgerMode === "enforce" && config.conflictFreezeEnabled === true) {
+    logger?.warn?.("dsh-mneme sleep: conflictLedgerMode=enforce coexists with conflictFreezeEnabled — degrading to shadow; disable one of them");
+    ledgerMode = "shadow";
+  }
+  // alreadyJudged 预筛只为省 LLM：freeze 与 enforce 都不走 LLM，筛不筛不影响成本，
+  // 不筛还能让 T2/T3/T4 的每轮观察持续刷新账本（tier 可能随内容更新而变）。
+  const selectionPairs = config.conflictFreezeEnabled === true || ledgerMode === "enforce"
     ? fresh
     : fresh.filter((p) => isCrossScopePair(p) || !alreadyJudged(p));
   const ledgerSkipped = fresh.length - selectionPairs.length;
@@ -395,11 +407,11 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // 分诊（dup / cross-scope-dup / evolution / conflict，判据唯一实现见 triage.js）
   // 并落 conflict_ledger。shadow = 只记账零处置：下面 freeze/LLM 路径一个字节都
   // 不变——shadow 的存在意义就是让「分诊分布是否复现真实库 46/20/5/27」在真实
-  // 运行里可测，作为切 enforce（处置接线，后续 PR）前的预注册证据。记账失败只
-  // warn 计数，绝不反噬相位（与 conflict_reviewed 同一条 best-effort 纪律）。
+  // 运行里可测，作为切 enforce 前的预注册证据。记账失败只 warn 计数，绝不反噬
+  // 相位（与 conflict_reviewed 同一条 best-effort 纪律）。
   // 记账时点在 used 去重之后：被去重压掉的那半边对（同一条记忆配给了更高相似的
   // 对手）本来就不是这一轮的候选，观察它们只会让分母虚高。
-  const ledgerTriage = (config.conflictLedgerMode ?? "off") === "shadow"
+  const ledgerTriage = ledgerMode !== "off"
     ? await recordLedgerTriage(service, runId, selected, {
         dupMinSimilarity: config.conflictLedgerDupMinSimilarity,
         logger,
@@ -407,6 +419,98 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
         signal
       })
     : null;
+
+  // Issue #641（beta 第二阶段，enforce 档）：确定性处置接线。T1（dup）走
+  // supersedeInfoFirstPair（与冻结分支自动档同一条契约，decisions.js 共享实现）；
+  // T1 走信息量优先 supersede、T3 走取代链（superseded_by 指向，不归档）、
+  // T2/T4 记账即处置——不停车、不送 LLM。人审队列与 LLM 裁决在本档下都不再
+  // 消费冲突候选，conflict_pending 恒空。每轮上限沿用
+  // sleepConflictMaxPairsPerRun：处置虽不走 LLM，归档/落链仍是写动作，写预算
+  // 与 freeze/auto 两档同口径。T4 的检索时消解（fuseRecall 矛盾感知 + 注入
+  // 标注）是后续 PR，本档先把人审摘出去。
+  if (ledgerMode === "enforce") {
+    const perRunCap = config.sleepConflictMaxPairsPerRun ?? 60;
+    const pool = perRunCap > 0 ? selected.slice(0, perRunCap) : selected;
+    let t1Resolved = 0;
+    let t1Failed = 0;
+    let t3Chained = 0;
+    const t1VectorFixups = [];
+    for (const p of pool) {
+      const verdict = triagePair(p.a, p.b, p.similarity, { dupMinSimilarity: config.conflictLedgerDupMinSimilarity });
+      if (verdict.tier === "evolution") {
+        // T3 取代链（beta 第三阶段）：旧行 superseded_by → 新行，检索降权，
+        // **不归档**——演进不是输赢，旧值仍是「曾经为真」的可追溯历史（与
+        // supersede 动作的归档语义不同）。新者胜对演进成立：间隔 ≥7 天的
+        // 同主题对，新记载才反映现状（服务器时钟，内容声称的时间不做键）。
+        const newer = (p.a.created_at ?? "") >= (p.b.created_at ?? "") ? p.a : p.b;
+        const older = newer === p.a ? p.b : p.a;
+        try {
+          if (service.supersedeChain(older.id, newer.id)) {
+            t3Chained += 1;
+            // 先落观察行再推进状态（#650 评审）：enforce 档下 recordLedgerTriage 只会
+            // 把这一对写成 open，UPDATE 于此才有行可命中；顺序反了就是静默落空。
+            service.saveConflictLedgerEntry({ run_id: runId, memory_a: p.a.id, memory_b: p.b.id, tier: verdict.tier, similarity: p.similarity, signals: verdict.signals });
+            service.setConflictLedgerStatus(p.a.id, p.b.id, "superseded");
+          }
+        } catch (error) {
+          logger?.warn?.(`dsh-mneme sleep: ledger T3 chain failed for ${p.a.id}/${p.b.id}: ${String(error)}`);
+        }
+        continue;
+      }
+      if (verdict.tier !== "dup") continue;
+      let res = null;
+      try {
+        res = supersedeInfoFirstPair(p, service, logger, config);
+      } catch (error) {
+        logger?.warn?.(`dsh-mneme sleep: ledger T1 supersede failed for ${p.a.id}/${p.b.id}: ${String(error)}`);
+      }
+      if (res?.applied) {
+        t1Resolved += 1;
+        // winner/loser 用 helper 判定的真实方向（信息量优先可能翻转 p.a/p.b）
+        t1VectorFixups.push({ action: "supersede", winner: res.winnerId, loser: res.loserId });
+        try {
+          // 账本状态推进 + 机器台账照记（与自动档同款 outcome 口径）——自动处置
+          // 也要能事后回答「这一对什么时候、被谁判的」。先落观察行（#650 评审）：
+          // 这一对未必已在账本里，直接 UPDATE 会命中 0 行而静默失记。
+          service.saveConflictLedgerEntry({ run_id: runId, memory_a: p.a.id, memory_b: p.b.id, tier: verdict.tier, similarity: p.similarity, signals: verdict.signals });
+          service.setConflictLedgerStatus(p.a.id, p.b.id, "superseded");
+          service.saveConflictReviewed?.({ run_id: runId, memory_a: p.a.id, memory_b: p.b.id, outcome: "supersede", judged_at: new Date().toISOString() });
+        } catch (error) {
+          logger?.warn?.(`dsh-mneme sleep: ledger bookkeeping after T1 supersede failed for ${p.a.id}/${p.b.id}: ${String(error)}`);
+        }
+      } else {
+        t1Failed += 1;
+      }
+    }
+    // 败者向量清理：T1 的 supersede 不在下面 LLM 通路的 maintainIndexAfterDream
+    // 清单里（enforce 已早退），必须在早退前自己清——已归档行留向量等于检索
+    // 层「看得见摸不着」。
+    if (t1VectorFixups.length > 0 && semantic?.embedder && semantic?.vectorIndex) {
+      try {
+        await maintainIndexAfterDream(t1VectorFixups, service, semantic);
+      } catch (error) {
+        logger?.warn?.(`dsh-mneme sleep: ledger T1 index maintenance failed: ${String(error)}`);
+      }
+    }
+    if (selected.length > pool.length) {
+      logger?.warn?.(`dsh-mneme sleep: conflict ledger enforce capped at ${pool.length}/${selected.length} pairs this run`);
+    }
+    return {
+      status: t1Failed > 0 ? "degraded" : t1Resolved > 0 || t3Chained > 0 ? "ok" : "noop",
+      clean: t1Failed === 0,
+      frozen: 0,
+      scopeCandidates: 0,
+      pairs: selected.length,
+      batches: 0,
+      ledgerSkipped,
+      // applied 是整轮回执的唯一写库口径（runSleep 的 totalApplied 只认这个键）。
+      // 缺了它，本档真实发生的 T1 归档与 T3 落链在 receipt / dream_runs.applied
+      // 里全是 0 ——「本相位说改了、整轮说没改」（#650 评审，#619 同族）。
+      applied: t1Resolved + t3Chained,
+      enforced: { t1Resolved, t1Failed, t3Chained },
+      ...(ledgerTriage ? { ledgerTriage } : {})
+    };
+  }
 
   // v0.8.1（issue #170 第 2 步）：跨 scope 相似对分流。同一内容落在两个归属下
   // （任一维标注键不等即算，NULL=未标注=全局也参与比较——「全局副本 + 专属副本

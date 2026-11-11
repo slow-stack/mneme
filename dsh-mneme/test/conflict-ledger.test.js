@@ -224,11 +224,12 @@ test("issue#641 conflict_ledger：tier/status 过滤口径（shadow 周分析的
 
 // ---- 配置面 ----
 
-test("issue#641 conflictLedgerMode 默认 off、枚举拒绝 enforce（不存在设了没行为的档位）", () => {
+test("issue#641 conflictLedgerMode 默认 off、枚举拒绝未定义档位（不存在设了没行为的档位）", () => {
   const cfg = Config({});
   assert.equal(cfg.conflictLedgerMode, "off");
   assert.equal(cfg.conflictLedgerDupMinSimilarity, 0.9);
-  assert.throws(() => Config({ conflictLedgerMode: "enforce" }), /conflictLedgerMode/);
+  // enforce 在 beta 第二阶段进枚举（处置接线），但清单之外的值仍然要被拒
+  assert.throws(() => Config({ conflictLedgerMode: "yolo" }), /conflictLedgerMode/);
 });
 
 test("issue#641 LEDGER_TIERS 与 store 侧白名单一致（两处清单不许漂移）", () => {
