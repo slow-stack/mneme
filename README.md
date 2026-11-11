@@ -153,7 +153,9 @@ dsh web
   召回（混合检索 + 精排）──► 注入会话上下文
 ```
 
-## 🧭 M.O.：让「怎么做」也住进仓库（v0.9 beta）
+## 🧭 M.O.：让「怎么做」也住进仓库（v0.9 beta，v0.13.0 起从面板下架）
+
+> **状态（v0.13.0）**：这一组已从设置面板下架，界面上没有入口了。三个旗标（`actionPipelineEnabled` / `actionRunEnabled` / `actionNudgeEnabled`）与 `/mo-run` 命令、座位注册逻辑都还在，语义零改动——想恢复界面，把那行加回 `FEATURE_GROUPS` 与 `FEATURE_FIRST_SCREEN` 即可。下面保留的是它的设计说明。
 
 记忆库记得住**为什么**这么做，但记不住**这件事到底怎么跑**。工作流住在哪，决定了它能不能被改：住在记忆库里是一行没有 diff 的文字，住在会话里是一次性的提示词，住在人脑里改不动也不留痕。
 
@@ -458,7 +460,9 @@ The one way to lose data is pointing the library **inside** your profile scope (
   recall (hybrid search + rerank) ──► inject into the conversation
 ```
 
-## 🧭 M.O.: make "how it's done" live in the repo (v0.9 beta)
+## 🧭 M.O.: make "how it's done" live in the repo (v0.9 beta; retired from the panel in v0.13.0)
+
+> **Status (v0.13.0)**: this group is no longer rendered in the settings panel. The three flags (`actionPipelineEnabled` / `actionRunEnabled` / `actionNudgeEnabled`), the `/mo-run` command and the seat-registration logic are all unchanged — to bring the UI back, add the group back to `FEATURE_GROUPS` and `FEATURE_FIRST_SCREEN`. What follows is the original design write-up.
 
 The memory store remembers **why** a thing was done that way, but not **how the thing actually runs**. Where a workflow lives decides whether it can be changed at all: as a line in the memory store it has no diff; as a session prompt it exists once; in someone's head it can't be edited and leaves no trace.
 
