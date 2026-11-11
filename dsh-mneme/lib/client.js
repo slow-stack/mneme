@@ -4629,7 +4629,7 @@ window.__ModuleLoader__.load({
     // 「它记的东西会不会被别的会话看到」。其余组整组收进「全部设置」折叠
     // （showAll）。成员从原组里移走而不是渲染时过滤：同一项永远只渲染一次。
     // 首屏可点项 = 3 总开关 + autoInject 的 2 个子开关 + 扩展功能 3 个闸门 +
-    // scope 2 开关 + 「全部设置」按钮 = 11。v0.9.0 曾按产品主人点名把 M.O.
+    // 睡眠 2 项 + scope 2 开关 + 「全部设置」按钮 = 13。v0.9.0 曾按产品主人点名把 M.O.
     // 独立成组并提进首屏（当时豁免 ≤8 软预算，理由记在 test/client.test.js 的
     // 同名用例里）；v0.13.x 主人决定把 M.O. 下架，预算回到 8。
     // v0.13.x 第二次豁免（#607 后续）：主人要「一眼看见」仓库地志与知识库这两个
@@ -4638,8 +4638,15 @@ window.__ModuleLoader__.load({
     // 有功能没入口。为此新开 group.ext 并进首屏，预算 8→11。豁免的是「一眼看见」
     // 这条产品要求，不是把预算取消：再往首屏塞东西前先问它是不是和这三个闸门
     // 同级的子系统，不是就留在折叠层。
+    // v0.13.x 第三次豁免（用户 2026-11-11 反馈「装了发现设置没情绪那一页的开关」）：
+    // 豁免由头是 sleepModeEnabled 的**同级性**，不是「用户要」——它是「巩固与睡眠」
+    // 这个子系统的总闸，与 group.ext 的三个闸门同级，按上面那条判据本该在首屏，
+    // 而它恰好是首屏唯一缺席的子系统总闸，于是整个 group.dream 躺在折叠层。
+    // sleepAffectiveEnabled 是它的并列成员（FEATURE_CHILDREN 里没有父子关系），
+    // 跟着整组进来；不单拎进 group.basic —— 那里收的是「新手敢动的自动类总开关」，
+    // 把巩固细节塞进去会打散该组的语义边界。预算 11→13。
     // RuntimeProvisionBlock 配好即消失，常态首屏更少。
-    const FEATURE_FIRST_SCREEN = ["group.basic", "group.ext", "group.scope"];
+    const FEATURE_FIRST_SCREEN = ["group.basic", "group.ext", "group.dream", "group.scope"];
     const FEATURE_GROUPS = [
       { key: "group.basic", items: ["autoInject", "autoSummarize", "autoDream"] },
       // 扩展功能（v0.13.x）：mneme 本体只做记忆，仓库地志 / 知识库 / 日记本是
@@ -4682,6 +4689,18 @@ window.__ModuleLoader__.load({
     // 与 retrieve 的常开旋钮不同级。调优类数值键（seedCap/depth/weight* 等）
     // 刻意不设座位，走配置文件（见 FEATURE_NUMBERS 的同名纪律）。
     const FEATURE_ADVANCED_BOOLS = ["hybridInject", "selectiveInjectEnabled", "adaptiveThresholdEnabled", "entityRecallEnabled", "graphAnchoringEnabled", "reflectionUpdateEnabled", "reflectionFailureTracking", "conflictFreezeEnabled", "trustEpistemicWeighting"];
+    // 枚举键（下拉）：形态与布尔开关不同——取值是多档而不是开/关，所以不进
+    // FEATURE_ADVANCED_BOOLS（那一组的每一行都由 boolRow 统一渲染）。此前
+    // conflictLedgerMode 的下拉手写在「高级」折叠的末尾，等于第七个出口：
+    // 可达性测试按常量表数座位，按定义看不见它，#641 那个下拉被误删也不会红。
+    // 登记口径：新枚举键在这里加一行、在 FEATURE_ENUM_VALUES 配对取值表，
+    // 渲染一律由 FEATURE_ENUMS.map 驱动，别再从别处手写第二个下拉。
+    const FEATURE_ENUMS = ["conflictLedgerMode"];
+    // 取值表与后端 FEATURE_FLAG_ENUMS 对齐：面板能选到的档必须与后端接受的档
+    // 同一份——多一档后端 400，少一档用户调不到。首档即默认档。
+    const FEATURE_ENUM_VALUES = {
+      conflictLedgerMode: ["off", "shadow", "enforce"]
+    };
     // 字符串键（blur/Enter 提交，空串合法 = 跟随默认）：巩固模型与语义
     // 检索路线。embedProvider 是枚举，用下拉单独渲染。
     const FEATURE_STRINGS = ["dreamProvider", "dreamModel", "sleepProvider", "sleepModel", "entityExtractionProvider", "entityExtractionModel", "localEmbedModel", "ollamaBaseUrl", "ollamaModel",
@@ -4887,6 +4906,27 @@ window.__ModuleLoader__.load({
         tag: flagTag(k),
         onToggle: () => put({ [k]: !eff[k] })
       });
+
+      // 枚举行：与 boolRow 同一副骨架（左边名称 + 提示语，右边控件），只把
+      // 开关换成下拉。取值表来自 FEATURE_ENUM_VALUES，标签按 <key>.<value>
+      // 从词典取——所以新增一个枚举档位只改常量表与词典，不动渲染代码。
+      // 值缺失时退回首档（与后端默认档一致），不会渲染出一个没有选中的下拉。
+      const enumRow = (k) => {
+        const values = FEATURE_ENUM_VALUES[k] ?? [];
+        return h("div", { className: "mneme-featsub", key: k },
+          h("div", { className: "mneme-featnum" },
+            h("span", { className: "mneme-featnumlabel" }, t(`memory.features.${k}`)),
+            h("select", {
+              className: "mneme-select",
+              value: eff[k] || values[0],
+              disabled: busy,
+              onChange: (e) => put({ [k]: e.target.value })
+            },
+              values.map((v) => h("option", { key: v, value: v }, t(`memory.features.${k}.${v}`))))
+          ),
+          h("div", { className: "mneme-featsubhint" }, t(`memory.features.${k}.hint`))
+        );
+      };
 
       // 带子项的父开关：父行 + 紧随其后的子行（子行缩进，父关时标注不生效）。
       const flagRow = (k) => {
@@ -5266,23 +5306,10 @@ window.__ModuleLoader__.load({
                   ),
                   showAdv && h(react.Fragment, null,
                     FEATURE_ADVANCED_BOOLS.map((k) => boolRow(k)),
-                    // conflictLedgerMode（#641）：三档枚举，紧挨 conflictFreezeEnabled
-                    // 摆——两者语义关联（enforce 与 freeze 互斥，同开时冻结让位），
-                    // 隔开摆放会让人以为各自独立。枚举键没有通用渲染器，手写下拉
-                    // （choroSub 同款）。
-                    h("div", { className: "mneme-featsub" },
-                      h("div", { className: "mneme-featnum" },
-                        h("span", { className: "mneme-featnumlabel" }, t("memory.features.conflictLedgerMode")),
-                        h("select", {
-                          className: "mneme-select",
-                          value: eff.conflictLedgerMode || "off",
-                          disabled: busy,
-                          onChange: (e) => put({ conflictLedgerMode: e.target.value })
-                        },
-                          ["off", "shadow", "enforce"].map((v) => h("option", { key: v, value: v }, t(`memory.features.conflictLedgerMode.${v}`))))
-                      ),
-                      h("div", { className: "mneme-featsubhint" }, t("memory.features.conflictLedgerMode.hint"))
-                    )
+                    // 枚举行排在布尔行之后，由 FEATURE_ENUMS 驱动。conflictLedgerMode
+                    // 紧跟 conflictFreezeEnabled 是有意的：两者语义关联（enforce 与
+                    // freeze 互斥，同开时冻结让位），隔开摆放会让人以为各自独立。
+                    FEATURE_ENUMS.map((k) => enumRow(k))
                   )
                 )
               );
@@ -9230,6 +9257,11 @@ window.__ModuleLoader__.load({
       const [receiveOpen, setReceiveOpen] = useState(false);
       const itemRefs = useRef(new Map());
       const moreRef = useRef(null);
+      // 子系统页签的座位闸门（用户 2026-11-11 反馈「装了发现设置没情绪那一页的
+      // 开关」）：开关关着，对应页签就不注册，同一条闸门管入口与座位。
+      // null = features 还没到手，按「一律不渲染需要闸门的页签」处理（见下方
+      // useEffect 的注释）；{} = 拉取失败，按全关处理（fail-closed）。
+      const [seatEff, setSeatEff] = useState(null);
 
       const switchViewMode = (mode) => {
         setViewMode(mode);
@@ -9241,6 +9273,20 @@ window.__ModuleLoader__.load({
           .then((res) => res.json())
           .then((d) => setVecEnabled(!!d.config?.enabled))
           .catch(() => {});
+      }, []);
+
+      // 页签闸门的数据源。features 是异步拉的，所以「加载中」必须有自己的表现：
+      // 未到手（null）时一律不渲染需要闸门的页签——先不出现、到手后补上是渐显，
+      // 反过来先全渲染再收起会在加载完成那一瞬间闪一下消失，那才是看得见的跳变。
+      // 拉取失败也收敛到 {}（全关），与后端「关着就不注册座位」同一口径：
+      // 读不到就不给入口，不做乐观放行。
+      useEffect(() => {
+        let cancelled = false;
+        apiFetch("/api/dsh-mneme/features")
+          .then((res) => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
+          .then((j) => { if (!cancelled) setSeatEff((j && j.effective) || {}); })
+          .catch(() => { if (!cancelled) setSeatEff({}); });
+        return () => { cancelled = true; };
       }, []);
 
       // 冲突冻结指示：dream-status 一次带出待确认冲突涉及的记忆 id，
@@ -9596,15 +9642,32 @@ window.__ModuleLoader__.load({
         diary: "book"
       };
 
+      // 页签闸门：affective / diary 两格跟着各自的总闸走，开关关着就不注册
+      // （与后端「关着就不注册座位」同一条口径，用户 2026-11-11 反馈）。
+      // 加载中 seatEff 还是 null → seatOpen 恒假，这两格先不出现；到手后一次补上。
+      // 用 filter(Boolean) 而不是渲染时再过滤，是为了让「这一格在不在」只有
+      // 一个判据（数组长度即页签数），测试也能直接数。
+      const seatOpen = (key) => !!seatEff && !!seatEff[key];
       const subviews = [
         { key: "memory", label: t("memory.explorer.tabMemory") },
         { key: "entity", label: t("memory.explorer.tabEntities") },
         { key: "status", label: t("memory.explorer.tabStatus") },
         { key: "settings", label: t("memory.explorer.tabSettings") },
+        // persona 页签刻意不挂闸门：它承载人格卡的查看与编辑，注入总闸关着时
+        // 仍然要能改内容（先写好人设、后面再开注入），不是「关着就没意义」的
+        // 数据页。affective / diary 不同：没开就没有数据可看，进来是空页。
         { key: "persona", label: t("memory.explorer.tabPersona") },
-        { key: "affective", label: t("memory.explorer.tabAffective") },
-        { key: "diary", label: t("memory.diary.title") }
-      ];
+        seatOpen("sleepAffectiveEnabled") && { key: "affective", label: t("memory.explorer.tabAffective") },
+        seatOpen("diaryEnabled") && { key: "diary", label: t("memory.diary.title") }
+      ].filter(Boolean);
+
+      // 闸门关掉后重开面板：view 可能还停在已经被过滤掉的那一格上，渲染出来
+      // 是一张空白页。到手即回落 memory——「页签没了、内容还停在半空」不能留。
+      useEffect(() => {
+        if (!seatEff) return;
+        if (view === "affective" && !seatEff.sleepAffectiveEnabled) setView("memory");
+        else if (view === "diary" && !seatEff.diaryEnabled) setView("memory");
+      }, [seatEff, view]);
 
       return h("div", { className: "mneme-x" },
         h("div", { className: "mneme-xbar" },

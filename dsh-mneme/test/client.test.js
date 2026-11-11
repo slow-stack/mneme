@@ -1617,11 +1617,18 @@ test("scope isolation ships panel switches and provenance surfaces (A4)", () => 
 // 找得到、找不到就没法开」——#607 报的「知识库没成型」一半是入口问题。它们
 // 是「装不装这个子系统」而非「每轮付多少」，与 enhance 的行为开关不同级，
 // 所以单列一组并提到首屏。**再往首屏塞东西前先问：它是不是同级子系统？**
+// **v0.13.x 第三次豁免（用户 2026-11-11 反馈「装了发现设置没情绪那一页的开关」）**：
+// 首屏加 group.dream（巩固与睡眠），可点项预算 11→13。豁免由头是 sleepModeEnabled
+// 的**同级性**——它是「巩固与睡眠」这个子系统的总闸，与 group.ext 的三个闸门同级，
+// 而它是首屏唯一缺席的子系统总闸（整组因此躺在「全部设置」里）。不是「用户要」：
+// 后半句能撑住判据，前半句不能。sleepAffectiveEnabled 是它的并列成员
+// （FEATURE_CHILDREN 里没有父子关系），跟着整组进来，不单拎进 group.basic——
+// 那里收的是新手敢动的自动类总开关，塞进巩固细节会打散该组的语义边界。
 test("settings card folds everything beyond the first screen behind All settings (issue #427)", () => {
-  // ① 首屏层组成：三组都要在（basic 总开关 / ext 子系统总闸 / scope 必答题），
-  // 且 basic 的成员是从 core/dream 移走的。
-  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.ext", "group\.scope"\];/.test(clientSource),
-    "the first screen must be the basic, ext and scope groups (M.O. taken down in v0.13.x; ext added as the second product exemption)");
+  // ① 首屏层组成：四组都要在（basic 总开关 / ext 子系统总闸 / dream 巩固总闸 /
+  // scope 必答题），且 basic 的成员是从 core/dream 移走的。
+  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.ext", "group\.dream", "group\.scope"\];/.test(clientSource),
+    "the first screen must be the basic, ext, dream and scope groups (M.O. taken down in v0.13.x; ext and dream added as product exemptions 2 and 3)");
   // M.O. 下架锁：组从 FEATURE_GROUPS 摘掉 ≠ 只把首屏位去掉。少了这一条，下次
   // 有人「顺手把组加回来」时会折进「全部设置」，测试照绿而 M.O. 又出现在面板上。
   assert.ok(!/\{ key: "group\.mo", items: \[/.test(clientSource),
@@ -1681,6 +1688,147 @@ test("settings card folds everything beyond the first screen behind All settings
     "flagTag must return null on default rows (no more always-grey 「默认」 chips)");
   assert.ok(!clientSource.includes("memory.features.tagDefault"),
     "the tagDefault copy must stay deleted along with its render site");
+});
+
+// C 项：入口可达性锁（用户 2026-11-11 反馈「装了发现设置没情绪那一页的开关」）。
+// FEATURE_GROUPS 是手写 key 数组——新开关要在首屏数组、折叠白名单、高级层、
+// 输入行这几处手工登记，漏一处就变成「后端接好了、面板上找不到」，而且不报错。
+// group.dream 这次就是这么漏的：整组躺在「全部设置」里，用户装完找不到巩固与
+// 睡眠。这条测试是唯一能防同类复发、又不用把数据结构改成 glob 模式的机制。
+// 解析口径：直接切 clientSource 的字面量，不 eval、不 import——这四个常量是
+// 面板的私有实现细节，测试只该看到文本形状，不应该把它们导出去。
+test("every settings group is reachable and every flag key owns exactly one seat", () => {
+  // 文本断言的假通过防线：注释里同样能写出 `FEATURE_ENUMS.map(` 这类片段。
+  // 谁把它写进注释、而真的渲染行早被删掉，断言就永远绿。所以下面的文本断言
+  // 一律跑在去注释副本上，且断言本身要求行首缩进 + 紧贴的调用形态（行尾注释
+  // 写不进那个位置）。剥法只去整行 `//` 与 `/* */` 段：行内注释不碰，因为
+  // 字符串里可能出现 `//`（URL），误剥会把真代码切坏。
+  const stripComments = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
+  const codeSource = stripComments(clientSource);
+
+  // 切出某个 `const X = [ ... ];` 的方括号内文本。FEATURE_GROUPS 的 items 里
+  // 只有 `}],` 收尾，第一个 `];` 就是常量本身结束，不会被组内的 `]` 提前截断。
+  const grabArray = (name) => {
+    const head = `const ${name} = [`;
+    const at = codeSource.indexOf(head);
+    assert.ok(at >= 0, `const ${name} must exist`);
+    const start = at + head.length;
+    const end = codeSource.indexOf("];", start);
+    assert.ok(end > start, `const ${name} must be a closed array literal`);
+    return codeSource.slice(start, end);
+  };
+  const grabObject = (name) => {
+    const head = `const ${name} = {`;
+    const at = codeSource.indexOf(head);
+    assert.ok(at >= 0, `const ${name} must exist`);
+    const start = at + head.length;
+    const end = codeSource.indexOf("};", start);
+    assert.ok(end > start, `const ${name} must be a closed object literal`);
+    return codeSource.slice(start, end);
+  };
+  const quoted = (text) => [...text.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+
+  const groups = [...grabArray("FEATURE_GROUPS").matchAll(/\{ key: "(group\.[a-z]+)", items: \[([\s\S]*?)\] \}/g)]
+    .map((m) => ({ key: m[1], items: quoted(m[2]) }));
+  assert.ok(groups.length >= 8, `FEATURE_GROUPS must parse into its groups (got ${groups.length})`);
+  const firstScreen = quoted(grabArray("FEATURE_FIRST_SCREEN"));
+  const advanced = quoted(grabArray("FEATURE_ADVANCED_BOOLS"));
+  const strings = quoted(grabArray("FEATURE_STRINGS"));
+  const numbers = quoted(grabArray("FEATURE_NUMBERS"));
+  const enums = quoted(grabArray("FEATURE_ENUMS"));
+  const enumValuesBody = grabObject("FEATURE_ENUM_VALUES");
+  const childrenBody = grabObject("FEATURE_CHILDREN");
+  const children = [...childrenBody.matchAll(/\[([^\]]*)\]/g)].flatMap((m) => quoted(m[1]));
+
+  // ① 每个组必须二选一：进首屏，或显式登记在下面的折叠白名单里。两个都没写
+  // = 这一组的开关整组躺在「全部设置」里没人知道，正是 group.dream 的病。
+  // deepEqual 一次覆盖三件事：不重叠、不引用不存在的组、没有漏登记的组。
+  const FOLDED_GROUPS = ["group.safety", "group.pipeline", "group.retrieve", "group.persona"];
+  assert.deepEqual(
+    groups.map((g) => g.key).sort(),
+    [...firstScreen, ...FOLDED_GROUPS].sort(),
+    "every group must be on the first screen or explicitly listed as folded; a group that skips both has no entry"
+  );
+
+  // ② 空组等于白注册：组在、里面没有开关，用户点开是一片空白。
+  for (const g of groups) {
+    assert.ok(g.items.length > 0, `${g.key} must carry at least one switch`);
+  }
+
+  // ③ 一个开关只能有一个座位。同一 key 落进两组会渲染两次（render-once 破坏），
+  // 两个开关的显隐状态还可能不同步；落进组又落进「高级」更糟——同一项在两层
+  // 各画一遍。所以这里比覆盖，更比**互斥**。
+  const owner = new Map();
+  const claim = (keys, outlet) => {
+    for (const k of keys) {
+      assert.ok(!owner.has(k),
+        `${k} is rendered by both ${owner.get(k)} and ${outlet} — one switch, one seat`);
+      owner.set(k, outlet);
+    }
+  };
+  for (const g of groups) claim(g.items, g.key);
+  claim(children, "FEATURE_CHILDREN");
+  claim(advanced, "FEATURE_ADVANCED_BOOLS");
+  claim(strings, "FEATURE_STRINGS");
+  claim(numbers, "FEATURE_NUMBERS");
+  claim(enums, "FEATURE_ENUMS");
+
+  // ④ 反向：首屏数组引用的组必须真实存在（拼错组名 = 首屏少两组却没人发现）。
+  const known = new Set(groups.map((g) => g.key));
+  for (const k of firstScreen) assert.ok(known.has(k), `FEATURE_FIRST_SCREEN references a non-existent ${k}`);
+  // ⑤ 首屏与折叠白名单不能重叠：一个组同时出现在两边，语义上说不通。
+  for (const k of FOLDED_GROUPS) {
+    assert.ok(!firstScreen.includes(k), `${k} cannot be both folded and on the first screen`);
+  }
+
+  // ⑥ 登记了就必须真渲染。conflictLedgerMode 此前的处境是反过来的：渲染代码
+  // 里手写了一个下拉，但没在任何常量表里登记，所以上面五个出口都数不到它，
+  // #641 那个下拉被误删也不会有测试红。现在它进了表的第六个出口，剩下要锁的
+  // 是另一头——表里有这个 key、渲染代码却没人消费它，同样是静默消失。
+  assert.ok(/^\s+FEATURE_ENUMS\.map\(\(k\) => enumRow\(k\)\)/m.test(codeSource),
+    "FEATURE_ENUMS must be consumed by map() so every registered enum key renders a row");
+  assert.ok(/^\s+const enumRow = \(k\) =>/m.test(codeSource),
+    "enumRow must stay the single shared renderer for enum keys (one row shape, not a second hand-written select)");
+  // 取值表与登记表必须一一对应：表里多一个孤儿 setback 就没人渲染，
+  // 少一个取值表则下拉点开是空的。配上「至少两档」防止把枚举写成假开关。
+  const enumValueKeys = [...enumValuesBody.matchAll(/([A-Za-z][A-Za-z0-9_]*):\s*\[/g)].map((m) => m[1]);
+  assert.deepEqual(enumValueKeys.sort(), [...enums].sort(),
+    "every enum key must own exactly one value table, and no value table may be orphaned");
+  for (const k of enums) {
+    const at = enumValuesBody.indexOf(k + ":");
+    const values = [...(enumValuesBody.slice(at).match(/\[([^\]]*)\]/)?.[1] ?? "")
+      .matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    assert.ok(values.length >= 2, `${k} must offer at least two states (an enum with one state is a hidden switch)`);
+  }
+  // ⑦ 已知枚举座位的反向锚。今天只有一个——它是面板上唯一「取值成档」的开关，
+  // 被整条摘掉时没有任何别的测试会发现（i18n 锁只扫组 items，扫不到枚举行）。
+  assert.deepEqual(enums, ["conflictLedgerMode"],
+    "conflictLedgerMode is the only enum seat today; losing it silently removes the #641 dropdown");
+});
+
+// B 项：页签闸门的加载态。features 是异步拉的，规则必须是「未到手就不渲染」——
+// 反过来先按默认值全渲染、到手再收起，会在加载完成那一瞬间闪一下消失，那是
+// 看得见的跳变；而「先不出现、到手后补上」只是渐显。这条锁规则本身，不锁渲染
+// 结果：组件没有导出，测试看不到 DOM，但能锁住「初值 null」「null 时恒假」
+// 「失败也关」这三个决定行为走向的字面量。
+test("tab seats wait for the feature flags instead of flashing a default", () => {
+  assert.ok(/const \[seatEff, setSeatEff\] = useState\(null\)/.test(clientSource),
+    "the flag snapshot must start as null (loading), not an optimistic default");
+  assert.ok(/const seatOpen = \(key\) => !!seatEff && !!seatEff\[key\]/.test(clientSource),
+    "seatOpen must be false while the snapshot is still null — a tab appears only once its flag is known");
+  assert.ok(/seatOpen\("sleepAffectiveEnabled"\) && \{ key: "affective"/.test(clientSource),
+    "the affective tab must be gated on its own master switch");
+  assert.ok(/seatOpen\("diaryEnabled"\) && \{ key: "diary"/.test(clientSource),
+    "the diary tab must be gated on its own master switch");
+  assert.ok(/\.catch\(\(\) => \{ if \(!cancelled\) setSeatEff\(\{\}\); \}\)/.test(clientSource),
+    "a failed flag fetch must close the gates (fail-closed), not open them");
+  // 页签没了、view 还停在那一格会渲染成空白页，必须回落 memory。
+  assert.ok(/if \(view === "affective" && !seatEff\.sleepAffectiveEnabled\) setView\("memory"\)/.test(clientSource),
+    "a view left on a now-hidden tab must fall back to the memory tab");
 });
 
 // #481：面板开关「改了不生效」的体验坑。开关在宿主启动时合并进冻结 cfg，
@@ -3000,6 +3148,28 @@ test("panel copy and icons must not silently vanish (missing dict lines, unregis
     .flatMap((m) => [...m[1].matchAll(/"([a-zA-Z0-9_.]+)"/g)].map((x) => x[1])))];
   assert.ok(flagKeys.length >= 20, `group items must be parseable (saw ${flagKeys.length})`);
   for (const k of flagKeys) { usedKeys.add("memory.features." + k); usedKeys.add("memory.features." + k + ".hint"); }
+  // ①-c 枚举行：标签、提示、每一档的取值标签全走模板串（t(`memory.features.${k}`)），
+  // ①-a 的字面量扫描看不见，①-b 只扫组 items。所以 conflictLedgerMode 这整组
+  // 文案在收进 FEATURE_ENUMS 之前，从来没被这条测试覆盖过——文案丢了界面会裸奔
+  // 出键名，而闸门照绿。
+  const enumHead = "const FEATURE_ENUMS = [";
+  const enumAt = clientSource.indexOf(enumHead);
+  assert.ok(enumAt >= 0, "FEATURE_ENUMS must exist (enum keys have no other seat registry)");
+  const enumBody = clientSource.slice(enumAt + enumHead.length, clientSource.indexOf("];", enumAt));
+  const enumKeys = [...enumBody.matchAll(/"([a-zA-Z0-9_]+)"/g)].map((m) => m[1]);
+  assert.ok(enumKeys.length >= 1, "FEATURE_ENUMS must be parseable");
+  const valuesHead = "const FEATURE_ENUM_VALUES = {";
+  const valuesAt = clientSource.indexOf(valuesHead);
+  assert.ok(valuesAt >= 0, "FEATURE_ENUM_VALUES must exist");
+  const valuesBody = clientSource.slice(valuesAt + valuesHead.length, clientSource.indexOf("};", valuesAt));
+  for (const k of enumKeys) {
+    usedKeys.add("memory.features." + k);
+    usedKeys.add("memory.features." + k + ".hint");
+    const at = valuesBody.indexOf(k + ":");
+    assert.ok(at >= 0, `enum ${k} must have a value table (an empty dropdown is a dead control)`);
+    const values = [...(valuesBody.slice(at).match(/\[([^\]]*)\]/)?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    for (const v of values) usedKeys.add("memory.features." + k + "." + v);
+  }
 
   const missing = [...usedKeys].filter((k) => !defined(k)).sort();
   assert.deepEqual(missing, [], `用而无典的 i18n 键（界面会裸奔出键名）：${missing.join(", ")}`);
