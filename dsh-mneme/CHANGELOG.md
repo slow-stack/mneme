@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- **wiki 面板三处「给人看」的口径修正：机器标记不再露、文件 status 与库同步、树的缩进看真父子（#582）**：chorography 的价值主要在「人看」，但面板把三件「给程序看的东西」也摆了出来。**① `<!-- CHORO:T1:START/END -->` 等机器标记原样显示**——`renderWikiMarkdown` 没有 HTML 注释分支，t0/t1 用来剥段与回填的段落边界成了一行行裸文本；现在渲染层跳过「整行以 `<!--` 开头」的行，且**挂在代码围栏分支之后**（``` 块里的 HTML 注释是内容不是标记，先剥了它示例就缺行）；`choro_read_page` 的工具回执与磁盘文件原样不动——真源纪律只约束数据面，渲染层另有一层口径。**② frontmatter 的 `status` 在 T1 之后不回写**——T1 成功只改库（`markChoroPageEnriched`），文件里那行永远停在 T0 写的 `skeleton`：11 个已富化模块页的文件与数据库状态全部不一致，看文件的人会以为从没富化过。现在 T1 成功路径（`enrichPageFile` → `markChoroPageEnriched` 同一条）把 `status: enriched` 一起写进 frontmatter（键名进 `render.js` 的 `FM_STATUS`，与 verified 两键同住——frontmatter 的形状属于页面格式）；失败路径不写，文件停在 skeleton 与「首次失败不标 failed（骨架仍是有效产物）」的库侧口径一致；重富化幂等覆写、不重复插行。**存量已富化页的文件不做批量回填**（那些文件有用户手写的 HUMAN 保留区，机器批量改写内容文件不可逆），重跑一次 T1 即自然对齐。**③ 左侧模块树的缩进按 slug 连字符数算**——slugify 把路径分隔与一切非字母数字都变成 `-`，目录名自带的连字符与去重序号（`-2`）都会冒充层级，`packages-computer-use-src` 被画成三层深而 `docs`/`root` 顶格；现在用 `moduleMap` 本来就返回的 `id`/`parent_id` 建真父子序：根（无父或父不在表里）按 slug 序先出、孩子紧跟父后，环成员防御性归入根层兜底（宁可用根层平铺也不能静默丢行——树少一页等于入口没了）。回归测试 5 条：T1 成功把文件 status 推进到 enriched / 重富化幂等且 status 只有一行 / 失败路径不动文件 / 渲染器跳过分支必须挂在围栏分支之后 / 树构建必须用 parent_id 且连字符计数彻底退场。变异自证 4 例（删标记跳过 → 红；树退回连字符 → 红；撤 status 回写 → 红；回写错值 skeleton → 红），恢复后全绿。
+
+## [0.14.0-beta.3] - 2026-11-12
 ## [0.14.0-beta.3] - 2026-11-12
 
 - **情绪页白屏（beta.1 起的回归，beta.2 仍在）：点开「情感」页整块面板变空白，且此后每次打开都空白**。根因是 `lib/client.js` 的 `AffectivePanel` 里一行 `formatRelativeTime(it.lastSeen)` 漏传第二个参数 `t`——该函数内部要调 `t("memory.time.now")`，缺参就抛 `t is not a function`，而这行跑在 render 里，React 整棵树卸载，日志里什么都不留。引入提交是 #619（`244da66d`），`v0.14.0-beta.1` 与 `v0.14.0-beta.2` 都带它；只有库里存在带 `lastSeen` 的情绪边时才触发，所以不是每个用户都会遇到。修法是补上 `, t`，并加一条静态断言：扫出所有 `formatRelativeTime(` 调用点，逐个做括号配对、数顶层逗号，实参不足 2 个就红。全库只有这一处漏传（`formatDate`/`formatDateShort` 本来只收一个参数，扫描器报的几处是误报）。变异自证：撤掉修复后断言变红并直接指出 `:8168 (argc=1)`。
