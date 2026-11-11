@@ -1617,11 +1617,18 @@ test("scope isolation ships panel switches and provenance surfaces (A4)", () => 
 // 找得到、找不到就没法开」——#607 报的「知识库没成型」一半是入口问题。它们
 // 是「装不装这个子系统」而非「每轮付多少」，与 enhance 的行为开关不同级，
 // 所以单列一组并提到首屏。**再往首屏塞东西前先问：它是不是同级子系统？**
+// **v0.13.x 第三次豁免（用户 2026-11-11 反馈「装了发现设置没情绪那一页的开关」）**：
+// 首屏加 group.dream（巩固与睡眠），可点项预算 11→13。豁免由头是 sleepModeEnabled
+// 的**同级性**——它是「巩固与睡眠」这个子系统的总闸，与 group.ext 的三个闸门同级，
+// 而它是首屏唯一缺席的子系统总闸（整组因此躺在「全部设置」里）。不是「用户要」：
+// 后半句能撑住判据，前半句不能。sleepAffectiveEnabled 是它的并列成员
+// （FEATURE_CHILDREN 里没有父子关系），跟着整组进来，不单拎进 group.basic——
+// 那里收的是新手敢动的自动类总开关，塞进巩固细节会打散该组的语义边界。
 test("settings card folds everything beyond the first screen behind All settings (issue #427)", () => {
-  // ① 首屏层组成：三组都要在（basic 总开关 / ext 子系统总闸 / scope 必答题），
-  // 且 basic 的成员是从 core/dream 移走的。
-  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.ext", "group\.scope"\];/.test(clientSource),
-    "the first screen must be the basic, ext and scope groups (M.O. taken down in v0.13.x; ext added as the second product exemption)");
+  // ① 首屏层组成：四组都要在（basic 总开关 / ext 子系统总闸 / dream 巩固总闸 /
+  // scope 必答题），且 basic 的成员是从 core/dream 移走的。
+  assert.ok(/const FEATURE_FIRST_SCREEN = \["group\.basic", "group\.ext", "group\.dream", "group\.scope"\];/.test(clientSource),
+    "the first screen must be the basic, ext, dream and scope groups (M.O. taken down in v0.13.x; ext and dream added as product exemptions 2 and 3)");
   // M.O. 下架锁：组从 FEATURE_GROUPS 摘掉 ≠ 只把首屏位去掉。少了这一条，下次
   // 有人「顺手把组加回来」时会折进「全部设置」，测试照绿而 M.O. 又出现在面板上。
   assert.ok(!/\{ key: "group\.mo", items: \[/.test(clientSource),
@@ -1681,6 +1688,108 @@ test("settings card folds everything beyond the first screen behind All settings
     "flagTag must return null on default rows (no more always-grey 「默认」 chips)");
   assert.ok(!clientSource.includes("memory.features.tagDefault"),
     "the tagDefault copy must stay deleted along with its render site");
+});
+
+// C 项：入口可达性锁（用户 2026-11-11 反馈「装了发现设置没情绪那一页的开关」）。
+// FEATURE_GROUPS 是手写 key 数组——新开关要在首屏数组、折叠白名单、高级层、
+// 输入行这几处手工登记，漏一处就变成「后端接好了、面板上找不到」，而且不报错。
+// group.dream 这次就是这么漏的：整组躺在「全部设置」里，用户装完找不到巩固与
+// 睡眠。这条测试是唯一能防同类复发、又不用把数据结构改成 glob 模式的机制。
+// 解析口径：直接切 clientSource 的字面量，不 eval、不 import——这四个常量是
+// 面板的私有实现细节，测试只该看到文本形状，不应该把它们导出去。
+test("every settings group is reachable and every flag key owns exactly one seat", () => {
+  // 切出某个 `const X = [ ... ];` 的方括号内文本。FEATURE_GROUPS 的 items 里
+  // 只有 `}],` 收尾，第一个 `];` 就是常量本身结束，不会被组内的 `]` 提前截断。
+  const grabArray = (name) => {
+    const head = `const ${name} = [`;
+    const at = clientSource.indexOf(head);
+    assert.ok(at >= 0, `const ${name} must exist`);
+    const start = at + head.length;
+    const end = clientSource.indexOf("];", start);
+    assert.ok(end > start, `const ${name} must be a closed array literal`);
+    return clientSource.slice(start, end);
+  };
+  const grabObject = (name) => {
+    const head = `const ${name} = {`;
+    const at = clientSource.indexOf(head);
+    assert.ok(at >= 0, `const ${name} must exist`);
+    const start = at + head.length;
+    const end = clientSource.indexOf("};", start);
+    assert.ok(end > start, `const ${name} must be a closed object literal`);
+    return clientSource.slice(start, end);
+  };
+  const quoted = (text) => [...text.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+
+  const groups = [...grabArray("FEATURE_GROUPS").matchAll(/\{ key: "(group\.[a-z]+)", items: \[([\s\S]*?)\] \}/g)]
+    .map((m) => ({ key: m[1], items: quoted(m[2]) }));
+  assert.ok(groups.length >= 8, `FEATURE_GROUPS must parse into its groups (got ${groups.length})`);
+  const firstScreen = quoted(grabArray("FEATURE_FIRST_SCREEN"));
+  const advanced = quoted(grabArray("FEATURE_ADVANCED_BOOLS"));
+  const strings = quoted(grabArray("FEATURE_STRINGS"));
+  const numbers = quoted(grabArray("FEATURE_NUMBERS"));
+  const childrenBody = grabObject("FEATURE_CHILDREN");
+  const children = [...childrenBody.matchAll(/\[([^\]]*)\]/g)].flatMap((m) => quoted(m[1]));
+
+  // ① 每个组必须二选一：进首屏，或显式登记在下面的折叠白名单里。两个都没写
+  // = 这一组的开关整组躺在「全部设置」里没人知道，正是 group.dream 的病。
+  // deepEqual 一次覆盖三件事：不重叠、不引用不存在的组、没有漏登记的组。
+  const FOLDED_GROUPS = ["group.safety", "group.pipeline", "group.retrieve", "group.persona"];
+  assert.deepEqual(
+    groups.map((g) => g.key).sort(),
+    [...firstScreen, ...FOLDED_GROUPS].sort(),
+    "every group must be on the first screen or explicitly listed as folded; a group that skips both has no entry"
+  );
+
+  // ② 空组等于白注册：组在、里面没有开关，用户点开是一片空白。
+  for (const g of groups) {
+    assert.ok(g.items.length > 0, `${g.key} must carry at least one switch`);
+  }
+
+  // ③ 一个开关只能有一个座位。同一 key 落进两组会渲染两次（render-once 破坏），
+  // 两个开关的显隐状态还可能不同步；落进组又落进「高级」更糟——同一项在两层
+  // 各画一遍。所以这里比覆盖，更比**互斥**。
+  const owner = new Map();
+  const claim = (keys, outlet) => {
+    for (const k of keys) {
+      assert.ok(!owner.has(k),
+        `${k} is rendered by both ${owner.get(k)} and ${outlet} — one switch, one seat`);
+      owner.set(k, outlet);
+    }
+  };
+  for (const g of groups) claim(g.items, g.key);
+  claim(children, "FEATURE_CHILDREN");
+  claim(advanced, "FEATURE_ADVANCED_BOOLS");
+  claim(strings, "FEATURE_STRINGS");
+  claim(numbers, "FEATURE_NUMBERS");
+
+  // ④ 反向：首屏数组引用的组必须真实存在（拼错组名 = 首屏少两组却没人发现）。
+  const known = new Set(groups.map((g) => g.key));
+  for (const k of firstScreen) assert.ok(known.has(k), `FEATURE_FIRST_SCREEN references a non-existent ${k}`);
+  // ⑤ 首屏与折叠白名单不能重叠：一个组同时出现在两边，语义上说不通。
+  for (const k of FOLDED_GROUPS) {
+    assert.ok(!firstScreen.includes(k), `${k} cannot be both folded and on the first screen`);
+  }
+});
+
+// B 项：页签闸门的加载态。features 是异步拉的，规则必须是「未到手就不渲染」——
+// 反过来先按默认值全渲染、到手再收起，会在加载完成那一瞬间闪一下消失，那是
+// 看得见的跳变；而「先不出现、到手后补上」只是渐显。这条锁规则本身，不锁渲染
+// 结果：组件没有导出，测试看不到 DOM，但能锁住「初值 null」「null 时恒假」
+// 「失败也关」这三个决定行为走向的字面量。
+test("tab seats wait for the feature flags instead of flashing a default", () => {
+  assert.ok(/const \[seatEff, setSeatEff\] = useState\(null\)/.test(clientSource),
+    "the flag snapshot must start as null (loading), not an optimistic default");
+  assert.ok(/const seatOpen = \(key\) => !!seatEff && !!seatEff\[key\]/.test(clientSource),
+    "seatOpen must be false while the snapshot is still null — a tab appears only once its flag is known");
+  assert.ok(/seatOpen\("sleepAffectiveEnabled"\) && \{ key: "affective"/.test(clientSource),
+    "the affective tab must be gated on its own master switch");
+  assert.ok(/seatOpen\("diaryEnabled"\) && \{ key: "diary"/.test(clientSource),
+    "the diary tab must be gated on its own master switch");
+  assert.ok(/\.catch\(\(\) => \{ if \(!cancelled\) setSeatEff\(\{\}\); \}\)/.test(clientSource),
+    "a failed flag fetch must close the gates (fail-closed), not open them");
+  // 页签没了、view 还停在那一格会渲染成空白页，必须回落 memory。
+  assert.ok(/if \(view === "affective" && !seatEff\.sleepAffectiveEnabled\) setView\("memory"\)/.test(clientSource),
+    "a view left on a now-hidden tab must fall back to the memory tab");
 });
 
 // #481：面板开关「改了不生效」的体验坑。开关在宿主启动时合并进冻结 cfg，
