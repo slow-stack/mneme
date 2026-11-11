@@ -4612,9 +4612,13 @@ window.__ModuleLoader__.load({
     // 属调优噪音，按对齐结论留在配置文件，不上 UI。
     // #249 第二批：注入形态的父／子开关（父 = autoInject）。子项紧跟父行、缩进
     // 显示；父关时子项加一句「不生效」，但开关仍可点——父关是「不生效」而不是
-    // 「重置用户配置」，子项自己勾着的值要留着，也应该能提前设好。同一份关系在
-    // 后端 src/config.js 的 INJECT_CHILD_FLAGS（运行时闸门），两侧漂移由
-    // test/inject-parent-gate.test.js 钉住。
+    // 「重置用户配置」，子项自己勾着的值要留着，也应该能提前设好。
+    // 这张表是**面板的渲染关系**，不是运行时闸门：后端 src/config.js 的
+    // INJECT_CHILD_FLAGS 只收「父关、子项却仍有执行路径」的键（注入器的工具描述
+    // 住在注入器外层，所以需要显式判父）。地志那两条不用——总闸关着时整个子系统
+    // 不注册座位，子项天然没有跑起来的路径，加闸门是空转。所以两张表不必相等；
+    // test/inject-parent-gate.test.js 钉的是后端的闸门完整性 + 前端「子项只由
+    // flagRow 渲染一次」（手写第二份会让同一个键在面板上出现两行）。
     const FEATURE_CHILDREN = {
       autoInject: ["injectGuidanceEnabled", "continuityRescueEnabled"],
       // 热度衰减的注入侧乘数（#362）是它的第二口径：数据同源、含义不同
@@ -5171,13 +5175,12 @@ window.__ModuleLoader__.load({
           },
             CHORO_TIERS.map((r) => h("option", { key: r, value: r }, t(`memory.features.chorographyInject.${r}`))))
         ),
-        h("div", { className: "mneme-featsubhint" }, t("memory.features.chorographyInject.hint")),
-        // 契约 §3.1 的两枚子开关，落在同一个子块里：它们只在仓库地志启用后
-        // 才有意义，散到全部设置里就变成「看不见总闸却先看到子项」。
-        // 两个都 opt-in/opt-out 按契约默认（自动更新默认关——它会读盘比 git 基线；
-        // 面板发起 T1 默认开——它是人主动点的按钮，不是后台行为）。
-        boolRow("chorographyAutoRefresh", { sub: true }),
-        boolRow("chorographyT1FromPanel", { sub: true })
+        h("div", { className: "mneme-featsubhint" }, t("memory.features.chorographyInject.hint"))
+        // 契约 §3.1 的两枚子开关（自动更新 / 面板发起 T1）不在这里手写：它们是
+        // FEATURE_CHILDREN.chorographyEnabled 的子项，由 flagRow 紧跟父行统一渲染。
+        // 手写一份会让同一个键渲染两遍——5c41d31 先写了这两行，5bad8a6 补父关系时
+        // 没删旧的，v0.14.0-beta.1 就带着这个重复上线（切上面那个，下面那行不同步）。
+        // 统一渲染还顺带补上 gate：父关时子行标注「不生效」，而值留着、仍可预置。
       );
 
       if (error && !state) return h("section", { className: "mneme-set-card" },
