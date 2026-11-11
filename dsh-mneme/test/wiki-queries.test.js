@@ -14,13 +14,16 @@ import { createChoroQueries } from "../src/wiki/queries.js";
 
 const FIXED_NOW = () => "2026-11-05T00:00:00.000Z";
 
-function makeFixture() {
+// mark：往文件里掺一个区分串。#581 之后无 remote 的仓库按根提交哈希作身份键，
+// 同一秒提交的两个内容相同的夹具会算出同一个哈希——真仓库不会（同内容 + 同秒
+// 的概率趋零），但测试里往同一个库登记两个夹具的用例必须显式区分开。
+function makeFixture(mark = "") {
   const root = mkdtempSync(join(tmpdir(), "choro-queries-"));
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "qfix", scripts: { test: "node --test" } }, null, 2) + "\n", "utf8");
   mkdirSync(join(root, "src"), { recursive: true });
   writeFileSync(join(root, "src", "a.js"), 'import { b } from "./b.js";\nimport h from "left-pad";\nexport const a = () => b();\n', "utf8");
   writeFileSync(join(root, "src", "b.js"), 'import { b2 } from "./b2.js";\nexport const b = () => b2();\n', "utf8");
-  writeFileSync(join(root, "src", "b2.js"), "export const b2 = () => 1;\n", "utf8");
+  writeFileSync(join(root, "src", "b2.js"), "export const b2 = () => 1;\n" + mark, "utf8");
   execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "pipe" });
   execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"], { cwd: root, stdio: "pipe" });
   execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init", "--no-gpg-sign"], { cwd: root, stdio: "pipe" });
@@ -140,8 +143,9 @@ test("listRepos / resolveRepo：单仓自动收敛，多仓歧义要显式给键
     assert.equal(auto.id, repos[0].id, "只有一个仓库时不带键也能解析");
     assert.ok(q.resolveRepo("qfix").id, "按显示名解析");
     assert.equal(q.resolveRepo("no-such-repo"), null);
-    // 造第二个仓库让解析变歧义
-    const root2 = makeFixture();
+    // 造第二个仓库让解析变歧义（mark 区分：无 remote 夹具按根提交哈希作键，
+    // 同一秒提交的相同内容会同键收敛成一行，歧义就造不出来了）
+    const root2 = makeFixture("second-repo-mark");
     try {
       runChoroT0({ repoRoot: root2, store, apply: true, now: FIXED_NOW });
       const amb = q.resolveRepo(undefined);
@@ -239,7 +243,7 @@ test("repoByCwd：祖先前缀命中、最长 root 胜出、cwd 不存在返回 
     assert.equal(q.repoByCwd(""), null);
     assert.equal(q.repoByCwd(null), null);
     // 嵌套仓库：外层先登记，内层后登记 → 内层会话必须被内层抢走（最长前缀）
-    nested = makeFixture();
+    nested = makeFixture("inner-repo-mark");
     runChoroT0({ repoRoot: nested, store, apply: true, now: FIXED_NOW });
     const inner = q.repoByCwd(join(nested, "src"));
     assert.equal(inner.root_path, nested, "嵌套时取最深那层，否则内层会话被外层仓库抢走");
@@ -391,6 +395,36 @@ test("claimDrift：未知仓库返回 null（调用方据此 404，不是空清�
   const { root, store, q } = setup();
   try {
     assert.equal(q.claimDrift(999999), null);
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
+// ---- #581 本机路径解析：身份行 vs 位置行 ----
+
+test("共享库跨端：读侧按当前 host 的位置行解析本机根，未登记的机器回退身份行（#581）", () => {
+  const root = makeFixture();
+  // T0 前挂 remote：身份键从 URL 归一化，两台机器的同一仓库算出同一个键
+  execFileSync("git", ["remote", "add", "origin", "git@github.com:slow-stack/demo.git"], { cwd: root, stdio: "pipe" });
+  const store = createStore(":memory:");
+  try {
+    runChoroT0({ repoRoot: root, store, apply: true, now: FIXED_NOW });
+    const row = store.db.prepare("SELECT id, root_path, portable_key FROM choro_repos").get();
+    assert.equal(row.portable_key, "github.com/slow-stack/demo", "T0 登记时把身份键算出来落库");
+    // 另一台机器（hostB）共享这个库，并在本机路径登记过自己的一份工作副本
+    store.upsertChoroRepoPath(row.portable_key, "hostB", "/Volumes/demo", FIXED_NOW());
+    const qB = createChoroQueries({ store, hostId: () => "hostB" });
+    const factsB = qB.repoFromRow(store.db.prepare("SELECT * FROM choro_repos WHERE id = ?").get(row.id));
+    assert.equal(factsB.rootPath, "/Volumes/demo", "hostB 解析到自己的位置行");
+    // 没登记过位置行的 hostC：回退身份行 root_path——文件访问落进既有的
+    // page-missing 口径（拿不到本机路径，不能拿别的机器的路径读出错误内容）
+    const qC = createChoroQueries({ store, hostId: () => "hostC" });
+    const factsC = qC.repoFromRow(store.db.prepare("SELECT * FROM choro_repos WHERE id = ?").get(row.id));
+    assert.equal(factsC.rootPath, row.root_path, "回退身份行的 root_path");
+    // 本机（跑过 T0 的这台，默认 hostId）：行为与升级前完全一致
+    const qA = createChoroQueries({ store });
+    assert.equal(qA.repoFromRow(store.db.prepare("SELECT * FROM choro_repos WHERE id = ?").get(row.id)).rootPath, root);
   } finally {
     store.close();
     rmTempBestEffort(root);

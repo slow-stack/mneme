@@ -611,9 +611,23 @@ CREATE TABLE IF NOT EXISTS choro_repos (
   plan_fingerprint TEXT,              -- 上次成功 run 的 plan.yaml 内容 sha256
   git_baseline     TEXT,              -- 上次成功 run 的 HEAD
   created_at       TEXT NOT NULL,
-  updated_at       TEXT NOT NULL
+  updated_at       TEXT NOT NULL,
+  portable_key     TEXT               -- 可移植身份（#581）：remote URL 归一化，无 remote 退化仓库名
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_repos_root ON choro_repos(root_path);
+
+-- 每机一份的位置表（#581）：身份与位置分家——memory.db 可以跨端共享，工作
+-- 副本的位置不能。host_id 取 os.hostname()（src/wiki/portable.js）；同一身份
+-- 同一台机器只有一行，T0/T1 登记时 upsert。读侧按当前 host 取本机路径，取
+-- 不到回退 choro_repos.root_path（行上的 root_path 从此是「最近一次登记的
+-- 位置」，单机库两个值恒等，行为不变）。
+CREATE TABLE IF NOT EXISTS choro_repo_paths (
+  repo_key     TEXT NOT NULL,
+  host_id      TEXT NOT NULL,
+  root_path    TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY (repo_key, host_id)
+);
 
 -- 模块划分与依赖边。fingerprint = 模块文件集 + 边集的内容 sha256：幂等语义靠
 -- replaceChoroGraph 的整仓替换，不靠逐行 diff，所以本表没有「上次见过的划分」
@@ -1339,6 +1353,10 @@ export function createStore(path) {
   // 向量本体列），存量库经 PRAGMA 检查补列。
   addColumn("choro_vectors", "vector", "ALTER TABLE choro_vectors ADD COLUMN vector TEXT");
   addColumn("choro_vectors", "source_generated_at", "ALTER TABLE choro_vectors ADD COLUMN source_generated_at TEXT");
+  // chorography 跨端身份（#581）：存量行的 portable_key 留 NULL——键只在它
+  // 自己的机器上重跑 T0/T1 时补上，不猜（remote URL 拿不到就是拿不到）。
+  // choro_repo_paths 建表走 SCHEMA 的 CREATE TABLE IF NOT EXISTS，老库重开自动补。
+  addColumn("choro_repos", "portable_key", "ALTER TABLE choro_repos ADD COLUMN portable_key TEXT");
 
   // v0.8.0 A1（issue #17）scope 隔离存储层：四列全部可空、不带 DEFAULT——存量行
   // 零重写，读侧把 NULL 视为未标注（= 全局可见）。是否落值由 scopeEnabled 门控
@@ -5211,19 +5229,60 @@ export function createStore(path) {
     return db.prepare("SELECT * FROM choro_repos WHERE root_path = ?").get(rootPath) ?? undefined;
   }
 
-  // 登记或刷新仓库行。created_at 只在首次插入时落（ON CONFLICT 不碰它）；
-  // plan_fingerprint / git_baseline 永远反映上次成功 run——失败 run 不写这两格
-  // （红线 5「失败不推进 state」，库侧与 state.json 同一口径）。
-  function upsertChoroRepo(rootPath, name, planFingerprint, gitBaseline, updatedAt) {
+  // 位置行 upsert（#581）：同一身份同一台机器只一行，root_path 与 last_seen_at
+  // 反映最近一次登记。repo_key 为空（无 remote 且名字算不出）就不落——位置表
+  // 只为可移植身份服务，没有身份的行留在 choro_repos.root_path 的旧语义里。
+  function upsertChoroRepoPath(repoKey, hostId, rootPath, nowIso) {
+    if (!repoKey || !hostId) return;
     db.prepare(
-      `INSERT INTO choro_repos (root_path, name, plan_fingerprint, git_baseline, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(root_path) DO UPDATE SET
-         name = excluded.name,
-         plan_fingerprint = excluded.plan_fingerprint,
-         git_baseline = excluded.git_baseline,
-         updated_at = excluded.updated_at`
-    ).run(rootPath, name, planFingerprint, gitBaseline, updatedAt, updatedAt);
+      `INSERT INTO choro_repo_paths (repo_key, host_id, root_path, last_seen_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(repo_key, host_id) DO UPDATE SET
+         root_path = excluded.root_path,
+         last_seen_at = excluded.last_seen_at`
+    ).run(repoKey, hostId, rootPath, nowIso);
+  }
+
+  function choroRepoPathFor(repoKey, hostId) {
+    if (!repoKey || !hostId) return null;
+    return db.prepare("SELECT * FROM choro_repo_paths WHERE repo_key = ? AND host_id = ?").get(repoKey, hostId) ?? null;
+  }
+
+  // 登记或刷新仓库行。created_at 只在首次插入时落；plan_fingerprint / git_baseline
+  // 永远反映上次成功 run——失败 run 不写这两格（红线 5「失败不推进 state」，库侧
+  // 与 state.json 同一口径）。
+  //
+  // 身份（#581）：同一 portable_key 的行**优先**收敛（键的唯一性靠它保证——若
+  // 让 root_path 命中优先，升格期的跨端重复行会在各自机器上把同一个键 adoption
+  // 到两行上，键就废了）；本机路径命中只在没有同键行时兜底（无键仓库的旧口径）。
+  // 收敛到的行上 root_path 更新为「最近一次登记的位置」，读侧经 choroRepoPathFor
+  // 回退它——单机库两个值恒等、行为不变。**升级前已跨端登记出的重复行不合并**：
+  // 页面与 claims 挂在 repo_id 上，机器间合并行等于改写归属；所以 UPDATE
+  // root_path 前先查目标值是否被别的行占着（被占就保留本行原值，位置走位置表）
+  // ——否则升格期登记会撞 idx_choro_repos_root 直接抛。portable_key 缺席（无
+  // remote 且名字算不出）时退回旧的 root_path 冲突口径，存量语义不变。
+  function upsertChoroRepo(rootPath, name, planFingerprint, gitBaseline, updatedAt, portableKey = null) {
+    let existing = portableKey
+      ? (db.prepare("SELECT * FROM choro_repos WHERE portable_key = ?").get(portableKey) ?? undefined)
+      : undefined;
+    if (!existing) existing = choroRepoByRoot(rootPath);
+    if (existing) {
+      const rootTaken = db.prepare("SELECT id FROM choro_repos WHERE root_path = ? AND id != ?")
+        .get(rootPath, existing.id);
+      const nextRoot = rootTaken ? existing.root_path : rootPath;
+      db.prepare(
+        `UPDATE choro_repos SET root_path = ?, name = ?, plan_fingerprint = ?, git_baseline = ?, updated_at = ?
+          WHERE id = ?`
+      ).run(nextRoot, name, planFingerprint, gitBaseline, updatedAt, existing.id);
+      if (portableKey && existing.portable_key !== portableKey) {
+        db.prepare("UPDATE choro_repos SET portable_key = ? WHERE id = ?").run(portableKey, existing.id);
+      }
+      return choroRepoByRoot(nextRoot);
+    }
+    db.prepare(
+      `INSERT INTO choro_repos (root_path, name, plan_fingerprint, git_baseline, created_at, updated_at, portable_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(rootPath, name, planFingerprint, gitBaseline, updatedAt, updatedAt, portableKey);
     return choroRepoByRoot(rootPath);
   }
 
@@ -5865,6 +5924,8 @@ export function createStore(path) {
     // chorography（仓库地志）：M0 只写不读，消费面 M1 接（见上面注释块）。
     choroRepoByRoot,
     upsertChoroRepo,
+    upsertChoroRepoPath,
+    choroRepoPathFor,
     replaceChoroGraph,
     choroPageBySlug,
     recordChoroPageFailure,

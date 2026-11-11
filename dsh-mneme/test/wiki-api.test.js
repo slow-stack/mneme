@@ -62,11 +62,13 @@ async function invokePost(route, path, body) {
   return { status: res.statusCode, body: JSON.parse(res.body || "{}") };
 }
 
-function makeRepo(store) {
+// mark：往初始提交里掺区分串（#581 后无 remote 仓库按根提交哈希作身份键——
+// 同一秒提交的相同内容会同键收敛成一行，往同一个库登记两个仓库的用例必须区分开）。
+function makeRepo(store, mark = "") {
   const root = mkdtempSync(join(tmpdir(), "choro-api-"));
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "apifix", scripts: { test: "node --test" } }, null, 2) + "\n", "utf8");
   mkdirSync(join(root, "src"), { recursive: true });
-  writeFileSync(join(root, "src", "a.js"), 'import { b } from "./b.js";\nexport const a = () => b();\n', "utf8");
+  writeFileSync(join(root, "src", "a.js"), `import { b } from "./b.js";\nexport const a = () => b();\n// ${mark}\n`, "utf8");
   writeFileSync(join(root, "src", "b.js"), "export const b = () => 1;\n", "utf8");
   execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "pipe" });
   execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"], { cwd: root, stdio: "pipe" });
@@ -147,7 +149,7 @@ test("repo 解析失败各归各位：未知 → 404；歧义 → 400 带清单�
     assert.equal(notFound.status, 404);
     assert.equal(notFound.body.error, "repo-not-found");
 
-    const root2 = makeRepo(store);
+    const root2 = makeRepo(store, "second");
     try {
       const ambiguous = await invoke(handler(routes, "/api/dsh-mneme/choro/modules"), "/api/dsh-mneme/choro/modules");
       assert.equal(ambiguous.status, 400);
@@ -505,8 +507,8 @@ function countingChoro(store, { throwOnRun = false } = {}) {
 }
 
 // 造一个「代码已变」的仓库：登记时的 git_baseline 与当前 HEAD 不同。
-function driftRepo(store) {
-  const root = makeRepo(store);
+function driftRepo(store, mark = "") {
+  const root = makeRepo(store, mark);
   writeFileSync(join(root, "src", "c.js"), "export const c = () => 2;\n", "utf8");
   execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"], { cwd: root, stdio: "pipe" });
   execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "drift", "--no-gpg-sign"], { cwd: root, stdio: "pipe" });
@@ -553,7 +555,7 @@ test("/choro/repos 自动重跑：开关开 + ?repo= 点名且 git 过期 → �
 
 test("/choro/repos 自动重跑：不 stale 或没点名 ?repo= 时都不刷（一次面板加载不能扫全库）", async () => {
   const store = createStore(":memory:");
-  const cleanRoot = makeRepo(store);
+  const cleanRoot = makeRepo(store, "clean");
   try {
     const { calls, choro } = countingChoro(store);
     const { routes } = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
@@ -563,7 +565,7 @@ test("/choro/repos 自动重跑：不 stale 或没点名 ?repo= 时都不刷（�
     assert.equal(calls.length, 0, "staleReason 为 null → 没有刷的理由");
 
     // 造第二个过期仓库，但请求不带 ?repo=：列表路径一个都不许刷。
-    const drifted = driftRepo(store);
+    const drifted = driftRepo(store, "drifted");
     try {
       const listed = await invoke(handler(routes, plain), plain);
       assert.equal(listed.body.repos.length, 2);

@@ -28,6 +28,7 @@ import {
   FM_VERIFIED_AT, FM_VERIFIED_BASELINE, setFrontmatterKeys,
 } from "./render.js";
 import { gitHead } from "./t0.js";
+import { portableKeyFor, hostId } from "./portable.js";
 // issue #607：拒绝文案里的 CLI 命令要给绝对路径入口（profile 装的插件没有全局
 // shim，光写 `dsh-mneme-choro` 用户照抄只会 command not found）。
 import { choroCliCommandFrom } from "./cli-hint.js";
@@ -323,9 +324,19 @@ export function createT1({ store, runSession = null, limits = DEFAULT_LIMITS, no
   async function runT1({ repoRoot, model = DEFAULT_T1_MODEL, moduleSlug = null, retryFailed = false, dryRun = false, dshExe = null, limits: limitsOverride = null }) {
     const cap = { ...limits, ...limitsOverride };
     const rootPath = realpathSync(resolve(repoRoot));
-    const repo = store.db.prepare("SELECT * FROM choro_repos WHERE root_path = ?").get(rootPath);
+    // 登记校验（#581）：本机路径没登记时，按可移植身份认领——同一仓库已在别的
+    // 机器登记过（共享库），本机直接富化那一行，消灭「每端都必须先各自跑一次
+    // T0」。认领成功的同时把本机路径落进位置表，读侧从此能按 host 解析到它。
+    const portableKey = portableKeyFor(rootPath);
+    let repo = store.db.prepare("SELECT * FROM choro_repos WHERE root_path = ?").get(rootPath);
+    if (!repo && portableKey) {
+      repo = store.db.prepare("SELECT * FROM choro_repos WHERE portable_key = ?").get(portableKey) ?? undefined;
+    }
     if (!repo) {
       throw new T1Refusal("not-registered", `${rootPath} 还没有登记：先跑一次 T0（${T1_CLI ?? "dsh-mneme-choro <repo> --apply"}）`);
+    }
+    if (portableKey) {
+      store.upsertChoroRepoPath(portableKey, hostId(), rootPath, now());
     }
 
     // 选模块：skeleton 必跑；failed 只在 retryFailed 时；enriched 跳过（重富化留待显式 --module）。

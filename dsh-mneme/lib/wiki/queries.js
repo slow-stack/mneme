@@ -14,6 +14,7 @@ import { join, resolve, sep } from "node:path";
 import { gitHead } from "./t0.js";
 import { loadPlanFromRepo } from "./plan.js";
 import { TEMPLATE_VERSION, T1_SECTION_START } from "./render.js";
+import { hostId as defaultHostId } from "./portable.js";
 // claim 失效判定的纯函数（借 openwiki 的 Grounded Claims）：解析 diff + 逐条比对
 // 三列证据。放独立模块是因为它零 DB、零 IO（除 diffSince 那一次 git），可单测。
 import { diffSince, summarizeClaims } from "./claims.js";
@@ -48,13 +49,30 @@ function cosine(a, b) {
   return denom === 0 ? 0 : dot / denom;
 }
 
-export function createChoroQueries({ store }) {
+export function createChoroQueries({ store, hostId: hostIdFn = defaultHostId }) {
   const db = store.db;
+
+  // 本机路径解析（#581）：身份行（choro_repos）上的 root_path 是「最近一次登记
+  // 的位置」，未必是本机的——跨端共享库时可能是另一台机器的路径。当前机器登记
+  // 过（choro_repo_paths 有本 host 的行）就用本机路径；没登记过退回行上的
+  // root_path。单机库两个值恒等，行为不变；跨端库在本机还没跑过 T0/T1 时拿不到
+  // 本机路径，文件访问落进既有的 page-missing / unreadable 失败口径（wiki-tools
+  // 的共享库用例锁着那个形状）——路径形状跨 OS 互不为前缀，不会拿别的机器的
+  // 路径读出错误内容。
+  const localRootPath = (row) => {
+    const key = row?.portable_key;
+    if (key) {
+      const p = db.prepare("SELECT root_path FROM choro_repo_paths WHERE repo_key = ? AND host_id = ?")
+        .get(key, hostIdFn());
+      if (p && p.root_path) return p.root_path;
+    }
+    return row?.root_path ?? "";
+  };
 
   /** 已登记仓库（含模块/页面计数，面板仓库选择器与工具的 repo 解析共用）。 */
   function listRepos() {
     const rows = db.prepare(
-      `SELECT r.id, r.root_path, r.name, r.plan_fingerprint, r.git_baseline, r.updated_at,
+      `SELECT r.id, r.root_path, r.portable_key, r.name, r.plan_fingerprint, r.git_baseline, r.updated_at,
               (SELECT COUNT(*) FROM choro_modules m WHERE m.repo_id = r.id) AS module_count,
               (SELECT COUNT(*) FROM choro_pages p JOIN choro_modules m2 ON p.module_id = m2.id
                  WHERE m2.repo_id = r.id) AS page_count,
@@ -86,7 +104,7 @@ export function createChoroQueries({ store }) {
    * 新基线说话，不能再拿旧行算一遍）。混用会得到自相矛盾的回执。
    */
   function repoFromRow(row) {
-    const rootPath = String(row.root_path ?? "");
+    const rootPath = localRootPath(row);
     return {
       id: row.id,
       name: row.name,
@@ -127,7 +145,7 @@ export function createChoroQueries({ store }) {
   }
 
   function repoFacts(row) {
-    const rootPath = String(row.root_path ?? "");
+    const rootPath = localRootPath(row);
     // git 优先：代码变了是更硬的「该重跑」信号，plan 变了才退而求其次——两者同时
     // 成立时面板只说一句话，说「git」比说「plan」更贴近用户看到的现象（他刚改了码）。
     const head = rootPath === "" ? null : gitHead(rootPath);
@@ -230,8 +248,8 @@ export function createChoroQueries({ store }) {
         WHERE m.repo_id = ? AND m.slug = ?`
     ).get(repoId, String(slug));
     if (!row) return null;
-    const repo = db.prepare("SELECT root_path, name FROM choro_repos WHERE id = ?").get(repoId);
-    const abs = join(repo.root_path, row.rel_path);
+    const repo = db.prepare("SELECT root_path, portable_key, name FROM choro_repos WHERE id = ?").get(repoId);
+    const abs = join(localRootPath(repo), row.rel_path);
     let content;
     try {
       content = readFileSync(abs, "utf8");
@@ -270,10 +288,11 @@ export function createChoroQueries({ store }) {
         WHERE m.repo_id = ? AND (? IS NULL OR m.slug = ?)
         ORDER BY m.slug`
     ).all(repoId, moduleSlug, moduleSlug);
-    const repo = db.prepare("SELECT root_path FROM choro_repos WHERE id = ?").get(repoId);
+    const repo = db.prepare("SELECT root_path, portable_key FROM choro_repos WHERE id = ?").get(repoId);
     const hits = [];
+    const searchRoot = localRootPath(repo);
     for (const page of pages) {
-      const abs = join(repo.root_path, page.rel_path);
+      const abs = join(searchRoot, page.rel_path);
       let text;
       try {
         text = readFileSync(abs, "utf8");
@@ -334,13 +353,22 @@ export function createChoroQueries({ store }) {
     const cmp = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
     const target = cmp(normalized);
     const rows = db.prepare("SELECT * FROM choro_repos ORDER BY id").all();
+    // 候选根（#581）：除了身份行的 root_path（「最近一次登记的位置」可能是别的
+    // 机器的），本机在位置表登记过的路径也参与前缀匹配。位置行**只认当前
+    // host**——两台同名盘符的 Windows（都是 E:\repo）不能互相认领对方的目录。
+    const byKey = new Map(rows.filter((r) => r.portable_key).map((r) => [r.portable_key, r]));
+    const candidates = rows.map((row) => ({ root: String(row.root_path ?? ""), row }));
+    for (const p of db.prepare("SELECT repo_key, root_path FROM choro_repo_paths WHERE host_id = ?").all(hostIdFn())) {
+      const row = byKey.get(p.repo_key);
+      if (row) candidates.push({ root: String(p.root_path ?? ""), row });
+    }
     let best = null;
-    for (const row of rows) {
-      const root = cmp(String(row.root_path ?? ""));
-      if (root === "") continue;
-      const hit = target === root || target.startsWith(root.endsWith(sep) ? root : root + sep);
+    for (const { root, row } of candidates) {
+      const croot = cmp(root);
+      if (croot === "") continue;
+      const hit = target === croot || target.startsWith(croot.endsWith(sep) ? croot : croot + sep);
       if (!hit) continue;
-      if (!best || root.length > cmp(String(best.root_path)).length) best = row;
+      if (!best || croot.length > cmp(String(best.root_path)).length) best = row;
     }
     return best ?? null;
   }
@@ -352,7 +380,7 @@ export function createChoroQueries({ store }) {
    */
   function outline(repoId) {
     const repo = db.prepare(
-      "SELECT id, root_path, name, git_baseline, plan_fingerprint, updated_at FROM choro_repos WHERE id = ?"
+      "SELECT id, root_path, portable_key, name, git_baseline, plan_fingerprint, updated_at FROM choro_repos WHERE id = ?"
     ).get(repoId);
     if (!repo) return null;
     const rows = db.prepare(
@@ -379,7 +407,7 @@ export function createChoroQueries({ store }) {
       repo: {
         id: repo.id,
         name: repo.name,
-        rootPath: repo.root_path,
+        rootPath: localRootPath(repo),
         gitBaseline: repo.git_baseline,
         updatedAt: repo.updated_at,
       },
@@ -409,9 +437,9 @@ export function createChoroQueries({ store }) {
    *   - 起点 == HEAD                     → 那组真没变，clean
    */
   function claimDrift(repoId) {
-    const repo = db.prepare("SELECT id, root_path, name, git_baseline FROM choro_repos WHERE id = ?").get(repoId);
+    const repo = db.prepare("SELECT id, root_path, portable_key, name, git_baseline FROM choro_repos WHERE id = ?").get(repoId);
     if (!repo) return null;
-    const rootPath = String(repo.root_path ?? "");
+    const rootPath = localRootPath(repo);
     const rows = db.prepare(
       `SELECT c.id, c.statement, c.kind, c.source_path, c.start_line, c.end_line,
               m.slug AS page_slug, m.title AS page_title, p.rel_path
@@ -545,7 +573,7 @@ export function createChoroQueries({ store }) {
          FROM choro_pages p JOIN choro_modules m ON p.module_id = m.id
         WHERE m.repo_id = ? ORDER BY m.slug`
     ).all(repoId);
-    const repo = db.prepare("SELECT root_path FROM choro_repos WHERE id = ?").get(repoId);
+    const repo = db.prepare("SELECT root_path, portable_key FROM choro_repos WHERE id = ?").get(repoId);
     const embedOne = embedder.embedSingle ? (t) => embedder.embedSingle(t) : (t) => embedder.embed(t);
     const rows = store.getChoroPageVectors(repoId);
     const bySlug = new Map(rows.map((r) => [r.slug, r]));
@@ -561,7 +589,7 @@ export function createChoroQueries({ store }) {
       const fresh = !dimDrift && row && row.source_generated_at === page.generated_at && row.vector;
       if (fresh) { result.skipped++; continue; }
       if (row && row.vector) result.stale++;
-      const abs = join(repo.root_path, page.rel_path);
+      const abs = join(localRootPath(repo), page.rel_path);
       if (!existsSync(abs)) continue;
       let text;
       try {
@@ -636,5 +664,8 @@ export function createChoroQueries({ store }) {
     listRepos, listRepoFacts, repoFacts, repoFactsById, repoFromRow, listRepoRow, repoByRoot,
     resolveRepo, moduleMap, readPage, search, repoByCwd, outline, claimDrift,
     embedPageVectors, searchSemantic, embedQueryText, semanticTopN,
+    // 写路径（/choro/run、T1 后台任务）拿本机可用的仓库根：resolveRepo 回的是
+    // 原始行，root_path 可能是别的机器最近一次登记的位置（#581）。
+    localRootForRepo: localRootPath,
   };
 }

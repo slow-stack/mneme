@@ -3457,7 +3457,9 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             });
             return;
           }
-          repoRoot = repo.root_path;
+          // 本机可用的根（#581）：身份行上的 root_path 可能是别的机器最近一次
+          // 登记的位置，直接拿去跑 T0 会 no-such-dir。
+          repoRoot = choro.localRootForRepo(repo);
         }
 
         try {
@@ -3533,6 +3535,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         }
         const started = choro.startT1Job({
           repo,
+          // 本机根（#581）：身份行的 root_path 可能是别的机器登记的位置。
+          rootPath: typeof choro.localRootForRepo === "function" ? choro.localRootForRepo(repo) : null,
           module: body && typeof body.module === "string" && body.module.trim() !== "" ? body.module.trim() : null,
           retryFailed: body && typeof body === "object" ? body.retryFailed === true : false
         });
