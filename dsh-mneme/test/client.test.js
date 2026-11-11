@@ -1698,25 +1698,37 @@ test("settings card folds everything beyond the first screen behind All settings
 // 解析口径：直接切 clientSource 的字面量，不 eval、不 import——这四个常量是
 // 面板的私有实现细节，测试只该看到文本形状，不应该把它们导出去。
 test("every settings group is reachable and every flag key owns exactly one seat", () => {
+  // 文本断言的假通过防线：注释里同样能写出 `FEATURE_ENUMS.map(` 这类片段。
+  // 谁把它写进注释、而真的渲染行早被删掉，断言就永远绿。所以下面的文本断言
+  // 一律跑在去注释副本上，且断言本身要求行首缩进 + 紧贴的调用形态（行尾注释
+  // 写不进那个位置）。剥法只去整行 `//` 与 `/* */` 段：行内注释不碰，因为
+  // 字符串里可能出现 `//`（URL），误剥会把真代码切坏。
+  const stripComments = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
+  const codeSource = stripComments(clientSource);
+
   // 切出某个 `const X = [ ... ];` 的方括号内文本。FEATURE_GROUPS 的 items 里
   // 只有 `}],` 收尾，第一个 `];` 就是常量本身结束，不会被组内的 `]` 提前截断。
   const grabArray = (name) => {
     const head = `const ${name} = [`;
-    const at = clientSource.indexOf(head);
+    const at = codeSource.indexOf(head);
     assert.ok(at >= 0, `const ${name} must exist`);
     const start = at + head.length;
-    const end = clientSource.indexOf("];", start);
+    const end = codeSource.indexOf("];", start);
     assert.ok(end > start, `const ${name} must be a closed array literal`);
-    return clientSource.slice(start, end);
+    return codeSource.slice(start, end);
   };
   const grabObject = (name) => {
     const head = `const ${name} = {`;
-    const at = clientSource.indexOf(head);
+    const at = codeSource.indexOf(head);
     assert.ok(at >= 0, `const ${name} must exist`);
     const start = at + head.length;
-    const end = clientSource.indexOf("};", start);
+    const end = codeSource.indexOf("};", start);
     assert.ok(end > start, `const ${name} must be a closed object literal`);
-    return clientSource.slice(start, end);
+    return codeSource.slice(start, end);
   };
   const quoted = (text) => [...text.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
 
@@ -1777,9 +1789,9 @@ test("every settings group is reachable and every flag key owns exactly one seat
   // 里手写了一个下拉，但没在任何常量表里登记，所以上面五个出口都数不到它，
   // #641 那个下拉被误删也不会有测试红。现在它进了表的第六个出口，剩下要锁的
   // 是另一头——表里有这个 key、渲染代码却没人消费它，同样是静默消失。
-  assert.ok(/FEATURE_ENUMS\.map\(/.test(clientSource),
+  assert.ok(/^\s+FEATURE_ENUMS\.map\(\(k\) => enumRow\(k\)\)/m.test(codeSource),
     "FEATURE_ENUMS must be consumed by map() so every registered enum key renders a row");
-  assert.ok(/const enumRow = \(k\) =>/.test(clientSource),
+  assert.ok(/^\s+const enumRow = \(k\) =>/m.test(codeSource),
     "enumRow must stay the single shared renderer for enum keys (one row shape, not a second hand-written select)");
   // 取值表与登记表必须一一对应：表里多一个孤儿 setback 就没人渲染，
   // 少一个取值表则下拉点开是空的。配上「至少两档」防止把枚举写成假开关。
