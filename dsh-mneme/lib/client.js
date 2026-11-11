@@ -1094,6 +1094,14 @@ window.__ModuleLoader__.load({
         "memory.features.sleepProvider": "睡眠 Provider",
         "memory.features.sleepModel": "睡眠模型",
         "memory.features.sleepModelHint": "留空 = 用巩固模型或当前模型；建议选非思考模型",
+        // 图像描述档（docs/DISTILL.md:346）。三点必须写明白，否则用户会以为
+        // 「开了就好了」：① 只有能收图的模型才有用；② 路由留空 = 整档不跑，
+        // 不是跟随默认；③ 它只写描述进蒸馏转录，不存原图。
+        "memory.features.imageDescribeEnabled": "图像描述",
+        "memory.features.imageDescribeEnabled.hint": "蒸馏时让能看图的模型给每张图写一句描述，图里的内容才进得了记忆。不存原图，只留描述。",
+        "memory.features.imageDescribeProvider": "描述模型 Provider",
+        "memory.features.imageDescribeModel": "描述模型",
+        "memory.features.imageDescribeModelHint": "留空 = 整档不跑（不是跟随默认）。必须选一个能收图的模型，纯文本模型只会把图换成占位。",
         // Issue #478：max_tokens 预算键。hint 写清两件事：这是「单轮输出预算」，
         // 以及服务商硬上限更小时后端会按报错自动降级重试（对齐 #478 的后端行为）。
         "memory.features.dreamMaxTokens": "巩固输出上限",
@@ -2216,6 +2224,11 @@ window.__ModuleLoader__.load({
         "memory.features.sleepProvider": "Sleep provider",
         "memory.features.sleepModel": "Sleep model",
         "memory.features.sleepModelHint": "Leave empty to reuse the consolidation model; a non-reasoning model is recommended",
+        "memory.features.imageDescribeEnabled": "Image description",
+        "memory.features.imageDescribeEnabled.hint": "Lets a vision-capable model write one line about each image during distillation, so what is in the picture can reach memory. The image itself is never stored.",
+        "memory.features.imageDescribeProvider": "Description provider",
+        "memory.features.imageDescribeModel": "Description model",
+        "memory.features.imageDescribeModelHint": "Empty = the whole feature stays off (not \"follow default\"). Pick a model that accepts images — a text-only model just swaps the picture for a placeholder.",
         // Issue #478: max_tokens budget keys. Hint states both the scope (single-run
         // output budget) and the backend auto-downgrade on provider cap rejection.
         "memory.features.dreamMaxTokens": "Consolidation max tokens",
@@ -4670,7 +4683,7 @@ window.__ModuleLoader__.load({
       // 编码回溯、文档摘要卡、质量过滤、原文留存（子块：天数）。
       { key: "group.pipeline", items: ["entityExtractionEnabled", "codingRetrospect", "documentMemoryEnabled", "memoryQualityFilter.enabled",
         // #399 的留存总闸放组末：distillSub（天数行）经 subAfter 紧贴它渲染。
-        "distillRecords.enabled"] },
+        "distillRecords.enabled", "imageDescribeEnabled"] },
       // 检索与注入：捞什么、排什么序——热记忆、时间前缀、重排、BM25、语义去重、
       // 热度衰减。resilientModelDownload 是本地嵌入的配套（下载/校验/adopt），
       // 跟着检索组走。embedProvider 下拉（无开关行的子块）挂本组组尾。
@@ -4710,7 +4723,11 @@ window.__ModuleLoader__.load({
     const FEATURE_STRINGS = ["dreamProvider", "dreamModel", "sleepProvider", "sleepModel", "entityExtractionProvider", "entityExtractionModel", "localEmbedModel", "ollamaBaseUrl", "ollamaModel",
       // Issue #239 第 4 项：错峰时段串（巩固侧与蒸馏侧）。此前只有后端白名单、
       // 面板调不到——两个错峰键一个能调一个不能比都不给更让人困惑。
-      "dreamPeakHours", "summarizePeakHours"];
+      "dreamPeakHours", "summarizePeakHours",
+      // 图像描述档（docs/DISTILL.md:346）的路由。与上面几条语义不同：留空不是
+      // 「跟随当前模型」，而是整档不描述——蒸馏路由多是纯文本模型，拿它看图
+      // 只会换回占位、白花一次调用。所以留空必须被读成「关」而不是「默认」。
+      "imageDescribeProvider", "imageDescribeModel"];
     // 整数键（blur/Enter 提交，非法值不提交、退回生效值）：
     // issue #399 的 distillRecords.retentionDays。此前它与 enabled 一样只有
     // 后端白名单、面板够不着——而 CONFIGURATION.md 明写「面板可启停」。
@@ -4771,6 +4788,9 @@ window.__ModuleLoader__.load({
       const [dreamTest, setDreamTest] = useState(null);
       const [sleepTest, setSleepTest] = useState(null);
       const [entityTest, setEntityTest] = useState(null);
+      // 图像描述档（docs/DISTILL.md:346）：与蒸馏共用一次蒸馏触发，但路由是
+      // 独立一条（蒸馏走纯文本模型，看图要另一个能收 image 的模型）。
+      const [imageTest, setImageTest] = useState(null);
 
       useEffect(() => {
         let cancelled = false;
@@ -5184,6 +5204,17 @@ window.__ModuleLoader__.load({
         h("div", { className: "mneme-featsubhint" }, t("memory.features.distillRecords.retentionDays.hint"))
       );
 
+      // 图像描述档（docs/DISTILL.md:346）：总闸开着才展开路由。路由留空时这一档
+      // 在运行时也不跑（src/config.js 的注释与 summarize.js 的准入都按这个口径），
+      // 所以 hint 必须说「留空 = 不跑」，而不是跟随默认——它与上面几条路由的语义
+      // 故意不同，混着说会让人以为留空是「沿用蒸馏模型」。
+      const imageSub = eff.imageDescribeEnabled && h("div", { className: "mneme-featsub" },
+        Array.isArray(routes)
+          ? routeSelects("imageDescribeProvider", "imageDescribeModel", imageTest, setImageTest)
+          : h(react.Fragment, null, strRow("imageDescribeProvider"), strRow("imageDescribeModel")),
+        h("div", { className: "mneme-featsubhint" }, t("memory.features.imageDescribeModelHint"))
+      );
+
       // chorography M3：开局注入的档位。挂在 chorographyEnabled 下（总闸关着时
       // 不展开——没启用子系统就没有「注入多少」可谈）。枚举键没有通用渲染器，
       // 与上面几个子块同款手写下拉。轻量档（lightMode）在消费侧压成 off，
@@ -5263,6 +5294,7 @@ window.__ModuleLoader__.load({
                 // summarizeSub 挂 core 组尾而它的开关 autoSummarize 在 basic 组——
                 // 子块与开关隔着几行甚至隔着另一个组，读起来像在给别的东西调参数。
                 "distillRecords.enabled": distillSub,
+                imageDescribeEnabled: imageSub,
                 entityExtractionEnabled: entitySub,
                 autoSummarize: summarizeSub,
                 // #637：注入轮换窗口挂在自己的总闸 autoInject 上（#638 确立的
