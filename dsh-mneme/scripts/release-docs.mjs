@@ -182,6 +182,12 @@ export function sectionOf(text, heading) {
 export function checkSupportTable(text, version) {
   const [major, minor] = version.split(".");
   const expected = `${major}.${minor}.x`;
+  // 预发布版（0.14.0-beta.1）不是「受支持的版本」，支持表不该跟着它挪格。
+  // 挪了等于对外宣称 0.14 已经在活跃维护——而 beta 随时可能推倒重来。
+  // 这里显式标 skipped，调用方据此换一句人话；**不静默通过**：skipped 是返回值的一部分。
+  if (version.includes("-")) {
+    return { ok: true, expected, problems: [], skipped: "prerelease" };
+  }
   const problems = [];
   for (const [heading, label] of [
     ["## Supported Versions", "英文"],
@@ -200,5 +206,5 @@ export function checkSupportTable(text, version) {
     const found = rows[0].split("|")[1].trim();
     if (found !== expected) problems.push(`${label}表首行写的是 ${found}，应为 ${expected}`);
   }
-  return { ok: problems.length === 0, expected, problems };
+  return { ok: problems.length === 0, expected, problems, skipped: null };
 }

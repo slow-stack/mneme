@@ -19,10 +19,16 @@ import { checkSupportTable, scanReleaseRows, syncReadmeTables } from "../dsh-mne
 
 const version = (process.argv[2] || "").replace(/^v/, "");
 const testCount = process.argv[3];
-if (!/^\d+\.\d+\.\d+$/.test(version)) {
+// 预发布版（0.14.0-beta.1）也是一等版本：release.yml 早就按 tag 发、release-notes 也已认后缀，
+// 唯独这里是三段式硬校验——于是 beta 版只能手工做这一步，而手工最容易漏的就是 CHANGELOG 小节
+// （漏了 release.yml 的 verify 直接红）。放宽成与 release-notes 同一条规则。
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
   console.error("用法: node scripts/release-prep.mjs <版本号> [测试数]");
   process.exit(1);
 }
+// 预发布版不是「一次 minor 发布」：它不占 README 版本表、也不挪 SECURITY 支持表。
+// 判断只做一次，下面各步共用，避免三处各写一遍再漂移。
+const isPrerelease = version.includes("-");
 
 const PKG = "dsh-mneme/package.json";
 const LOCK = "dsh-mneme/package-lock.json";
@@ -41,7 +47,9 @@ const supportTableProblems = [];
 // 由 PR 里那句「必须人来写」的清单把改动落到同一次合并里。
 {
   const r = checkSupportTable(fs.readFileSync(SECURITY, "utf8"), version);
-  if (r.ok) {
+  if (r.skipped === "prerelease") {
+    console.log("· " + SECURITY + " 支持版本表不随预发布版 " + version + " 变动（beta 不是受支持的稳定版本）");
+  } else if (r.ok) {
     console.log("✓ " + SECURITY + " 支持版本表首行已是 " + r.expected);
   } else {
     console.warn("! " + SECURITY + " 的支持版本表还没跟上 " + version + "（应为 " + r.expected + "）：");
@@ -116,6 +124,12 @@ if (testCount && /^\d+$/.test(testCount)) {
 let touched = 0;
 for (const f of READMES) {
   const t = fs.readFileSync(f, "utf8");
+  if (isPrerelease) {
+    // 版本表按 minor/patch 排条目，预发布版不是一次版本发布：给它插行会凭空造出
+    // 「**v0.14.0-beta.1**」这样一个版本历史条目，而正式的 0.14.0 还没发。
+    console.log("- " + f + " 版本表不随预发布版 " + version + " 插行（等正式版发布时再补）");
+    continue;
+  }
   const r = syncReadmeTables(t, version, date);
   if (!r.actions.length) {
     const scanned = scanReleaseRows(t);
@@ -144,7 +158,7 @@ for (const f of READMES) {
 console.log("");
 console.log(touched ? "完成（" + touched + " 份 README 有改动）。还需要人写的：" : "完成（README 无需改动）。还需要人写的：");
 console.log("  1. dsh-mneme/CHANGELOG.md 新节条目的**措辞与取舍**（[Unreleased] 攒的已整段搬过去，不用手搬）");
-console.log("  2. 双 README 版本表占位行里的主题描述");
+console.log("  2. 双 README 版本表占位行里的主题描述" + (isPrerelease ? "（本版是预发布，表不插行，这条留给正式版）" : ""));
 console.log("  3. 根 README 的「📰 最近更新」与「📰 Recent updates」段落的头条（现在是标题式散文，已不是表格；纯编辑内容，脚本不碰）");
 if (supportTableProblems.length) {
   console.log("");

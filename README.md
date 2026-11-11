@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3E63DD?style=flat-square" alt="license"></a>
   <a href="https://github.com/slow-stack/mneme/actions"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI" alt="CI"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22%2B-3E63DD?style=flat-square&logo=nodedotjs&logoColor=white" alt="node"></a>
-  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-3262%20total-3E63DD?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-3375%20total-3E63DD?style=flat-square" alt="tests"></a>
   <a href="https://codecov.io/gh/slow-stack/mneme"><img src="https://img.shields.io/codecov/c/github/slow-stack/mneme/main?style=flat-square" alt="coverage"></a>
   <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
@@ -29,10 +29,10 @@
 
 ## 📰 最近更新
 
-**v0.13.0 — 记忆开始分得清「这一次」和「你这个人」**（2026-11-10）
+**v0.14.0-beta.1 — 两条记忆打架，现在有账可查了**（2026-11-11，预发布）
 
-夜里巩固时情绪第一次有了落点：记下「哪一次、因为什么、什么情绪」。同一情绪要在 3 个以上互相独立的会话里出现过，才算你稳定的倾向；不够就只当这一次——被降级的会记账，不静默丢。**这一相位默认不跑**，要同时打开 `sleepModeEnabled` 与 `sleepAffectiveEnabled` 才会开始记。
-同版日记本长成本子样（能到点自己写、正文终于排版），工作流（M.O.）从面板下架，另有一圈面板与容量预警的修复。
+矛盾对不再直接交给模型判生死：先记进 `conflict_ledger`，再按四档分诊——近重复走取代、跨作用域只记账、时序演进落取代链、真矛盾两条都活。默认 `conflictLedgerMode: "off"`，行为与 0.13.0 完全一致；想先看分档分布可以把档位拨到 `shadow`，它只记账不动任何一条记忆。
+同一批还修掉两个「不跑就没人知道」的故障：归档把活跃量压到阈值基线之下后，夜间巩固从此静默失联；热记忆让注入块在一轮里反复变化，同一轮快照能追出十份。
 
 > 逐条见 [CHANGELOG](dsh-mneme/CHANGELOG.md) · 完整版本历史见 [Releases](https://github.com/slow-stack/mneme/releases)
 
@@ -297,7 +297,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 
 ```bash
 cd dsh-mneme && npm install
-npm test        # 3262 个测试
+npm test        # 3375 个测试
 npm run stress  # 三轴线压测
 npm run sync    # src → lib 同步
 ```
@@ -336,10 +336,10 @@ dsh-mneme 的机制设计与下列公开研究相互印证（以下引用均逐�
 
 ## 📰 Recent updates
 
-**v0.13.0 — Memory now tells "this once" apart from "who you are"** (2026-11-10)
+**v0.14.0-beta.1 — When two memories disagree, there is now a ledger** (2026-11-11, pre-release)
 
-Emotion finally has a place to live: the nightly consolidation records which occasion, why, and what feeling. An emotion counts as one of your stable traits only when it shows up in three or more independent sessions; short of that it stays "this once" — every downgrade is counted, never silently dropped. **This phase is off by default**: turn on both `sleepModeEnabled` and `sleepAffectiveEnabled` before anything gets recorded.
-The same release grows the diary into a real notebook (it can write itself on schedule, and its text is finally laid out), retires the M.O. workflow from the panel, and brings a round of panel and capacity-warning fixes.
+Contradicting pairs are no longer handed straight to the model to decide who dies. They are written to `conflict_ledger` first and then triaged in four tiers — near-duplicates get superseded, cross-scope pairs are only recorded, temporal evolutions get a supersede chain, and true contradictions both stay alive. The default is `conflictLedgerMode: "off"`, so behaviour is unchanged from 0.13.0; switch it to `shadow` to watch the tiering on your own library without touching a single memory.
+The same batch fixes two failures that stayed silent precisely because nothing ran: once archiving pushed the active store below the threshold baseline, nightly consolidation stopped for good without a trace; and hot memory made the injected block churn within a round, chasing up to ten snapshots for one round.
 
 > Per-item notes in the [CHANGELOG](dsh-mneme/CHANGELOG.md) · full history in [Releases](https://github.com/slow-stack/mneme/releases)
 
@@ -604,7 +604,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 
 ```bash
 cd dsh-mneme && npm install
-npm test        # 3262 tests
+npm test        # 3375 tests
 npm run stress  # three-axis stress test
 npm run sync    # src → lib sync
 ```
