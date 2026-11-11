@@ -9,6 +9,7 @@ import { TOOL_GUIDE, CONTINUITY_TOOL_RULE } from "./guide.js";
 import { injectChildEnabled } from "./config.js";
 import { normalizeScopeStateDimension, normalizeScopeStateValue, normalizeScopeStateState } from "./scope-state.js";
 import { lastUserQuery } from "./inject.js";
+import { hintDate } from "./date-hint.js";
 // issue #607：工具报错里的 CLI 命令同样要给绝对路径入口——profile 装的插件没有
 // 全局 shim，光写 `dsh-mneme-choro` 用户照抄只会 command not found。
 import { choroCliCommandFrom } from "./wiki/cli-hint.js";
@@ -83,6 +84,19 @@ const MEMORY_PROVENANCE = (m) => {
     parts.push(`scope: ${m.agent_scope ?? "global"} / ${m.workspace_scope ?? "global"}`);
   }
   if (m.sensitivity) parts.push(`sensitivity: ${m.sensitivity}`);
+  return parts.length ? ` | ${parts.join(" | ")}` : "";
+};
+
+// 条目年龄段（模型可见时间线索）：created 是落库时间，与 updated 一起给，因为
+// updated 会被巩固合并刷新（见 src/date-hint.js 顶部），单看 updated 会把旧条目
+// 当新条目。带前导分隔符返回，created_at 是 schema 必填列，形状不对才整段消失
+// （不留悬空 ` | `）。
+const MEMORY_AGE = (m) => {
+  const created = hintDate(m?.created_at);
+  const updated = hintDate(m?.updated_at);
+  const parts = [];
+  if (created) parts.push(`created: ${created}`);
+  if (updated) parts.push(`updated: ${updated}`);
   return parts.length ? ` | ${parts.join(" | ")}` : "";
 };
 
@@ -266,7 +280,7 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
             .map((m, i) => {
               const preview = (m.content ?? "").replace(/\s+/g, " ").trim();
               const cut = preview.length > 200 ? `${preview.slice(0, 200)}…` : preview;
-              return `[${i + 1}] ${m.title}\n    ID: ${m.id} | type: ${m.type} | importance: ${m.importance} | updated: ${m.updated_at}${MEMORY_PROVENANCE(m)}\n    ${cut}`;
+              return `[${i + 1}] ${m.title}\n    ID: ${m.id} | type: ${m.type} | importance: ${m.importance}${MEMORY_AGE(m)}${MEMORY_PROVENANCE(m)}\n    ${cut}`;
             })
             .join("\n\n");
           return TEXT_OUTPUT(`Found ${items.length} memory entr${items.length === 1 ? "y" : "ies"}:\n\n${body}`);
@@ -318,7 +332,7 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
           const items = value.items ?? [];
           if (items.length === 0) return TEXT_OUTPUT(`0 memory entries (of ${value.total}).`);
           const body = items
-            .map((m, i) => `[${i + 1}] ${m.title} (type=${m.type}, importance=${m.importance})\n    ID: ${m.id} | updated: ${m.updated_at}${MEMORY_PROVENANCE(m)}`)
+            .map((m, i) => `[${i + 1}] ${m.title} (type=${m.type}, importance=${m.importance})\n    ID: ${m.id}${MEMORY_AGE(m)}${MEMORY_PROVENANCE(m)}`)
             .join("\n\n");
           return TEXT_OUTPUT(`${items.length} memory entries (of ${value.total}):\n\n${body}`);
         }
@@ -360,7 +374,7 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
           const m = value.memory;
           // #230：document 指针行把文件路径亮在首行——「全文按需读」从这里拿路径。
           const doc = m.doc_path ? ` | doc: ${m.doc_path}` : "";
-          return TEXT_OUTPUT(`${m.title}\nID: ${m.id} | type: ${m.type} | importance: ${m.importance}${doc}${MEMORY_PROVENANCE(m)}\n\n${m.content}`);
+          return TEXT_OUTPUT(`${m.title}\nID: ${m.id} | type: ${m.type} | importance: ${m.importance}${doc}${MEMORY_AGE(m)}${MEMORY_PROVENANCE(m)}\n\n${m.content}`);
         }
       },
       async execute(args) {

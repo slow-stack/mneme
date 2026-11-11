@@ -1094,6 +1094,14 @@ window.__ModuleLoader__.load({
         "memory.features.sleepProvider": "睡眠 Provider",
         "memory.features.sleepModel": "睡眠模型",
         "memory.features.sleepModelHint": "留空 = 用巩固模型或当前模型；建议选非思考模型",
+        // 图像描述档（docs/DISTILL.md:346）。三点必须写明白，否则用户会以为
+        // 「开了就好了」：① 只有能收图的模型才有用；② 路由留空 = 整档不跑，
+        // 不是跟随默认；③ 它只写描述进蒸馏转录，不存原图。
+        "memory.features.imageDescribeEnabled": "图像描述",
+        "memory.features.imageDescribeEnabled.hint": "蒸馏时让能看图的模型给每张图写一句描述，图里的内容才进得了记忆。不存原图，只留描述。",
+        "memory.features.imageDescribeProvider": "描述模型 Provider",
+        "memory.features.imageDescribeModel": "描述模型",
+        "memory.features.imageDescribeModelHint": "留空 = 整档不跑（不是跟随默认）。必须选一个能收图的模型，纯文本模型只会把图换成占位。",
         // Issue #478：max_tokens 预算键。hint 写清两件事：这是「单轮输出预算」，
         // 以及服务商硬上限更小时后端会按报错自动降级重试（对齐 #478 的后端行为）。
         "memory.features.dreamMaxTokens": "巩固输出上限",
@@ -2216,6 +2224,11 @@ window.__ModuleLoader__.load({
         "memory.features.sleepProvider": "Sleep provider",
         "memory.features.sleepModel": "Sleep model",
         "memory.features.sleepModelHint": "Leave empty to reuse the consolidation model; a non-reasoning model is recommended",
+        "memory.features.imageDescribeEnabled": "Image description",
+        "memory.features.imageDescribeEnabled.hint": "Lets a vision-capable model write one line about each image during distillation, so what is in the picture can reach memory. The image itself is never stored.",
+        "memory.features.imageDescribeProvider": "Description provider",
+        "memory.features.imageDescribeModel": "Description model",
+        "memory.features.imageDescribeModelHint": "Empty = the whole feature stays off (not \"follow default\"). Pick a model that accepts images — a text-only model just swaps the picture for a placeholder.",
         // Issue #478: max_tokens budget keys. Hint states both the scope (single-run
         // output budget) and the backend auto-downgrade on provider cap rejection.
         "memory.features.dreamMaxTokens": "Consolidation max tokens",
@@ -4612,9 +4625,13 @@ window.__ModuleLoader__.load({
     // 属调优噪音，按对齐结论留在配置文件，不上 UI。
     // #249 第二批：注入形态的父／子开关（父 = autoInject）。子项紧跟父行、缩进
     // 显示；父关时子项加一句「不生效」，但开关仍可点——父关是「不生效」而不是
-    // 「重置用户配置」，子项自己勾着的值要留着，也应该能提前设好。同一份关系在
-    // 后端 src/config.js 的 INJECT_CHILD_FLAGS（运行时闸门），两侧漂移由
-    // test/inject-parent-gate.test.js 钉住。
+    // 「重置用户配置」，子项自己勾着的值要留着，也应该能提前设好。
+    // 这张表是**面板的渲染关系**，不是运行时闸门：后端 src/config.js 的
+    // INJECT_CHILD_FLAGS 只收「父关、子项却仍有执行路径」的键（注入器的工具描述
+    // 住在注入器外层，所以需要显式判父）。地志那两条不用——总闸关着时整个子系统
+    // 不注册座位，子项天然没有跑起来的路径，加闸门是空转。所以两张表不必相等；
+    // test/inject-parent-gate.test.js 钉的是后端的闸门完整性 + 前端「子项只由
+    // flagRow 渲染一次」（手写第二份会让同一个键在面板上出现两行）。
     const FEATURE_CHILDREN = {
       autoInject: ["injectGuidanceEnabled", "continuityRescueEnabled"],
       // 热度衰减的注入侧乘数（#362）是它的第二口径：数据同源、含义不同
@@ -4629,7 +4646,7 @@ window.__ModuleLoader__.load({
     // 「它记的东西会不会被别的会话看到」。其余组整组收进「全部设置」折叠
     // （showAll）。成员从原组里移走而不是渲染时过滤：同一项永远只渲染一次。
     // 首屏可点项 = 3 总开关 + autoInject 的 2 个子开关 + 扩展功能 3 个闸门 +
-    // scope 2 开关 + 「全部设置」按钮 = 11。v0.9.0 曾按产品主人点名把 M.O.
+    // 睡眠 2 项 + scope 2 开关 + 「全部设置」按钮 = 13。v0.9.0 曾按产品主人点名把 M.O.
     // 独立成组并提进首屏（当时豁免 ≤8 软预算，理由记在 test/client.test.js 的
     // 同名用例里）；v0.13.x 主人决定把 M.O. 下架，预算回到 8。
     // v0.13.x 第二次豁免（#607 后续）：主人要「一眼看见」仓库地志与知识库这两个
@@ -4638,8 +4655,15 @@ window.__ModuleLoader__.load({
     // 有功能没入口。为此新开 group.ext 并进首屏，预算 8→11。豁免的是「一眼看见」
     // 这条产品要求，不是把预算取消：再往首屏塞东西前先问它是不是和这三个闸门
     // 同级的子系统，不是就留在折叠层。
+    // v0.13.x 第三次豁免（用户 2026-11-11 反馈「装了发现设置没情绪那一页的开关」）：
+    // 豁免由头是 sleepModeEnabled 的**同级性**，不是「用户要」——它是「巩固与睡眠」
+    // 这个子系统的总闸，与 group.ext 的三个闸门同级，按上面那条判据本该在首屏，
+    // 而它恰好是首屏唯一缺席的子系统总闸，于是整个 group.dream 躺在折叠层。
+    // sleepAffectiveEnabled 是它的并列成员（FEATURE_CHILDREN 里没有父子关系），
+    // 跟着整组进来；不单拎进 group.basic —— 那里收的是「新手敢动的自动类总开关」，
+    // 把巩固细节塞进去会打散该组的语义边界。预算 11→13。
     // RuntimeProvisionBlock 配好即消失，常态首屏更少。
-    const FEATURE_FIRST_SCREEN = ["group.basic", "group.ext", "group.scope"];
+    const FEATURE_FIRST_SCREEN = ["group.basic", "group.ext", "group.dream", "group.scope"];
     const FEATURE_GROUPS = [
       { key: "group.basic", items: ["autoInject", "autoSummarize", "autoDream"] },
       // 扩展功能（v0.13.x）：mneme 本体只做记忆，仓库地志 / 知识库 / 日记本是
@@ -4659,7 +4683,7 @@ window.__ModuleLoader__.load({
       // 编码回溯、文档摘要卡、质量过滤、原文留存（子块：天数）。
       { key: "group.pipeline", items: ["entityExtractionEnabled", "codingRetrospect", "documentMemoryEnabled", "memoryQualityFilter.enabled",
         // #399 的留存总闸放组末：distillSub（天数行）经 subAfter 紧贴它渲染。
-        "distillRecords.enabled"] },
+        "distillRecords.enabled", "imageDescribeEnabled"] },
       // 检索与注入：捞什么、排什么序——热记忆、时间前缀、重排、BM25、语义去重、
       // 热度衰减。resilientModelDownload 是本地嵌入的配套（下载/校验/adopt），
       // 跟着检索组走。embedProvider 下拉（无开关行的子块）挂本组组尾。
@@ -4682,12 +4706,28 @@ window.__ModuleLoader__.load({
     // 与 retrieve 的常开旋钮不同级。调优类数值键（seedCap/depth/weight* 等）
     // 刻意不设座位，走配置文件（见 FEATURE_NUMBERS 的同名纪律）。
     const FEATURE_ADVANCED_BOOLS = ["hybridInject", "selectiveInjectEnabled", "adaptiveThresholdEnabled", "entityRecallEnabled", "graphAnchoringEnabled", "reflectionUpdateEnabled", "reflectionFailureTracking", "conflictFreezeEnabled", "trustEpistemicWeighting"];
+    // 枚举键（下拉）：形态与布尔开关不同——取值是多档而不是开/关，所以不进
+    // FEATURE_ADVANCED_BOOLS（那一组的每一行都由 boolRow 统一渲染）。此前
+    // conflictLedgerMode 的下拉手写在「高级」折叠的末尾，等于第七个出口：
+    // 可达性测试按常量表数座位，按定义看不见它，#641 那个下拉被误删也不会红。
+    // 登记口径：新枚举键在这里加一行、在 FEATURE_ENUM_VALUES 配对取值表，
+    // 渲染一律由 FEATURE_ENUMS.map 驱动，别再从别处手写第二个下拉。
+    const FEATURE_ENUMS = ["conflictLedgerMode"];
+    // 取值表与后端 FEATURE_FLAG_ENUMS 对齐：面板能选到的档必须与后端接受的档
+    // 同一份——多一档后端 400，少一档用户调不到。首档即默认档。
+    const FEATURE_ENUM_VALUES = {
+      conflictLedgerMode: ["off", "shadow", "enforce"]
+    };
     // 字符串键（blur/Enter 提交，空串合法 = 跟随默认）：巩固模型与语义
     // 检索路线。embedProvider 是枚举，用下拉单独渲染。
     const FEATURE_STRINGS = ["dreamProvider", "dreamModel", "sleepProvider", "sleepModel", "entityExtractionProvider", "entityExtractionModel", "localEmbedModel", "ollamaBaseUrl", "ollamaModel",
       // Issue #239 第 4 项：错峰时段串（巩固侧与蒸馏侧）。此前只有后端白名单、
       // 面板调不到——两个错峰键一个能调一个不能比都不给更让人困惑。
-      "dreamPeakHours", "summarizePeakHours"];
+      "dreamPeakHours", "summarizePeakHours",
+      // 图像描述档（docs/DISTILL.md:346）的路由。与上面几条语义不同：留空不是
+      // 「跟随当前模型」，而是整档不描述——蒸馏路由多是纯文本模型，拿它看图
+      // 只会换回占位、白花一次调用。所以留空必须被读成「关」而不是「默认」。
+      "imageDescribeProvider", "imageDescribeModel"];
     // 整数键（blur/Enter 提交，非法值不提交、退回生效值）：
     // issue #399 的 distillRecords.retentionDays。此前它与 enabled 一样只有
     // 后端白名单、面板够不着——而 CONFIGURATION.md 明写「面板可启停」。
@@ -4748,6 +4788,9 @@ window.__ModuleLoader__.load({
       const [dreamTest, setDreamTest] = useState(null);
       const [sleepTest, setSleepTest] = useState(null);
       const [entityTest, setEntityTest] = useState(null);
+      // 图像描述档（docs/DISTILL.md:346）：与蒸馏共用一次蒸馏触发，但路由是
+      // 独立一条（蒸馏走纯文本模型，看图要另一个能收 image 的模型）。
+      const [imageTest, setImageTest] = useState(null);
 
       useEffect(() => {
         let cancelled = false;
@@ -4887,6 +4930,27 @@ window.__ModuleLoader__.load({
         tag: flagTag(k),
         onToggle: () => put({ [k]: !eff[k] })
       });
+
+      // 枚举行：与 boolRow 同一副骨架（左边名称 + 提示语，右边控件），只把
+      // 开关换成下拉。取值表来自 FEATURE_ENUM_VALUES，标签按 <key>.<value>
+      // 从词典取——所以新增一个枚举档位只改常量表与词典，不动渲染代码。
+      // 值缺失时退回首档（与后端默认档一致），不会渲染出一个没有选中的下拉。
+      const enumRow = (k) => {
+        const values = FEATURE_ENUM_VALUES[k] ?? [];
+        return h("div", { className: "mneme-featsub", key: k },
+          h("div", { className: "mneme-featnum" },
+            h("span", { className: "mneme-featnumlabel" }, t(`memory.features.${k}`)),
+            h("select", {
+              className: "mneme-select",
+              value: eff[k] || values[0],
+              disabled: busy,
+              onChange: (e) => put({ [k]: e.target.value })
+            },
+              values.map((v) => h("option", { key: v, value: v }, t(`memory.features.${k}.${v}`))))
+          ),
+          h("div", { className: "mneme-featsubhint" }, t(`memory.features.${k}.hint`))
+        );
+      };
 
       // 带子项的父开关：父行 + 紧随其后的子行（子行缩进，父关时标注不生效）。
       const flagRow = (k) => {
@@ -5140,6 +5204,17 @@ window.__ModuleLoader__.load({
         h("div", { className: "mneme-featsubhint" }, t("memory.features.distillRecords.retentionDays.hint"))
       );
 
+      // 图像描述档（docs/DISTILL.md:346）：总闸开着才展开路由。路由留空时这一档
+      // 在运行时也不跑（src/config.js 的注释与 summarize.js 的准入都按这个口径），
+      // 所以 hint 必须说「留空 = 不跑」，而不是跟随默认——它与上面几条路由的语义
+      // 故意不同，混着说会让人以为留空是「沿用蒸馏模型」。
+      const imageSub = eff.imageDescribeEnabled && h("div", { className: "mneme-featsub" },
+        Array.isArray(routes)
+          ? routeSelects("imageDescribeProvider", "imageDescribeModel", imageTest, setImageTest)
+          : h(react.Fragment, null, strRow("imageDescribeProvider"), strRow("imageDescribeModel")),
+        h("div", { className: "mneme-featsubhint" }, t("memory.features.imageDescribeModelHint"))
+      );
+
       // chorography M3：开局注入的档位。挂在 chorographyEnabled 下（总闸关着时
       // 不展开——没启用子系统就没有「注入多少」可谈）。枚举键没有通用渲染器，
       // 与上面几个子块同款手写下拉。轻量档（lightMode）在消费侧压成 off，
@@ -5171,13 +5246,12 @@ window.__ModuleLoader__.load({
           },
             CHORO_TIERS.map((r) => h("option", { key: r, value: r }, t(`memory.features.chorographyInject.${r}`))))
         ),
-        h("div", { className: "mneme-featsubhint" }, t("memory.features.chorographyInject.hint")),
-        // 契约 §3.1 的两枚子开关，落在同一个子块里：它们只在仓库地志启用后
-        // 才有意义，散到全部设置里就变成「看不见总闸却先看到子项」。
-        // 两个都 opt-in/opt-out 按契约默认（自动更新默认关——它会读盘比 git 基线；
-        // 面板发起 T1 默认开——它是人主动点的按钮，不是后台行为）。
-        boolRow("chorographyAutoRefresh", { sub: true }),
-        boolRow("chorographyT1FromPanel", { sub: true })
+        h("div", { className: "mneme-featsubhint" }, t("memory.features.chorographyInject.hint"))
+        // 契约 §3.1 的两枚子开关（自动更新 / 面板发起 T1）不在这里手写：它们是
+        // FEATURE_CHILDREN.chorographyEnabled 的子项，由 flagRow 紧跟父行统一渲染。
+        // 手写一份会让同一个键渲染两遍——5c41d31 先写了这两行，5bad8a6 补父关系时
+        // 没删旧的，v0.14.0-beta.1 就带着这个重复上线（切上面那个，下面那行不同步）。
+        // 统一渲染还顺带补上 gate：父关时子行标注「不生效」，而值留着、仍可预置。
       );
 
       if (error && !state) return h("section", { className: "mneme-set-card" },
@@ -5220,6 +5294,7 @@ window.__ModuleLoader__.load({
                 // summarizeSub 挂 core 组尾而它的开关 autoSummarize 在 basic 组——
                 // 子块与开关隔着几行甚至隔着另一个组，读起来像在给别的东西调参数。
                 "distillRecords.enabled": distillSub,
+                imageDescribeEnabled: imageSub,
                 entityExtractionEnabled: entitySub,
                 autoSummarize: summarizeSub,
                 // #637：注入轮换窗口挂在自己的总闸 autoInject 上（#638 确立的
@@ -5266,23 +5341,10 @@ window.__ModuleLoader__.load({
                   ),
                   showAdv && h(react.Fragment, null,
                     FEATURE_ADVANCED_BOOLS.map((k) => boolRow(k)),
-                    // conflictLedgerMode（#641）：三档枚举，紧挨 conflictFreezeEnabled
-                    // 摆——两者语义关联（enforce 与 freeze 互斥，同开时冻结让位），
-                    // 隔开摆放会让人以为各自独立。枚举键没有通用渲染器，手写下拉
-                    // （choroSub 同款）。
-                    h("div", { className: "mneme-featsub" },
-                      h("div", { className: "mneme-featnum" },
-                        h("span", { className: "mneme-featnumlabel" }, t("memory.features.conflictLedgerMode")),
-                        h("select", {
-                          className: "mneme-select",
-                          value: eff.conflictLedgerMode || "off",
-                          disabled: busy,
-                          onChange: (e) => put({ conflictLedgerMode: e.target.value })
-                        },
-                          ["off", "shadow", "enforce"].map((v) => h("option", { key: v, value: v }, t(`memory.features.conflictLedgerMode.${v}`))))
-                      ),
-                      h("div", { className: "mneme-featsubhint" }, t("memory.features.conflictLedgerMode.hint"))
-                    )
+                    // 枚举行排在布尔行之后，由 FEATURE_ENUMS 驱动。conflictLedgerMode
+                    // 紧跟 conflictFreezeEnabled 是有意的：两者语义关联（enforce 与
+                    // freeze 互斥，同开时冻结让位），隔开摆放会让人以为各自独立。
+                    FEATURE_ENUMS.map((k) => enumRow(k))
                   )
                 )
               );
@@ -9230,6 +9292,11 @@ window.__ModuleLoader__.load({
       const [receiveOpen, setReceiveOpen] = useState(false);
       const itemRefs = useRef(new Map());
       const moreRef = useRef(null);
+      // 子系统页签的座位闸门（用户 2026-11-11 反馈「装了发现设置没情绪那一页的
+      // 开关」）：开关关着，对应页签就不注册，同一条闸门管入口与座位。
+      // null = features 还没到手，按「一律不渲染需要闸门的页签」处理（见下方
+      // useEffect 的注释）；{} = 拉取失败，按全关处理（fail-closed）。
+      const [seatEff, setSeatEff] = useState(null);
 
       const switchViewMode = (mode) => {
         setViewMode(mode);
@@ -9241,6 +9308,20 @@ window.__ModuleLoader__.load({
           .then((res) => res.json())
           .then((d) => setVecEnabled(!!d.config?.enabled))
           .catch(() => {});
+      }, []);
+
+      // 页签闸门的数据源。features 是异步拉的，所以「加载中」必须有自己的表现：
+      // 未到手（null）时一律不渲染需要闸门的页签——先不出现、到手后补上是渐显，
+      // 反过来先全渲染再收起会在加载完成那一瞬间闪一下消失，那才是看得见的跳变。
+      // 拉取失败也收敛到 {}（全关），与后端「关着就不注册座位」同一口径：
+      // 读不到就不给入口，不做乐观放行。
+      useEffect(() => {
+        let cancelled = false;
+        apiFetch("/api/dsh-mneme/features")
+          .then((res) => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
+          .then((j) => { if (!cancelled) setSeatEff((j && j.effective) || {}); })
+          .catch(() => { if (!cancelled) setSeatEff({}); });
+        return () => { cancelled = true; };
       }, []);
 
       // 冲突冻结指示：dream-status 一次带出待确认冲突涉及的记忆 id，
@@ -9596,15 +9677,32 @@ window.__ModuleLoader__.load({
         diary: "book"
       };
 
+      // 页签闸门：affective / diary 两格跟着各自的总闸走，开关关着就不注册
+      // （与后端「关着就不注册座位」同一条口径，用户 2026-11-11 反馈）。
+      // 加载中 seatEff 还是 null → seatOpen 恒假，这两格先不出现；到手后一次补上。
+      // 用 filter(Boolean) 而不是渲染时再过滤，是为了让「这一格在不在」只有
+      // 一个判据（数组长度即页签数），测试也能直接数。
+      const seatOpen = (key) => !!seatEff && !!seatEff[key];
       const subviews = [
         { key: "memory", label: t("memory.explorer.tabMemory") },
         { key: "entity", label: t("memory.explorer.tabEntities") },
         { key: "status", label: t("memory.explorer.tabStatus") },
         { key: "settings", label: t("memory.explorer.tabSettings") },
+        // persona 页签刻意不挂闸门：它承载人格卡的查看与编辑，注入总闸关着时
+        // 仍然要能改内容（先写好人设、后面再开注入），不是「关着就没意义」的
+        // 数据页。affective / diary 不同：没开就没有数据可看，进来是空页。
         { key: "persona", label: t("memory.explorer.tabPersona") },
-        { key: "affective", label: t("memory.explorer.tabAffective") },
-        { key: "diary", label: t("memory.diary.title") }
-      ];
+        seatOpen("sleepAffectiveEnabled") && { key: "affective", label: t("memory.explorer.tabAffective") },
+        seatOpen("diaryEnabled") && { key: "diary", label: t("memory.diary.title") }
+      ].filter(Boolean);
+
+      // 闸门关掉后重开面板：view 可能还停在已经被过滤掉的那一格上，渲染出来
+      // 是一张空白页。到手即回落 memory——「页签没了、内容还停在半空」不能留。
+      useEffect(() => {
+        if (!seatEff) return;
+        if (view === "affective" && !seatEff.sleepAffectiveEnabled) setView("memory");
+        else if (view === "diary" && !seatEff.diaryEnabled) setView("memory");
+      }, [seatEff, view]);
 
       return h("div", { className: "mneme-x" },
         h("div", { className: "mneme-xbar" },

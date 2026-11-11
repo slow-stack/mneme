@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3E63DD?style=flat-square" alt="license"></a>
   <a href="https://github.com/slow-stack/mneme/actions"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI" alt="CI"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22%2B-3E63DD?style=flat-square&logo=nodedotjs&logoColor=white" alt="node"></a>
-  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-3375%20total-3E63DD?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-3399%20total-3E63DD?style=flat-square" alt="tests"></a>
   <a href="https://codecov.io/gh/slow-stack/mneme"><img src="https://img.shields.io/codecov/c/github/slow-stack/mneme/main?style=flat-square" alt="coverage"></a>
   <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
@@ -29,10 +29,11 @@
 
 ## 📰 最近更新
 
-**v0.14.0-beta.1 — 两条记忆打架，现在有账可查了**（2026-11-11，预发布）
+**v0.14.0-beta.2 — 模型终于知道一条记忆有多旧了**（2026-11-11，预发布）
 
-矛盾对不再直接交给模型判生死：先记进 `conflict_ledger`，再按四档分诊——近重复走取代、跨作用域只记账、时序演进落取代链、真矛盾两条都活。默认 `conflictLedgerMode: "off"`，行为与 0.13.0 完全一致；想先看分档分布可以把档位拨到 `shadow`，它只记账不动任何一条记忆。
-同一批还修掉两个「不跑就没人知道」的故障：归档把活跃量压到阈值基线之下后，夜间巩固从此静默失联；热记忆让注入块在一轮里反复变化，同一轮快照能追出十份。
+此前注入给模型的每一行记忆都没有日期——「三天前说要 A、昨天改口说 B」在它眼里是两条等重的陈述，先后关系全靠正文里有没有恰好写着日期。这一版把日期补进所有渲染面：注入行、检索回执、单条读取。年龄一律看 `created_at`（`updated_at` 会被巩固刷新，实测最久会年轻 51 天），只给日期不给时分，坏值不渲染。
+同一批还上了**图像描述档**（`imageDescribeEnabled`，默认关）：蒸馏前让一个能看图的模型给每张图写一句描述并进转录——此前一张报错截图进库只剩 `[图: xxx.png 1543x983]`，模型知道「有过一张图」但不知道图里是什么。不读图字节（宿主按模型能力决定编不编）、必须独立路由、描述失败绝不影响蒸馏。
+另修面板三处「有渲染、没登记」与地志子开关渲染两遍。
 
 > 逐条见 [CHANGELOG](dsh-mneme/CHANGELOG.md) · 完整版本历史见 [Releases](https://github.com/slow-stack/mneme/releases)
 
@@ -297,7 +298,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 
 ```bash
 cd dsh-mneme && npm install
-npm test        # 3375 个测试
+npm test        # 3399 个测试
 npm run stress  # 三轴线压测
 npm run sync    # src → lib 同步
 ```
@@ -336,12 +337,13 @@ dsh-mneme 的机制设计与下列公开研究相互印证（以下引用均逐�
 
 ## 📰 Recent updates
 
-**v0.14.0-beta.1 — When two memories disagree, there is now a ledger** (2026-11-11, pre-release)
+**v0.14.0-beta.2 — the model can now see how old a memory is** (2026-11-11, pre-release)
 
-Contradicting pairs are no longer handed straight to the model to decide who dies. They are written to `conflict_ledger` first and then triaged in four tiers — near-duplicates get superseded, cross-scope pairs are only recorded, temporal evolutions get a supersede chain, and true contradictions both stay alive. The default is `conflictLedgerMode: "off"`, so behaviour is unchanged from 0.13.0; switch it to `shadow` to watch the tiering on your own library without touching a single memory.
-The same batch fixes two failures that stayed silent precisely because nothing ran: once archiving pushed the active store below the threshold baseline, nightly consolidation stopped for good without a trace; and hot memory made the injected block churn within a round, chasing up to ten snapshots for one round.
+Every injected line used to arrive with no date at all, so "user wanted A three days ago, changed their mind yesterday" read as two equally weighted statements and the order had to be inferred from whether a date happened to be written in the body. This release adds it to every rendering surface: injected lines, search receipts, single-item reads. Age always comes from `created_at` — `updated_at` is refreshed by consolidation and measured up to 51 days too young on a real library — as a date only, never a time, and never rendered when the value is malformed.
+The same batch ships **image descriptions** (`imageDescribeEnabled`, off by default): before distillation, a vision-capable model writes one line about each image and that line joins the transcript. Previously a screenshot of an error landed as `[图: shot.png 1543x983]` — the model knew an image existed but not what was in it. Image bytes are never read by the plugin (the host encodes them only when the routed model accepts images), the route must be configured separately, and a failed description never breaks distillation.
+Also fixes three panel entries that were rendered but never registered, and a chorography sub-toggle that appeared twice.
 
-> Per-item notes in the [CHANGELOG](dsh-mneme/CHANGELOG.md) · full history in [Releases](https://github.com/slow-stack/mneme/releases)
+> Full list in [CHANGELOG](dsh-mneme/CHANGELOG.md) · version history in [Releases](https://github.com/slow-stack/mneme/releases)
 
 ## What problem does it solve
 
@@ -604,7 +606,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 
 ```bash
 cd dsh-mneme && npm install
-npm test        # 3375 tests
+npm test        # 3399 tests
 npm run stress  # three-axis stress test
 npm run sync    # src → lib sync
 ```
