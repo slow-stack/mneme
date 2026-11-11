@@ -1727,6 +1727,8 @@ test("every settings group is reachable and every flag key owns exactly one seat
   const advanced = quoted(grabArray("FEATURE_ADVANCED_BOOLS"));
   const strings = quoted(grabArray("FEATURE_STRINGS"));
   const numbers = quoted(grabArray("FEATURE_NUMBERS"));
+  const enums = quoted(grabArray("FEATURE_ENUMS"));
+  const enumValuesBody = grabObject("FEATURE_ENUM_VALUES");
   const childrenBody = grabObject("FEATURE_CHILDREN");
   const children = [...childrenBody.matchAll(/\[([^\]]*)\]/g)].flatMap((m) => quoted(m[1]));
 
@@ -1761,6 +1763,7 @@ test("every settings group is reachable and every flag key owns exactly one seat
   claim(advanced, "FEATURE_ADVANCED_BOOLS");
   claim(strings, "FEATURE_STRINGS");
   claim(numbers, "FEATURE_NUMBERS");
+  claim(enums, "FEATURE_ENUMS");
 
   // ④ 反向：首屏数组引用的组必须真实存在（拼错组名 = 首屏少两组却没人发现）。
   const known = new Set(groups.map((g) => g.key));
@@ -1769,6 +1772,30 @@ test("every settings group is reachable and every flag key owns exactly one seat
   for (const k of FOLDED_GROUPS) {
     assert.ok(!firstScreen.includes(k), `${k} cannot be both folded and on the first screen`);
   }
+
+  // ⑥ 登记了就必须真渲染。conflictLedgerMode 此前的处境是反过来的：渲染代码
+  // 里手写了一个下拉，但没在任何常量表里登记，所以上面五个出口都数不到它，
+  // #641 那个下拉被误删也不会有测试红。现在它进了表的第六个出口，剩下要锁的
+  // 是另一头——表里有这个 key、渲染代码却没人消费它，同样是静默消失。
+  assert.ok(/FEATURE_ENUMS\.map\(/.test(clientSource),
+    "FEATURE_ENUMS must be consumed by map() so every registered enum key renders a row");
+  assert.ok(/const enumRow = \(k\) =>/.test(clientSource),
+    "enumRow must stay the single shared renderer for enum keys (one row shape, not a second hand-written select)");
+  // 取值表与登记表必须一一对应：表里多一个孤儿 setback 就没人渲染，
+  // 少一个取值表则下拉点开是空的。配上「至少两档」防止把枚举写成假开关。
+  const enumValueKeys = [...enumValuesBody.matchAll(/([A-Za-z][A-Za-z0-9_]*):\s*\[/g)].map((m) => m[1]);
+  assert.deepEqual(enumValueKeys.sort(), [...enums].sort(),
+    "every enum key must own exactly one value table, and no value table may be orphaned");
+  for (const k of enums) {
+    const at = enumValuesBody.indexOf(k + ":");
+    const values = [...(enumValuesBody.slice(at).match(/\[([^\]]*)\]/)?.[1] ?? "")
+      .matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    assert.ok(values.length >= 2, `${k} must offer at least two states (an enum with one state is a hidden switch)`);
+  }
+  // ⑦ 已知枚举座位的反向锚。今天只有一个——它是面板上唯一「取值成档」的开关，
+  // 被整条摘掉时没有任何别的测试会发现（i18n 锁只扫组 items，扫不到枚举行）。
+  assert.deepEqual(enums, ["conflictLedgerMode"],
+    "conflictLedgerMode is the only enum seat today; losing it silently removes the #641 dropdown");
 });
 
 // B 项：页签闸门的加载态。features 是异步拉的，规则必须是「未到手就不渲染」——
@@ -3109,6 +3136,28 @@ test("panel copy and icons must not silently vanish (missing dict lines, unregis
     .flatMap((m) => [...m[1].matchAll(/"([a-zA-Z0-9_.]+)"/g)].map((x) => x[1])))];
   assert.ok(flagKeys.length >= 20, `group items must be parseable (saw ${flagKeys.length})`);
   for (const k of flagKeys) { usedKeys.add("memory.features." + k); usedKeys.add("memory.features." + k + ".hint"); }
+  // ①-c 枚举行：标签、提示、每一档的取值标签全走模板串（t(`memory.features.${k}`)），
+  // ①-a 的字面量扫描看不见，①-b 只扫组 items。所以 conflictLedgerMode 这整组
+  // 文案在收进 FEATURE_ENUMS 之前，从来没被这条测试覆盖过——文案丢了界面会裸奔
+  // 出键名，而闸门照绿。
+  const enumHead = "const FEATURE_ENUMS = [";
+  const enumAt = clientSource.indexOf(enumHead);
+  assert.ok(enumAt >= 0, "FEATURE_ENUMS must exist (enum keys have no other seat registry)");
+  const enumBody = clientSource.slice(enumAt + enumHead.length, clientSource.indexOf("];", enumAt));
+  const enumKeys = [...enumBody.matchAll(/"([a-zA-Z0-9_]+)"/g)].map((m) => m[1]);
+  assert.ok(enumKeys.length >= 1, "FEATURE_ENUMS must be parseable");
+  const valuesHead = "const FEATURE_ENUM_VALUES = {";
+  const valuesAt = clientSource.indexOf(valuesHead);
+  assert.ok(valuesAt >= 0, "FEATURE_ENUM_VALUES must exist");
+  const valuesBody = clientSource.slice(valuesAt + valuesHead.length, clientSource.indexOf("};", valuesAt));
+  for (const k of enumKeys) {
+    usedKeys.add("memory.features." + k);
+    usedKeys.add("memory.features." + k + ".hint");
+    const at = valuesBody.indexOf(k + ":");
+    assert.ok(at >= 0, `enum ${k} must have a value table (an empty dropdown is a dead control)`);
+    const values = [...(valuesBody.slice(at).match(/\[([^\]]*)\]/)?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    for (const v of values) usedKeys.add("memory.features." + k + "." + v);
+  }
 
   const missing = [...usedKeys].filter((k) => !defined(k)).sort();
   assert.deepEqual(missing, [], `用而无典的 i18n 键（界面会裸奔出键名）：${missing.join(", ")}`);

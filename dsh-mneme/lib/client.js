@@ -4689,6 +4689,18 @@ window.__ModuleLoader__.load({
     // 与 retrieve 的常开旋钮不同级。调优类数值键（seedCap/depth/weight* 等）
     // 刻意不设座位，走配置文件（见 FEATURE_NUMBERS 的同名纪律）。
     const FEATURE_ADVANCED_BOOLS = ["hybridInject", "selectiveInjectEnabled", "adaptiveThresholdEnabled", "entityRecallEnabled", "graphAnchoringEnabled", "reflectionUpdateEnabled", "reflectionFailureTracking", "conflictFreezeEnabled", "trustEpistemicWeighting"];
+    // 枚举键（下拉）：形态与布尔开关不同——取值是多档而不是开/关，所以不进
+    // FEATURE_ADVANCED_BOOLS（那一组的每一行都由 boolRow 统一渲染）。此前
+    // conflictLedgerMode 的下拉手写在「高级」折叠的末尾，等于第七个出口：
+    // 可达性测试按常量表数座位，按定义看不见它，#641 那个下拉被误删也不会红。
+    // 登记口径：新枚举键在这里加一行、在 FEATURE_ENUM_VALUES 配对取值表，
+    // 渲染一律由 FEATURE_ENUMS.map 驱动，别再从别处手写第二个下拉。
+    const FEATURE_ENUMS = ["conflictLedgerMode"];
+    // 取值表与后端 FEATURE_FLAG_ENUMS 对齐：面板能选到的档必须与后端接受的档
+    // 同一份——多一档后端 400，少一档用户调不到。首档即默认档。
+    const FEATURE_ENUM_VALUES = {
+      conflictLedgerMode: ["off", "shadow", "enforce"]
+    };
     // 字符串键（blur/Enter 提交，空串合法 = 跟随默认）：巩固模型与语义
     // 检索路线。embedProvider 是枚举，用下拉单独渲染。
     const FEATURE_STRINGS = ["dreamProvider", "dreamModel", "sleepProvider", "sleepModel", "entityExtractionProvider", "entityExtractionModel", "localEmbedModel", "ollamaBaseUrl", "ollamaModel",
@@ -4894,6 +4906,27 @@ window.__ModuleLoader__.load({
         tag: flagTag(k),
         onToggle: () => put({ [k]: !eff[k] })
       });
+
+      // 枚举行：与 boolRow 同一副骨架（左边名称 + 提示语，右边控件），只把
+      // 开关换成下拉。取值表来自 FEATURE_ENUM_VALUES，标签按 <key>.<value>
+      // 从词典取——所以新增一个枚举档位只改常量表与词典，不动渲染代码。
+      // 值缺失时退回首档（与后端默认档一致），不会渲染出一个没有选中的下拉。
+      const enumRow = (k) => {
+        const values = FEATURE_ENUM_VALUES[k] ?? [];
+        return h("div", { className: "mneme-featsub", key: k },
+          h("div", { className: "mneme-featnum" },
+            h("span", { className: "mneme-featnumlabel" }, t(`memory.features.${k}`)),
+            h("select", {
+              className: "mneme-select",
+              value: eff[k] || values[0],
+              disabled: busy,
+              onChange: (e) => put({ [k]: e.target.value })
+            },
+              values.map((v) => h("option", { key: v, value: v }, t(`memory.features.${k}.${v}`))))
+          ),
+          h("div", { className: "mneme-featsubhint" }, t(`memory.features.${k}.hint`))
+        );
+      };
 
       // 带子项的父开关：父行 + 紧随其后的子行（子行缩进，父关时标注不生效）。
       const flagRow = (k) => {
@@ -5273,23 +5306,10 @@ window.__ModuleLoader__.load({
                   ),
                   showAdv && h(react.Fragment, null,
                     FEATURE_ADVANCED_BOOLS.map((k) => boolRow(k)),
-                    // conflictLedgerMode（#641）：三档枚举，紧挨 conflictFreezeEnabled
-                    // 摆——两者语义关联（enforce 与 freeze 互斥，同开时冻结让位），
-                    // 隔开摆放会让人以为各自独立。枚举键没有通用渲染器，手写下拉
-                    // （choroSub 同款）。
-                    h("div", { className: "mneme-featsub" },
-                      h("div", { className: "mneme-featnum" },
-                        h("span", { className: "mneme-featnumlabel" }, t("memory.features.conflictLedgerMode")),
-                        h("select", {
-                          className: "mneme-select",
-                          value: eff.conflictLedgerMode || "off",
-                          disabled: busy,
-                          onChange: (e) => put({ conflictLedgerMode: e.target.value })
-                        },
-                          ["off", "shadow", "enforce"].map((v) => h("option", { key: v, value: v }, t(`memory.features.conflictLedgerMode.${v}`))))
-                      ),
-                      h("div", { className: "mneme-featsubhint" }, t("memory.features.conflictLedgerMode.hint"))
-                    )
+                    // 枚举行排在布尔行之后，由 FEATURE_ENUMS 驱动。conflictLedgerMode
+                    // 紧跟 conflictFreezeEnabled 是有意的：两者语义关联（enforce 与
+                    // freeze 互斥，同开时冻结让位），隔开摆放会让人以为各自独立。
+                    FEATURE_ENUMS.map((k) => enumRow(k))
                   )
                 )
               );
