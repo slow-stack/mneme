@@ -346,6 +346,32 @@ emoji 占两个单元，切在中间就留下一个孤立的高位代理——�
 但记忆库已 273MB，原图档明确不做；描述档（多模态模型出 1 段描述 + attachmentId 溯源）
 是下一批，需要单独一个 provider 槽，不占蒸馏那个。
 
+### 描述档（`imageDescribeEnabled`，默认关）
+
+上面那句「下一批」已经落地：`src/image-describe.js` + `summarize.js` 的一个注入点。
+默认关着时蒸馏输出与 #611 之后逐字节一致，这条由 `test/image-description.test.js` 里
+「默认关：即使配了描述模型，转录逐字节不变」锁住——opt-in 功能不许顺手改掉老行为。
+
+三个约束写在这里是因为它们各自都有反直觉的地方：
+
+1. **图字节由宿主编，本模块不碰。** `@deepseek-ai/dsh-llm` 的 adapter 边界先看
+   `modelInfo.inputModalities`：含 `image` 就把消息里的 image 块原样交给适配器（字节
+   由它内部取），不含就换成 `textOnlyImageText` 的占位。所以这里只需要「把真 image 块
+   放进一次 `llm.stream`」，**不读文件、不做 base64、不需要 attachments store**——
+   本插件也没有 attachments 服务可注入（`src/index.js` 的 inject 列表里没有它）。
+2. **必须是独立路由，且留空 = 整档不跑。** 与 `summarizeProvider` 的「空 = 跟随会话
+   当前模型」语义**刻意相反**：蒸馏路由多半是纯文本模型，拿它去看图最坏的结果是宿主
+   降级成占位——一次调用换回一行占位，白花钱且看不出错。所以 `imageDescribeProvider` /
+   `imageDescribeModel` 任一为空就不发调用，面板的 hint 也这么写。
+3. **准入三态，`unknown` 照发。** `inputModalities` 缺席表示「未知」（老适配器不声明能力），
+   不是「不支持」——宿主对未知是不投影、照原样发，这里替它决定就是猜。只有明确声明了
+   且不含 `image` 才跳过。
+
+描述文本按「单张 ≤300 字符、压成一行」并入占位行之后（`[图: …]\n  描述：…`），占位本身
+不动——它是 #611 定的口径。同一附件在一次蒸馏里只描述一次（按 `attachmentId` 缓存），
+重复贴图不重复付费。任何失败（路由挂、流中断、模型不支持）都退化成「这张图没有描述」，
+**不影响蒸馏**：描述是增强，不是前置条件。
+
 **观测**：`collectMessages` 按 **`publicTranscriptParts` 产出的 part** 数 `imageCount`，
 每个 part 带一份 `blocks`（产文本的那份 content），随返回值上浮，写进
 `llm_audit_logs.metadata.imageCount`——四种审计行（skip / 失败 / 成功）都带。

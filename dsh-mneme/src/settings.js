@@ -295,6 +295,10 @@ const FEATURE_FLAG_BOOLEANS = [
   // 进 LIGHT_MODE_OFF（自动维护轮与低资源档互斥）。顶层扁平键，与 config.js schema
   // 成对出现（计数锁 test/api.test.js 钉住）。
   "profileFactsEnabled",
+  // 图像描述档（docs/DISTILL.md:346）：蒸馏前给窗口里的图出描述。默认关，进
+  // LIGHT_MODE_OFF —— 它是一次额外的视觉调用，与低资源档互斥。路由两个键走
+  // FEATURE_FLAG_STRINGS（留空 = 不描述，理由写在 config.js 那三个键的注释里）。
+  "imageDescribeEnabled",
   // #539：逐会话无痕默认关闭；子代理开关受总开关约束。手动 session id 名单留在配置，
   // 不进入只支持标量的 feature_flags 白名单。
   "sessionGateEnabled",
@@ -419,7 +423,13 @@ const FEATURE_FLAG_STRINGS = [
   // Issue #239 第 4 项：高峰时段串（"09:00-18:00"，空串 = 关闭）。
   "summarizePeakHours",
   // Issue #239 第 4 项镜像到巩固：同一份时段语法，空串 = 关闭（行为与现状一致）。
-  "dreamPeakHours"
+  "dreamPeakHours",
+  // 图像描述档专用路由（docs/DISTILL.md:346）：与上面几条不同，这两条留空不是
+  // 「跟随当前模型」而是「整档不描述」——蒸馏路由与会话主模型都可能是纯文本
+  // 模型，跟着它们跑只会拿回一行 textOnly 占位。所以面板上它们是空串 + 说明，
+  // 不是下拉默认值。
+  "imageDescribeProvider",
+  "imageDescribeModel"
 ];
 // URL 字符串开关：trim 后必须为空或合法 http/https URL（new URL() 校验协议，
 // 拒绝其余协议——这是 SSRF 防线的一部分）。

@@ -11,6 +11,9 @@ import { createScopeResolver } from "./scope.js";
 import { breakFenceMarkers } from "./fence.js";
 // Issue #611：图片块的文本口径（占位，不是空串）。三个 textOf 副本共用这一份。
 import { contentToText, countImages } from "./attachment-text.js";
+// 图像描述档（docs/DISTILL.md:346）：占位之外再补一段「图里是什么」。本文件只
+// 负责把描述并进转录行；出描述的调用、准入判断都在 image-describe.js。
+import { appendDescriptions, describeImages, imageBlocks, canSeeImages } from "./image-describe.js";
 // #512：每轮蒸馏一个 run id（归因主体）。store 侧也能铸造，但这里必须知道它——
 // 写记忆时要把它一路带到 saveMemoryProvenance / 落 run 行，拿回来再写就是两次往返。
 import { randomUUID } from "node:crypto";
@@ -397,7 +400,7 @@ function snapshotSessionEvents(session, afterSeq, throughSeq) {
   });
 }
 
-function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, throughSeq) {
+async function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, throughSeq, describePart) {
   const events = snapshotSessionEvents(session, afterSeq, throughSeq);
   const lines = [];
   const seenSubagentMessages = new Set();
@@ -441,12 +444,18 @@ function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, th
       // 会报「这一窗有 2 张图」而转录里一张都没有。part 是渲染与落盘共用的同一份
       // 判定，计量跟着它走，两处不会再各有一套口径。
       imageCount += countImages(part.blocks);
+      // 图像描述档（docs/DISTILL.md:346）：开关开着且这一 part 真的带图时，才
+      // 去出描述。describePart 由调用方注入（默认 undefined）——本函数不认识
+      // 任何路由配置，只负责「文本最后长什么样」，这样单测可以只塞一个桩进去。
+      const described = typeof describePart === "function" && part.blocks?.length
+        ? await describePart(part)
+        : part.text;
       if (part.role === "user") {
-        lines.push(STR.transcriptUser[language](part.text));
+        lines.push(STR.transcriptUser[language](described));
       } else if (part.role === "agent") {
-        lines.push(STR.transcriptAgent[language](part.text));
+        lines.push(STR.transcriptAgent[language](described));
       } else {
-        lines.push(STR.transcriptAssistant[language](part.text));
+        lines.push(STR.transcriptAssistant[language](described));
       }
     }
     // 渲染专属内容：工具调用/结果与 code 输出进 LLM 转录（codingRetrospect 靠
@@ -833,12 +842,48 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       const triggerSeq = eventSeq(triggerEvent);
       // 只读取上次成功游标之后、当前 turn/end 之前的事件。旧版 snapshotEvents
       // 即使忽略范围参数，collectMessages 仍会按事件 seq 二次过滤。
-      const collected = collectMessages(
+      // 图像描述档（docs/DISTILL.md:346）：三件事按顺序判——开关、路由、模型
+      // 是否真能看图。任一不过就整档不跑，**并且不改变转录一个字**（describePart
+      // 缺席时 collectMessages 走原路径，输出逐字节等于 #611 的行为）。
+      //
+      // 判定放在这里而不是 image-describe.js 里：路由来自 config，准入是一次可能
+      // 很贵的 resolveModelInfo 调用，两者都该只问一次，而不是每张图问一次。
+      let describePart;
+      if (config.imageDescribeEnabled === true) {
+        const describeProvider = typeof config.imageDescribeProvider === "string" ? config.imageDescribeProvider.trim() : "";
+        const describeModel = typeof config.imageDescribeModel === "string" ? config.imageDescribeModel.trim() : "";
+        if (describeProvider && describeModel) {
+          const sight = await canSeeImages(ctx, describeProvider, describeModel);
+          // "unknown"（老适配器不声明能力）照发：宿主那侧对未知是不投影，照原样
+          // 交给适配器，它若真看不到再降级成占位——这里替它决定就是猜。
+          if (sight !== false) {
+            const describeRoute = { provider: describeProvider, model: describeModel };
+            // 同一张图在一次蒸馏里只描述一次：同一附件常被重复贴（追问、引用），
+            // 按 attachmentId 缓存，省掉重复的视觉调用。
+            const described = new Map();
+            describePart = async (part) => {
+              const blocks = imageBlocks(part.blocks);
+              if (blocks.length === 0) return part.text;
+              const fresh = blocks.filter((block, i) => {
+                const key = block?.attachment?.attachmentId ?? `#${i}`;
+                return !described.has(key);
+              });
+              if (fresh.length > 0) {
+                const got = await describeImages(ctx, describeRoute, config, fresh, { signal: controller.signal });
+                for (const [key, value] of got) described.set(key, value);
+              }
+              return appendDescriptions(part.text, blocks, described);
+            };
+          }
+        }
+      }
+      const collected = await collectMessages(
         session,
         config.distillMaxChars ?? 24000,
         langOf(config),
         previousSeq,
-        triggerSeq
+        triggerSeq,
+        describePart
       );
       const hasNewEvents = collected.hasEvents
         || (triggerSeq !== undefined && (previousSeq === undefined || triggerSeq > previousSeq));
