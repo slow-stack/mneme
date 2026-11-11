@@ -10,7 +10,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3E63DD?style=flat-square" alt="license"></a>
   <a href="https://github.com/slow-stack/mneme/actions"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI" alt="CI"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22%2B-3E63DD?style=flat-square&logo=nodedotjs&logoColor=white" alt="node"></a>
-  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-3399%20total-3E63DD?style=flat-square" alt="tests"></a>
+  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-3401%20total-3E63DD?style=flat-square" alt="tests"></a>
   <a href="https://codecov.io/gh/slow-stack/mneme"><img src="https://img.shields.io/codecov/c/github/slow-stack/mneme/main?style=flat-square" alt="coverage"></a>
   <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
@@ -29,11 +29,10 @@
 
 ## 📰 最近更新
 
-**v0.14.0-beta.2 — 模型终于知道一条记忆有多旧了**（2026-11-11，预发布）
+**v0.14.0-beta.3 — 情绪页白屏修好了，档位被冻结覆盖也说得明白了**（2026-11-12，预发布）
 
-此前注入给模型的每一行记忆都没有日期——「三天前说要 A、昨天改口说 B」在它眼里是两条等重的陈述，先后关系全靠正文里有没有恰好写着日期。这一版把日期补进所有渲染面：注入行、检索回执、单条读取。年龄一律看 `created_at`（`updated_at` 会被巩固刷新，实测最久会年轻 51 天），只给日期不给时分，坏值不渲染。
-同一批还上了**图像描述档**（`imageDescribeEnabled`，默认关）：蒸馏前让一个能看图的模型给每张图写一句描述并进转录——此前一张报错截图进库只剩 `[图: xxx.png 1543x983]`，模型知道「有过一张图」但不知道图里是什么。不读图字节（宿主按模型能力决定编不编）、必须独立路由、描述失败绝不影响蒸馏。
-另修面板三处「有渲染、没登记」与地志子开关渲染两遍。
+点开「情感」页整块面板变空白的回归修掉了。根因是一行 `formatRelativeTime(it.lastSeen)` 漏传 `t`，函数内部要拿它取文案，缺参就抛错；这行跑在 render 里，React 整棵树卸载，日志里什么都不留——所以看起来像「点了没反应」。`v0.14.0-beta.1` 与 `beta.2` 都带这个回归，只有库里存在带 `lastSeen` 的情绪边时才触发，因此不是每个人都会遇到。
+另修一处「面板说的和实际做的不一致」：档位选 `off` 或 `shadow`、同时开着**矛盾冻结**时，判成矛盾的对会照旧停车进待审队列，档位选哪一档都不减少——而这条互斥关系此前只写在设置项提示语里，下拉旁边看不到。现在档位下方直接标一行「⚠ 冻结正在覆盖本档位」。判据与后端同源，不改默认值、不改语义；要停止新增仍须自己关掉矛盾冻结。
 
 > 逐条见 [CHANGELOG](dsh-mneme/CHANGELOG.md) · 完整版本历史见 [Releases](https://github.com/slow-stack/mneme/releases)
 
@@ -298,7 +297,7 @@ dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
 
 ```bash
 cd dsh-mneme && npm install
-npm test        # 3399 个测试
+npm test        # 3401 个测试
 npm run stress  # 三轴线压测
 npm run sync    # src → lib 同步
 ```
@@ -337,11 +336,10 @@ dsh-mneme 的机制设计与下列公开研究相互印证（以下引用均逐�
 
 ## 📰 Recent updates
 
-**v0.14.0-beta.2 — the model can now see how old a memory is** (2026-11-11, pre-release)
+**v0.14.0-beta.3 — the affective panel no longer goes blank, and an overridden tier now says so** (2026-11-12, pre-release)
 
-Every injected line used to arrive with no date at all, so "user wanted A three days ago, changed their mind yesterday" read as two equally weighted statements and the order had to be inferred from whether a date happened to be written in the body. This release adds it to every rendering surface: injected lines, search receipts, single-item reads. Age always comes from `created_at` — `updated_at` is refreshed by consolidation and measured up to 51 days too young on a real library — as a date only, never a time, and never rendered when the value is malformed.
-The same batch ships **image descriptions** (`imageDescribeEnabled`, off by default): before distillation, a vision-capable model writes one line about each image and that line joins the transcript. Previously a screenshot of an error landed as `[图: shot.png 1543x983]` — the model knew an image existed but not what was in it. Image bytes are never read by the plugin (the host encodes them only when the routed model accepts images), the route must be configured separately, and a failed description never breaks distillation.
-Also fixes three panel entries that were rendered but never registered, and a chorography sub-toggle that appeared twice.
+The regression that blanked the whole affective panel is fixed. One call to `formatRelativeTime(it.lastSeen)` was missing its `t` argument; the function reaches for that to look up a label, so it threw — and because the line runs inside render, React unmounted the entire tree and left nothing in the log. That is why it looked like "I clicked it and nothing happened". Both `v0.14.0-beta.1` and `beta.2` shipped this; it only triggers when the library holds an affective edge with `lastSeen`, so not every user hits it.
+This release also fixes one case where the panel disagreed with behaviour: with the tier set to `off` or `shadow` and **conflict freeze** on, contradicting pairs still park in the pending queue no matter which tier is chosen — and that mutual exclusion was only documented in a settings hint, invisible from the dropdown itself. The tier row now shows "⚠ conflict freeze is overriding this tier". The condition is the same one the backend uses, defaults and semantics are untouched, and stopping new arrivals still requires turning conflict freeze off.
 
 > Full list in [CHANGELOG](dsh-mneme/CHANGELOG.md) · version history in [Releases](https://github.com/slow-stack/mneme/releases)
 
@@ -606,7 +604,7 @@ Community projects that wire mneme into more platforms — not part of this repo
 
 ```bash
 cd dsh-mneme && npm install
-npm test        # 3399 tests
+npm test        # 3401 tests
 npm run stress  # three-axis stress test
 npm run sync    # src → lib sync
 ```
