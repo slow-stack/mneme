@@ -106,4 +106,29 @@ test("#249 第二批：面板的父子关系与后端同源（漏一处就静默
     // 白名单：面板给的开关必须真能写进 kv，否则点了只会拿到 400。
     assert.ok(FEATURE_FLAG_SPEC.booleans.includes(child), `${child} 不在 settings 白名单里`);
   }
+
+  // 子项只能由 flagRow 经 FEATURE_CHILDREN 渲染一次。上面那张表（后端闸门）只
+  // 覆盖 autoInject，地志的两枚子项是纯面板关系，不在里面——所以这一条改用前端
+  // 表自己解析，覆盖面板声明的全部子项。
+  // 回归：5c41d31 在 choroSub 里先手写了两行 boolRow，5bad8a6 往 FEATURE_CHILDREN
+  // 补父关系时没删旧的，同一个键渲染两遍（v0.14.0-beta.1 带着它上线：切上面那个，
+  // 下面那行不同步）。旧的断言查不出来——它只比「items 与 FEATURE_CHILDREN 有没有
+  // 重叠」，手写行不进任何表。
+  // 先剥注释再数：注释里写字面量不该算渲染点（客户端源码里也有同款约定）。
+  const stripped = client
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
+  const childrenBlock = stripped.match(/const FEATURE_CHILDREN = \{([\s\S]*?)\n    \};/)?.[1] ?? "";
+  const declaredChildren = [...childrenBlock.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(declaredChildren.length >= 5, `前端 FEATURE_CHILDREN 解析失败（got ${declaredChildren.length}）`);
+  for (const child of declaredChildren) {
+    const escaped = child.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const handwritten = (stripped.match(new RegExp(`boolRow\\(\\s*"${escaped}"`, "g")) || []).length;
+    assert.equal(handwritten, 0, `${child} 被手写渲染了 ${handwritten} 次：子项只能由 flagRow 渲染，否则面板上会出现两行`);
+  }
+  // 防「删掉渲染让上面那条变绿」：子项真得有展开点。
+  assert.ok(/kids\.map\(\(c\) => boolRow\(c, \{ sub: true, gate: k \}\)\)/.test(stripped),
+    "flagRow 必须展开子项并带 gate，否则 FEATURE_CHILDREN 只是声明、面板上没有子行");
 });
