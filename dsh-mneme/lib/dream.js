@@ -1545,7 +1545,13 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
         const b = snapshot.get(d.loser);
         if (!a || !b) continue;
         try {
-          const verdict = triagePair(a, b, pairSimilarity.get(similarityKey(d.winner, d.loser)));
+          // 判据必须与 sleep 侧同源（#650 评审）：sleep enforce 传的是
+          // config.conflictLedgerDupMinSimilarity，这里不传就会退回 triage.js 的
+          // 死默认 0.9 —— 用户把阈值调高/调低后，同一对在两条路径上可能分到不同
+          // tier（一侧判 dup 去归档，另一侧判 conflict 只记账）。
+          const verdict = triagePair(a, b, pairSimilarity.get(similarityKey(d.winner, d.loser)), {
+            dupMinSimilarity: config.conflictLedgerDupMinSimilarity
+          });
           if (verdict.tier === "dup") {
             const res = supersedeInfoFirstPair({ a, b }, service, logger, config);
             if (res.applied) {
@@ -1555,6 +1561,11 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
               // 本 helper 独立落地的，不在 applyList 里，必须显式补进维护清单
               // （否则索引里留一行已归档记忆的向量，「清得掉才检索得到」失衡）。
               ledgerVectorFixups.push({ action: "supersede", winner: res.winnerId, loser: res.loserId });
+              // 先落观察行再推进状态（#650 评审）：dream 路径不像 sleep 那样先跑
+              // recordLedgerTriage，账本里可能根本没有这一对；此处若直接 UPDATE，
+              // 命中 0 行、changes=0 被静默丢弃，于是「处置成功」与「账本有记录」
+              // 长期背离。upsert 一次拿到确定的行，状态推进才有落点。
+              service.saveConflictLedgerEntry({ run_id: runId, memory_a: a.id, memory_b: b.id, tier: verdict.tier, similarity: verdict.signals.similarity, signals: verdict.signals });
               service.setConflictLedgerStatus(a.id, b.id, "superseded");
               try {
                 service.saveConflictReviewed?.({ run_id: runId, memory_a: a.id, memory_b: b.id, outcome: "supersede", judged_at: new Date().toISOString() });
@@ -1574,6 +1585,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
             try {
               if (service.supersedeChain(older.id, newer.id)) {
                 t3Chained += 1;
+                service.saveConflictLedgerEntry({ run_id: runId, memory_a: a.id, memory_b: b.id, tier: verdict.tier, similarity: verdict.signals.similarity, signals: verdict.signals });
                 service.setConflictLedgerStatus(a.id, b.id, "superseded");
               } else {
                 service.saveConflictLedgerEntry({ run_id: runId, memory_a: a.id, memory_b: b.id, tier: verdict.tier, similarity: verdict.signals.similarity, signals: verdict.signals });
@@ -1846,7 +1858,10 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     return finish({
       ok: okResult,
       status,
-      applied,
+      // ledgerApplied 是 ledger enforce 档下 T1 supersede 的独立产出，不在 applyList
+      // 里（#650 评审）。只把它算进 noChange 会让 receipt 与 dream_runs.applied 仍
+      // 报 0：库真被改了，回执说没改——#619 同族假成功。计入 applied 才是唯一口径。
+      applied: applied + ledgerApplied,
       decisions: auditDecisions,
       outcome,
       conflicts,

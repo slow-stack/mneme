@@ -4083,6 +4083,9 @@ export function createStore(path) {
 
   // --- conflict triage ledger（issue #641，shadow 档）-----------------------
 
+  // 四态里 superseded（已被取代）与 open 有写入点；differentiated（人审判为不同事、
+  // 不必再问）与 zombied（两条都已退场、无从消解）是预留位，当前没有任何代码路径
+  // 会写它们——留着是为了状态机与面板筛选口径完整，别当成「已实现但没数据」。
   const LEDGER_STATUSES = new Set(["open", "superseded", "differentiated", "zombied"]);
   const LEDGER_TIERS = new Set(["dup", "cross-scope-dup", "evolution", "conflict"]);
 
@@ -4135,8 +4138,17 @@ export function createStore(path) {
    * 可同步；bump updated_at 反而会误导「已审过」的宽松代理判定）。已归档/
    * 已遗忘的行不落链（它们已经退场，再标注是给幽灵记账）；重复写同一指向
    * 是无害的幂等 no-op，换指向以最后一次为准。
+   *
+   * 幂等守卫（#650 评审）：上面那句「无害的 no-op」只对指向成立——superseded_at
+   * 每次都会刷成新的 nowIso()，返回值又按 changes > 0 判，于是同一对每轮都报
+   * 「刚处理过」：t3Chained 虚增，取代时刻被改写成最近一次巩固的时间（挂账时长
+   * 一类指标随之失真）。先读当前指向，已指向同一 winner 就直接返回 false 且不
+   * 写库，只有首次落链或换指向才真正落笔。
    */
   function supersedeChain(loserId, winnerId) {
+    const current = db.prepare("SELECT superseded_by FROM memories WHERE id = ?").get(loserId);
+    // 行不存在 / 已指向同一继任者：no-op，不刷时间戳、不计入变更数。
+    if (!current || current.superseded_by === winnerId) return false;
     const res = db.prepare(
       "UPDATE memories SET superseded_by = ?, superseded_at = ? WHERE id = ? AND archived = 0 AND forgotten = 0"
     ).run(winnerId, nowIso(), loserId);
@@ -4146,9 +4158,22 @@ export function createStore(path) {
   /**
    * 已被取代行的 id 清单（issue #641，T3 检索侧降权用）。走部分索引，未落链
    * 的库上是空查询。返回数组而非 Set——集合语义由调用方决定。
+   *
+   * 只认「继任者仍活着」的旧行（#650 评审）：链是一次性写下的指向，而继任者
+   * 之后仍可能被归档/遗忘/删除。若只判 superseded_by IS NOT NULL，那种情况下
+   * 旧行会被当成「已有新版本」从注入里摘掉，可它自己明明是活的、且它指向的
+   * 那条已经退场——数据在库里却永远不再出现，是一种沉默的不可逆失效。JOIN 到
+   * 继任者上要求 archived=0 且 forgotten=0，继任者退场即自动恢复旧行可见性。
    */
   function supersededIds() {
-    return db.prepare("SELECT id FROM memories WHERE superseded_by IS NOT NULL").all().map((r) => r.id);
+    return db.prepare(
+      `SELECT m.id AS id
+         FROM memories m
+         JOIN memories w ON w.id = m.superseded_by
+        WHERE m.superseded_by IS NOT NULL
+          AND w.archived = 0
+          AND w.forgotten = 0`
+    ).all().map((r) => r.id);
   }
 
   /**

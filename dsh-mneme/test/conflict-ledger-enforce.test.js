@@ -7,7 +7,7 @@ import { createApi } from "../src/api.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { runSleep } from "../src/dream/sleep.js";
 import { supersedeInfoFirstPair } from "../src/dream/decisions.js";
-import { createDreamScheduler } from "../src/dream.js";
+import { createDreamScheduler, parseReceipt } from "../src/dream.js";
 
 // Issue #641（beta 第二阶段，enforce 档）：确定性处置接线。锁五件事，防的回归是：
 //   ① enforce 假成功——枚举里加了档位但没人消费（#616 的教训），所以每条用例都
@@ -379,5 +379,74 @@ test("issue#641 dream enforce 与 freeze 同开：freeze 让位（conflict 照�
   assert.ok(warnings.some((m) => m.includes("degrading to freeze")), "共存必须 warn");
   assert.equal(result.frozen, 1, "freeze 语义保留");
   assert.equal(store.listConflictLedger().length, 0, "降级轮不写账本处置");
+  store.close();
+});
+
+// ---- #650 评审必修：取代链单向门 / 幂等 / 回执口径 ----
+
+test("issue#641 supersededIds：继任者退场后旧行恢复可见（取代链不是单向门）", () => {
+  const { service, store } = setup();
+  const oldMem = makeMemory(service, "旧版", "旧版的内容");
+  const newMem = makeMemory(service, "新版", "新版的内容");
+  assert.equal(service.supersedeChain(oldMem.id, newMem.id), true);
+  assert.ok(store.supersededIds().includes(oldMem.id), "继任者活着：旧行按「已有新版本」降权");
+  // 继任者被归档（人删、遗忘流程、别的相位判定退场）——链还在，但替代已经不存在。
+  service.setArchived(newMem.id, true);
+  assert.ok(
+    !store.supersededIds().includes(oldMem.id),
+    "继任者退场：旧行不该再被判为「已有新版本」，否则它明明活着却永久从注入里消失"
+  );
+  store.close();
+});
+
+test("issue#641 supersedeChain：同一指向重放是 no-op——不刷 superseded_at、不计变更", () => {
+  const { service, store } = setup();
+  const a = makeMemory(service, "A", "甲的内容");
+  const b = makeMemory(service, "B", "乙的内容");
+  assert.equal(service.supersedeChain(a.id, b.id), true, "首次落链");
+  const firstAt = store.getById(a.id).superseded_at;
+  assert.equal(service.supersedeChain(a.id, b.id), false, "同一继任者重放：没有新的变更");
+  assert.equal(store.getById(a.id).superseded_at, firstAt, "取代时刻不被重放刷新（挂账时长不被抹平）");
+  store.close();
+});
+
+test("issue#641 enforce：回执 applied 记真实处置数（相位与整轮同一口径）", async () => {
+  const { service, store, vectorIndex } = setup();
+  const long = makeMemory(service, "回执长条", "一段明显更长的内容，信息量优先胜出");
+  const short = makeMemory(service, "回执短条", "短");
+  seedVectorPair(vectorIndex, long, short, 1.0);
+  const ctx = captureCtx("");
+  const result = await runSleep(ctx, service, baseConfig({ conflictLedgerMode: "enforce" }), ctx.logger, { embedder, vectorIndex }, null);
+  assert.equal(result.phases.conflicts.enforced.t1Resolved, 1);
+  assert.equal(
+    result.phases.conflicts.applied,
+    1,
+    "enforce 档真归档了一条，相位回执必须记 1（缺 applied 时下游一律读成 0）"
+  );
+  const parsed = parseReceipt(result.receipt);
+  assert.equal(parsed.applied, 1, "整轮回执同口径——库变了就必须报变");
+  store.close();
+});
+
+test("issue#641 dream enforce：T1 自动 supersede 也必须在账本留痕（dream 路径不跑分诊记账）", async () => {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  const vectorIndex = createVectorIndex({ store });
+  service.setEmbedder(embedder);
+  service.setVectorIndex(vectorIndex);
+  const { memory: w } = service.saveWithDedupe({ type: "decision", title: "同日前者", content: "这是一段明显更长的内容，信息量优先胜出", importance: 4 });
+  const { memory: l } = service.saveWithDedupe({ type: "decision", title: "同日后者", content: "短", importance: 4 });
+  // 同一天、相似度 1.0 → 分诊判 dup → dream 侧自动 supersede（不是 conflict 记账档）
+  seedVectorPair(vectorIndex, w, l, 1.0);
+  const ctx = dreamCtx({ conflicts: [{ action: "conflict", winner: w.id, loser: l.id, reason: "同一天两次录入" }] });
+  const dream = createDreamScheduler({ thresholdCount: 1, thresholdChars: 0, delayMs: 0, semantic: { embedder, vectorIndex } });
+  const result = await dream.runDream(ctx, service, { ...BASE_DREAM_CONFIG, conflictLedgerMode: "enforce" });
+  assert.equal(result.ok, true);
+  const loser = service.getById(l.id);
+  const winner = service.getById(w.id);
+  assert.equal([loser.archived, winner.archived].filter(Boolean).length, 1, "dup 档真处置了一条（此用例的前提）");
+  const row = store.listConflictLedger()[0];
+  assert.ok(row, "dream 路径不写分诊账本，处置前必须自己落行——否则后面那步 UPDATE 命中 0 行静默丢弃");
+  assert.equal(row.status, "superseded", "状态推进落在真实存在的行上");
   store.close();
 });

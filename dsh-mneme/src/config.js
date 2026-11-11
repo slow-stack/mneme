@@ -606,11 +606,12 @@ export const Config = z.object({
   //             freeze/LLM 路径零变化——beta 实验的测量期：shadow 一周拿真实分诊
   //             分布，验证是否复现 46/20/5/27。
   //   "enforce" 确定性处置：T1（dup）走信息量优先 supersede（supersedeInfoFirstPair，
-  //             败者归档、胜者正文不动、可追溯注记在被归档侧）；T2/T3/T4 记账即
-  //             处置——不停车、不送 LLM、不归档。人审队列与 LLM 裁决都不再消费
-  //             冲突候选；与 conflictFreezeEnabled 同开时 freeze 让位（降级 shadow
-  //             + warn，#616 父子绑定不继承）。T3 的取代链与 T4 的检索时消解是
-  //             后续 PR，enforce 先把人审摘出去。
+  //             败者归档、胜者正文不动、可追溯注记在被归档侧）；T2（跨作用域重复）
+  //             与 T4（真矛盾）只记账——不停车、不送 LLM、不动正文；T3（时序演进）
+  //             落取代链：旧行 superseded_by/superseded_at 指向新行，两行都留着、
+  //             正文都不动，检索侧按降权处理。人审队列与 LLM 裁决都不再消费冲突
+  //             候选；与 conflictFreezeEnabled 同开时 freeze 让位（降级 shadow
+  //             + warn，#616 父子绑定不继承）。
   //
   // 判据唯一实现在 src/dream/triage.js；处置共享实现在 decisions.js 的
   // supersedeInfoFirstPair。每个档位的行为都真实存在——#616 的「假成功」教训

@@ -447,6 +447,9 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
         try {
           if (service.supersedeChain(older.id, newer.id)) {
             t3Chained += 1;
+            // 先落观察行再推进状态（#650 评审）：enforce 档下 recordLedgerTriage 只会
+            // 把这一对写成 open，UPDATE 于此才有行可命中；顺序反了就是静默落空。
+            service.saveConflictLedgerEntry({ run_id: runId, memory_a: p.a.id, memory_b: p.b.id, tier: verdict.tier, similarity: p.similarity, signals: verdict.signals });
             service.setConflictLedgerStatus(p.a.id, p.b.id, "superseded");
           }
         } catch (error) {
@@ -467,7 +470,9 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
         t1VectorFixups.push({ action: "supersede", winner: res.winnerId, loser: res.loserId });
         try {
           // 账本状态推进 + 机器台账照记（与自动档同款 outcome 口径）——自动处置
-          // 也要能事后回答「这一对什么时候、被谁判的」。
+          // 也要能事后回答「这一对什么时候、被谁判的」。先落观察行（#650 评审）：
+          // 这一对未必已在账本里，直接 UPDATE 会命中 0 行而静默失记。
+          service.saveConflictLedgerEntry({ run_id: runId, memory_a: p.a.id, memory_b: p.b.id, tier: verdict.tier, similarity: p.similarity, signals: verdict.signals });
           service.setConflictLedgerStatus(p.a.id, p.b.id, "superseded");
           service.saveConflictReviewed?.({ run_id: runId, memory_a: p.a.id, memory_b: p.b.id, outcome: "supersede", judged_at: new Date().toISOString() });
         } catch (error) {
@@ -498,6 +503,10 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       pairs: selected.length,
       batches: 0,
       ledgerSkipped,
+      // applied 是整轮回执的唯一写库口径（runSleep 的 totalApplied 只认这个键）。
+      // 缺了它，本档真实发生的 T1 归档与 T3 落链在 receipt / dream_runs.applied
+      // 里全是 0 ——「本相位说改了、整轮说没改」（#650 评审，#619 同族）。
+      applied: t1Resolved + t3Chained,
       enforced: { t1Resolved, t1Failed, t3Chained },
       ...(ledgerTriage ? { ledgerTriage } : {})
     };
