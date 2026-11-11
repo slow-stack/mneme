@@ -165,9 +165,29 @@ jobs:
           if npm view "@modusensus/dsh-mneme@${V}" version >/dev/null 2>&1; then
             echo "v${V} already published on registry — skipping"
           else
+            # 预发布版必须显式 --tag，不能落到 latest。
+            #
+            # 为什么不加就危险：npm 的隐式 latest 只有一个守卫——「已有的最高正式版 >= 本版」
+            # 时抛错拦下（lib/commands/publish.js 的 highestVersionIsGreater）。而 semver
+            # 里 0.14.0-beta.1 < 0.13.0 不成立（0.14.0 > 0.13.0），所以这个守卫**不会触发**，
+            # npm 会安安静静把 0.14.0-beta.1 写成 dist-tags.latest —— 线上 0.13.0 好版直接
+            # 被 beta 顶掉，`npm i @modusensus/dsh-mneme` 装到 beta。beta 阶段的重置代价
+            # 太大（用户装到的就是 beta）。
+            #
             # --provenance：把 tarball 与这次 commit / workflow 绑成可验证的 attestation，
             # 消费者能确认「这个版本确实从这条 commit 发出来」，而不是相信 registry 上的名字。
-            npm publish --access public --provenance
+            # dist-tag 取预发布标识的第一段（0.14.0-beta.1 → beta），与 npm 社区惯例一致；
+            # 正式版留空走默认 latest。
+            TAG=""
+            case "$V" in
+              *-*) TAG="${V#*-}"; TAG="${TAG%%.*}" ;;
+            esac
+            if [ -n "$TAG" ]; then
+              echo "prerelease ${V} → dist-tag ${TAG}（不写 latest）"
+              npm publish --access public --provenance --tag "$TAG"
+            else
+              npm publish --access public --provenance
+            fi
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -223,10 +243,17 @@ jobs:
           # 标题统一纯版本号（v0.7.9 基准，9/8 决定）；Release 正文由上方抽取的 CHANGELOG 小节
           # 渲染而来，分类小节名以 CHANGELOG 实际写法为准（现为 ## 📦 仓库结构 / 🔐 安全 / 🧰 发版与文档 这类）。
           # 这里不再重复列出分类：写死的清单会随 CHANGELOG 演进而变成假话。
+          # 预发布版要标成 prerelease：否则 GitHub 会把它当正式版挂成 Latest release，
+          # 用户按 Release 页装回的就是 beta。--prerelease 也可用于 edit（幂等重跑）、
+          # 切正式版时补删要用 --prerelease=false（gh 用 =false 而不是缺省）。
+          case "$VERSION" in
+            *-*) PRE="--prerelease" ;;
+            *)   PRE="--prerelease=false" ;;
+          esac
           if gh release view "v${VERSION}" >/dev/null 2>&1; then
-            gh release edit "v${VERSION}" --title "v${VERSION}" --notes-file notes/body.md
+            gh release edit "v${VERSION}" --title "v${VERSION}" --notes-file notes/body.md "$PRE"
           else
-            gh release create "v${VERSION}" --title "v${VERSION}" --notes-file notes/body.md
+            gh release create "v${VERSION}" --title "v${VERSION}" --notes-file notes/body.md "$PRE"
           fi
 
   # ── 5. 通知与运行摘要（接入外部通知时往这里加一步 webhook 即可）────────────
