@@ -8165,7 +8165,7 @@ window.__ModuleLoader__.load({
         if (Number.isFinite(it.evidenceCount) && it.evidenceCount > 0) {
           bits.push(t("memory.affective.evidence").replace("{n}", String(it.evidenceCount)));
         }
-        if (it.lastSeen) bits.push(t("memory.affective.lastSeen").replace("{time}", formatRelativeTime(it.lastSeen)));
+        if (it.lastSeen) bits.push(t("memory.affective.lastSeen").replace("{time}", formatRelativeTime(it.lastSeen, t)));
         return h("div", { className: isTrait ? "mneme-affective-row mneme-affective-row--trait" : "mneme-affective-row", key: `${it.personId}-${it.targetId}-${it.emotion}-${it.attribution}-${i}` },
           h("div", { className: "mneme-affective-main" },
             // 谁：服务端一直带着 person（from_name），此前前端只渲染了「对什么 ·

@@ -4593,3 +4593,49 @@ test("affective rows name the person, and every tab owns its icon (#619)", () =>
   assert.ok(/h\(Icon, \{ name: TAB_ICONS\[s\.key\]/.test(clientSource),
     "页签图标必须走 TAB_ICONS 查表，不许回到嵌套三元");
 });
+
+// formatRelativeTime(value, t) 的 t 是必填的：它内部要 t("memory.time.now")
+// 之类的文案，少传就抛 TypeError，而它跑在 render 里 —— 整个面板会白屏，
+// 且不写进任何日志。v0.14.0-beta.1/2 的「情绪页一点就全白」就是这么来的
+// （AffectivePanel 里 formatRelativeTime(it.lastSeen) 漏了 t）。
+// 没有 React 渲染级测试可依赖（deps 无 react-dom），所以用静态扫描兜：
+// 逐个调用点做括号配对、数顶层逗号，实参少于 2 个即为回归。
+test("every formatRelativeTime call passes the translator (a missing t blanks the panel)", () => {
+  const name = "formatRelativeTime";
+  const re = new RegExp(`\\b${name}\\(`, "g");
+  const offenders = [];
+  let match;
+  while ((match = re.exec(clientSource))) {
+    // 定义行本身不是调用点。
+    const lineStart = clientSource.lastIndexOf("\n", match.index) + 1;
+    const lineText = clientSource.slice(lineStart, clientSource.indexOf("\n", match.index));
+    if (lineText.includes(`function ${name}`)) continue;
+
+    let i = match.index + match[0].length;
+    const argsStart = i;
+    let depth = 1;
+    while (i < clientSource.length && depth > 0) {
+      const ch = clientSource[i];
+      if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+      i++;
+    }
+    const args = clientSource.slice(argsStart, i - 1);
+    let argDepth = 0;
+    let argc = args.trim() ? 1 : 0;
+    for (const ch of args) {
+      if ("([{".includes(ch)) argDepth++;
+      else if (")]}".includes(ch)) argDepth--;
+      else if (ch === "," && argDepth === 0) argc++;
+    }
+    if (argc < 2) {
+      const lineNo = clientSource.slice(0, match.index).split("\n").length;
+      offenders.push(`:${lineNo} (argc=${argc}) ${lineText.trim().slice(0, 120)}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    `formatRelativeTime 必须带上 t，否则 render 里抛 t is not a function、面板整块白屏：\n${offenders.join("\n")}`
+  );
+});
