@@ -497,17 +497,45 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
                 id: { type: "string", required: true },
                 forgotten: { type: "boolean", required: true }
               }
+            },
+            // 取代链连带面（#532）：predecessors = 这行取代了几条更早的记忆。
+            // 抑制这行之后它们**仍然**不进注入面（supersededIds 只看继任者的
+            // archived，不看 forgotten）——回执必须说出来，否则模型会以为
+            // 「被取代的旧值会回来」，或者反过来把它当成仍在生效的当前答案。
+            chain: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                predecessors: { type: "integer", required: true },
+                supersededBy: { type: "string" }
+              }
             }
           }
         },
-        render: (_args, value) => TEXT_OUTPUT(`Memory ${value.memory.id} injection ${value.memory.forgotten ? "suppressed" : "restored"}.`)
+        render: (_args, value) => {
+          const base = `Memory ${value.memory.id} injection ${value.memory.forgotten ? "suppressed" : "restored"}.`;
+          const preds = value.chain?.predecessors ?? 0;
+          if (!value.memory.forgotten || preds === 0) return TEXT_OUTPUT(base);
+          return TEXT_OUTPUT(
+            `${base} It supersedes ${preds} older ${preds === 1 ? "entry" : "entries"}; ` +
+            "they stay hidden (explicit search can still reach them) and must not be treated as the current value."
+          );
+        }
       },
       async execute(args) {
         if (service.getById(args.id) === undefined) {
           throw new Error("memory not found");
         }
+        // 先读链（setForget 不改 superseded_by，两侧等价；放在前面是为了让「找不到
+        // 链」与「行不存在」共用一个前置检查，不产生第二次 getById）。
+        const chain = service.supersedeContext(args.id);
         const memory = service.setForget(args.id, args.forgotten ?? true);
-        return { memory: { id: memory.id, forgotten: memory.forgotten } };
+        return {
+          memory: { id: memory.id, forgotten: memory.forgotten },
+          ...(chain
+            ? { chain: { predecessors: chain.predecessors, ...(chain.supersededBy ? { supersededBy: chain.supersededBy } : {}) } }
+            : {})
+        };
       }
     }),
 

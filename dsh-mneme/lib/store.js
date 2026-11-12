@@ -4265,7 +4265,16 @@ export function createStore(path) {
    * 之后仍可能被归档/遗忘/删除。若只判 superseded_by IS NOT NULL，那种情况下
    * 旧行会被当成「已有新版本」从注入里摘掉，可它自己明明是活的、且它指向的
    * 那条已经退场——数据在库里却永远不再出现，是一种沉默的不可逆失效。JOIN 到
-   * 继任者上要求 archived=0 且 forgotten=0，继任者退场即自动恢复旧行可见性。
+   * 继任者上要求 archived=0，继任者被归档即自动恢复旧行可见性。
+   *
+   * **遗忘是另一回事，不能一并恢复（#532）**：`memory_forget` 的语义是「我不要再
+   * 记得这个内容」，继任者退场的理由是用户主动要求，不是「这个版本不再成立」——
+   * 把被取代的旧值重新摆回注入面，等于让用户明确抛弃的旧答案趁虚回潮，正是
+   * #532 报的那个现象（更正行被忘掉，新对话答回更正前的旧值）。归档则不同：
+   * 它是整理面的退场（可恢复，且常是合并/降级的落点，旧行可能是唯一载体），
+   * 那种情形按 #650 的理由恢复。所以这里只看 archived，不看 forgotten；旧行
+   * 仍可通过显式搜索读到（fuseRecall 只降权 0.5，不摘除），不是沉默的不可逆
+   * 失效。删除（物理删）沿用 JOIN 的自然结果——继任者不存在，链随之失效。
    */
   function supersededIds() {
     return db.prepare(
@@ -4273,9 +4282,21 @@ export function createStore(path) {
          FROM memories m
          JOIN memories w ON w.id = m.superseded_by
         WHERE m.superseded_by IS NOT NULL
-          AND w.archived = 0
-          AND w.forgotten = 0`
+          AND w.archived = 0`
     ).all().map((r) => r.id);
+  }
+
+  /**
+   * 取代链上下文（#532）：一行被遗忘时，回执要说清连带面。
+   * 只读两个读数：这行被谁取代（superseded_by）、它取代了几条更早的行。
+   * 后者是回执里「它们保持隐藏、不算当前答案」的那句话的依据——判据与
+   * supersededIds 同源（链是否仍然生效由检索侧决定），这里不重复判断。
+   */
+  function supersedeContext(id) {
+    const row = db.prepare("SELECT id, superseded_by FROM memories WHERE id = ?").get(id);
+    if (!row) return null;
+    const preds = db.prepare("SELECT count(*) AS n FROM memories WHERE superseded_by = ?").get(id).n;
+    return { supersededBy: row.superseded_by ?? null, predecessors: preds };
   }
 
   /**
@@ -6010,6 +6031,7 @@ export function createStore(path) {
     setConflictLedgerStatus,
     supersedeChain,
     supersededIds,
+    supersedeContext,
     openConflictPairs,
     listConflictLedger,
     countConflictLedger,
