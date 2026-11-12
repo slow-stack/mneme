@@ -871,13 +871,17 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // 图像描述档（docs/DISTILL.md:346）新增三个键：imageDescribeEnabled（顶层布尔键，
   // 走 BOOLEANS 表）+ imageDescribeProvider / imageDescribeModel（两条路由串，走
   // STRINGS 表）= +3，故 131 + 3 = 134。
-  assert.equal(Object.keys(data.effective).length, 134);
+  // #619 补链（注入侧）新增 affectiveInjectEnabled（顶层布尔键，走 BOOLEANS 表）
+  // = +1，故 134 + 1 = 135。
+  assert.equal(Object.keys(data.effective).length, 135);
   // 描述档三条的默认值单独钉：开关默认关（不配路由就一个调用都不发），
   // 路由默认空串——空串在这里的语义是「整档不跑」，不是「跟随当前模型」，
   // 所以它不能像 summarizeProvider 那样被回填成会话模型。
   assert.equal(data.effective.imageDescribeEnabled, false);
   assert.equal(data.effective.imageDescribeProvider, "");
   assert.equal(data.effective.imageDescribeModel, "");
+  // #619 补链：情绪注释默认关——未获用户同意前不进注入块、不占预算。
+  assert.equal(data.effective.affectiveInjectEnabled, false);
   // issue #641：分诊账本档位默认 off（默认路径零行为变化）、T1 阈值默认 0.9。
   // 值单独钉：计数锁钉不住枚举默认被翻转（shadow 意外变默认会让每轮巩固多写账本）。
   assert.equal(data.effective.conflictLedgerMode, "off");

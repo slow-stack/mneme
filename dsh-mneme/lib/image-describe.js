@@ -81,16 +81,29 @@ function trimDescription(text) {
  * @param {{provider: string, model: string}} route  描述专用路由
  * @param {object} config    由 langOf 取提示词语言
  * @param {Array} blocks     image 块数组（通常是同一个 part 的）
- * @param {{signal?: AbortSignal}} [options]
+ * @param {{signal?: AbortSignal, stats?: object}} [options]
+ *   `stats` 是可选的**出参**（同 injectCandidates 的 pinnedStats 口径）：调用方
+ *   传一个对象进来，本函数往里累计 attempted/described/failed 与第一条失败原因。
+ *   它存在的原因是「整档静默」——描述失败原先被 catch 吞掉，审计里只有一个
+ *   图块数 imageCount，用户开了开关、选了模型、一次没跑成，界面上零痕迹。
+ *   不传就逐字节等于改前（只返回 Map）。
  */
 export async function describeImages(ctx, route, config, blocks, options = {}) {
   const out = new Map();
+  const stats = options.stats && typeof options.stats === "object" ? options.stats : null;
+  const bump = (key) => { if (stats) stats[key] = (stats[key] ?? 0) + 1; };
   if (!Array.isArray(blocks) || blocks.length === 0) return out;
-  if (typeof ctx?.llm?.stream !== "function") return out;
+  if (typeof ctx?.llm?.stream !== "function") {
+    // 宿主没给 llm：这不是「这张图失败」，是整档根本没条件跑。记一条原因，
+    // 别让它看起来像「库里就是没图」。
+    if (stats) stats.unavailable = "no llm stream";
+    return out;
+  }
   const prompt = STR.prompts.imageDescription[langOf(config)];
   for (const [index, block] of blocks.entries()) {
     const key = attachmentKey(block, index);
     if (out.has(key)) continue;
+    bump("attempted");
     try {
       let text = "";
       const stream = ctx.llm.stream(withBackgroundSession({
@@ -118,9 +131,22 @@ export async function describeImages(ctx, route, config, blocks, options = {}) {
         }
       }
       const description = trimDescription(text);
-      if (description) out.set(key, description);
-    } catch {
-      // 单张图失败不影响其他张，也不影响蒸馏（见文件头 ③）。
+      if (description) {
+        out.set(key, description);
+        bump("described");
+      } else {
+        // 流正常结束但一个字都没有：模型拒答、被内容策略拦、或适配器没把图
+        // 编进去。这也是失败，只是没有异常可抓——最容易被误读成「成功」的一种。
+        bump("failed");
+        if (stats && !stats.firstError) stats.firstError = "empty description";
+      }
+    } catch (error) {
+      // 单张图失败不影响其他张，也不影响蒸馏（见文件头 ③）——但现在要留痕：
+      // 失败计数与第一条原因由调用方写进审计，否则用户永远看不见「一次都没成」。
+      bump("failed");
+      if (stats && !stats.firstError) {
+        stats.firstError = String(error?.message ?? error ?? "unknown").slice(0, 120);
+      }
     }
   }
   return out;

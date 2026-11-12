@@ -250,6 +250,7 @@
 | `sleepAffectiveEnabled` **light** | `false` | 情感归因相位（#619）：情境情绪写成 `affective_context` 关系，跨多次独立会话的稳定倾向才铸成 pattern | opt-in；`sleepModeEnabled` 的子相，父关着不跑；要调模型且依赖实体抽取 |
 | `sleepAffectiveTraitMinSessions` | `3` | 判「稳定倾向」所需的**独立会话**数（2–10） | 下界 2 是故意的：N=1 就是单次场合，正是必须禁止升特质的那个情形 |
 | `sleepAffectiveMaxRelationsPerRun` | `10` | 单轮最多写多少条 `affective_context` 关系（0–50） | 同 `sleepMaxPatternPerRun` 的角色；0 = 一条也不写 |
+| `affectiveInjectEnabled` **light** | `false` | 注入侧情绪注释（#619 补链）：把 `attribution=occasion` 的情绪边作为一行注释挂到对应记忆下，让模型看见「她那天为什么那样」 | 默认关；`sleepAffectiveEnabled` 的子项——父关则无情绪边可挂；只挂 occasion，trait 已铸成 pattern 自己进注入；注释限 160 字（吃注入块预算） |
 | `sleepProvider` / `sleepModel` | 空 | sleep 专用路由 | 空 = 用巩固路由 / 当前模型 |
 | `sleepReasoningEffort` | 未配置 | 同 `dreamReasoningEffort` | — |
 | `sleepMaxTokens` | `8192` | 冲突/模式阶段输出预算（#257） | 原硬编码 2048 对 `full` 档必然截断 |
@@ -390,7 +391,7 @@
 `lightMode: true`（或面板 `panel_mode=light`）时，以下键被预设强制为 `false`——都是
 重型路径；核心循环（autoInject、autoSummarize、hotMemory*、质量过滤、关键词检索）不动：
 
-`entityExtractionEnabled` · `autoDream` · `sleepModeEnabled` · `sleepAffectiveEnabled`（#619） · `rerankEnabled` ·
+`entityExtractionEnabled` · `autoDream` · `sleepModeEnabled` · `sleepAffectiveEnabled`（#619） · `affectiveInjectEnabled` · `rerankEnabled` ·
 `autoReindexOnBoot` · `hybridInject` · `injectGuidanceEnabled` · `searchSemanticDedup` ·
 `selectiveInjectEnabled` · `bm25SearchEnabled` · `entityRecallEnabled` ·
 `graphAnchoringEnabled` · `graphWeightEnabled` · `graphInjectHint` · `graphPassiveConfirm` ·

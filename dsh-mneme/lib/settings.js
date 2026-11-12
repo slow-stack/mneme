@@ -180,6 +180,9 @@ const FEATURE_FLAG_BOOLEANS = [
   // 才允许升成稳定特质。要调模型且依赖实体抽取，所以必须显式打开、可随时关掉；
   // 它是 sleepModeEnabled 的子相：父开关关着时整个 sleep 不跑。
   "sleepAffectiveEnabled",
+  // #619 补链（注入侧）：把单次场合的情绪记录作为一行注释挂在对应记忆下（默认关）。
+  // 与 sleepAffectiveEnabled 是父子：父关则库里的情绪边不再增长，子关则一条都不挂。
+  "affectiveInjectEnabled",
   "heatEnabled",
   // issue #218 / E5：注入侧 heat 独立开关（默认关，老用户 injectHeatEnabled=true 回滚）。
   "injectHeatEnabled",

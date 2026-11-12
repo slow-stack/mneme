@@ -11,10 +11,10 @@ import { createScopeResolver } from "./scope.js";
 // 原先能提前闭合围栏——那是把用户消息升格成指令最短的一条路。
 import { breakFenceMarkers } from "./fence.js";
 // Issue #611：图片块的文本口径（占位，不是空串）。三个 textOf 副本共用这一份。
-import { contentToText, countImages } from "./attachment-text.js";
+import { contentToText, countImages, IMAGE_PLACEHOLDER_PREFIX } from "./attachment-text.js";
 // 图像描述档（docs/DISTILL.md:346）：占位之外再补一段「图里是什么」。本文件只
 // 负责把描述并进转录行；出描述的调用、准入判断都在 image-describe.js。
-import { appendDescriptions, describeImages, imageBlocks, canSeeImages } from "./image-describe.js";
+import { appendDescriptions, describeImages, imageBlocks, canSeeImages, DESCRIPTION_PREFIX } from "./image-describe.js";
 // #512：每轮蒸馏一个 run id（归因主体）。store 侧也能铸造，但这里必须知道它——
 // 写记忆时要把它一路带到 saveMemoryProvenance / 落 run 行，拿回来再写就是两次往返。
 import { randomUUID } from "node:crypto";
@@ -399,6 +399,30 @@ function snapshotSessionEvents(session, afterSeq, throughSeq) {
     if (throughSeq !== undefined && seq !== undefined && seq > throughSeq) return false;
     return true;
   });
+}
+
+/**
+ * 图像描述档的审计片段（#619 补链，图像侧）。
+ *
+ * 为什么单独一个函数：三处写审计 metadata 的分支（窗口过小 / 解析失败 / 成功）
+ * 都必须带同一份口径，抄三遍就一定会漂移。规则是「有数才写」——全零时返回空
+ * 对象，于是关闭态（默认）的审计行与加这段之前逐字节一致。
+ *
+ * attempted 是分母、described 是分子：两者相减才是「试了没成」。只看 described
+ * 会把「一张都没试」和「试了全失败」混成同一行，而那正是这次要修的静默。
+ */
+function describeAuditPatch(stats) {
+  if (!stats || typeof stats !== "object") return {};
+  const attempted = stats.attempted ?? 0;
+  const described = stats.described ?? 0;
+  const failed = stats.failed ?? 0;
+  const out = {};
+  if (attempted > 0) out.imageDescribed = described;
+  if (attempted > 0) out.imageDescribeFailed = failed;
+  if (stats.firstError) out.imageDescribeError = String(stats.firstError).slice(0, 120);
+  if (stats.unavailable) out.imageDescribeUnavailable = String(stats.unavailable).slice(0, 120);
+  if (stats.skipped) out.imageDescribeSkipped = String(stats.skipped);
+  return out;
 }
 
 async function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, throughSeq, describePart) {
@@ -850,6 +874,11 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       // 判定放在这里而不是 image-describe.js 里：路由来自 config，准入是一次可能
       // 很贵的 resolveModelInfo 调用，两者都该只问一次，而不是每张图问一次。
       let describePart;
+      // 描述档的逐次计数（#619 补链，图像侧）：attempted/described/failed 与第一条
+      // 失败原因。原先这条链路上只有一个 imageCount（图块数），「开了开关但一次
+      // 都没跑成」在审计里与「这个窗口没有图」长得完全一样——静默失效。整档不跑
+      // 的原因也记在这里，审计 metadata 会带上它。
+      const describeStats = { attempted: 0, described: 0, failed: 0 };
       if (config.imageDescribeEnabled === true) {
         const describeProvider = typeof config.imageDescribeProvider === "string" ? config.imageDescribeProvider.trim() : "";
         const describeModel = typeof config.imageDescribeModel === "string" ? config.imageDescribeModel.trim() : "";
@@ -857,7 +886,9 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           const sight = await canSeeImages(ctx, describeProvider, describeModel);
           // "unknown"（老适配器不声明能力）照发：宿主那侧对未知是不投影，照原样
           // 交给适配器，它若真看不到再降级成占位——这里替它决定就是猜。
-          if (sight !== false) {
+          if (sight === false) {
+            describeStats.skipped = "model-cannot-see-images";
+          } else {
             const describeRoute = { provider: describeProvider, model: describeModel };
             // 同一张图在一次蒸馏里只描述一次：同一附件常被重复贴（追问、引用），
             // 按 attachmentId 缓存，省掉重复的视觉调用。
@@ -870,12 +901,17 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
                 return !described.has(key);
               });
               if (fresh.length > 0) {
-                const got = await describeImages(ctx, describeRoute, config, fresh, { signal: controller.signal });
+                const got = await describeImages(ctx, describeRoute, config, fresh, { signal: controller.signal, stats: describeStats });
                 for (const [key, value] of got) described.set(key, value);
               }
               return appendDescriptions(part.text, blocks, described);
             };
           }
+        } else {
+          // 开着却没配路由：用户以为自己开了，实际一次都没跑——这正是要能看见的
+          // 那一种静默，所以写进审计。反过来，开关关着（默认）不写任何东西，审计行
+          // 必须与加这段之前逐字节一致。
+          describeStats.skipped = "no route";
         }
       }
       const collected = await collectMessages(
@@ -928,7 +964,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           model_id: route ? `${route.provider}:${route.model}` : "unknown",
           status: "skipped",
           error_message: "window-too-small",
-          metadata: { distillChars, minWindowChars, ...(imageCount > 0 ? { imageCount } : {}) }
+          metadata: { distillChars, minWindowChars, ...(imageCount > 0 ? { imageCount } : {}), ...describeAuditPatch(describeStats) }
         });
         return;
       }
@@ -972,7 +1008,16 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       // （可注入 now()，测试用假时钟）；锚点行同时是 prompt 里「按提示末尾给出的
       // 当前时间换算」那句的落点，改写/移动随两处一起动。
       const distillPrompt = config.codingRetrospect ? STR.prompts.codingSummary[langOf(config)] : STR.prompts.summary[langOf(config)];
-      const anchoredPrompt = `${distillPrompt}${STR.distillTimeAnchor[langOf(config)](new Date(now()).toISOString())}`;
+      // 图像描述档真的产出了描述时，才补一句「描述行是事实来源」。这一句必须在
+      // 拿到 stats 之后拼（describeStats.described 是本次窗口实际写进转录的条数）：
+      // 没有描述却告诉模型「描述行可信」是在描述一个不存在的行，只会让它去找。
+      // 前缀字面量从两个模块导入，不在这里抄一遍——文案与生成端漂移过一次就会
+      // 变成「提示词说要找『描述：』、转录里写的却是别的」这种最难查的静默失效。
+      const describedCount = describeStats.described ?? 0;
+      const imageHint = describedCount > 0
+        ? STR.imageDistillHint[langOf(config)](IMAGE_PLACEHOLDER_PREFIX, DESCRIPTION_PREFIX)
+        : "";
+      const anchoredPrompt = `${distillPrompt}${STR.distillTimeAnchor[langOf(config)](new Date(now()).toISOString())}${imageHint}`;
 
       const options = {
         provider: route.provider,
@@ -1136,6 +1181,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           audit.metadata = {
             distillChars,
             ...(imageCount > 0 ? { imageCount } : {}),
+            ...describeAuditPatch(describeStats),
             ...failureAudit.metadata,
             streak,
             ...(maxParseRetries > 0 ? { maxRetries: maxParseRetries } : {}),
@@ -1276,6 +1322,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         audit.metadata = {
           distillChars,
           ...(imageCount > 0 ? { imageCount } : {}),
+          ...describeAuditPatch(describeStats),
           parsed: parsed.length,
           ...(parsedResult.salvaged ? { json_salvaged: true } : {}),
           ...(capped > 0 ? { capped } : {}),
