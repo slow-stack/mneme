@@ -30,6 +30,7 @@ import { createSettings } from "../src/settings.js";
 import { createApi } from "../src/api.js";
 import { createStandaloneApi } from "../src/api-standalone.js";
 import { deriveExternalId, SHARE_KIND, validateSharePack } from "../src/share.js";
+import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 import {
   parseReceiveBody,
   receiveReply,
@@ -329,7 +330,7 @@ class FakeRes extends EventEmitter {
   }
 }
 
-function receiveSetup(apiToken = "secret-token", { logger = null } = {}) {
+function receiveSetup(apiToken = FAKE_API_TOKEN, { logger = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-receive-api-"));
   const store = createStore(join(dir, "memory.db"));
   const service = createService({ store, mirror: null, config: {} });
@@ -358,7 +359,7 @@ function receiveReq({ method = "POST", url = RECEIVE_PATH, body = "", authorized
   const req = new EventEmitter();
   req.method = method;
   req.url = url;
-  req.headers = authorized ? { authorization: "Bearer secret-token" } : {};
+  req.headers = authorized ? { authorization: `Bearer ${FAKE_API_TOKEN}` } : {};
   process.nextTick(() => {
     req.emit("data", Buffer.from(body));
     req.emit("end");
@@ -480,7 +481,7 @@ test("an oversize body answers 413 exactly once on both receive routes", async (
 
 test("the receive routes answer the gate's code, a logged 500, and unavailable", async () => {
   const warnings = [];
-  const s = receiveSetup("secret-token", { logger: { warn: (m) => warnings.push(String(m)) } });
+  const s = receiveSetup(FAKE_API_TOKEN, { logger: { warn: (m) => warnings.push(String(m)) } });
   try {
     const receive = receiveRoute(s, RECEIVE_PATH);
     const undo = receiveRoute(s, UNDO_PATH);
@@ -522,7 +523,7 @@ test("a logger that throws on the 500 path still gets exactly one reply", async 
   // C6 把守卫还回共用层（warnSafely）之后，它不再顺带证明面板的 .catch——回调里根本
   // 不会再抛出来了。.catch 由下面那条「sink 自己坏」的用例单独咬（那是它唯一还能被
   // 走到的路径），两层各挡一类，谁都不是装饰。
-  const s = receiveSetup("secret-token", { logger: { warn: () => { throw new Error("log sink on fire"); } } });
+  const s = receiveSetup(FAKE_API_TOKEN, { logger: { warn: () => { throw new Error("log sink on fire"); } } });
   try {
     s.service.importSharePack = () => { throw new Error("database is locked"); };
     s.service.deleteSharePack = () => { throw new Error("disk i/o error"); };

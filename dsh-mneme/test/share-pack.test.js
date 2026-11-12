@@ -25,6 +25,7 @@ import { readFileSync } from "node:fs";
 import {
   SHARE_KIND, deriveExternalId, createHomeRedactor, classifyRowForShare, buildSharePack
 } from "../src/share.js";
+import { fakeDetectableOpenAiKey, fakePassword } from "./helpers/fake-auth-values.js";
 
 test("pack kind is the versioned literal the receiver keys on", () => {
   assert.equal(SHARE_KIND, "mneme.share/v1");
@@ -175,7 +176,7 @@ test("a skipped row's title comes back redacted, from here", () => {
   }
   // sensitive 这一档换了出口：标题恒为空串。上一版在这里断言 `~/退路方案`，那是错的
   // 期待——命中密钥判据的行，它的标题正是那条凭据的回声，遮 home 遮不掉它（见下一条）。
-  const sensitive = leanOn({ content: "key sk-abcdefghijklmnopqrstuvwxyz012345" });
+  const sensitive = leanOn({ content: "key " + fakeDetectableOpenAiKey() });
   assert.equal(sensitive.reason, "sensitive");
   assert.equal(sensitive.title, "", "a credential-bearing row must not hand over its title");
 });
@@ -188,7 +189,7 @@ test("a credential-bearing row never contributes its title, whatever the skip re
   // 是随包外发的（整库被水位拒掉那次，413 答复里也带同一份 report）。
   // 断言写成「整个包里找不到那个值」，而不是「那一条记录的 title 为空」：后者只锁住
   // skip_list 一格，包体还有 memories、别名与 413 那条 report 副本。
-  const secret = "P@ssw0rd-for-prod-db";
+  const secret = fakePassword();
   const rows = [
     row({ title: `生产库密码 ${secret} 别丢`, content: `password: ${secret}`, archived: 1 }),
     row({ title: `老库口令 ${secret}`, content: `api_key = ${secret}abcdefgh`, forgotten: 1 }),
@@ -221,7 +222,7 @@ test("a credential-bearing row never contributes its title, whatever the skip re
 test("a credential in the body drops the whole row instead of redacting it", () => {
   // 就地打码会造出一条读不通的半截记忆；整条不进 + 跳过清单里看得见标题，才是
   // 分享者能复核的形态（spec §4）。
-  const hit = classifyRowForShare(row({ content: "key sk-abcdefghijklmnopqrstuvwxyz012345" }), {});
+  const hit = classifyRowForShare(row({ content: "key " + fakeDetectableOpenAiKey() }), {});
   assert.equal(hit.include, false);
   assert.equal(hit.reason, "sensitive");
 });
@@ -248,7 +249,7 @@ test("a blank memory is skipped as blank_or_noise before the sensitive check", (
   // 为空、标签里带凭据的记忆两条都命中。报 blank_or_noise 才是对的原因 —— 没有正文
   // 就没有可泄露的东西，记成 sensitive 会让跳过清单的读数把用户指向错的那一类。
   assert.equal(
-    classifyRowForShare(row({ title: "", content: "", tags: ["sk-abcdefghijklmnopqrstuvwxyz012345"] }), {}).reason,
+    classifyRowForShare(row({ title: "", content: "", tags: [fakeDetectableOpenAiKey()] }), {}).reason,
     "blank_or_noise"
   );
 });

@@ -12,6 +12,7 @@ import { createSettings } from "../src/settings.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { Config, applyLightModePreset } from "../src/config.js";
 import { parseHumanEdits } from "../src/mirror.js";
+import { FAKE_API_TOKEN, fakeOpenAiKey, fakeMaskedOpenAiKey } from "./helpers/fake-auth-values.js";
 
 // 解析后的 schema 默认值，作为 /features effective 的 bundle 配置侧样本。
 const FLAGS_CFG = Config({});
@@ -286,14 +287,14 @@ test("PUT /api/dsh-mneme/mode validates the enum and persists", async () => {
 });
 
 test("PUT /api/dsh-mneme/mode is token-gated like other settings writes", async () => {
-  const { routes } = setup(undefined, "secret-token");
+  const { routes } = setup(undefined, FAKE_API_TOKEN);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/mode");
   const res = new FakeRes();
   await route.handler(req("/api/dsh-mneme/mode", "PUT", { mode: "light" }), res);
   assert.equal(res.statusCode, 401);
   const ok = new FakeRes();
   const authed = req("/api/dsh-mneme/mode", "PUT", { mode: "light" });
-  authed.headers = { authorization: "Bearer secret-token" };
+  authed.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(authed, ok);
   assert.equal(ok.statusCode, 200);
 });
@@ -406,7 +407,7 @@ test("vector-config masks apiKey; empty/masked key on PUT keeps existing", async
   // PUT stores the real key but responds masked
   const put = new FakeRes();
   await route.handler(req("/api/dsh-mneme/vector-config", "PUT", {
-    enabled: true, baseUrl: "https://api.openai.com/v1", apiKey: "sk-abcdefghijklmnop", model: "m1"
+    enabled: true, baseUrl: "https://api.openai.com/v1", apiKey: fakeOpenAiKey(), model: "m1"
   }), put);
   const putBody = JSON.parse(put.body);
   assert.equal(putBody.config.apiKey, "sk-***mnop", "PUT response masked");
@@ -431,13 +432,13 @@ test("vector-config masks apiKey; empty/masked key on PUT keeps existing", async
   // PUT with a masked apiKey (client round-trip) also keeps the previous key
   const put3 = new FakeRes();
   await route.handler(req("/api/dsh-mneme/vector-config", "PUT", {
-    enabled: true, baseUrl: "https://api.openai.com/v1", apiKey: "sk-***mnop", model: "m3"
+    enabled: true, baseUrl: "https://api.openai.com/v1", apiKey: fakeMaskedOpenAiKey(), model: "m3"
   }), put3);
   assert.equal(settings.getVectorConfig().apiKey, "sk-abcdefghijklmnop", "masked key keeps existing");
 });
 
 test("apiToken protects write/secret endpoints while read endpoints stay open", async () => {
-  const { routes } = setup(undefined, "secret-token");
+  const { routes } = setup(undefined, FAKE_API_TOKEN);
   const list = routes.find((r) => r.path === "/api/dsh-mneme/list");
   const profile = routes.find((r) => r.path === "/api/dsh-mneme/profile");
   const vec = routes.find((r) => r.path === "/api/dsh-mneme/vector-config");
@@ -466,7 +467,7 @@ test("apiToken protects write/secret endpoints while read endpoints stay open", 
   // with a Bearer token everything is allowed
   const authReq = (path, method = "GET", body = null) => {
     const r = req(path, method, body);
-    r.headers = { authorization: "Bearer secret-token" };
+    r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
     return r;
   };
   const resVecOk = new FakeRes();
@@ -1211,7 +1212,7 @@ test("PUT /api/dsh-mneme/features rejects unknown keys, bad types and bad ranges
 });
 
 test("PUT /api/dsh-mneme/features is token-gated; GET stays open", async () => {
-  const { routes } = setup(undefined, "secret-token", FLAGS_CFG);
+  const { routes } = setup(undefined, FAKE_API_TOKEN, FLAGS_CFG);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/features");
 
   const get = new FakeRes();
@@ -1223,7 +1224,7 @@ test("PUT /api/dsh-mneme/features is token-gated; GET stays open", async () => {
   assert.equal(put.statusCode, 401);
 
   const ok = req("/api/dsh-mneme/features", "PUT", { autoDream: false });
-  ok.headers = { authorization: "Bearer secret-token" };
+  ok.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   const okRes = new FakeRes();
   await route.handler(ok, okRes);
   assert.equal(okRes.statusCode, 200);
@@ -1355,7 +1356,7 @@ test("POST /api/dsh-mneme/update returns 400/404 for bad requests", async () => 
 });
 
 test("POST /api/dsh-mneme/update is token-gated", async () => {
-  const { routes } = setup(undefined, "secret-token");
+  const { routes } = setup(undefined, FAKE_API_TOKEN);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/update");
   const res = new FakeRes();
   await route.handler(req("/api/dsh-mneme/update", "POST", { id: "x", title: "y" }), res);
@@ -1468,7 +1469,7 @@ test("POST /api/dsh-mneme/import validates type/markdown and tolerates zero edit
 });
 
 test("POST /api/dsh-mneme/import is token-gated", async () => {
-  const { routes } = setup(undefined, "secret-token");
+  const { routes } = setup(undefined, FAKE_API_TOKEN);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/import");
   const res = new FakeRes();
   await route.handler(req("/api/dsh-mneme/import", "POST", { type: "preference", markdown: "x" }), res);
@@ -2219,7 +2220,7 @@ test("POST /api/dsh-mneme/test-model validates input and llm availability", asyn
 });
 
 test("POST /api/dsh-mneme/test-model is auth-gated like other expensive endpoints", async () => {
-  const { routes } = setupLlm(MOCK_LLM, "secret-token");
+  const { routes } = setupLlm(MOCK_LLM, FAKE_API_TOKEN);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/test-model");
   const res = new FakeRes();
   await route.handler(req("/api/dsh-mneme/test-model", "POST", { provider: "deepseek", model: "deepseek-chat" }), res);
@@ -2475,7 +2476,7 @@ test("GET /api/dsh-mneme/pipeline 带观察旁挂：observationsById 真的进�
 const RECORDS_ON = { distillRecords: { enabled: true } };
 
 test("GET /api/dsh-mneme/memory/provenance 返回窗口区间与原文行", async () => {
-  const { routes, service, store } = setup(null, "secret-token", RECORDS_ON);
+  const { routes, service, store } = setup(null, FAKE_API_TOKEN, RECORDS_ON);
   // 直接落溯源链接与原文：读取面不关心是谁写的，只关心库里的形状。
   service.saveWithDedupe({ type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
   const memory = service.all()[0];
@@ -2495,7 +2496,7 @@ test("GET /api/dsh-mneme/memory/provenance 返回窗口区间与原文行", asyn
 
   const res = new FakeRes();
   const r = req("/api/dsh-mneme/memory/provenance?id=" + memory.id);
-  r.headers = { authorization: "Bearer secret-token" };
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(r, res);
   assert.equal(res.statusCode, 200);
   const data = JSON.parse(res.body);
@@ -2512,7 +2513,7 @@ test("GET /api/dsh-mneme/memory/provenance 返回窗口区间与原文行", asyn
 });
 
 test("GET /api/dsh-mneme/memory/provenance：无 token 401，装配没接线 503", async () => {
-  const { routes, service } = setup(null, "secret-token", RECORDS_ON);
+  const { routes, service } = setup(null, FAKE_API_TOKEN, RECORDS_ON);
   service.saveWithDedupe({ type: "preference", title: "语言", content: "中文" });
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
 
@@ -2531,13 +2532,13 @@ test("GET /api/dsh-mneme/memory/provenance：无 token 401，装配没接线 503
   const bareRoutes = [];
   createApi(
     { webServer: { register(r) { bareRoutes.push(r); return () => {}; } } },
-    bare, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "secret-token",
+    bare, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, FAKE_API_TOKEN,
     RECORDS_ON
   );
   const bareRoute = bareRoutes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   const res503 = new FakeRes();
   const authed = req("/api/dsh-mneme/memory/provenance?id=x");
-  authed.headers = { authorization: "Bearer secret-token" };
+  authed.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await bareRoute.handler(authed, res503);
   assert.equal(res503.statusCode, 503, "装配缺方法 → provenance-unavailable，不是空 windows");
   assert.equal(JSON.parse(res503.body).error, "provenance-unavailable");
@@ -2547,13 +2548,13 @@ test("GET /api/dsh-mneme/memory/provenance：无 token 401，装配没接线 503
 test("GET /api/dsh-mneme/memory/provenance：非蒸馏来源的记忆返回空窗口而非报错", async () => {
   // memory_save 写进来的记忆没有溯源链接——「这条不是蒸馏来的」本身是有效答案，
   // 不能 404/500。契约：空 windows，不是错误。
-  const { routes, service } = setup(null, "secret-token", RECORDS_ON);
+  const { routes, service } = setup(null, FAKE_API_TOKEN, RECORDS_ON);
   service.saveWithDedupe({ type: "preference", title: "语言", content: "中文" });
   const memory = service.all()[0];
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   const res = new FakeRes();
   const r = req("/api/dsh-mneme/memory/provenance?id=" + memory.id);
-  r.headers = { authorization: "Bearer secret-token" };
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(r, res);
   assert.equal(res.statusCode, 200);
   const data = JSON.parse(res.body);
@@ -2561,12 +2562,12 @@ test("GET /api/dsh-mneme/memory/provenance：非蒸馏来源的记忆返回空�
 });
 
 test("GET /api/dsh-mneme/memory/provenance 缺 id 报 400，未知 id 返回空窗口", async () => {
-  const { routes } = setup(null, "secret-token", RECORDS_ON);
+  const { routes } = setup(null, FAKE_API_TOKEN, RECORDS_ON);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   // 400 要赢过 401：调用方发坏了，报「没鉴权」是误导（reclaimReply 同款顺序）。
   const bad = new FakeRes();
   const badReq = req("/api/dsh-mneme/memory/provenance");
-  badReq.headers = { authorization: "Bearer secret-token" };
+  badReq.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(badReq, bad);
   assert.equal(bad.statusCode, 400);
 
@@ -2574,7 +2575,7 @@ test("GET /api/dsh-mneme/memory/provenance 缺 id 报 400，未知 id 返回空�
   // 「没有链接」对未知 id 与对非蒸馏记忆是同一个答案。
   const unknown = new FakeRes();
   const unknownReq = req("/api/dsh-mneme/memory/provenance?id=nope");
-  unknownReq.headers = { authorization: "Bearer secret-token" };
+  unknownReq.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(unknownReq, unknown);
   assert.equal(unknown.statusCode, 200);
   assert.deepEqual(JSON.parse(unknown.body).windows, []);
@@ -2598,13 +2599,13 @@ test("GET /api/dsh-mneme/memory/provenance：读失败要留痕，500 不能把 
       webServer: { register(r) { routes.push(r); return () => {}; } },
       logger: { warn: (m) => warnings.push(m) }
     },
-    service, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "secret-token",
+    service, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, FAKE_API_TOKEN,
     RECORDS_ON
   );
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   const res = new FakeRes();
   const r = req("/api/dsh-mneme/memory/provenance?id=m1");
-  r.headers = { authorization: "Bearer secret-token" };
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(r, res);
 
   assert.equal(res.statusCode, 500, "读失败回 500");
@@ -2621,13 +2622,13 @@ test("GET /api/dsh-mneme/memory/provenance：读失败要留痕，500 不能把 
 // 都吃它；这里锁宿主面的外壳与顺序。
 
 test("GET /api/dsh-mneme/memory/provenance：distillRecords.enabled 关着 → 409，不是 404 也不是空 windows", async () => {
-  const { routes, service } = setup(null, "secret-token", { distillRecords: { enabled: false } });
+  const { routes, service } = setup(null, FAKE_API_TOKEN, { distillRecords: { enabled: false } });
   service.saveWithDedupe({ type: "preference", title: "语言", content: "中文" });
   const memory = service.all()[0];
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   const res = new FakeRes();
   const r = req("/api/dsh-mneme/memory/provenance?id=" + memory.id);
-  r.headers = { authorization: "Bearer secret-token" };
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(r, res);
 
   assert.equal(res.statusCode, 409, "用户关了功能 = 409（src/api.js:525 的 profileExtract 同型先例）");
@@ -2637,22 +2638,22 @@ test("GET /api/dsh-mneme/memory/provenance：distillRecords.enabled 关着 → 4
 test("GET /api/dsh-mneme/memory/provenance：config 整个缺席也按关处理（fail-closed）", async () => {
   // 旧调用方直连 createApi 不传第 8 参、或宿主没装配 cfg：这个端点返回逐字原文，
   // 判不出来时必须往「不读」那一侧倒。
-  const { routes } = setup(null, "secret-token");
+  const { routes } = setup(null, FAKE_API_TOKEN);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   const res = new FakeRes();
   const r = req("/api/dsh-mneme/memory/provenance?id=whatever");
-  r.headers = { authorization: "Bearer secret-token" };
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(r, res);
   assert.equal(res.statusCode, 409);
   assert.deepEqual(JSON.parse(res.body), { error: "distill-records-disabled" });
 });
 
 test("GET /api/dsh-mneme/memory/provenance：400 赢 409——缺 id 是语法畸形，与服务端状态无关", async () => {
-  const { routes } = setup(null, "secret-token", { distillRecords: { enabled: false } });
+  const { routes } = setup(null, FAKE_API_TOKEN, { distillRecords: { enabled: false } });
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   const res = new FakeRes();
   const r = req("/api/dsh-mneme/memory/provenance");
-  r.headers = { authorization: "Bearer secret-token" };
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(r, res);
   assert.equal(res.statusCode, 400, "请求本身不成立时报「功能关了」是误导");
   assert.equal(JSON.parse(res.body).error, "missing-id");
@@ -2668,13 +2669,13 @@ test("GET /api/dsh-mneme/memory/provenance：409 赢 503——功能关比装配
   const bareRoutes = [];
   createApi(
     { webServer: { register(r) { bareRoutes.push(r); return () => {}; } } },
-    bare, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "secret-token",
+    bare, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, FAKE_API_TOKEN,
     { distillRecords: { enabled: false } }
   );
   const route = bareRoutes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   const res = new FakeRes();
   const r = req("/api/dsh-mneme/memory/provenance?id=x");
-  r.headers = { authorization: "Bearer secret-token" };
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(r, res);
   assert.equal(res.statusCode, 409);
   assert.equal(JSON.parse(res.body).error, "distill-records-disabled");
@@ -2684,14 +2685,14 @@ test("GET /api/dsh-mneme/memory/provenance：409 赢 503——功能关比装配
 test("GET /api/dsh-mneme/memory/provenance：关着时对已知 id 与未知 id 同一个答案——不当存在性预言机", async () => {
   // 如果关着只对「有原文的 id」回 409、对别的 id 回空 windows，调用方就能拿这个
   // 端点枚举「哪些记忆有蒸馏原文」。功能关是端点的属性，每个 id 答案必须一样。
-  const { routes, service } = setup(null, "secret-token", { distillRecords: { enabled: false } });
+  const { routes, service } = setup(null, FAKE_API_TOKEN, { distillRecords: { enabled: false } });
   service.saveWithDedupe({ type: "preference", title: "语言", content: "中文" });
   const memory = service.all()[0];
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   for (const id of [memory.id, "nope", ""]) {
     const res = new FakeRes();
     const r = req("/api/dsh-mneme/memory/provenance?id=" + id);
-    r.headers = { authorization: "Bearer secret-token" };
+    r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
     await route.handler(r, res);
     if (id === "") {
       assert.equal(res.statusCode, 400, "空 id 仍是语法问题，409 不该吃掉它");
@@ -2706,11 +2707,11 @@ test("GET /api/dsh-mneme/memory/provenance：lightMode 预设把关掉 → 409�
   // applyLightModePreset 把 distillRecords.enabled 置 false（pre-inject-gate.test.js
   // 锁的是写入侧那个方向）；读侧必须跟着变，否则轻量模式下用户以为自己关了、原文
   // 却还能从 HTTP 读出去。
-  const { routes } = setup(null, "secret-token", applyLightModePreset({ lightMode: true, distillRecords: { enabled: true } }));
+  const { routes } = setup(null, FAKE_API_TOKEN, applyLightModePreset({ lightMode: true, distillRecords: { enabled: true } }));
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   const res = new FakeRes();
   const r = req("/api/dsh-mneme/memory/provenance?id=m1");
-  r.headers = { authorization: "Bearer secret-token" };
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(r, res);
   assert.equal(res.statusCode, 409);
   assert.equal(JSON.parse(res.body).error, "distill-records-disabled");
@@ -2719,7 +2720,7 @@ test("GET /api/dsh-mneme/memory/provenance：lightMode 预设把关掉 → 409�
 // #524 方向 2：按会话列窗口（store 侧 GROUP BY 成一行一窗口）。这条用例盯三件事：
 // 同一窗口派生的多条记忆不许变成多行、区间按 seq_start 排、答复用 sessionId 认领。
 test("GET /api/dsh-mneme/memory/provenance?sessionId= 列出该会话的蒸馏窗口（#524）", async () => {
-  const { routes, service, store } = setup(null, "secret-token", RECORDS_ON);
+  const { routes, service, store } = setup(null, FAKE_API_TOKEN, RECORDS_ON);
   service.saveWithDedupe({ type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
   service.saveWithDedupe({ type: "decision", title: "备选", content: "先用 JSON 文件顶着", importance: 3 });
   const [m1, m2] = service.all();
@@ -2733,7 +2734,7 @@ test("GET /api/dsh-mneme/memory/provenance?sessionId= 列出该会话的蒸馏�
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   const res = new FakeRes();
   const r = req("/api/dsh-mneme/memory/provenance?sessionId=s1");
-  r.headers = { authorization: "Bearer secret-token" };
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(r, res);
   assert.equal(res.statusCode, 200);
   const data = JSON.parse(res.body);
@@ -2747,18 +2748,18 @@ test("GET /api/dsh-mneme/memory/provenance?sessionId= 列出该会话的蒸馏�
 });
 
 test("GET /api/dsh-mneme/memory/provenance：两个主键都给 → 400，不静默择一（#524）", async () => {
-  const { routes } = setup(null, "secret-token", RECORDS_ON);
+  const { routes } = setup(null, FAKE_API_TOKEN, RECORDS_ON);
   const route = routes.find((r) => r.path === "/api/dsh-mneme/memory/provenance");
   const res = new FakeRes();
   const r = req("/api/dsh-mneme/memory/provenance?id=m1&sessionId=s1");
-  r.headers = { authorization: "Bearer secret-token" };
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(r, res);
   assert.equal(res.statusCode, 400);
   assert.equal(JSON.parse(res.body).error, "ambiguous-id");
 });
 
 test("GET /api/dsh-mneme/memory/provenance?sessionId=：limit 越界 → 400；撞上限时 truncated=true（#524）", async () => {
-  const { routes, service, store } = setup(null, "secret-token", RECORDS_ON);
+  const { routes, service, store } = setup(null, FAKE_API_TOKEN, RECORDS_ON);
   service.saveWithDedupe({ type: "decision", title: "核心决策", content: "x", importance: 5 });
   const memory = service.all()[0];
   for (const n of [1, 2, 3]) {
@@ -2768,14 +2769,14 @@ test("GET /api/dsh-mneme/memory/provenance?sessionId=：limit 越界 → 400；�
 
   const bad = new FakeRes();
   const badReq = req("/api/dsh-mneme/memory/provenance?sessionId=s1&limit=0");
-  badReq.headers = { authorization: "Bearer secret-token" };
+  badReq.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(badReq, bad);
   assert.equal(bad.statusCode, 400);
   assert.equal(JSON.parse(bad.body).error, "invalid-limit");
 
   const ok = new FakeRes();
   const okReq = req("/api/dsh-mneme/memory/provenance?sessionId=s1&limit=2");
-  okReq.headers = { authorization: "Bearer secret-token" };
+  okReq.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(okReq, ok);
   assert.equal(ok.statusCode, 200);
   const data = JSON.parse(ok.body);

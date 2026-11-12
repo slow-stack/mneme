@@ -6,8 +6,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mountDshGoPanel, resetPanelState } from "../src/dsh-go/panel.js";
+import { fakeToken } from "./helpers/fake-auth-values.js";
 
-const TOKEN = "test-token";
+const TOKEN = fakeToken("panel-actions");
 
 function reply(res, status, value) {
   res.writeHead(status, { "content-type": "application/json" });

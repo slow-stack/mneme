@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
+import { fakeToken } from "./helpers/fake-auth-values.js";
 
 // serve bin 冒烟 + 多进程共存锁(daemon 唯一的真新风险点):daemon 子进程与测试进程
 // 同时打开同一 memory.db(WAL + busy_timeout 本就为此设计),互写互读。spawn 必须
@@ -56,7 +57,7 @@ test("serve bin: spawn 冒烟;daemon 与宿主进程同库互写互读", { timeo
   // 「与宿主面板/CLI 共用同一凭证」这条零配置承诺在真子进程里成立。
   const seedStore = createStore(join(dir, "memory.db"));
   const seedSettings = createSettings(seedStore.db);
-  const TOKEN = "serve-bin-test-token-0123456789abcdef";
+  const TOKEN = fakeToken("serve-bin");
   seedSettings.setExternalApi({ token: TOKEN });
   const peer = createService({ store: seedStore, mirror: null, config: {} });
   peer.saveWithDedupe({ type: "project", title: "peer 进程直写", content: "测试进程经 createStore 写入", importance: 3 });
