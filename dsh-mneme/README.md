@@ -2,18 +2,25 @@
   <img src="https://raw.githubusercontent.com/slow-stack/mneme/main/images/mneme-banner-hero.webp" alt="Mneme — The Memory That Dreams" width="100%" />
 </p>
 
-<p align="center"><strong>中文 | <a href="docs/SEMANTIC.md">English（语义增强）</a></strong></p>
+```
+$ cat ~/.dsh/memory/preferences.md
+# 你的偏好，写在本机磁盘上，随时能改
+```
+
+<p align="center">
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm version"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm downloads"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=EFE7D8"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=111111" alt="CI"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/tests-3446%20total-EFE7D8?style=flat-square"><img src="https://img.shields.io/badge/tests-3446%20total-111111?style=flat-square" alt="tests"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/license-MIT-EFE7D8?style=flat-square&label=license&labelColor=B03A2E&logoColor=1C1C1C"><img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square&label=license&labelColor=B03A2E&logoColor=FFFFFF" alt="license"></picture>
+<a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
+</p>
+
+<p align="center"><strong>中文 · <a href="docs/SEMANTIC.md">English（语义增强）</a></strong></p>
+
+---
 
 # dsh-mneme
-
-[![npm version](https://img.shields.io/npm/v/@modusensus/dsh-mneme?color=blue&label=npm)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
-[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Awesome](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
-[![tests](https://img.shields.io/badge/tests-3446%20total-success)](https://github.com/slow-stack/mneme)
-[![CI](https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml)](https://github.com/slow-stack/mneme/actions)
-[![node](https://img.shields.io/badge/node-22%2B-blue)](https://nodejs.org)
-[![npm downloads](https://img.shields.io/npm/d18m/@modusensus/dsh-mneme.svg?color=blue&label=downloads)](https://www.npmjs.com/package/@modusensus/dsh-mneme)
-[![coverage](https://img.shields.io/codecov/c/github/slow-stack/mneme/main)](https://codecov.io/gh/slow-stack/mneme)
 
 > 给 DeepSeek Harness 的跨会话记忆插件：让 Agent 记住你、记住项目、自动整理记忆。**Mneme**（Μνήμη）——希腊记忆女神 Mnemosyne 之名，掌管记忆与梦境，正如 autoDream 在后台巩固记忆。
 
