@@ -26,6 +26,17 @@
   - **四条结局**：跑成了写 `imageDescribed` + `imageDescribeFailed: 0`（失败数显式给 0，缺键会被读成「没跑」，那正是要避免的模糊）；试了失败写失败数与 `imageDescribeError`；开着没配路由写 `imageDescribeSkipped: "no route"`；模型明确不能看图写 `"model-cannot-see-images"`。**默认关着时一个 `imageDescribe*` 键都不写**，老档位审计行逐字节不变。
   - **测试**：`test/image-description.test.js` 增 5 条（跑成 / 失败带原文 / 没路由 / 看不懂图 / 关闭态不写任何键）。变异自证三轮：去掉成功分支的 patch（4 红）、去掉 no route 的记账（1 红）、去掉 `attempted` 计数（2 红）。
 
+- **图像记忆只到「图变成一句文字」为止：新增图像溯源表，让每条记忆能回指它来自哪张图（`imageMemoryEnabled`，默认关）**。此前图像链路的终点是转录：图块转成 `[图: …]` 占位、描述档再给它补一句 `描述：…`，两者都只是蒸馏的输入。落库的记忆与那张图之间没有任何关联——想知道「这条记忆是从哪张截图里看出来的」，除了翻会话日志没有别的办法；而会话日志会被 DSH 的图像 offload 机制永久改写（超预算的旧图换成占位文本，不再回来），也不保证还在。
+  - **不新增 memory type，只加一张溯源表**。`image` 若作为一种记忆类型，要同时改 `src/store.js` 的 `TYPES`、`src/mirror.js` 的 `TYPE_FILE`、`src/share.js` 与 `src/document.js` 的类型表，以及两处把差异量钉死的测试；牵一发动全身，与「溯源」这件事本身无关。做法是 `CREATE TABLE IF NOT EXISTS image_sources`（11 列，主键 `(memory_id, session_id, seq, fallback_key)`），与既有的 `memory_provenance`（记忆 ← 蒸馏窗口）合成完整链路：**记忆 ← 窗口 ← 图**。
+  - **粒度是窗口级，不是「这张图贡献了这条记忆」**。蒸馏是模型读完一整段转录后提炼的，没有任何信号能证明「第三张图只贡献了第一条记忆」。按行去猜，会把「这条记忆恰好也提到了图里的词」写成「确有此证」——那是伪造证据，比没有证据更糟。所以只记「这批记忆来自这个窗口，而窗口里有这几张图」，叉积写入，读的时候靠人工判断，不替模型下结论。
+  - **只在描述真的跑成时才写**。没有描述时图只是一个占位符，把记忆挂到它上面等于编归因。前置条件五重：有图、有落库的记忆、父子开关都开、本轮至少描述成功一张、`service.saveImageSources` 存在。三条不写库的分支（默认关、描述全失败、父开关关）在测试里各自断言「`image_sources` 一行都没有，且审计里没有 `imageSources` 键」。
+  - **只存引用，不存图字节**。`attachment_id` 直接取宿主 `ImageAttachmentRef.attachmentId`（不透明标识，宿主的文档明确承诺它不是文件路径）；降级情况下拿不到 id，就存 `fallback_key`（`name|mediaType|宽x高|序号`）并把 `key_stability` 标成 `unstable`——这种键在同名同尺寸换图时会撞车，标出来是为了让读的人知道「这一行的键不可靠」，而不是假装它和稳定键等价。`attachment_id` 落 NULL，不落空串。
+  - **`IMAGE_SOURCE_MAX = 50`**：一张图不是一行——它与本轮每条记忆叉积。50 张图 × 20 条记忆就是 1000 行，而它们要在蒸馏的同一个事务里提交；不设上限，毫秒级的提交会被拖成秒级，还会把长会话的蒸馏变成写放大。超出的图不记，且这个上限只在采集时生效，不改变「没有图」与「图被漏记」在审计上的区别（后者会少行，`imageSources` 计数会低于 `imageCount`）。
+  - **两个新导出**：`src/image-describe.js` 的 `attachmentKey` 从私有改为导出（描述缓存与溯源行必须是同一个键，否则同一张图在两边被认成两张），新增 `imageRefOf(block, index)` 返回 `{ attachmentId, fallbackKey, keyStability, mediaType, name, width, height }`。
+  - **开关是子项**：`imageMemoryEnabled` 默认 false，父开关 `imageDescribeEnabled`（后端 `INJECT_CHILD_FLAGS` 与面板 `FEATURE_CHILDREN` 同源，`test/inject-parent-gate.test.js` 锁）。进 `LIGHT_MODE_OFF`——轻量档连描述档一起关，没有描述就没有溯源可言。
+  - **测试**：`test/image-sources.test.js` 9 条（建表幂等与空库读空、默认关一行不写、父关子项持久值保留、开着写 stable 键且字段对齐、叉积两条记忆各一行而一张图只一行、描述全失败不写、无 attachmentId 降级 unstable 且 `attachment_id` 为 NULL、配置默认值与轻量档、审计键随行数出现）。变异自证七轮：去掉写库整段（7 红）、去掉「描述必须成功」闸（3 红）、`keyStability` 恒 stable（5 红）、审计键恒写（7 红）、store 里跳过 unstable 行（3 红）、降级键掺随机数（5 红）；**第七条（把子开关换成裸读 `config.imageMemoryEnabled`）未变红**——它今天被「描述必须成功」完全覆盖（父关就没有描述），保留是因为两者表达不同契约，代码注释里如实写明它当前不可被单独触发。
+  - **不做**：不做按图找图（没有图像向量，也不打算为它引入多模态 embedding 与索引迁移），不做 OCR（描述档已经覆盖「图里写了什么」这个需求，OCR 是另一条成本线）。这两件事在 `docs/DISTILL.md` 里写明是「暂不做」而不是「已做」。
+
 ## [0.14.0-beta.3] - 2026-11-12
 
 - **情绪页白屏（beta.1 起的回归，beta.2 仍在）：点开「情感」页整块面板变空白，且此后每次打开都空白**。根因是 `lib/client.js` 的 `AffectivePanel` 里一行 `formatRelativeTime(it.lastSeen)` 漏传第二个参数 `t`——该函数内部要调 `t("memory.time.now")`，缺参就抛 `t is not a function`，而这行跑在 render 里，React 整棵树卸载，日志里什么都不留。引入提交是 #619（`244da66d`），`v0.14.0-beta.1` 与 `v0.14.0-beta.2` 都带它；只有库里存在带 `lastSeen` 的情绪边时才触发，所以不是每个用户都会遇到。修法是补上 `, t`，并加一条静态断言：扫出所有 `formatRelativeTime(` 调用点，逐个做括号配对、数顶层逗号，实参不足 2 个就红。全库只有这一处漏传（`formatDate`/`formatDateShort` 本来只收一个参数，扫描器报的几处是误报）。变异自证：撤掉修复后断言变红并直接指出 `:8168 (argc=1)`。

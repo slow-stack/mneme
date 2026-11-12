@@ -1107,6 +1107,11 @@ window.__ModuleLoader__.load({
         "memory.features.imageDescribeProvider": "描述模型 Provider",
         "memory.features.imageDescribeModel": "描述模型",
         "memory.features.imageDescribeModelHint": "留空 = 整档不跑（不是跟随默认）。必须选一个能收图的模型，纯文本模型只会把图换成占位。",
+        // 图像溯源（v2）：记「这条记忆的蒸馏窗口里出现过哪张图」，便于回指原附件。
+        // 文案要说清两件事：① 不存图本身；② 只有描述跑成功才有意义——没描述时
+        // 图只是占位，记忆里没有一句来自图，挂上去就是假归因。
+        "memory.features.imageMemoryEnabled": "图像溯源",
+        "memory.features.imageMemoryEnabled.hint": "记下每条记忆来自哪几张图，便于回指原附件。只在描述跑成时才记——没描述时图只是占位，挂上去等于编归因。不存图本身。",
         // Issue #478：max_tokens 预算键。hint 写清两件事：这是「单轮输出预算」，
         // 以及服务商硬上限更小时后端会按报错自动降级重试（对齐 #478 的后端行为）。
         "memory.features.dreamMaxTokens": "巩固输出上限",
@@ -2235,6 +2240,8 @@ window.__ModuleLoader__.load({
         "memory.features.sleepModelHint": "Leave empty to reuse the consolidation model; a non-reasoning model is recommended",
         "memory.features.imageDescribeEnabled": "Image description",
         "memory.features.imageDescribeEnabled.hint": "Lets a vision-capable model write one line about each image during distillation, so what is in the picture can reach memory. The image itself is never stored.",
+        "memory.features.imageMemoryEnabled": "Image provenance",
+        "memory.features.imageMemoryEnabled.hint": "Records which images a memory came from, so it can point back to the original attachment. Only recorded when a description succeeded: without one the image is just a placeholder and linking it would invent causation. The image itself is never stored.",
         "memory.features.imageDescribeProvider": "Description provider",
         "memory.features.imageDescribeModel": "Description model",
         "memory.features.imageDescribeModelHint": "Empty = the whole feature stays off (not \"follow default\"). Pick a model that accepts images — a text-only model just swaps the picture for a placeholder.",
@@ -4651,7 +4658,11 @@ window.__ModuleLoader__.load({
       chorographyEnabled: ["chorographyAutoRefresh", "chorographyT1FromPanel"],
       // #619 补链：情绪注释是情感归因的下游——写下的情绪要能进模型视野，否则
       // 面板上看得见、对话里看不见。贴着父开关摆，父关时这一行标注不生效。
-      sleepAffectiveEnabled: ["affectiveInjectEnabled"]
+      sleepAffectiveEnabled: ["affectiveInjectEnabled"],
+      // 图像溯源（v2）是描述档的下游：没开描述就没有「从图里看出来的话」，
+      // 此时把窗口里的图挂到这一窗的记忆上，等于把「同窗口」谎报成「因果」。
+      // 贴着父行摆，父关时这一行标注不生效（与 sleepAffectiveEnabled 同款）。
+      imageDescribeEnabled: ["imageMemoryEnabled"]
     };
     // Issue #427 建议 1：折叠线挪到「新手之外」。group.basic 是首屏层，只列新
     // 用户敢动的总开关；group.scope 也在首屏——它回答新用户的第二个必答题

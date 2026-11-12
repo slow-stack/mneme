@@ -3035,6 +3035,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
     saveDistillRecords: (records) => store.saveDistillRecords(records),
     saveMemoryProvenance: (link) => store.saveMemoryProvenance(link),
     provenanceFor: (memoryId) => store.provenanceFor(memoryId),
+    // 图像溯源（v2）：与 saveMemoryProvenance 同一组 passthrough——写侧在蒸馏窗口
+    // 事务里一并落，读侧给面板/CLI 回答「这条记忆能回指哪张图」。不碰 syncMirror：
+    // 引用行不是记忆内容，改它不该把记忆文件标脏。
+    saveImageSources: (rows) => store.saveImageSources(rows),
+    imageSourcesFor: (memoryId) => store.imageSourcesFor(memoryId),
     // #421 读出口：按 (session, seq 区间) 取蒸馏原文。与 provenanceFor 成对——
     // 一个给区间、一个给区间里的原文，合起来才是「这条记忆从哪几句蒸出来的」。
     distillRecordsFor: (sessionId, seqStart, seqEnd) => store.distillRecordsFor(sessionId, seqStart, seqEnd),

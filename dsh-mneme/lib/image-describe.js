@@ -60,12 +60,41 @@ export function imageBlocks(content) {
   return content.filter((block) => block?.type === "image" && block?.attachment);
 }
 
-/** 一张图的稳定标识：优先 attachmentId，其次元数据四元组，最后退回序号。 */
-function attachmentKey(block, index) {
+/**
+ * 一张图的稳定标识：优先 attachmentId，其次元数据四元组，最后退回序号。
+ *
+ * 导出是给图像溯源用的（src/summarize.js 的 image_sources）：描述缓存与溯源行
+ * 必须是**同一个键**，否则同一张图会在一处算「已描述」、在另一处被记成一张新图。
+ * 两份实现迟早漂移，所以只留这一份。
+ *
+ * 注意返回值不携带「稳不稳」：附件有 attachmentId 是稳定键，降级四元组不是
+ * （同名同尺寸的两张不同图会撞键）。判稳的那一步在 imageRefOfKey，不在这里——
+ * 本函数的既有调用点只需要键本身。
+ */
+export function attachmentKey(block, index) {
   const ref = block?.attachment ?? {};
   if (typeof ref.attachmentId === "string" && ref.attachmentId) return ref.attachmentId;
   const size = `${ref.width ?? "?"}x${ref.height ?? "?"}`;
   return `${ref.name ?? ""}|${ref.mediaType ?? ""}|${size}|${index}`;
+}
+
+/**
+ * 把一张图块整理成溯源行要的字段（v2）。`attachmentId` 缺席时 keyStability 落
+ * `unstable`：那串四元组键在重发同名同尺寸的图时会撞，读侧必须看得见这件事，
+ * 不能把它当成稳定外键去做「同一张图」的判断。
+ */
+export function imageRefOf(block, index) {
+  const ref = block?.attachment ?? {};
+  const attachmentId = typeof ref.attachmentId === "string" && ref.attachmentId ? ref.attachmentId : undefined;
+  return {
+    attachmentId,
+    fallbackKey: attachmentKey(block, index),
+    keyStability: attachmentId ? "stable" : "unstable",
+    mediaType: typeof ref.mediaType === "string" && ref.mediaType ? ref.mediaType : undefined,
+    name: typeof ref.name === "string" && ref.name ? ref.name : undefined,
+    width: Number.isFinite(ref.width) ? Math.trunc(ref.width) : undefined,
+    height: Number.isFinite(ref.height) ? Math.trunc(ref.height) : undefined
+  };
 }
 
 function trimDescription(text) {

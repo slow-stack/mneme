@@ -42,6 +42,16 @@ export const Config = z.object({
   imageDescribeEnabled: z.boolean().default(false),
   imageDescribeProvider: z.string().default(""),
   imageDescribeModel: z.string().default(""),
+  // 图像溯源（v2）：把「这条记忆的蒸馏窗口里出现过哪几张图」记进 image_sources，
+  // 让记忆能回指原附件（不是存图字节，只存宿主 AttachmentId + 降级键）。
+  //
+  // 默认关，且是 imageDescribeEnabled 的**子开关**：没有描述时图只是一个
+  // `[图: …]` 占位，记忆里没有任何一句话是「从图里看出来的」，此时把窗口里的图
+  // 挂到这一窗产出的每条记忆上，是把「同一个窗口」谎报成「因果」。有描述才有
+  // 那条可追的证据链，所以父关时子项一律不生效（INJECT_CHILD_FLAGS）。
+  //
+  // 它不改任何既有行为：关着时一次 SQL 都不发，审计行逐字节等于加它之前。
+  imageMemoryEnabled: z.boolean().default(false),
   // autoSummarize 节流、产出上限与写入端同会话去重（Issue #127，默认全 0/off =
   // 零行为变化）。此前每个 turn/end 必跑、产出条数由模型输出决定、写入端只按
   // 「同类型 + 标题 trim 全等」去重——本机实测单日 84 次、单会话一天 198 条、
@@ -1283,6 +1293,9 @@ const LIGHT_MODE_OFF = [
   // 图像描述档：一次额外的视觉调用，与低资源档互斥（同 profileFactsEnabled 的
   // 定性）。预设关不是强制，用户显式勾选仍然赢。
   "imageDescribeEnabled",
+  // 轻量档同理不开图像溯源：它跟着描述档一起才有意义（父关子项本就不生效），
+  // 进这张表是为了让「轻量档下这两个键都关」在 /features 的 effective 里可读。
+  "imageMemoryEnabled",
   // 轻量模式不开热计算（heat 属于重型增强；关掉后 sleep 降级也退回纯时间分层）。
   "heatEnabled",
   // 轻量模式不开注入前判定（#380：LLM-per-turn 附加路径，每帧注入多一次池级
@@ -1364,7 +1377,11 @@ export const INJECT_CHILD_FLAGS = Object.freeze({
   // #619 补链（注入侧）：情绪注释是「情感归因」的下游——父关掉（不再产生新情绪
   // 边）之后，库里遗留的边不该继续往注入里说话。父关 = 注释一并不挂，子项持久
   // 值原样保留，与 autoInject 那组同一条纪律。
-  sleepAffectiveEnabled: Object.freeze(["affectiveInjectEnabled"])
+  sleepAffectiveEnabled: Object.freeze(["affectiveInjectEnabled"]),
+  // 图像溯源（v2）是描述档的下游：没开描述就没有「从图里看出来的话」，此时把
+  // 窗口里的图挂到这一窗的记忆上，等于把「同窗口」谎报成「因果」。父关 = 一行
+  // 都不写，子项持久值原样保留（同 autoInject 那组）。
+  imageDescribeEnabled: Object.freeze(["imageMemoryEnabled"])
 });
 
 /** 子开关的运行时生效值：父开关显式关（false）时恒不生效。 */

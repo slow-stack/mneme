@@ -124,7 +124,8 @@
 | `summarizeProvider` / `summarizeModel` | 空 | 蒸馏专用模型路由 | 两者都非空才生效；空 = 用会话当前模型 |
 | `distillMaxChars` | `24000` | 喂给蒸馏 LLM 的完整转录上限（字符，1000–200000） | 调大更完整、更贵 |
 | `imageDescribeEnabled` **light** | `false` | 图像描述档（[DISTILL.md](DISTILL.md) 的「描述档」）：蒸馏时先用一个能看图的模型给每张图写一句描述，把描述并入转录再蒸馏 | opt-in；每张图多一次视觉调用，进 lightMode 强制关闭清单 |
-| `imageDescribeProvider` / `imageDescribeModel` | 空 | 描述档专用路由 | **两者都非空才生效，且留空 = 整档不跑**——与 `summarizeProvider` 的「空 = 跟随会话当前模型」语义刻意不同：蒸馏路由多是纯文本模型，拿它看图只会换回占位。宿主侧按 `inputModalities` 决定发不发图字节，本插件不读图、不存原图 |
+| `imageDescribeProvider` / `imageDescribeModel` | 空 | 描述档专用路由 | **两者都非空才生效，且留空 = 整档不跑**——与 `summarizeProvider` 的「空 = 跟随会话当前模型」语义刻意不同：蒸馏路由多是纯文本模型，拿它看图只会换回占位。宿主侧按 `inputModalities` 决定发不发图字节，本插件不读图、不存原图 || `imageDescribeProvider` / `imageDescribeModel` | 空 | 描述档专用路由 | **两者都非空才生效，且留空 = 整档不跑**——与 `summarizeProvider` 的「空 = 跟随会话当前模型」语义刻意不同：蒸馏路由多是纯文本模型，拿它看图只会换回占位。宿主侧按 `inputModalities` 决定发不发图字节，本插件不读图、不存原图 |
+| `imageMemoryEnabled` **light** | `false` | 图像溯源（v2）：把「这条记忆的蒸馏窗口里出现过哪几张图」记进 `image_sources`，让记忆能回指原附件 | `imageDescribeEnabled` 的子开关（父关即不生效）。只在**本窗真有描述成功**时才写——没描述时图只是占位，挂上去等于把「同窗口」谎报成「因果」。只存宿主 `attachmentId` 与降级键，**不存图字节、不存路径**；进 lightMode 强制关闭清单 |
 | `summarizeMinIntervalMinutes` | `0` | 同会话两次蒸馏的最小间隔（分钟，≤10080） | 0 = 不限（#127 节流三键之一） |
 | `summarizeMaxEntriesPerRun` | `0` | 单次蒸馏最多落库条数（≤50） | 0 = 不限 |
 | `summarizeMinWindowChars` | `0` | 窗口可蒸馏文本下限（字符），不足直接跳过 LLM（#239） | 被挡窗口照常消费游标并留 skip 审计 |
@@ -402,6 +403,7 @@
 `profileFactsEnabled`（2026-11-06） ·
 `preInjectGate.enabled`（#380） · `distillRecords.enabled`（#399） ·
 `imageDescribeEnabled`（每张图一次视觉调用） ·
+`imageMemoryEnabled`（图像溯源的写入） ·
 `diaryEnabled`（v0.13，每天一篇 = 一次 LLM 调用，属重型）
 
 预设只是默认值而非强制：用户显式写进 feature_flags 的值在装配顺序上后展开、仍然生效
