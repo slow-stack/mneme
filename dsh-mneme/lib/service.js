@@ -15,7 +15,7 @@ import { applyDecisions, EPISTEMIC_PRIORITY } from "./dream/decisions.js";
 import { createDocumentRegistrar } from "./document.js";
 import { createOrganizer } from "./organize.js";
 import { createShareImport } from "./share-import.js";
-import { createBM25Index } from "./search/bm25.js";
+import { createCorpusIndex } from "./search/bm25.js";
 import { adaptiveThreshold } from "./search/adaptive.js";
 import { anchorSeeds, normalizePath, cascadeDepths, HOP_QUOTA } from "./graph/anchoring.js";
 
@@ -556,7 +556,13 @@ export function createService({ store, mirror, config, onWrite, logger, document
   // 只缓存索引、不缓存查询结果：search() 返回的是 {...row, score} 副本，索引里
   // 留着的原始行不会被调用方改到；缓存结果则会跨 step 串味（同一 query 在不同
   // 池子状态下该给不同答案）。
-  let bm25IndexCache = null; // { generation, index } | null
+  //
+  // #616（语料截断）：索引本身换成增量形态（createCorpusIndex），语料也换成全量。
+  // 此前语料固定 store.list({ limit: 500 })，排在 500 名之外的记忆永远进不了词法
+  // 召回——实测 8 个查询里 top10 与全量语料只有 1-4 条重合。截断不是慢，是静默的
+  // 召回缺失，所以这里必须全量；全量的代价靠增量维护摊掉：整份语料只在索引不存在
+  // 或需要对齐时取一次，之后每轮只对变过的行重新分词。
+  let bm25IndexCache = null; // { generation, index, seen } | null
 
   /**
    * BM25 third recall path (v0.5.0 1.1). Scores the query tokens against the
@@ -569,7 +575,21 @@ export function createService({ store, mirror, config, onWrite, logger, document
     try {
       const index = bm25CorpusIndex();
       if (!index) return [];
-      return index.search(q, { limit });
+      const hits = index.search(q, { limit });
+      if (!hits.length) return [];
+      // 索引只留 id + 频次（省掉整行常驻内存），命中后按 id 回表补全：融合层与
+      // 注入渲染都要完整字段（fuseRecall 直接把行塞进结果集）。
+      const byId = new Map();
+      for (const row of store.listByIdsForInject(hits.map((h) => h.id))) byId.set(row.id, row);
+      const out = [];
+      for (const hit of hits) {
+        const row = byId.get(hit.id);
+        // 索引与回表之间可能有并发写入（另一个宿主进程归档/遗忘该行），
+        // 取不到或已不可见的命中直接丢弃，不拿它冒充结果。
+        if (!row || row.archived || row.forgotten) continue;
+        out.push({ ...row, score: hit.score });
+      }
+      return out;
     } catch {
       return [];
     }
@@ -587,17 +607,34 @@ export function createService({ store, mirror, config, onWrite, logger, document
     if (bm25IndexCache && generation !== null && bm25IndexCache.generation === generation) {
       return bm25IndexCache.index;
     }
-    const docs = store.list({ limit: 500, includeForgotten: false }).filter((m) => !m.archived);
+    const docs = store.listBm25Corpus();
     if (!docs.length) {
       bm25IndexCache = null;
       return null;
     }
-    const index = createBM25Index(docs);
+    const index = bm25IndexCache ? bm25IndexCache.index : createCorpusIndex();
+    const seen = bm25IndexCache ? bm25IndexCache.seen : new Map();
+    // 增量维护：只对 updated_at 变过（或新出现）的行重新分词，语料里已经不存在的
+    // id 从索引移除。删除不会在行上留痕（行都没了），所以判据是「本轮全量 id 集合」
+    // 减去「索引里还留着的 id」——这也是必须每轮取一次全量语料的原因，省钱的空间
+    // 在分词与建索引，不在取数。
+    const alive = new Set();
+    for (const doc of docs) {
+      alive.add(doc.id);
+      if (seen.get(doc.id) === doc.updated_at) continue;
+      index.upsert(doc);
+      seen.set(doc.id, doc.updated_at);
+    }
+    for (const id of [...seen.keys()]) {
+      if (alive.has(id)) continue;
+      index.remove(id);
+      seen.delete(id);
+    }
     // 水位读不到时**不碰缓存**，保留上一份「已知有效 generation」的条目：读失败
     // 若只是偶发（库锁、迁移窗口）而期间没有写入，恢复后水位与条目一致，直接命中；
     // 期间真有写入，水位已经变了，下一轮自然重建。反过来把 null 当键存进去则是纯
     // 噪声——那样的条目永远命不中，还把有效的那份挤掉了。
-    if (generation !== null) bm25IndexCache = { generation, index };
+    if (generation !== null) bm25IndexCache = { generation, index, seen };
     return index;
   }
 

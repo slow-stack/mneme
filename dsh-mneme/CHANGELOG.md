@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- **词法召回只看得到前 500 条记忆：BM25 语料此前固定 `store.list({ limit: 500 })`，语料超过 500 行时，排在 500 名之后的记忆永远进不了检索（#616）**。500 名按 `importance DESC, updated_at DESC` 排，所以越旧、越不重要的记忆越容易掉出窗口——而它们恰恰是最需要靠检索才想得起来的那批。实测 8 个查询里，500 行窗口的 top10 与全量语料只有 1-4 条重合（`记忆 审查` 2/10、`矛盾 冻结` 1/10、`注入 规则池 截断` 4/10）。这是**静默的召回缺失**：不报错、不变慢、日志里什么都没有，只是「有这条记忆但搜不到」。
+  - **不是把 500 改成 null 就完事**。全量重建一份索引实测 340-356ms，而现在 500 行只要 14-23ms；只放开截断，每次写入后的重建会从 ~110ms 涨到 ~680ms，等于用一个可感知的卡顿换召回。所以这次拆成两件事：语料放开到全量，同时把索引改成**增量维护**，重建成本随变化的行数走而不是随语料规模走（实测 upsert 50 行 3.4ms，单行 0.5ms）。本库 9052 行活跃记忆中，最近一小时变化的只有 49 行。
+  - **新开口 `store.listBm25Corpus()`，不走 `store.list({ limit: null })`**。后者的投影由 PRAGMA 派生，搬全部列，无界时 9k 行实测 340-400ms；这里只要 `id / title / content / updated_at` 四列，实测 74-108ms，且 `ORDER BY updated_at DESC` 命中 `idx_memories_updated`。**刻意不取 `content_hash`**：把这一列加进查询会让耗时涨到 310ms（覆盖索引失效），比省下的分词还贵——所以判据用 `updated_at`，它同时覆盖「改内容」「归档」「遗忘」三类变更（这三类都会刷新它），只有删除不在行上留痕。
+  - **删除靠 id 集合差集收掉**。语料每轮全量取一次（这一步省不掉，只能省分词与建索引），拿本轮存活 id 减去索引里还留着的 id，差集逐个 `remove`。所以「每轮取一次全量」不是浪费，是删除补偿的唯一依据。
+  - **索引表示选紧凑数组而不是 Map**。`src/search/bm25.js` 新增 `createCorpusIndex()`：每文档存升序 `Int32Array`（termId）+ `Uint16Array`（频次），查询时与查询词项归并求交；`vocab` 只增不减（删掉的词保留 id、df 归零），槽位数组复用空位。同一 tokenizer、同一 K1=1.5 / B=0.75、同一打分式，实测 80 组 top10 与 `createBM25Index` **逐位相同**，全量 build 418ms / 堆 +38MB（Map 版 +53.8MB）。`createBM25Index` 保留给知识库那边——它的语料本来就不截断，且 docs 带额外 `row` 字段。
+  - **索引只留 id，命中后回表**。`bm25Recall` 拿到 `{ id, score }` 后用 `store.listByIdsForInject` 批量补全（60 条 1.12ms）。这一步不可省：融合层把行直接塞进结果集，字段必须完整。回表时取不到、或已经被别的宿主进程归档/遗忘的命中直接丢弃——索引与回表之间是有窗口的。
+  - **失效键仍是 `mirror_state.generation`**，逻辑与 #617-O2 一致（水位每次现读、读不到时不写缓存、只缓存索引不缓存查询结果）；只是缓存条目多带一份 `seen: Map<id, updated_at>` 用于增量判断。
+  - **测试**：`test/bm25-corpus-index.test.js` 6 条（与批量索引命中与分数逐条一致、重复 upsert 不重复计 df、remove 后分数等于「从没插过它」、更新后新词命中旧词不命中、limit 与归一化、空索引空查询）。`test/bm25-corpus-full.test.js` 4 条（第 621 行记忆仍可召回、同轮多查询只取一次语料、删除后退出、更新后按新内容召回）。`test/bm25-corpus-cache.test.js` 的观测点从「`store.list` 被以 `limit:500` 调用几次」改为「`store.listBm25Corpus` 被调用几次」，8 条断言值一个没动。变异自证三轮各自变红：把语料查询改回 `ORDER BY importance DESC LIMIT 500`（1 红）、把增量判据从「`updated_at` 变过」改成「见过就跳过」（1 红）、删掉删除补偿（未变红——见下）。
+  - **如实记一处变异假绿**：删掉 `index.remove` 那一段后「删除后退出词法召回」仍然绿，因为 `bm25Recall` 回表时查不到行会丢弃命中，把索引里的死行挡住了。这是防御性冗余，不是漏测——但它意味着「索引必须干净」这条契约今天只能靠代码审查守住，不能靠测试。删补偿的代价是索引随删除行数膨胀（内存不回收），不是结果错误。
 - **后台 LLM 调用一个 session id 都没带，走 OpenCode 路由必然 400（#668）：七个调用点统一补上固定后台会话标识**。插件自己的后台调用（整理、蒸馏、实体抽取、注入门控、图像描述、连通性探测）此前只传 `provider`/`model`/`messages`，`sessionId` 全程缺席。这在多数网关上无声无息，但 OpenCode 适配器是硬要求：pi-ai 的 `dist/providers/opencode-headers.js` 里 `withSessionHeader` 只在 `options.sessionId` 存在时才注入 `x-opencode-session` 头，缺了就直接 400。上报者（#668）说的正是这条。
   - **一处收口，不散点补**：新增 `src/llm-session.js`，`BACKGROUND_SESSION_ID = "dsh-mneme"` 与 `withBackgroundSession(options)` 两个导出。七个点全部经它包一层——`src/dream.js` 与 `src/dream/sleep.js` 各有本地 `streamText`，改单点即覆盖全部 7 个 dream/sleep 相位；另五处是 `src/index.js`、`src/summarize.js`、`src/pre-inject-gate.js`、`src/api.js`、`src/image-describe.js`。
   - **固定标识而不是按 run id 派生**：按 run id 会让网关把每次整理当成一个新会话，限流按会话计数时反而更容易撞墙，排障时也分不清请求来自哪一层。固定成一个，既满足头部要求，也让网关侧能一眼认出「这是插件的后台流量」。
