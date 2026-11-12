@@ -180,6 +180,9 @@ const FEATURE_FLAG_BOOLEANS = [
   // 才允许升成稳定特质。要调模型且依赖实体抽取，所以必须显式打开、可随时关掉；
   // 它是 sleepModeEnabled 的子相：父开关关着时整个 sleep 不跑。
   "sleepAffectiveEnabled",
+  // #619 补链（注入侧）：把单次场合的情绪记录作为一行注释挂在对应记忆下（默认关）。
+  // 与 sleepAffectiveEnabled 是父子：父关则库里的情绪边不再增长，子关则一条都不挂。
+  "affectiveInjectEnabled",
   "heatEnabled",
   // issue #218 / E5：注入侧 heat 独立开关（默认关，老用户 injectHeatEnabled=true 回滚）。
   "injectHeatEnabled",
@@ -299,6 +302,8 @@ const FEATURE_FLAG_BOOLEANS = [
   // LIGHT_MODE_OFF —— 它是一次额外的视觉调用，与低资源档互斥。路由两个键走
   // FEATURE_FLAG_STRINGS（留空 = 不描述，理由写在 config.js 那三个键的注释里）。
   "imageDescribeEnabled",
+  // 图像溯源（v2）：面板可写、父关即不生效。白名单是写入面的门，漏了面板点了 400。
+  "imageMemoryEnabled",
   // #539：逐会话无痕默认关闭；子代理开关受总开关约束。手动 session id 名单留在配置，
   // 不进入只支持标量的 feature_flags 白名单。
   "sessionGateEnabled",

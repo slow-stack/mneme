@@ -975,20 +975,21 @@ test("mneme mark is self-drawn: no host icon-name probing left (#287 root cause)
 test("plugin-list icon: declared, in-package, and shipped in files", () => {
   const icon = pkg.icon;
   assert.equal(typeof icon, "string", "package.json must declare an icon");
-  assert.equal(icon, "assets/icon.svg", "the icon must be the self-drawn mark");
+  assert.equal(icon, "assets/icon.png", "the icon must be the shipped brand avatar");
   assert.ok(!/^([A-Za-z]:|[A-Za-z][A-Za-z\d+.-]*:)/.test(icon), "the icon must be a relative path (host rejects absolute/URL)");
   assert.ok(pkg.files.includes("assets"), "the assets dir must ship, or the published package has no icon");
   const file = join(root, icon);
   assert.ok(existsSync(file), `the declared icon must exist: ${icon}`);
   const bytes = readFileSync(file);
   assert.ok(bytes.length > 0 && bytes.length <= 256 * 1024, "the icon must be a non-empty file under the host's 256 KiB cap");
-  const svg = bytes.toString("utf8");
-  assert.ok(svg.includes("<svg") && svg.includes("viewBox"), "the icon must be an SVG with a viewBox");
-  // <img> 不能继承 currentColor：文件必须自带颜色，否则会渲染成黑块/不可见。
-  assert.ok(/stroke="#[0-9a-fA-F]{6}"/.test(svg), "the standalone file must bake its own colour (<img> cannot inherit currentColor)");
-  // 文件与客户端内联路径必须是同一颗：两边形状漂移是最容易悄悄发生的事。
-  const inline = clientSource.match(/const MNEME_MARK_D = "([^"]+)"/)[1];
-  assert.ok(svg.includes(inline), "assets/icon.svg must use the same path as the inline mark (no shape drift)");
+  // 位图取代了手绘 SVG mark：宿主只按扩展名收位图，坏文件会静默回落成通用插画，
+  // 所以直接把 PNG 结构验到底——魔数、IHDR 边长、位深与 RGBA 通道。
+  assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", "the icon must be a real PNG");
+  assert.equal(bytes.readUInt32BE(16), 256, "the icon must be 256 px wide");
+  assert.equal(bytes.readUInt32BE(20), 256, "the icon must be 256 px tall");
+  assert.equal(bytes[24], 8, "the icon must be 8-bit");
+  // 圆角必须是真的透明而不是涂白，否则浅底/深底主题下都会露出方角。
+  assert.equal(bytes[25], 6, "the icon must be RGBA so the rounded corners stay transparent");
 });
 
 // 插件列表的标题/描述读包内的 `locale/<语言码>.json`：宿主 readPluginMeta 先解析

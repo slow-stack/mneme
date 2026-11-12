@@ -12,6 +12,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { createApi } from "../src/api.js";
+import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 
 const pkgRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const repoRoot = path.dirname(pkgRoot);
@@ -94,7 +95,7 @@ function declaredRoutes() {
   const mounted = [];
   createApi(
     { webServer: { register(route) { mounted.push(route); return () => {}; } } },
-    service, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "secret-token"
+    service, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, FAKE_API_TOKEN
   );
   // 路由名去掉公共前缀，文档里写的是 /export 而不是 /api/dsh-mneme/export。
   return mounted.map((route) => ({

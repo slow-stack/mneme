@@ -11,13 +11,14 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSummarizer } from "../src/summarize.js";
-import { imageLabel } from "../src/attachment-text.js";
+import { imageLabel, IMAGE_PLACEHOLDER_PREFIX } from "../src/attachment-text.js";
 import {
   MAX_DESCRIPTION_CHARS,
   appendDescriptions,
   canSeeImages,
   describeImages,
-  imageBlocks
+  imageBlocks,
+  DESCRIPTION_PREFIX
 } from "../src/image-describe.js";
 
 const IMAGE = {
@@ -268,4 +269,110 @@ test("imageBlocks 只挑带 attachment 的 image 块", () => {
   ];
   assert.equal(imageBlocks(content).length, 1, "没有 attachment 的 image 块无从描述");
   assert.deepEqual(imageBlocks(null), [], "非数组返回空，不抛");
+});
+
+// ── 审计：整档静默失效必须在 metadata 里留下痕迹 ─────────────────────────
+// 这一组的理由：这条链路上原先只有 imageCount（图块数），于是「开了开关但一次
+// 都没跑成」与「这个窗口本来没有图」在审计里长得一模一样。四条用例分别钉住
+// 「跑成了」「试了失败」「开着没路由」「默认关着不写」四种结局，少任何一条，
+// 下次有人把计数删了都不会有测试变红。
+
+function auditRow(service) {
+  return service.listLlmAudits().find((r) => r.status === "success");
+}
+
+test("审计：开着且跑成，写 imageDescribed 与 imageDescribeFailed=0", async () => {
+  const r = setup(
+    { imageDescribeEnabled: true, imageDescribeProvider: "vision", imageDescribeModel: "v1" },
+    fakeLlm({ description: "一张截图" })
+  );
+  await distill(r, sessionOf("img-audit-ok", [imageMessage(1, "看下这个"), { seq: 2, type: "turn/end" }]));
+  const row = auditRow(r.service);
+  assert.ok(row, "成功行要存在");
+  assert.equal(row.metadata?.imageDescribed, 1, "跑成一张就记 1");
+  assert.equal(row.metadata?.imageDescribeFailed, 0, "失败数必须是显式的 0，不能缺键");
+  assert.equal(row.metadata?.imageDescribeError, undefined, "没失败就不写原因");
+  assert.equal(row.metadata?.imageCount, 1, "图块数照旧");
+});
+
+test("审计：描述调用失败，写 imageDescribeFailed 与首条错误原文", async () => {
+  const r = setup(
+    { imageDescribeEnabled: true, imageDescribeProvider: "vision", imageDescribeModel: "v1" },
+    fakeLlm({ throwOnDescribe: true })
+  );
+  await distill(r, sessionOf("img-audit-fail", [imageMessage(1, "看下这个"), { seq: 2, type: "turn/end" }]));
+  const row = auditRow(r.service);
+  assert.ok(row, "描述挂了，蒸馏本身仍是成功行");
+  assert.equal(row.metadata?.imageDescribed, 0, "一张都没成");
+  assert.equal(row.metadata?.imageDescribeFailed, 1, "试了一张、失败一张");
+  assert.ok(
+    String(row.metadata?.imageDescribeError ?? "").includes("vision route down"),
+    "首条错误要留原文，否则只知道失败了不知道为什么"
+  );
+});
+
+test("审计：开着但路由留空，写 imageDescribeSkipped=no route", async () => {
+  const r = setup({ imageDescribeEnabled: true, imageDescribeProvider: "", imageDescribeModel: "" });
+  await distill(r, sessionOf("img-audit-noroute", [imageMessage(1, "看下这个"), { seq: 2, type: "turn/end" }]));
+  const row = auditRow(r.service);
+  assert.equal(row.metadata?.imageDescribeSkipped, "no route", "「我开了但没配」必须能看见");
+  assert.equal(row.metadata?.imageDescribed, undefined, "没试过就不该有尝试数");
+});
+
+test("审计：模型明确不能看图，写 imageDescribeSkipped=model-cannot-see-images", async () => {
+  const r = setup(
+    { imageDescribeEnabled: true, imageDescribeProvider: "text", imageDescribeModel: "t1" },
+    fakeLlm({ modalities: ["text"] })
+  );
+  await distill(r, sessionOf("img-audit-blind", [imageMessage(1, "看下这个"), { seq: 2, type: "turn/end" }]));
+  const row = auditRow(r.service);
+  assert.equal(row.metadata?.imageDescribeSkipped, "model-cannot-see-images");
+});
+
+test("审计：默认关着时不写任何 imageDescribe* 键（老档位逐字节不变）", async () => {
+  const r = setup({ imageDescribeProvider: "vision", imageDescribeModel: "v1" });
+  await distill(r, sessionOf("img-audit-off", [imageMessage(1, "看下这个"), { seq: 2, type: "turn/end" }]));
+  const row = auditRow(r.service);
+  assert.equal(row.metadata?.imageCount, 1, "图块数照旧要数");
+  const extra = Object.keys(row.metadata ?? {}).filter((k) => k.startsWith("imageDescribe"));
+  assert.deepEqual(extra, [], `关闭态不该多出任何键，实得多出 ${extra.join(",")}`);
+});
+
+// ── 蒸馏提示词：描述进转录还不够，得让蒸馏模型知道它是事实来源 ────────────
+// 「描述可检索」这件事真正的断点在这里：描述混进转录后，蒸馏模型并不天然知道
+// 那一行值得记，实测最容易被当排版噪音丢掉，于是图里写了什么在落库前就没了。
+// 这一组钉住三件事——有描述才加提示、提示里的前缀字面量与生成端同源、没描述时
+// 提示词逐字节不变（默认关仍与 #611 一致）。
+
+function systemPromptOf(call) {
+  return call.messages.find((m) => m.role === "system").content[0].text;
+}
+
+test("蒸馏提示词：产出了描述才加「描述行是事实来源」，且前缀与生成端同源", async () => {
+  const r = setup(
+    { imageDescribeEnabled: true, imageDescribeProvider: "vision", imageDescribeModel: "v1" },
+    fakeLlm({ description: "一张报错截图，红字 ECONNREFUSED" })
+  );
+  await distill(r, sessionOf("img-hint-on", [imageMessage(1, "这个怎么修"), { seq: 2, type: "turn/end" }]));
+  const prompt = systemPromptOf(r.llm.calls.find((c) => c.purpose === "summarization"));
+  assert.ok(prompt.includes(IMAGE_PLACEHOLDER_PREFIX), "提示里引用的占位前缀必须是真的那个");
+  assert.ok(prompt.includes(DESCRIPTION_PREFIX), "提示里引用的描述前缀必须是真的那个");
+  assert.ok(prompt.includes("ECONNREFUSED") === false, "提示词里不该抄描述内容——那是转录的事");
+});
+
+test("蒸馏提示词：描述调用失败时不加这句（不能指向不存在的行）", async () => {
+  const r = setup(
+    { imageDescribeEnabled: true, imageDescribeProvider: "vision", imageDescribeModel: "v1" },
+    fakeLlm({ throwOnDescribe: true })
+  );
+  await distill(r, sessionOf("img-hint-fail", [imageMessage(1, "看下"), { seq: 2, type: "turn/end" }]));
+  const prompt = systemPromptOf(r.llm.calls.find((c) => c.purpose === "summarization"));
+  assert.ok(!prompt.includes(DESCRIPTION_PREFIX), "没有描述就不该告诉模型去找描述行");
+});
+
+test("蒸馏提示词：默认关着时逐字节等于不带图像提示的形态", async () => {
+  const off = setup({ imageDescribeProvider: "vision", imageDescribeModel: "v1" });
+  await distill(off, sessionOf("img-hint-off", [imageMessage(1, "看下"), { seq: 2, type: "turn/end" }]));
+  const prompt = systemPromptOf(off.llm.calls.find((c) => c.purpose === "summarization"));
+  assert.ok(!prompt.includes(DESCRIPTION_PREFIX), "关着时提示词不该多出这一段");
 });

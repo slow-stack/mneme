@@ -127,6 +127,15 @@ export const STR = {
     zh: (iso) => `\n\n当前时间：${iso}（本会话发生的时间）。据此换算 occurred_at。`,
     en: (iso) => `\n\nCurrent time: ${iso} (when this conversation happened). Use it to convert occurred_at.`
   },
+  // 图像描述档（imageDescribeEnabled）开着且这一窗真的产出了描述时，把这句加进
+  // 蒸馏提示词。为什么必须加：描述只并进了转录，蒸馏模型并不天然知道「描述：」
+  // 那一行值不值得记——实测最容易被当成排版噪音丢掉，于是「图里写了什么」这个
+  // 唯一可复原的信息在落库前就没了，描述档等于白跑。这句话只陈述转录口径，不
+  // 扩大模型的自由度：它仍然只记事实，只是把图里的内容也算作事实来源。
+  imageDistillHint: {
+    zh: (imgPrefix, descPrefix) => `\n\n关于本段转录中的图片：以「${imgPrefix}」开头的行是图片占位，紧随其后的「${descPrefix}」行是指定视觉模型看图后写的。描述里的主体、界面文字、报错、图表数据都是**真实存在的内容**，可以当作事实来源，与用户原话同等对待；需要记住图里写了什么时，把关键文字抄进 content，不要只写「用户发了张图」。`,
+    en: (imgPrefix, descPrefix) => `\n\nAbout images in this transcript: lines starting with "${imgPrefix}" are placeholders, and the "${descPrefix}" line right after each one was written by a vision model that actually saw the image. What the description states — subjects, on-screen text, errors, chart values — is real content and a valid source of facts, on equal footing with the user's own words. When the image's content matters, copy the key text into content; do not merely write "the user sent an image".`
+  },
   // --- inject.js：注入块标题 / 条目行 ---------------------------------------
   hotHeader: {
     zh: (rounds, body) => `[短期上下文] 最近对话（共 ${rounds} 轮）：\n${body}`,
@@ -181,6 +190,26 @@ export const STR = {
   graphHintLine: {
     zh: (type, title, content, date) => `- [线索/${type}] ${date ? `${date} ` : ""}${title}：${content}`,
     en: (type, title, content, date) => `- [hint/${type}] ${date ? `${date} ` : ""}${title}: ${content}`
+  },
+  // #619 补链（注入侧）：单次场合的情绪注释，挂在它所属的记忆行下面。
+  // 三个信息缺一不可——谁、什么心情、哪件事：只写「她不高兴」是没用的注入，
+  // 模型会把一次场合的情绪当成稳定评价用；场合数说明了「这是一次，不是一贯」。
+  // `why` 是 sleep 侧给的理由（可缺省），有就带上，没有不补空话。
+  affectiveNote: {
+    zh: (person, emotion, target, occasions, why) =>
+      `〔情绪记录·单次场合〕${person} 在「${target}」这件事上${emotion}` +
+      (occasions > 1 ? `（记了 ${occasions} 次，仍属同一场合）` : "") +
+      (why ? `；当时的原因：${why}` : "") +
+      "。这是场合性的，不要当作一贯表现。",
+    en: (person, emotion, target, occasions, why) =>
+      `[affect record · single occasion] ${person} was ${emotion} about "${target}"` +
+      (occasions > 1 ? ` (recorded ${occasions}× in the same occasion)` : "") +
+      (why ? `; reason at the time: ${why}` : "") +
+      ". Occasion-bound — do not read it as a standing disposition."
+  },
+  affectiveTraitNote: {
+    zh: (target, occasions) => `〔情绪记录·多次独立场合〕这一态度在 ${occasions} 个独立场合都出现过：「${target}」。`,
+    en: (target, occasions) => `[affect record · repeated occasions] This attitude recurred across ${occasions} independent occasions: "${target}".`
   },
   userSettingsHeader: {
     zh: "[用户设置] 来自 dsh-mneme 的用户画像与规则：",

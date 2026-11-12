@@ -24,6 +24,7 @@ import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { createApi } from "../src/api.js";
 import { createStandaloneApi } from "../src/api-standalone.js";
+import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 
 const SHARE_PATH = "/api/dsh-mneme/share";
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -64,7 +65,7 @@ class FakeRes extends EventEmitter {
   }
 }
 
-function shareSetup(apiToken = "secret-token", { logger = null } = {}) {
+function shareSetup(apiToken = FAKE_API_TOKEN, { logger = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-share-api-"));
   const store = createStore(join(dir, "memory.db"));
   const service = createService({ store, mirror: null, config: {} });
@@ -93,7 +94,7 @@ function shareReq({ method = "POST", url = SHARE_PATH, body = "", authorized = t
   const req = new EventEmitter();
   req.method = method;
   req.url = url;
-  req.headers = authorized ? { authorization: "Bearer secret-token" } : {};
+  req.headers = authorized ? { authorization: `Bearer ${FAKE_API_TOKEN}` } : {};
   process.nextTick(() => {
     req.emit("data", Buffer.from(body));
     req.emit("end");
@@ -209,7 +210,7 @@ test("a throwing pack build answers 500 and leaves a log line", async () => {
   // 不带 logger 也照答 500（shareReply 的 warn 是可选的），但带时必须真的写日志：
   // 否则「500 且无迹可查」这条现场就无从下手。
   const warnings = [];
-  const s = shareSetup("secret-token", { logger: { warn: (m) => warnings.push(String(m)) } });
+  const s = shareSetup(FAKE_API_TOKEN, { logger: { warn: (m) => warnings.push(String(m)) } });
   try {
     const route = shareRoute(s);
     s.service.all = () => { throw new Error("database is locked"); };
