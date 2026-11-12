@@ -49,6 +49,7 @@
 //     一条指令型记忆可诱导模型标记全池 → 整个记忆块静默失明。该形态本帧退回观察档
 //     原样注入并 warn；判定结果仍在缓存与审计里（n_flagged == n_pool 即此形态）。
 import { STR, langOf } from "./lang.js";
+import { withBackgroundSession } from "./llm-session.js";
 
 export const GATE_TRIGGER_SOURCE = "preInjectGate";
 export const GATE_OPERATION_TYPE = "pre_inject_gate";
@@ -236,7 +237,7 @@ export function createPreInjectGate({ llm, agentDefaultModel, service, config, l
     const abort = new AbortController();
     const consume = (async () => {
       try {
-        for await (const chunk of llm.stream({ ...route, maxTokens: JUDGE_MAX_TOKENS, messages, signal: abort.signal })) {
+        for await (const chunk of llm.stream(withBackgroundSession({ ...route, maxTokens: JUDGE_MAX_TOKENS, messages, signal: abort.signal }))) {
           if (chunk.type === "text-delta" && typeof chunk.text === "string") text = (text ?? "") + chunk.text;
           if (chunk.type === "usage") {
             const u = chunk.usage ?? chunk;

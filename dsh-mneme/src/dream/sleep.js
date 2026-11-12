@@ -1,4 +1,5 @@
 import { STR, langOf } from "../lang.js";
+import { withBackgroundSession } from "../llm-session.js";
 // System-level sleep (v0.4.0): an idle-triggered, LLM-assisted deep pass over
 // the memory store. Four independent, fail-safe phases:
 //   1. conflict resolution — high-similarity same-type pairs are either parked
@@ -86,7 +87,7 @@ function parseJsonArray(text) {
 async function streamText(ctx, options, onUsage, onStreamError) {
   if (!ctx?.llm?.stream) return undefined;
   let text = "";
-  for await (const chunk of ctx.llm.stream(options)) {
+  for await (const chunk of ctx.llm.stream(withBackgroundSession(options))) {
     if (chunk.type === "text-delta" && typeof chunk.text === "string") text += chunk.text;
     // DSH 的 StreamChunk 契约把用量嵌在 chunk.usage（TokenUsage：inputTokens /
     // outputTokens / totalTokens）；兼容直接平铺在 chunk 上的旧形态。归一放在

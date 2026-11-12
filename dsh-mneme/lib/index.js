@@ -53,6 +53,7 @@ import { createVectorIndex } from "./vector-index.js";
 import { createSemantic } from "./semantic.js";
 import { Config, applyLightModePreset, injectChildEnabled } from "./config.js";
 import { langOf } from "./lang.js";
+import { withBackgroundSession } from "./llm-session.js";
 import { extractEntities } from "./entities/extractor.js";
 import { createProfileExtractor } from "./profile-extract.js";
 import { mkdirSync } from "node:fs";
@@ -149,12 +150,12 @@ export function createEntityStreamAdapter({ llm, agentDefaultModel, logger, serv
         }
       };
       return (async () => {
-        for await (const chunk of llm.stream({
+        for await (const chunk of llm.stream(withBackgroundSession({
           ...route,
           maxTokens: 4096,
           ...(withEffort && effort ? { reasoningEffort: effort } : {}),
           messages
-        })) {
+        }))) {
           if (chunk.type === "text-delta" && typeof chunk.text === "string") text += chunk.text;
           // DSH 的 StreamChunk 契约把用量嵌在 chunk.usage（TokenUsage）；兼容直接
           // 平铺在 chunk 上的旧形态。归一放在这里，下面只需认平铺形状——与
