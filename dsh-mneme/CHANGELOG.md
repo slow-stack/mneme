@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- **注入的规则池只看得到前 200 条记忆：候选池此前固定 `store.list({ limit: 200 })`，合格行 8400+ 条里 8200 条永远进不了窗（#619）**。这个窗口按 `importance DESC` 取，于是注入位实际上由「谁更重要」决定一个固定的前 200 名，而真正的排序规则（summary 优先档 → preference → importance×quality×heat×scope）只在这 200 条**内部**生效。实测本机库 9067 条活跃记忆里，按注入闸门（`injectType` / 非 narrative / importance ≥ 3）合格的有 8421 条，其中 8210 条永远进不了候选窗；窗口内 200 条的 importance 分布是**全部 5**——也就是说 summary 优先档这条规则，在最需要它的场景里根本没机会触发。
+  - **窗口改成只限制回表条数，不再决定谁能参与排序**。`store.listInjectPool()` 取全部活跃行的排序键（12 列：`id / type / source / importance / quality_score / last_accessed_at / created_at / updated_at / agent_scope / workspace_scope / archived / forgotten`），过滤与排序都在 JS 侧做，最后只对入选的 `max(200, poolSize)` 条回表补正文。回表深度与改动前一致（200），所以 backfill（槽位没填满时往下补）的行为不变。
+  - **不走 `store.list({ limit: null })`**：list 的投影由 PRAGMA 派生、搬全部列（含 content），9k 行实测 340-400ms；这里 12 列实测 200ms，正文只对 200 条用 `listByIdsForInject` 点查回来（6.8ms）。加起来仍低于改动前那条 `LIMIT 200` 查询的 ~76ms + 后续排序，但账要算清：**这不是变快，是把「看不见的记忆」换成了「多扫一遍排序键」**，换来召回覆盖面。
+  - **排序键按 `mirror_state.generation` 缓存**，与词法索引同纪律（水位每次现读、读不到时不写缓存）。但 `heatEnabled && injectHeatEnabled` 同时打开时**绕开缓存**：heat 依赖 `last_accessed_at`，而 `touchLastAccess` 刻意不 bump generation（读不该让镜像变脏），缓存会让 heat 停在上一轮的读数上。
+  - **补上末位平局键 `updated_at DESC` 再 `id`**。此前同分组的次序靠 `Array.sort` 的稳定性继承 SQL 行序，等于随数据库返回顺序漂移——实测全库只有 43 种排序键取值、37 个并列组、最大一组 2276 行，改一行 `updated_at` 就能造成上千对交换。现在同分组的次序可复现，轮换窗口不会因为一次无关写入而整批换人。
+  - **测试**：`test/inject-pool-full.test.js` 4 条（250 条 importance 5 填充 + 一条 importance 1 的 summary，后者必须排在第一位并进注入——旧实现下它在第 251 位、根本进不了窗；同 generation 内多次注入只取一次排序键；heat 双开关打开时每轮都重取；入选条目带完整 `content`/`tags`，证明走了回表而不是排序键快照）。变异自证四轮各自变红：语料改回 200 行窗口（3 红）、去掉排序键缓存（1 红）、去掉 heat 绕开缓存的判断（1 红）、直接返回排序键快照不回表（2 红）。
+  - **如实记一处变异假绿**：删掉 `updated_at` / `id` 两个平局键后 4 条用例全绿。原因是 `updated_at` 由 `save()` 铸造、精度到毫秒，测试里造不出「同分且同 `updated_at`」的两行；靠毫秒碰撞来造这种数据的用例本身就会随机红绿。所以平局键的收益（同分组次序可复现）今天只能靠代码审查守住，不能靠测试——与 #616 的删除补偿是同一种情况，不假装它被覆盖了。
+
 - **词法召回只看得到前 500 条记忆：BM25 语料此前固定 `store.list({ limit: 500 })`，语料超过 500 行时，排在 500 名之后的记忆永远进不了检索（#616）**。500 名按 `importance DESC, updated_at DESC` 排，所以越旧、越不重要的记忆越容易掉出窗口——而它们恰恰是最需要靠检索才想得起来的那批。实测 8 个查询里，500 行窗口的 top10 与全量语料只有 1-4 条重合（`记忆 审查` 2/10、`矛盾 冻结` 1/10、`注入 规则池 截断` 4/10）。这是**静默的召回缺失**：不报错、不变慢、日志里什么都没有，只是「有这条记忆但搜不到」。
   - **不是把 500 改成 null 就完事**。全量重建一份索引实测 340-356ms，而现在 500 行只要 14-23ms；只放开截断，每次写入后的重建会从 ~110ms 涨到 ~680ms，等于用一个可感知的卡顿换召回。所以这次拆成两件事：语料放开到全量，同时把索引改成**增量维护**，重建成本随变化的行数走而不是随语料规模走（实测 upsert 50 行 3.4ms，单行 0.5ms）。本库 9052 行活跃记忆中，最近一小时变化的只有 49 行。
   - **新开口 `store.listBm25Corpus()`，不走 `store.list({ limit: null })`**。后者的投影由 PRAGMA 派生，搬全部列，无界时 9k 行实测 340-400ms；这里只要 `id / title / content / updated_at` 四列，实测 74-108ms，且 `ORDER BY updated_at DESC` 命中 `idx_memories_updated`。**刻意不取 `content_hash`**：把这一列加进查询会让耗时涨到 310ms（覆盖索引失效），比省下的分词还贵——所以判据用 `updated_at`，它同时覆盖「改内容」「归档」「遗忘」三类变更（这三类都会刷新它），只有删除不在行上留痕。

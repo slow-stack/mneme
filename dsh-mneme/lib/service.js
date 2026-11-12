@@ -638,6 +638,36 @@ export function createService({ store, mirror, config, onWrite, logger, document
     return index;
   }
 
+  // #619（规则池截断）：注入候选池的排序键缓存。与 bm25IndexCache 同一套纪律——
+  // 失效键用 mirror_state.generation（读到就用，读不到就现扫一次且不写缓存），
+  // 只缓存「行 + 排序键」、不缓存过滤与排序结果：injectTypes、threshold、
+  // codingKeywords 都是每次调用现读的配置，缓存结果会串味。
+  //
+  // heat 是这套缓存唯一的例外：heatOf 读 last_accessed_at，而 touchLastAccess
+  // 刻意不 bump generation（#617 同一纪律），于是缓存会让热度停在上一轮。所以
+  // 那两个开关同时开时绕开缓存，宁可每轮多扫一次 200ms，也不让热度失真。
+  let injectPoolCache = null; // { generation, rows } | null
+
+  function injectPoolRows() {
+    const heatSensitive = config?.heatEnabled === true && config?.injectHeatEnabled === true;
+    let generation = null;
+    if (!heatSensitive) {
+      try {
+        generation = store.getMirrorState().generation;
+      } catch {
+        generation = null;
+      }
+      if (injectPoolCache && generation !== null && injectPoolCache.generation === generation) {
+        return injectPoolCache.rows;
+      }
+    }
+    const rows = store.listInjectPool();
+    // 水位读不到时不碰缓存，理由同 bm25CorpusIndex：那样的条目永远命不中，还会
+    // 把有效的那份挤掉。
+    if (generation !== null) injectPoolCache = { generation, rows };
+    return rows;
+  }
+
   /**
    * Graph fourth recall path (issue #219 → #24 块1 锚定层). When the query text
    * mentions a known entity name, memories linked to that entity (attrs +
@@ -1825,7 +1855,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // #230 拍板：叙述条解禁进注入受生成总闸约束——门必须对全部候选路径一致
     // （规则/向量/缓存/BM25），只锁规则路的话语义路仍会漏进 narrative 行。
     const allowNarrative = config?.dreamNarrativeEnabled === true;
-    const filtered = store.list({ limit: Math.max(200, poolSize), includeForgotten: false })
+    // #619：规则池不再从 200 行窗口里筛。此前这里是 store.list({ limit: 200 })，
+    // 窗口按 importance DESC 取（合格行 8410 条里 8210 条永远进不了窗）。
+    // listInjectPool 取全部活跃行的排序键，过滤与排序都在 JS 侧做；正文只对真正
+    // 入选的那一批回表补全（见下方排序段）。
+    const filtered = injectPoolRows()
       .filter((m) => !m.archived && injectTypes.has(m.type) && !m.forgotten &&
         // 叙述条：#228 落地为纯按需检索；#230 合并拍板解禁为次优先档注入
         // （per-topic 叙述常驻位仍只留给 dream 总览 source=dream）。
@@ -1853,32 +1887,54 @@ export function createService({ store, mirror, config, onWrite, logger, document
     const softScopeActive = config?.scopeEnabled === true && scope != null &&
       Boolean(scope.agent_scope || scope.workspace_scope);
     const scopeMultOf = (m) => (softScopeActive ? scopeMultiplier(m, scope) : 1);
-    const items = filtered.sort((a, b) => {
-        // 编码记忆在编码任务时优先于普通 decision（与 preference 同级），
-        // importance 乘 codingBoostFactor 加权（封顶 5，保持 importance 语义）。
-        const priority = (m) => {
-          // #230：叙述条与 document 摘要行同为次优先档——蒸馏摘要（0）仍最
-          // 先，指针型聚合产物（1）先于普通 project/decision（2）。叙述条是
-          // type=summary，判 source 必须在判 type 之前。
-          if (m.source === "narrative") return 1;
-          if (m.type === "summary") return 0;
-          if (m.type === "preference") return 1;
-          if (m.type === "document") return 1;
-          if (isCoding && CODING_MEMORY_TYPES.has(m.type)) return 1;
-          return 2;
-        };
-        const effImportance = (m) =>
-          (isCoding && CODING_MEMORY_TYPES.has(m.type))
-            ? Math.min(5, m.importance * (config.codingBoostFactor ?? 2))
-            : m.importance;
-        const pa = priority(a);
-        const pb = priority(b);
+    // #619：排序键逐条算一次，而不是在 comparator 里现算（8k 行要算十几万次
+    // priority/effImportance）；末位补 updated_at DESC + id 两个平局键，让同分组
+    // 内的次序可复现——此前靠 Array.sort 的稳定性继承 SQL 行序，改一行 updated_at
+    // 就能造成上千对交换，同分组的行谁进注入位实际上是随机的。
+    const priority = (m) => {
+      // #230：叙述条与 document 摘要行同为次优先档——蒸馏摘要（0）仍最
+      // 先，指针型聚合产物（1）先于普通 project/decision（2）。叙述条是
+      // type=summary，判 source 必须在判 type 之前。
+      if (m.source === "narrative") return 1;
+      if (m.type === "summary") return 0;
+      if (m.type === "preference") return 1;
+      if (m.type === "document") return 1;
+      if (isCoding && CODING_MEMORY_TYPES.has(m.type)) return 1;
+      return 2;
+    };
+    // 编码记忆在编码任务时优先于普通 decision（与 preference 同级），
+    // importance 乘 codingBoostFactor 加权（封顶 5，保持 importance 语义）。
+    const effImportance = (m) =>
+      (isCoding && CODING_MEMORY_TYPES.has(m.type))
+        ? Math.min(5, m.importance * (config.codingBoostFactor ?? 2))
+        : m.importance;
+    const windowSize = Math.max(200, poolSize);
+    const rankedOrder = filtered
+      .map((m) => ({
+        m,
+        p: priority(m),
         // 软加权乘在层内数值积上（priority 档位不动）：foreign ×0.5 后压不过
         // 同档自己行——E7 的同 importance 档设计正是这个场景。
-        return pa - pb ||
-          (effImportance(b) * qualityWeight(b) * heatOf(b) * scopeMultOf(b)) -
-          (effImportance(a) * qualityWeight(a) * heatOf(a) * scopeMultOf(a));
-      });
+        s: effImportance(m) * qualityWeight(m) * heatOf(m) * scopeMultOf(m),
+      }))
+      .sort((a, b) =>
+        a.p - b.p ||
+        b.s - a.s ||
+        (a.m.updated_at === b.m.updated_at ? 0 : (a.m.updated_at ?? "") < (b.m.updated_at ?? "") ? 1 : -1) ||
+        (a.m.id < b.m.id ? -1 : a.m.id > b.m.id ? 1 : 0))
+      .slice(0, windowSize)
+      .map((row) => row.m.id);
+    // 排序键那版没有 title/content，而注入渲染要全文；只回表这一批（实测 200 条
+    // 约 7ms），且保持排序后的次序。回表时行可能已被归档/遗忘/删除——丢弃，
+    // 不为它占位。
+    const fullById = new Map();
+    if (rankedOrder.length) {
+      for (const row of store.listByIdsForInject(rankedOrder)) fullById.set(row.id, row);
+    }
+    const items = rankedOrder
+      .map((id) => fullById.get(id))
+      .filter((m) => m && !m.archived && !m.forgotten);
+
     let candidates = items;
     // #617 第 2 条（前半）：向量路与 BM25 路此前是**互斥**的——`if (!semanticItems.length)`
     // 包住 BM25，于是「有向量」等于「词法命中整批消失」。可两条路测的不是同一件事：
