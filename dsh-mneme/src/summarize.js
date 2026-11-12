@@ -1,5 +1,6 @@
 import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { STR, langOf } from "./lang.js";
+import { withBackgroundSession } from "./llm-session.js";
 // Issue #315：蒸馏链路的 effort 降级复用巩固侧的 withEffortFallback（拒绝
 // 重试一次不带 effort 字段）与 describeStreamFailure（流失败原因归一）——
 // 三条链路同一降级语义，不另造第二份实现。
@@ -997,9 +998,9 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         const baseDelayMs = config.distillRateLimitBaseDelayMs ?? 1000;
         // 每次尝试独立拼 effort 字段：降级重试（withEffort=false）必须真的
         // 不带 reasoningEffort，不能复用带字段的同一 options 对象。
-        const callOptions = withEffort && summarizeEffort
+        const callOptions = withBackgroundSession(withEffort && summarizeEffort
           ? { ...options, reasoningEffort: summarizeEffort }
-          : options;
+          : options);
         for (let attempt = 0; ; attempt++) {
           // 每次尝试重置审计状态：effort 拒收/429 的失败 attempt 会把 status 置
           // error，若后续重试成功，审计必须记录最终成功而不是残留第一次的失败

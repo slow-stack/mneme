@@ -25,6 +25,7 @@
 // 对话正文挤出窗口，那是拿主产物换辅产物。
 
 import { STR, langOf } from "./lang.js";
+import { withBackgroundSession } from "./llm-session.js";
 import { imageLabel } from "./attachment-text.js";
 
 /** 单张图描述的字数天花板（字符）。 */
@@ -92,7 +93,7 @@ export async function describeImages(ctx, route, config, blocks, options = {}) {
     if (out.has(key)) continue;
     try {
       let text = "";
-      const stream = ctx.llm.stream({
+      const stream = ctx.llm.stream(withBackgroundSession({
         provider: route.provider,
         model: route.model,
         purpose: "image-description",
@@ -108,7 +109,7 @@ export async function describeImages(ctx, route, config, blocks, options = {}) {
           }
         ],
         ...(options.signal ? { signal: options.signal } : {})
-      });
+      }));
       for await (const chunk of stream) {
         if (chunk?.type === "text-delta") text += chunk.text ?? chunk.delta ?? "";
         if (chunk?.type === "finish") {

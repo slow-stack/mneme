@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **后台 LLM 调用一个 session id 都没带，走 OpenCode 路由必然 400（#668）：七个调用点统一补上固定后台会话标识**。插件自己的后台调用（整理、蒸馏、实体抽取、注入门控、图像描述、连通性探测）此前只传 `provider`/`model`/`messages`，`sessionId` 全程缺席。这在多数网关上无声无息，但 OpenCode 适配器是硬要求：pi-ai 的 `dist/providers/opencode-headers.js` 里 `withSessionHeader` 只在 `options.sessionId` 存在时才注入 `x-opencode-session` 头，缺了就直接 400。上报者（#668）说的正是这条。
+  - **一处收口，不散点补**：新增 `src/llm-session.js`，`BACKGROUND_SESSION_ID = "dsh-mneme"` 与 `withBackgroundSession(options)` 两个导出。七个点全部经它包一层——`src/dream.js` 与 `src/dream/sleep.js` 各有本地 `streamText`，改单点即覆盖全部 7 个 dream/sleep 相位；另五处是 `src/index.js`、`src/summarize.js`、`src/pre-inject-gate.js`、`src/api.js`、`src/image-describe.js`。
+  - **固定标识而不是按 run id 派生**：按 run id 会让网关把每次整理当成一个新会话，限流按会话计数时反而更容易撞墙，排障时也分不清请求来自哪一层。固定成一个，既满足头部要求，也让网关侧能一眼认出「这是插件的后台流量」。
+  - **不覆盖宿主已经给的真会话**：`options.sessionId` 已存在时原样返回，不覆盖。注入链路上宿主可能带着真实用户会话进来，那时把 id 换成插件标识等于伪造来源。
+  - **测试**：`test/llm-session.test.js` 6 条（填 id 且不改入参、已给真 id 时不覆盖、容忍 undefined/null、七个调用点源码各含预期 needle、`src` 全域不得再出现裸 `.stream(options)` 或 `.stream({ ...route,`、常量值就是 `"dsh-mneme"` 且长度 1–64 符合网关约束）。变异自证五轮各自变红：撤掉 `src/dream.js` 接线、把 helper 改成恒等返回、撤掉 `src/image-describe.js` 接线、改成无条件覆盖 sessionId、撤掉 `src/summarize.js` 接线。
+
 ## [0.14.0-beta.3] - 2026-11-12
 
 - **情绪页白屏（beta.1 起的回归，beta.2 仍在）：点开「情感」页整块面板变空白，且此后每次打开都空白**。根因是 `lib/client.js` 的 `AffectivePanel` 里一行 `formatRelativeTime(it.lastSeen)` 漏传第二个参数 `t`——该函数内部要调 `t("memory.time.now")`，缺参就抛 `t is not a function`，而这行跑在 render 里，React 整棵树卸载，日志里什么都不留。引入提交是 #619（`244da66d`），`v0.14.0-beta.1` 与 `v0.14.0-beta.2` 都带它；只有库里存在带 `lastSeen` 的情绪边时才触发，所以不是每个用户都会遇到。修法是补上 `, t`，并加一条静态断言：扫出所有 `formatRelativeTime(` 调用点，逐个做括号配对、数顶层逗号，实参不足 2 个就红。全库只有这一处漏传（`formatDate`/`formatDateShort` 本来只收一个参数，扫描器报的几处是误报）。变异自证：撤掉修复后断言变红并直接指出 `:8168 (argc=1)`。
