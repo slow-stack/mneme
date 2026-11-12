@@ -11,10 +11,10 @@ import { createScopeResolver } from "./scope.js";
 // 原先能提前闭合围栏——那是把用户消息升格成指令最短的一条路。
 import { breakFenceMarkers } from "./fence.js";
 // Issue #611：图片块的文本口径（占位，不是空串）。三个 textOf 副本共用这一份。
-import { contentToText, countImages } from "./attachment-text.js";
+import { contentToText, countImages, IMAGE_PLACEHOLDER_PREFIX } from "./attachment-text.js";
 // 图像描述档（docs/DISTILL.md:346）：占位之外再补一段「图里是什么」。本文件只
 // 负责把描述并进转录行；出描述的调用、准入判断都在 image-describe.js。
-import { appendDescriptions, describeImages, imageBlocks, canSeeImages } from "./image-describe.js";
+import { appendDescriptions, describeImages, imageBlocks, canSeeImages, DESCRIPTION_PREFIX } from "./image-describe.js";
 // #512：每轮蒸馏一个 run id（归因主体）。store 侧也能铸造，但这里必须知道它——
 // 写记忆时要把它一路带到 saveMemoryProvenance / 落 run 行，拿回来再写就是两次往返。
 import { randomUUID } from "node:crypto";
@@ -1008,7 +1008,16 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       // （可注入 now()，测试用假时钟）；锚点行同时是 prompt 里「按提示末尾给出的
       // 当前时间换算」那句的落点，改写/移动随两处一起动。
       const distillPrompt = config.codingRetrospect ? STR.prompts.codingSummary[langOf(config)] : STR.prompts.summary[langOf(config)];
-      const anchoredPrompt = `${distillPrompt}${STR.distillTimeAnchor[langOf(config)](new Date(now()).toISOString())}`;
+      // 图像描述档真的产出了描述时，才补一句「描述行是事实来源」。这一句必须在
+      // 拿到 stats 之后拼（describeStats.described 是本次窗口实际写进转录的条数）：
+      // 没有描述却告诉模型「描述行可信」是在描述一个不存在的行，只会让它去找。
+      // 前缀字面量从两个模块导入，不在这里抄一遍——文案与生成端漂移过一次就会
+      // 变成「提示词说要找『描述：』、转录里写的却是别的」这种最难查的静默失效。
+      const describedCount = describeStats.described ?? 0;
+      const imageHint = describedCount > 0
+        ? STR.imageDistillHint[langOf(config)](IMAGE_PLACEHOLDER_PREFIX, DESCRIPTION_PREFIX)
+        : "";
+      const anchoredPrompt = `${distillPrompt}${STR.distillTimeAnchor[langOf(config)](new Date(now()).toISOString())}${imageHint}`;
 
       const options = {
         provider: route.provider,

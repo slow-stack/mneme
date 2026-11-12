@@ -11,13 +11,14 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSummarizer } from "../src/summarize.js";
-import { imageLabel } from "../src/attachment-text.js";
+import { imageLabel, IMAGE_PLACEHOLDER_PREFIX } from "../src/attachment-text.js";
 import {
   MAX_DESCRIPTION_CHARS,
   appendDescriptions,
   canSeeImages,
   describeImages,
-  imageBlocks
+  imageBlocks,
+  DESCRIPTION_PREFIX
 } from "../src/image-describe.js";
 
 const IMAGE = {
@@ -335,4 +336,43 @@ test("审计：默认关着时不写任何 imageDescribe* 键（老档位逐字�
   assert.equal(row.metadata?.imageCount, 1, "图块数照旧要数");
   const extra = Object.keys(row.metadata ?? {}).filter((k) => k.startsWith("imageDescribe"));
   assert.deepEqual(extra, [], `关闭态不该多出任何键，实得多出 ${extra.join(",")}`);
+});
+
+// ── 蒸馏提示词：描述进转录还不够，得让蒸馏模型知道它是事实来源 ────────────
+// 「描述可检索」这件事真正的断点在这里：描述混进转录后，蒸馏模型并不天然知道
+// 那一行值得记，实测最容易被当排版噪音丢掉，于是图里写了什么在落库前就没了。
+// 这一组钉住三件事——有描述才加提示、提示里的前缀字面量与生成端同源、没描述时
+// 提示词逐字节不变（默认关仍与 #611 一致）。
+
+function systemPromptOf(call) {
+  return call.messages.find((m) => m.role === "system").content[0].text;
+}
+
+test("蒸馏提示词：产出了描述才加「描述行是事实来源」，且前缀与生成端同源", async () => {
+  const r = setup(
+    { imageDescribeEnabled: true, imageDescribeProvider: "vision", imageDescribeModel: "v1" },
+    fakeLlm({ description: "一张报错截图，红字 ECONNREFUSED" })
+  );
+  await distill(r, sessionOf("img-hint-on", [imageMessage(1, "这个怎么修"), { seq: 2, type: "turn/end" }]));
+  const prompt = systemPromptOf(r.llm.calls.find((c) => c.purpose === "summarization"));
+  assert.ok(prompt.includes(IMAGE_PLACEHOLDER_PREFIX), "提示里引用的占位前缀必须是真的那个");
+  assert.ok(prompt.includes(DESCRIPTION_PREFIX), "提示里引用的描述前缀必须是真的那个");
+  assert.ok(prompt.includes("ECONNREFUSED") === false, "提示词里不该抄描述内容——那是转录的事");
+});
+
+test("蒸馏提示词：描述调用失败时不加这句（不能指向不存在的行）", async () => {
+  const r = setup(
+    { imageDescribeEnabled: true, imageDescribeProvider: "vision", imageDescribeModel: "v1" },
+    fakeLlm({ throwOnDescribe: true })
+  );
+  await distill(r, sessionOf("img-hint-fail", [imageMessage(1, "看下"), { seq: 2, type: "turn/end" }]));
+  const prompt = systemPromptOf(r.llm.calls.find((c) => c.purpose === "summarization"));
+  assert.ok(!prompt.includes(DESCRIPTION_PREFIX), "没有描述就不该告诉模型去找描述行");
+});
+
+test("蒸馏提示词：默认关着时逐字节等于不带图像提示的形态", async () => {
+  const off = setup({ imageDescribeProvider: "vision", imageDescribeModel: "v1" });
+  await distill(off, sessionOf("img-hint-off", [imageMessage(1, "看下"), { seq: 2, type: "turn/end" }]));
+  const prompt = systemPromptOf(off.llm.calls.find((c) => c.purpose === "summarization"));
+  assert.ok(!prompt.includes(DESCRIPTION_PREFIX), "关着时提示词不该多出这一段");
 });
