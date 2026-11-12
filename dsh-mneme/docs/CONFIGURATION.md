@@ -124,7 +124,8 @@
 | `summarizeProvider` / `summarizeModel` | 空 | 蒸馏专用模型路由 | 两者都非空才生效；空 = 用会话当前模型 |
 | `distillMaxChars` | `24000` | 喂给蒸馏 LLM 的完整转录上限（字符，1000–200000） | 调大更完整、更贵 |
 | `imageDescribeEnabled` **light** | `false` | 图像描述档（[DISTILL.md](DISTILL.md) 的「描述档」）：蒸馏时先用一个能看图的模型给每张图写一句描述，把描述并入转录再蒸馏 | opt-in；每张图多一次视觉调用，进 lightMode 强制关闭清单 |
-| `imageDescribeProvider` / `imageDescribeModel` | 空 | 描述档专用路由 | **两者都非空才生效，且留空 = 整档不跑**——与 `summarizeProvider` 的「空 = 跟随会话当前模型」语义刻意不同：蒸馏路由多是纯文本模型，拿它看图只会换回占位。宿主侧按 `inputModalities` 决定发不发图字节，本插件不读图、不存原图 |
+| `imageDescribeProvider` / `imageDescribeModel` | 空 | 描述档专用路由 | **两者都非空才生效，且留空 = 整档不跑**——与 `summarizeProvider` 的「空 = 跟随会话当前模型」语义刻意不同：蒸馏路由多是纯文本模型，拿它看图只会换回占位。宿主侧按 `inputModalities` 决定发不发图字节，本插件不读图、不存原图 || `imageDescribeProvider` / `imageDescribeModel` | 空 | 描述档专用路由 | **两者都非空才生效，且留空 = 整档不跑**——与 `summarizeProvider` 的「空 = 跟随会话当前模型」语义刻意不同：蒸馏路由多是纯文本模型，拿它看图只会换回占位。宿主侧按 `inputModalities` 决定发不发图字节，本插件不读图、不存原图 |
+| `imageMemoryEnabled` **light** | `false` | 图像溯源（v2）：把「这条记忆的蒸馏窗口里出现过哪几张图」记进 `image_sources`，让记忆能回指原附件 | `imageDescribeEnabled` 的子开关（父关即不生效）。只在**本窗真有描述成功**时才写——没描述时图只是占位，挂上去等于把「同窗口」谎报成「因果」。只存宿主 `attachmentId` 与降级键，**不存图字节、不存路径**；进 lightMode 强制关闭清单 |
 | `summarizeMinIntervalMinutes` | `0` | 同会话两次蒸馏的最小间隔（分钟，≤10080） | 0 = 不限（#127 节流三键之一） |
 | `summarizeMaxEntriesPerRun` | `0` | 单次蒸馏最多落库条数（≤50） | 0 = 不限 |
 | `summarizeMinWindowChars` | `0` | 窗口可蒸馏文本下限（字符），不足直接跳过 LLM（#239） | 被挡窗口照常消费游标并留 skip 审计 |
@@ -250,6 +251,7 @@
 | `sleepAffectiveEnabled` **light** | `false` | 情感归因相位（#619）：情境情绪写成 `affective_context` 关系，跨多次独立会话的稳定倾向才铸成 pattern | opt-in；`sleepModeEnabled` 的子相，父关着不跑；要调模型且依赖实体抽取 |
 | `sleepAffectiveTraitMinSessions` | `3` | 判「稳定倾向」所需的**独立会话**数（2–10） | 下界 2 是故意的：N=1 就是单次场合，正是必须禁止升特质的那个情形 |
 | `sleepAffectiveMaxRelationsPerRun` | `10` | 单轮最多写多少条 `affective_context` 关系（0–50） | 同 `sleepMaxPatternPerRun` 的角色；0 = 一条也不写 |
+| `affectiveInjectEnabled` **light** | `false` | 注入侧情绪注释（#619 补链）：把 `attribution=occasion` 的情绪边作为一行注释挂到对应记忆下，让模型看见「她那天为什么那样」 | 默认关；`sleepAffectiveEnabled` 的子项——父关则无情绪边可挂；只挂 occasion，trait 已铸成 pattern 自己进注入；注释限 160 字（吃注入块预算） |
 | `sleepProvider` / `sleepModel` | 空 | sleep 专用路由 | 空 = 用巩固路由 / 当前模型 |
 | `sleepReasoningEffort` | 未配置 | 同 `dreamReasoningEffort` | — |
 | `sleepMaxTokens` | `8192` | 冲突/模式阶段输出预算（#257） | 原硬编码 2048 对 `full` 档必然截断 |
@@ -391,7 +393,7 @@
 `lightMode: true`（或面板 `panel_mode=light`）时，以下键被预设强制为 `false`——都是
 重型路径；核心循环（autoInject、autoSummarize、hotMemory*、质量过滤、关键词检索）不动：
 
-`entityExtractionEnabled` · `autoDream` · `sleepModeEnabled` · `sleepAffectiveEnabled`（#619） · `rerankEnabled` ·
+`entityExtractionEnabled` · `autoDream` · `sleepModeEnabled` · `sleepAffectiveEnabled`（#619） · `affectiveInjectEnabled` · `rerankEnabled` ·
 `autoReindexOnBoot` · `hybridInject` · `injectGuidanceEnabled` · `searchSemanticDedup` ·
 `selectiveInjectEnabled` · `bm25SearchEnabled` · `entityRecallEnabled` ·
 `graphAnchoringEnabled` · `graphWeightEnabled` · `graphInjectHint` · `graphPassiveConfirm` ·
@@ -402,6 +404,7 @@
 `profileFactsEnabled`（2026-11-06） ·
 `preInjectGate.enabled`（#380） · `distillRecords.enabled`（#399） ·
 `imageDescribeEnabled`（每张图一次视觉调用） ·
+`imageMemoryEnabled`（图像溯源的写入） ·
 `diaryEnabled`（v0.13，每天一篇 = 一次 LLM 调用，属重型）
 
 预设只是默认值而非强制：用户显式写进 feature_flags 的值在装配顺序上后展开、仍然生效

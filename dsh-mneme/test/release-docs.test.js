@@ -137,9 +137,14 @@ test("SECURITY.md 支持版本表：同 minor 通过，跨 minor 如实报出中
 });
 
 test("预发布版不把支持表首行挪到自己头上（beta 不是受支持的稳定版）", () => {
-  const [major, minor] = "0.14.0-beta.1".split(".");
-  const betaRow = `${major}.${minor}.x`;
-  const r = checkSupportTable(securityDoc, "0.14.0-beta.1");
+  // 样本取「当前 minor 的下一个 minor 的 beta」：那个 minor 一定还没发布过稳定版，
+  // 所以支持表首行不该是它。原先这里写死 0.14.0-beta.1，该 minor 一转正这条就变成
+  // 假红——而它要防的恰恰是「预发布版占格」，不是「某个版本号出现」。
+  const [major, minor] = version.split(".");
+  const nextMinor = Number(minor) + 1;
+  const betaVersion = `${major}.${nextMinor}.0-beta.1`;
+  const betaRow = `${major}.${nextMinor}.x`;
+  const r = checkSupportTable(securityDoc, betaVersion);
   assert.equal(r.ok, true);
   assert.equal(r.expected, betaRow, "expected 仍按 major.minor 算，只是不拿来要求表");
   const body = securityDoc.slice(securityDoc.indexOf("## Supported Versions"));

@@ -10,6 +10,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
+import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 
 class FakeRes extends EventEmitter {
   constructor() { super(); this.statusCode = 200; this.body = ""; }
@@ -39,7 +40,7 @@ function setup({ config = {}, apiToken = "" } = {}) {
 const BOOSTED = "/api/dsh-mneme/semantic/graph/boosted-relations";
 
 test("boosted-relations route is registered and open without apiToken", async () => {
-  const { routes } = setup({ apiToken: "secret-token" });
+  const { routes } = setup({ apiToken: FAKE_API_TOKEN });
   const route = routes.find((r) => r.path === BOOSTED);
   assert.ok(route, "route must be registered");
   const res = new FakeRes();

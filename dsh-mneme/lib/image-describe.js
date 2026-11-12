@@ -25,6 +25,7 @@
 // 对话正文挤出窗口，那是拿主产物换辅产物。
 
 import { STR, langOf } from "./lang.js";
+import { withBackgroundSession } from "./llm-session.js";
 import { imageLabel } from "./attachment-text.js";
 
 /** 单张图描述的字数天花板（字符）。 */
@@ -59,12 +60,41 @@ export function imageBlocks(content) {
   return content.filter((block) => block?.type === "image" && block?.attachment);
 }
 
-/** 一张图的稳定标识：优先 attachmentId，其次元数据四元组，最后退回序号。 */
-function attachmentKey(block, index) {
+/**
+ * 一张图的稳定标识：优先 attachmentId，其次元数据四元组，最后退回序号。
+ *
+ * 导出是给图像溯源用的（src/summarize.js 的 image_sources）：描述缓存与溯源行
+ * 必须是**同一个键**，否则同一张图会在一处算「已描述」、在另一处被记成一张新图。
+ * 两份实现迟早漂移，所以只留这一份。
+ *
+ * 注意返回值不携带「稳不稳」：附件有 attachmentId 是稳定键，降级四元组不是
+ * （同名同尺寸的两张不同图会撞键）。判稳的那一步在 imageRefOfKey，不在这里——
+ * 本函数的既有调用点只需要键本身。
+ */
+export function attachmentKey(block, index) {
   const ref = block?.attachment ?? {};
   if (typeof ref.attachmentId === "string" && ref.attachmentId) return ref.attachmentId;
   const size = `${ref.width ?? "?"}x${ref.height ?? "?"}`;
   return `${ref.name ?? ""}|${ref.mediaType ?? ""}|${size}|${index}`;
+}
+
+/**
+ * 把一张图块整理成溯源行要的字段（v2）。`attachmentId` 缺席时 keyStability 落
+ * `unstable`：那串四元组键在重发同名同尺寸的图时会撞，读侧必须看得见这件事，
+ * 不能把它当成稳定外键去做「同一张图」的判断。
+ */
+export function imageRefOf(block, index) {
+  const ref = block?.attachment ?? {};
+  const attachmentId = typeof ref.attachmentId === "string" && ref.attachmentId ? ref.attachmentId : undefined;
+  return {
+    attachmentId,
+    fallbackKey: attachmentKey(block, index),
+    keyStability: attachmentId ? "stable" : "unstable",
+    mediaType: typeof ref.mediaType === "string" && ref.mediaType ? ref.mediaType : undefined,
+    name: typeof ref.name === "string" && ref.name ? ref.name : undefined,
+    width: Number.isFinite(ref.width) ? Math.trunc(ref.width) : undefined,
+    height: Number.isFinite(ref.height) ? Math.trunc(ref.height) : undefined
+  };
 }
 
 function trimDescription(text) {
@@ -80,19 +110,32 @@ function trimDescription(text) {
  * @param {{provider: string, model: string}} route  描述专用路由
  * @param {object} config    由 langOf 取提示词语言
  * @param {Array} blocks     image 块数组（通常是同一个 part 的）
- * @param {{signal?: AbortSignal}} [options]
+ * @param {{signal?: AbortSignal, stats?: object}} [options]
+ *   `stats` 是可选的**出参**（同 injectCandidates 的 pinnedStats 口径）：调用方
+ *   传一个对象进来，本函数往里累计 attempted/described/failed 与第一条失败原因。
+ *   它存在的原因是「整档静默」——描述失败原先被 catch 吞掉，审计里只有一个
+ *   图块数 imageCount，用户开了开关、选了模型、一次没跑成，界面上零痕迹。
+ *   不传就逐字节等于改前（只返回 Map）。
  */
 export async function describeImages(ctx, route, config, blocks, options = {}) {
   const out = new Map();
+  const stats = options.stats && typeof options.stats === "object" ? options.stats : null;
+  const bump = (key) => { if (stats) stats[key] = (stats[key] ?? 0) + 1; };
   if (!Array.isArray(blocks) || blocks.length === 0) return out;
-  if (typeof ctx?.llm?.stream !== "function") return out;
+  if (typeof ctx?.llm?.stream !== "function") {
+    // 宿主没给 llm：这不是「这张图失败」，是整档根本没条件跑。记一条原因，
+    // 别让它看起来像「库里就是没图」。
+    if (stats) stats.unavailable = "no llm stream";
+    return out;
+  }
   const prompt = STR.prompts.imageDescription[langOf(config)];
   for (const [index, block] of blocks.entries()) {
     const key = attachmentKey(block, index);
     if (out.has(key)) continue;
+    bump("attempted");
     try {
       let text = "";
-      const stream = ctx.llm.stream({
+      const stream = ctx.llm.stream(withBackgroundSession({
         provider: route.provider,
         model: route.model,
         purpose: "image-description",
@@ -108,7 +151,7 @@ export async function describeImages(ctx, route, config, blocks, options = {}) {
           }
         ],
         ...(options.signal ? { signal: options.signal } : {})
-      });
+      }));
       for await (const chunk of stream) {
         if (chunk?.type === "text-delta") text += chunk.text ?? chunk.delta ?? "";
         if (chunk?.type === "finish") {
@@ -117,9 +160,22 @@ export async function describeImages(ctx, route, config, blocks, options = {}) {
         }
       }
       const description = trimDescription(text);
-      if (description) out.set(key, description);
-    } catch {
-      // 单张图失败不影响其他张，也不影响蒸馏（见文件头 ③）。
+      if (description) {
+        out.set(key, description);
+        bump("described");
+      } else {
+        // 流正常结束但一个字都没有：模型拒答、被内容策略拦、或适配器没把图
+        // 编进去。这也是失败，只是没有异常可抓——最容易被误读成「成功」的一种。
+        bump("failed");
+        if (stats && !stats.firstError) stats.firstError = "empty description";
+      }
+    } catch (error) {
+      // 单张图失败不影响其他张，也不影响蒸馏（见文件头 ③）——但现在要留痕：
+      // 失败计数与第一条原因由调用方写进审计，否则用户永远看不见「一次都没成」。
+      bump("failed");
+      if (stats && !stats.firstError) {
+        stats.firstError = String(error?.message ?? error ?? "unknown").slice(0, 120);
+      }
     }
   }
   return out;

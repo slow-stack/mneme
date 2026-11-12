@@ -480,6 +480,39 @@ CREATE TABLE IF NOT EXISTS memory_mints (
 );
 CREATE INDEX IF NOT EXISTS idx_memory_mints_run ON memory_mints(run_id);
 
+-- 图像溯源（v2）：一条记忆由哪个蒸馏窗口派生（memory_provenance 已记），而那个
+-- 窗口里出现过哪几张图。两者合成一个问题：「这条记忆能回指哪张原图」。
+--
+-- 为什么粒度是**窗口级**而不是逐条记忆：蒸馏是模型从整段转录里提炼的，没有任何
+-- 信号能证明「这张图只贡献了第 3 条记忆」。按行去猜（比如拿描述文本跟记忆正文做
+-- 匹配）会把「恰好同词」写成「确有此证」——归因宁可粗，不能编。与 memory_provenance
+-- 的选择同源：能表达的只有窗口，就只记窗口。
+--
+-- attachment_id 是宿主的 AttachmentId（dsh-attachment 明确承诺「never a filesystem
+-- path or bearer URL」），拿它交给宿主 attachments.readImage() 才能取回原图；本表
+-- **不存图字节、不存路径**——记忆库不托管原图这条边界没有变。
+-- fallback_key 永远有值：attachmentId 缺席时按元数据四元组+序号降级，此时
+-- key_stability='unstable'——重发一次同名同尺寸的图就可能对上同一个键，读侧必须
+-- 能看见这个不确定性，不能把它当成稳定外键用。
+CREATE TABLE IF NOT EXISTS image_sources (
+  memory_id     TEXT    NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  session_id    TEXT    NOT NULL,
+  seq           INTEGER NOT NULL,   -- 图块所在事件的 seq（窗口内定位）
+  attachment_id TEXT,               -- 宿主 AttachmentId；NULL = 只有降级键
+  fallback_key  TEXT    NOT NULL,   -- 稳定键或降级键，恒非空
+  key_stability TEXT    NOT NULL,   -- stable | unstable
+  media_type    TEXT,
+  name          TEXT,
+  width         INTEGER,
+  height        INTEGER,
+  created_at    TEXT    NOT NULL,
+  PRIMARY KEY (memory_id, session_id, seq, fallback_key)
+);
+CREATE INDEX IF NOT EXISTS idx_image_sources_memory ON image_sources(memory_id);
+-- 反向：一张图被哪些记忆引用过。attachment_id 可空，SQLite 的索引不排斥 NULL，
+-- 降级键那些行因此不出现在这个方向的查询里——那是对的，它们本来就不是稳定身份。
+CREATE INDEX IF NOT EXISTS idx_image_sources_attachment ON image_sources(attachment_id);
+
 -- #493 补充 §②：连续解析失败的**跨进程**计数（失败护栏 summarizeParseFailureMaxRetries
 -- 的判据）。原先只活在 summarize.js 的进程内 Map 里，于是重启即清零——而这条护栏要
 -- 防的恰恰是「确定性失败反复重试」，重启一次就绕过去了。
@@ -3599,6 +3632,75 @@ export function createStore(path) {
     ).run(memoryId, sessionId, seqStart, seqEnd, createdAt, distillRunId ?? null).changes;
   }
 
+  /**
+   * 记一批「这条记忆的蒸馏窗口里出现过哪几张图」（v2 图像溯源）。
+   *
+   * 与 saveMemoryProvenance 同一事务、同一批 memory_id 调用——两者合成
+   * 「这条记忆 ← 这个窗口 ← 这几张图」的链路，任一半缺了整个问题就答不上。
+   *
+   * `ON CONFLICT DO NOTHING` + 复合主键 (memory_id, session_id, seq, fallback_key)
+   * 吸收同窗口重跑的重复（与 memory_provenance 的唯一索引同一思路）。
+   * @returns {number} 实际插入行数
+   */
+  function saveImageSources(rows) {
+    const list = Array.isArray(rows) ? rows.filter((row) => row && typeof row === "object") : [];
+    if (list.length === 0) return 0;
+    const stmt = db.prepare(
+      `INSERT INTO image_sources (memory_id, session_id, seq, attachment_id, fallback_key,
+         key_stability, media_type, name, width, height, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT DO NOTHING`
+    );
+    let changes = 0;
+    for (const row of list) {
+      if (typeof row.memoryId !== "string" || !row.memoryId) continue;
+      if (typeof row.sessionId !== "string" || !row.sessionId) continue;
+      if (!Number.isSafeInteger(row.seq)) continue;
+      if (typeof row.fallbackKey !== "string" || !row.fallbackKey) continue;
+      changes += stmt.run(
+        row.memoryId,
+        row.sessionId,
+        row.seq,
+        typeof row.attachmentId === "string" && row.attachmentId ? row.attachmentId : null,
+        row.fallbackKey,
+        row.keyStability === "stable" ? "stable" : "unstable",
+        row.mediaType ?? null,
+        row.name ?? null,
+        Number.isFinite(row.width) ? Math.trunc(row.width) : null,
+        Number.isFinite(row.height) ? Math.trunc(row.height) : null,
+        row.createdAt ?? nowIso()
+      ).changes;
+    }
+    return changes;
+  }
+
+  /**
+   * 一条记忆能回指的原图（v2 读出口）。按 seq、fallback_key 排，与事件顺序一致。
+   *
+   * 只回**引用**，不回字节：attachment_id 交给宿主 attachments.readImage() 才是
+   * 取图的正路，本库不托管原图（见 image_sources 建表注释）。
+   */
+  function imageSourcesFor(memoryId) {
+    if (typeof memoryId !== "string" || !memoryId) return [];
+    return db.prepare(
+      `SELECT memory_id, session_id, seq, attachment_id, fallback_key, key_stability,
+              media_type, name, width, height, created_at
+         FROM image_sources WHERE memory_id = ? ORDER BY seq, fallback_key`
+    ).all(memoryId).map((row) => ({
+      memoryId: row.memory_id,
+      sessionId: row.session_id,
+      seq: row.seq,
+      attachmentId: row.attachment_id ?? undefined,
+      fallbackKey: row.fallback_key,
+      keyStability: row.key_stability,
+      mediaType: row.media_type ?? undefined,
+      name: row.name ?? undefined,
+      width: row.width ?? undefined,
+      height: row.height ?? undefined,
+      createdAt: row.created_at
+    }));
+  }
+
   /** 一条记忆的全部溯源链接（#399 面板/CLI 读取面；#512 起带 distill_run_id）。 */
   function provenanceFor(memoryId) {
     return db.prepare(
@@ -4421,6 +4523,76 @@ export function createStore(path) {
       .all(...wanted).map(toRow);
   }
 
+  /**
+   * 取词法召回（BM25）用的整份语料：全量活跃行，只带索引真正需要的四列。
+   *
+   * 为什么单独开一个口，而不是 store.list({ limit: null })：
+   *
+   * - 不能截断。语料被截到 500 行时，排序在 500 名之外的记忆永远进不了词法召回
+   *   ——实测 8 个查询里 top10 与全量语料只有 1-4 条重合，这是静默的召回缺失，
+   *   不是慢。
+   * - 也不能走 list 的宽投影。list 按 PRAGMA 派生列清单搬全部列，无界时 9k 行
+   *   实测 340-400ms；这里只要 id / title / content / updated_at，实测 74-108ms。
+   * - updated_at 是增量维护的判据：调用方按它判断某行是否变了，只对变了的行
+   *   重新分词，而不是每次重建都重算整份语料。刻意不取 content_hash：把
+   *   content_hash 进这条查询会让耗时涨到 310ms（覆盖索引失效），比省下的分词
+   *   还贵。
+   *
+   * 排序用 updated_at DESC 走 idx_memories_updated（与 #430 无界 chrono 档同一
+   * 个索引），这里排序本身不重要，命中索引才是。
+   */
+  function listBm25Corpus() {
+    return db.prepare(
+      `SELECT id, title, content, updated_at FROM memories
+       WHERE archived = 0 AND forgotten = 0
+       ORDER BY updated_at DESC`
+    ).all().map((row) => ({
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      updated_at: row.updated_at,
+    }));
+  }
+
+  /**
+   * 取注入规则池的排序键：全部活跃行，只带过滤与排序真正需要的列。
+   *
+   * 为什么单独开一个口，而不是 store.list({ limit: Math.max(200, poolSize) })：
+   * 那个窗口按 importance DESC 取（store.list 的默认 order），实测合格行 8410 条
+   * 里有 8210 条永远进不了窗——importance 4 且质量满分、本就该排在前面的记忆，
+   * 一条都到不了排序。这与 #616 的 BM25 语料是同一种病：截断不是慢，是静默的
+   * 候选缺失。
+   *
+   * 为什么不用 list({ limit: null })：list 按 PRAGMA 派生列清单搬全部列（含
+   * content），9k 行实测 340-400ms；这里只要 12 列，实测 200ms。content 只对真正
+   * 入选的那 200 条用 listByIdsForInject 点查回来（实测 7ms）。
+   *
+   * updated_at 一并取出，供排序末位平局键使用：同分组的行此前靠 Array.sort 的
+   * 稳定性继承 SQL 行序，改一行 updated_at 就能造成上千对交换。
+   */
+  function listInjectPool() {
+    return db.prepare(
+      `SELECT id, type, source, importance, quality_score, last_accessed_at,
+              created_at, updated_at, agent_scope, workspace_scope,
+              archived, forgotten
+         FROM memories
+        WHERE archived = 0 AND forgotten = 0`
+    ).all().map((row) => ({
+      id: row.id,
+      type: row.type,
+      source: row.source,
+      importance: row.importance,
+      quality_score: row.quality_score,
+      last_accessed_at: row.last_accessed_at,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      agent_scope: row.agent_scope,
+      workspace_scope: row.workspace_scope,
+      archived: row.archived,
+      forgotten: row.forgotten,
+    }));
+  }
+
   function getFailureStats({ since } = {}) {
     const clause = since ? "WHERE created_at >= ?" : "";
     const params = since ? [since] : [];
@@ -4878,6 +5050,51 @@ export function createStore(path) {
     return db.prepare(
       "SELECT * FROM entity_relations WHERE memory_id = ?"
     ).all(memoryId).map(toRelation);
+  }
+
+  /**
+   * 按一批记忆 id 一次取回它们的情绪边（叠加在注入行上的「情绪记录」注释用）。
+   *
+   * 为什么不复用 getRelationsByMemory 逐条查：注入每轮都有 3-5 个候选，逐条就是一个
+   * N+1；而且注释要显示「谁对什么」，那边只回实体 id，还得再查两次名字。这里
+   * 一次 SQL 带 LEFT JOIN 把两端名字取回，按 memory_id 分组成 Map。
+   *
+   * 只读、只取 affective_context，limit 由调用方给（默认按候选数）。排序与
+   * relationsByType 一致：created_at DESC，最近记的优先——同一记忆上的多条情绪
+   * 边里，注入只挂最新那条（多挂会把注入块撑爆，也会把历史情绪误读成现状）。
+   */
+  function affectiveRelationsByMemories(memoryIds, perMemory = 1) {
+    const ids = Array.isArray(memoryIds)
+      ? memoryIds.filter((id) => typeof id === "string" && id.length > 0)
+      : [];
+    if (ids.length === 0) return new Map();
+    const cap = Number.isFinite(perMemory) ? Math.max(1, Math.trunc(perMemory)) : 1;
+    const placeholders = ids.map(() => "?").join(", ");
+    const rows = db.prepare(
+      `SELECT r.*, f.name AS from_name, f.type AS from_type,
+              t.name AS to_name, t.type AS to_type
+         FROM entity_relations r
+         LEFT JOIN entities f ON f.id = r.from_entity
+         LEFT JOIN entities t ON t.id = r.to_entity
+        WHERE r.relation_type = 'affective_context' AND r.memory_id IN (${placeholders})
+        ORDER BY r.created_at DESC`
+    ).all(...ids);
+    const out = new Map();
+    for (const row of rows) {
+      const key = row.memory_id;
+      if (!key) continue;
+      const bucket = out.get(key) ?? [];
+      if (bucket.length >= cap) continue;
+      bucket.push({
+        ...toRelation(row),
+        from_name: row.from_name ?? null,
+        from_type: row.from_type ?? null,
+        to_name: row.to_name ?? null,
+        to_type: row.to_type ?? null
+      });
+      out.set(key, bucket);
+    }
+    return out;
   }
 
   /**
@@ -5785,6 +6002,8 @@ export function createStore(path) {
     distillRecordStats,
     clearDistillRecords,
     saveMemoryProvenance,
+    saveImageSources,
+    imageSourcesFor,
     provenanceFor,
     distillRecordsFor,
     distillWindowsFor,
@@ -5844,6 +6063,8 @@ export function createStore(path) {
     countPinned,
     isPinned,
     listByIdsForInject,
+    listInjectPool,
+    listBm25Corpus,
     createEntity,
     findEntityByName,
     findEntityById,
@@ -5871,6 +6092,7 @@ export function createStore(path) {
     relationsByType,
     getEntityNeighbors,
     getRelationsByMemory,
+    affectiveRelationsByMemories,
     setMirrorState,
     getMirrorState,
     markMirrorDirty,

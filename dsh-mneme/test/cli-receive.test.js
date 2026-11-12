@@ -28,9 +28,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deriveExternalId, SHARE_KIND } from "../src/share.js";
 import { parseReceiveBody, receiveReply, parseUndoBody, undoReply } from "../src/share-http.js";
+import { fakeToken } from "./helpers/fake-auth-values.js";
 
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "cli.mjs");
-const TOKEN = "cli-receive-test-token";
+const TOKEN = fakeToken("cli-receive");
 const PACK_ID = "f0f0f0f0f0f0f0f0";
 
 /** 一个合法的最小包：CLI 原样读、原样送，external_id 用真锚算出来。 */

@@ -23,9 +23,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseShareBody, shareReply } from "../src/share-http.js";
+import { fakeToken, fakePassword } from "./helpers/fake-auth-values.js";
 
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "cli.mjs");
-const TOKEN = "cli-share-test-token";
+const TOKEN = fakeToken("cli-share");
 const PACKAGE_VERSION = "0.9.4";
 // 打包侧拿来遮正文里 home 前缀的入参（share.js 的 createHomeRedactor），跟 os.homedir() 无关：
 // 子进程的 HOME 被下面的 scratch 顶掉了，两者刻意不是同一个目录。
@@ -198,7 +199,7 @@ test("CLI 的跳过清单：含凭据那行不给标题，终端要写得像「�
     // 这条锁的是终端那一格：src/share.js 在源头把命中密钥判据的行的标题留空，skip_list
     // 于是只剩原因。空标题直接打出来是一行尾随空格，读的人会当成「这条本来没标题」，
     // 而它恰恰是最需要被看见的那一类拒绝。
-    const secret = "P@ssw0rd-for-prod-db";
+    const secret = fakePassword();
     ctx.plane.use([
       row({ id: "1", type: "project", title: "干净的归档行", content: "没有凭据", archived: 1 }),
       row({ id: "2", type: "decision", title: `生产库密码 ${secret} 别丢`, content: `password: ${secret}`, archived: 1 })

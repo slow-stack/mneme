@@ -23,6 +23,7 @@ import { createSettings } from "../src/settings.js";
 import { createApi } from "../src/api.js";
 import { IMPORTED_SOURCE } from "../src/memory-source.js";
 import { deriveExternalId } from "../src/share.js";
+import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 
 const PACK_ID = "0123456789abcdef";
 
@@ -51,7 +52,7 @@ function foreignSetup() {
   const commands = { add: () => {}, remove: () => {}, list: () => [] };
   const routes = [];
   const ctx = { logger: null, webServer: { register(route) { routes.push(route); return () => {}; } } };
-  createApi(ctx, service, settings, commands, null, undefined, "secret-token", null, null);
+  createApi(ctx, service, settings, commands, null, undefined, FAKE_API_TOKEN, null, null);
   return {
     store,
     service,

@@ -1,638 +1,289 @@
 <p align="center">
-  <img src="images/mneme-readme-hero.png" alt="Mneme — cross-session memory for AI agents" width="100%" />
+  <img src="images/mneme-banner-hero.webp" alt="Mneme — The Memory That Dreams" width="100%" />
 </p>
 
-<h1 align="center">dsh-mneme</h1>
+```
+$ whoami
+mneme — the memory that dreams
+
+$ cat /etc/mneme
+cross-session memory for DeepSeek Harness
+every memory keeps its provenance
+conflicts freeze until you decide
+the only copy stays on your machine
+
+$ ls ~/.dsh/memory
+memory.db  constraints.md  decisions.md  documents.md  history.md
+patterns.md  pitfalls.md  preferences.md  projects.md
+rejected-solutions.md  summary.md
+```
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@modusensus/dsh-mneme"><img src="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&color=3E63DD&label=npm" alt="npm version"></a>
-  <a href="https://www.npmjs.com/package/@modusensus/dsh-mneme"><img src="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&color=3E63DD&label=downloads" alt="npm downloads"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3E63DD?style=flat-square" alt="license"></a>
-  <a href="https://github.com/slow-stack/mneme/actions"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI" alt="CI"></a>
-  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22%2B-3E63DD?style=flat-square&logo=nodedotjs&logoColor=white" alt="node"></a>
-  <a href="https://github.com/slow-stack/mneme"><img src="https://img.shields.io/badge/tests-3401%20total-3E63DD?style=flat-square" alt="tests"></a>
-  <a href="https://codecov.io/gh/slow-stack/mneme"><img src="https://img.shields.io/codecov/c/github/slow-stack/mneme/main?style=flat-square" alt="coverage"></a>
-  <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm version"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm downloads"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=EFE7D8"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=111111" alt="CI"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/tests-3446%20total-EFE7D8?style=flat-square"><img src="https://img.shields.io/badge/tests-3446%20total-111111?style=flat-square" alt="tests"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/license-MIT-EFE7D8?style=flat-square&label=license&labelColor=B03A2E&logoColor=1C1C1C"><img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square&label=license&labelColor=B03A2E&logoColor=FFFFFF" alt="license"></picture>
+<a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
 
-<p align="center">🌏 <a href="#中文">简体中文</a> · <a href="#english">English</a></p>
+<p align="center">中文 · <a href="#english">English</a></p>
 
 ---
 
-<a name="中文"></a>
+### 01 · 它是什么
 
-# 🧬 给 LLM 装上会自我进化的记忆
+*每次新开对话，AI 都像第一次认识你。*
 
-**dsh-mneme** 是 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 的跨会话记忆插件。它不只「存得下」，更「管得好」：后台自动去重合并、矛盾先冻结等你裁决、全程可回放审计、记忆只落在本机，还支持导出成人可读的 Markdown。
+**dsh-mneme** 给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 装上跨会话记忆。聊过的项目、提过的偏好、做过的决定——关掉窗口再打开，它还记得。
 
-> **Mneme**（Μνήμη）源自希腊记忆女神 **Mnemosyne**。她掌管记忆与梦境——正如 `autoDream` 在后台默默巩固你的记忆库。
+它不是一个向量库。记忆落在你本机的一份 SQLite 里，旁边配一份 Markdown 镜像：那个文件你随时能打开、能改，改完不会被机器盖掉。
 
-## 📰 最近更新
+### 02 · 凭什么信它
 
-**v0.14.0-beta.3 — 情绪页白屏修好了，档位被冻结覆盖也说得明白了**（2026-11-12，预发布）
+*看不见的地方，才决定它能不能长期用。*
 
-点开「情感」页整块面板变空白的回归修掉了。根因是一行 `formatRelativeTime(it.lastSeen)` 漏传 `t`，函数内部要拿它取文案，缺参就抛错；这行跑在 render 里，React 整棵树卸载，日志里什么都不留——所以看起来像「点了没反应」。`v0.14.0-beta.1` 与 `beta.2` 都带这个回归，只有库里存在带 `lastSeen` 的情绪边时才触发，因此不是每个人都会遇到。
-另修一处「面板说的和实际做的不一致」：档位选 `off` 或 `shadow`、同时开着**矛盾冻结**时，判成矛盾的对会照旧停车进待审队列，档位选哪一档都不减少——而这条互斥关系此前只写在设置项提示语里，下拉旁边看不到。现在档位下方直接标一行「⚠ 冻结正在覆盖本档位」。判据与后端同源，不改默认值、不改语义；要停止新增仍须自己关掉矛盾冻结。
+- **每条记忆都带着来历** — 从哪段对话来的、什么时候改过、被谁动过。自动整理同样留账：输入快照、决策明细、结果哈希，同一次整理可以复现回放。
+- **矛盾不替你做主** — 两条记忆打架时先冻结，并排摆在状态页，等你说保留哪条。
+- **你改的优先** — 记忆就是本地 Markdown；手改过的内容在合并回库时优先保留。
+- **空闲时才动手** — 常看的留在热区，久不用的压成摘要，陈旧的归档。越用越精炼，不是越堆越大。
+- **隔离与离线** — 可按 agent / 工作区隔离；把嵌入换成本地模型后，语义检索完全离线，不需要任何 API Key。
+- **删对话 ≠ 删记忆** — 记忆是跨会话的全局知识，清空聊天窗口不影响已经存下的部分。
 
-> 逐条见 [CHANGELOG](dsh-mneme/CHANGELOG.md) · 完整版本历史见 [Releases](https://github.com/slow-stack/mneme/releases)
+> 它和 Zep / Mem0 / Letta / Hindsight 各差在哪？有一张 11 行的逐项对照——存储、检索、写入时抽取、离线巩固、冲突处理、遗忘、作用域、可审计性、多宿主、离线、许可证。**「—」不等于「差」**：[能力对比](docs/COMPARISON.md)。
 
-## 它解决什么问题
-
-每次新开对话，AI 都像第一次认识你？
-
-**dsh-mneme 给 DeepSeek Harness 装上跨会话记忆。** 你聊过的项目、提过的偏好、做过的决定，AI 都记得——即使关掉了窗口，下次打开还在。
-
-| 场景 | 没装插件 | 装了插件 |
-|------|---------|---------|
-| 周一聊完项目需求，周三继续 | "能再描述一下你的项目吗？" | "你指的是上周提到的博客重构吗？当时你说想用 Astro。" |
-| 告诉 AI 你的编码习惯 | 每轮都要重复交代 | 一次设定，长期生效 |
-| 整理大量资料后关窗口 | 资料丢了 | 自动归档，随时检索找回 |
-
-> 但 dsh-mneme 的可信之处，恰恰在你**看不见**的后台。下面这些，才是它和「一个会存东西的插件」的本质区别。
-
-## 为什么可以信任它
-
-- 🧾 **可回放、可追责** — 每次自动整理都留一张「决策凭证」：输入快照 + 决策明细 + 结果哈希，同样的整理可复现回放，**不默默吞错、不留无法追溯的改动**。
-- ⚖️ **矛盾先冻结，等你裁决**（可关）— 两条记忆打架时，不擅自替你做主。可疑冲突会**挂起待审**，状态页冲突队列里并排对比、一键裁决（保留 A / 保留 B / 仅标记），确认后才生效。复杂判断，人永远在线。
-- 🔐 **记忆按 agent 与工作区隔离**（可关）— `scopeEnabled` 开启后，每条记忆标注由哪个 agent、在哪个工作区写入；检索时本会话作用域优先（命中加权，他 scope 降权仍可见）；`strictScope` 再进一步——**显式声明**收窄到他者作用域的记忆在检索/注入里完全不可见（载体自动标注只降权，不硬挡）。多 Agent、多项目互不串台。
-- 🌙 **夜深人静才动手**（可关）— 空闲时自动分层归档：常看的留在热区、久不用的压成摘要、陈旧的彻底归档。记忆库**越用越精炼，不膨胀**。
-- 🧠 **语义检索可以完全离线** — 把 `embedProvider` 设为 `local` 后检索走本地 Embedding 与精排，不需要 API Key；没配嵌入时关键词 / BM25 检索照样能用。
-- 📝 **Markdown 双向同步** — 记忆就是本地 `.md` 文件，随时打开编辑；**人工改动会被优先尊重**，不会被机器覆盖。
-- 💾 **删对话 ≠ 删记忆** — 记忆是跨会话的全局知识，清空聊天窗口，已保存的记忆仍在（v0.7.11 起不再与会话绑定）。
-
-> **它和 Zep / Mem0 / Letta / Hindsight 比呢？** 有一张逐项对照表——存储底座、检索、写入时抽取、离线巩固、冲突处理、遗忘、作用域、可审计性、多宿主、离线、许可证共 11 行，**「—」不等于「差」**：[能力对比](docs/COMPARISON.md)。
-
-## 5 分钟上手
+### 03 · 装
 
 ```bash
-# 安装插件（最省事的一条：npm 包名）
 dsh plugin --profile web add @modusensus/dsh-mneme
 dsh web
 ```
 
-### 四种安装来源
+两条硬要求，不满足装不上：
 
-DSH 的 **设置 → 插件 → Add plugin** 与 `dsh plugin add` 认四种写法，填进去的是什么就装什么。本仓库是个**单仓多包**：仓库根那份 `package.json` 只是**仓库壳**（`private`、不带 `dsh` 字段），真正可安装的插件本体在 `dsh-mneme/`。所以走 Git 或 tarball 时必须指到子目录，否则装到的是壳本身。
+- **Node 24+** —— 记忆库用的是 `node:sqlite`，Node 22 起不来库。
+- **DSH 0.1.x 或 0.2.x** —— 两条线都在兼容范围内；CI 对 0.2 线全绿。
 
-> 为什么仓库根要放一份装不了的壳？因为有些单仓多包探测器（比如 dshfind 的插件探测）只认仓库根的清单——没有它就会把本仓库判成「不可安装的插件包」，而这句判词与实际上能不能装无关。根清单 `private` + `0.0.0` + 不带 `dsh` 字段，就是为了让这类工具能找到子包、同时**绝不**被当成插件本体安装或发布。
+> 本仓库是**单仓多包**：可安装的本体在 `dsh-mneme/`，根目录那份 `package.json` 只是仓库壳（`private`、无 `dsh` 字段）。走 Git 或 tarball 时路径必须指到子目录，否则装到的是壳本身。四种安装来源的写法见[完整文档](dsh-mneme/README.md)。
 
-| 来源 | 填什么 | 备注 |
-|------|--------|------|
-| **npm 包名** | `@modusensus/dsh-mneme` | 推荐；可带版本 `@0.9.0` |
-| **Git 仓库** | `git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme` | `#path:` 不可省。省掉装到的是仓库根那份壳（`0.0.0`、无 `dsh` 字段），宿主不会把它当插件 |
-| **tarball** | `C:\\path\\to\\modusensus-dsh-mneme-0.9.0.tgz` | 在 `dsh-mneme/` 里 `npm pack` 产出；`pnpm pack` 会因 bin 脚本 CRLF 失败 |
-| **本地目录** | `C:\\path\\to\\mneme\\dsh-mneme` | **必须是绝对路径**；相对路径会被宿主直接拒掉（`a local path must be absolute`） |
+它落在你机器的哪几个地方：
 
-```bash
-# 从源码装（本地目录，改完代码重启即生效）
-git clone https://github.com/slow-stack/mneme.git
-dsh plugin --profile web add "$(pwd)/mneme/dsh-mneme"
+| 目录 | 是什么 |
+|------|--------|
+| `~/.dsh/memory` | 记忆库本体：SQLite 正本，加十份可手改的 Markdown 镜像 |
+| `~/.dsh/mneme` | 本地嵌入模型与运行时缓存，删掉会自动重下 |
+| `~/.dsh-mneme` | CLI / MCP 的连接配置（url 与 token） |
 
-# 或者直接从 Git 装（不落源码，适合只要个能跑的版本）
-dsh plugin --profile web add 'git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme'
-```
-
-> 面板里那行「Install guide and examples」只演示了包名一种写法；上面四种都是实测通过的。Git 与 tarball 来源在安装时宿主会做一次仓库可达性检查（超时默认 5 秒）。
-
-装完即可用。想在 5 分钟内看到它的价值：
-
-1. **聊**：新开对话，跟 AI 聊几句关于你的偏好或手头项目（比如"我写代码更喜欢 4 空格缩进"）。
-2. **等**：关掉窗口，重开新对话。如果它还记得刚才的事，说明记忆已经写入。
-3. **可选**：注入与后台整理装好就是开的，不用先动任何开关；想完全离线、开实体抽取或多会话隔离，再去「设置 → 记忆库设置」按需改（见快速配置）。注意实体抽取在 bundle 安装里本来就是开的、在手动安装里是关的——以设置页实际显示为准。
-
-## 快速配置（可选）
-
-| 需求 | 配置项 | 默认值 | 改法 |
-|------|--------|--------|------|
-| 完全离线运行 | `embedProvider` | `openai` | 改为 `local` |
-| 后台自动整理记忆 | `autoDream` | `true` | 改为 `false` 可关 |
-| 自动提取结构化实体 | `entityExtractionEnabled` | `false`（bundle 安装为 `true`） | 手动安装改为 `true`；bundle 安装已是开，想关再改 |
-| 多 Agent / 多项目记忆隔离 | `scopeEnabled`（需要更强隔离再加 `strictScope`，硬隔离只对显式声明生效） | `false` | 改为 `true` |
-
-> 以上均在 DSH 设置面板 → 记忆库设置 中修改。完整配置见 [配置章节](dsh-mneme/README.md)。
-
-### 记忆库落点建议
-
-记忆库默认在 `~/.dsh/memory`，天然在宿主 profile 作用域之外；但真实落点由 `memoryDir` 配置决定。若把它指进 profile 作用域（形如 `…/profiles/<名字>/…`），宿主清理或迁移 profile 时记忆库会被连带带走（#218 末楼记录的实际事故）。插件启动时检测到这种落点会打一条告警——**只提示、不搬库**。安全做法：`memoryDir` 保持在 profile 之外（默认值即可）；要迁移库 = 停止写入 → 复制整个目录 → 改配置指向新位置 → 重启。
-
-## 怎么升级（设置不会丢）
-
-**升级只动代码，不动你的记忆和设置。**
-
-设置与记忆是**同一个 SQLite 文件**里的表（`user_settings` 与 `memories` 等），文件位置由 `memoryDir` 决定，默认在 `~/.dsh/memory`——**不在插件安装目录下**。所以卸插件、装插件都不碰它。
-
-升级就是覆盖安装，装完重启一次：
+想卸掉：
 
 ```bash
-# --profile 后面写你当初安装它时用的那个名字，默认是 web
 dsh plugin --profile web remove @modusensus/dsh-mneme
-dsh plugin --profile web add @modusensus/dsh-mneme
-dsh web
 ```
 
-> 上面是 npm 来源的装法；当初从 Git、tarball 或本地目录装的，按下同一种来源重装即可（见上方「四种安装来源」）。唯一要求是**先 remove 再 add**。
-> 不用重装 DSH。重装 DSH 动的是 profile，是更大范围的改动，与插件版本无关。
-> 也不要只 `add` 不 `remove`——宿主可能拿到缓存的旧副本，版本号没变就说明没换成。
+插件目录没了，`~/.dsh/memory` 里的记忆还在——想清干净就自己删这个目录。三个目录名字很像，别认错：[目录说明](dsh-mneme/docs/DIRECTORIES.md)。
 
-**这件事是实测过的，不是推断**：用 v0.12.0 的代码建库、写入画像、规则、人格卡与四个功能开关，再换成本次发布的代码打开同一个库——四项全部原样读回。反向也测了：新代码写的库，v0.12.0 同样读得出来。所以升级与回退都不会把设置读丢。
-
-唯一会让你丢数据的是**把库指进 profile 作用域**（形如 `…/profiles/<名字>/…`），宿主清理 profile 时会连带带走——见下面「记忆库落点建议」。
-
-## 一图看懂记忆闭环
-
-```
-  写入 ──► 质量过滤（无用信息先拦下）
-    │
-    ▼
-  SQLite + 本地 Markdown 镜像
-    │（空闲时）
-    ├─ autoDream ：去重 / 合并 / 归档 / 修正 / 冲突冻结
-    └─ Sleep Mode ：分层压缩 + 模式发现 + 关系补全（可关）
-    │
-    ▼
-  召回（混合检索 + 精排）──► 注入会话上下文
-```
-
-## 🧭 M.O.：让「怎么做」也住进仓库（v0.9 beta，v0.13.0 起从面板下架）
-
-> **状态（v0.13.0）**：这一组已从设置面板下架，界面上没有入口了。三个旗标（`actionPipelineEnabled` / `actionRunEnabled` / `actionNudgeEnabled`）与 `/mo-run` 命令、座位注册逻辑都还在，语义零改动——想恢复界面，把那行加回 `FEATURE_GROUPS` 与 `FEATURE_FIRST_SCREEN` 即可。下面保留的是它的设计说明。
-
-记忆库记得住**为什么**这么做，但记不住**这件事到底怎么跑**。工作流住在哪，决定了它能不能被改：住在记忆库里是一行没有 diff 的文字，住在会话里是一次性的提示词，住在人脑里改不动也不留痕。
-
-所以 v0.9 把它们搬进项目仓库——一条工作流一个文件：
-
-```
-<项目>/.mneme/pipelines/<id>.json     ← 项目层（能提交、能 diff、能 PR、能被 CI 读）
-<插件包>/pipelines/<id>.json          ← 全局层（兜底，今天包里没有这个目录，这是有意的）
-```
-
-分工是一句话：**记忆是「为什么」，仓库是「怎么跑」，图是「看起来怎么样」**。
-
-- **护栏，不是轨道** — 图上必须留一扇合法的逃生门：agent 判断这条路这次不对时，按风险档决定「记账先走」还是「停下问人」。跳过 = 这次不用这一步（≥3 次提议删这一步）；绕开 = 这条路整个不对（≥3 次提议重看这条路径）。**两个指标分开数**，混在一起两种提议都发不出来。
-- **候选不进仓库** — 草稿住在 `<memoryDir>/candidates/<项目键>/`，只在本地。一天长十条死九条的东西进仓库就是垃圾。升格要同时满足「走过两次（至少一次成功）」**且**「写得出反事实」；够格之后系统只**提议**，提交与推送始终是人握着的那道门。
-- **面板画的图和 agent 读的是同一份数据** — 只画不存，agent 就什么也读不到。节点状态（`refuted` / `trusted` / `stale` / `candidate`）全部从运行记录推，不由作者写死；今天还没有运行记录落点，所以全体恒为 `candidate`——这就是那个 beta 标签必须摆在脸上的原因。
-
-默认关（`actionPipelineEnabled`）。设计取舍与踩过的坑见 [docs/WORKFLOWS.md](dsh-mneme/docs/WORKFLOWS.md)。
-
-## 界面预览
-
-> 面板内置中英双语，跟随你的 DSH 界面语言显示。以下为中文截图，英文版请切至文末 [English](#english) 段落。
+### 04 · 面板
 
 <p align="center">
-  <img src="images/screenshot-memories.png" alt="记忆库浏览" width="720"/><br/>
+  <img src="images/screenshot-memories.png" alt="记忆库浏览" width="760"/><br/>
   <i>记录、浏览与筛选你的记忆。</i>
 </p>
 
 <p align="center">
-  <img src="images/screenshot-entities.png" alt="实体与关系图谱" width="720"/><br/>
-  <i>自动从记忆里提炼实体，构建带属性的关系图谱。</i>
+  <img src="images/screenshot-entities.png" alt="实体与关系图谱" width="760"/><br/>
+  <i>从记忆里提炼实体，构建带属性的关系图谱。</i>
 </p>
 
 <p align="center">
-  <img src="images/screenshot-status.png" alt="状态与审计" width="720"/><br/>
-  <i>状态面板一眼看清向量索引、LLM 消耗与自动巩固记录。</i>
+  <img src="images/screenshot-status.png" alt="状态与审计" width="760"/><br/>
+  <i>向量索引、LLM 消耗、自动巩固记录，一眼看完。</i>
 </p>
 
-<p align="center">
-  <img src="images/screenshot-settings.png" alt="记忆库设置" width="720"/><br/>
-  <i>检索、实体抽取与记忆巩固开关都在设置里一站式配置。</i>
-</p>
+### 05 · 接到别处
 
-<p align="center">
-  <img src="images/screenshot-help.png" alt="帮助与反馈" width="720"/><br/>
-  <i>可选写保护 Token，以及本地化的反馈通道，让记忆库完全本地、可审计。</i>
-</p>
+| 方式 | 你能得到什么 |
+|------|--------------|
+| **MCP** | 零依赖 stdio 服务端（独立包 `mneme-memory`），Claude Code / Cursor / Codex / OpenCode 等任意 MCP 客户端都能挂上记忆六件套 |
+| **独立 daemon** | `dsh-mneme-serve` 让记忆库常驻：DSH 关着，脚本、网页桥接、自有面板照样读写同一份记忆 |
+| **社区适配器** | 比如 [Mneme-Bridge](https://github.com/SternChiri/Mneme-Bridge)，把 DeepSeek 网页端也接进同一个记忆库 |
 
-## 隐私承诺
+### 06 · 文档
 
-- 记忆只落在本机：SQLite 存储 + 可手工编辑的 Markdown 镜像，不经过任何 mneme 服务器
-- 记忆是 Markdown 文件，人类可读、可手工编辑
-- 不需要 mneme 自己的 API Key；巩固与摘要走你已配置的宿主模型（`autoDream` / `autoSummarize` 默认开）
-- 想连巩固也完全离线：把宿主换成本地模型（并清空 `dreamProvider` / `dreamModel` 与 `summarizeProvider` / `summarizeModel` —— 配了这两组就绕过宿主直连，换宿主不会生效），或直接关掉 `autoDream` / `autoSummarize`
-- 无遥测、无分析、无远程日志
+| 想了解 | 去哪 |
+|--------|------|
+| 功能、安装、配置、架构（完整） | [dsh-mneme/README.md](dsh-mneme/README.md) |
+| 全部配置键 | [配置说明](dsh-mneme/docs/CONFIGURATION.md) |
+| 目录归属：`~/.dsh/memory` ≠ `~/.dsh/mneme` | [目录说明](dsh-mneme/docs/DIRECTORIES.md) |
+| 与 Zep / Mem0 / Letta / Hindsight 的对照 | [能力对比](docs/COMPARISON.md) |
+| 版本历史 | [CHANGELOG](dsh-mneme/CHANGELOG.md) |
 
-## 用在其他 AI 工具里（MCP）
+### 07 · 一路走来
 
-插件自带零依赖 stdio MCP server（独立 npm 包 **`mneme-memory`**，bin 名 `mneme-mcp`），任何 MCP 客户端都能挂载记忆六件套（`memory_save` / `memory_search` / `memory_list` / `memory_get` / `memory_update` / `memory_delete`）。
-
-**前置条件（一次性）**：
-
-1. DSH 在运行且插件已安装（MCP 数据面走插件的独立 API `127.0.0.1:8790`）
-2. 在 DSH 面板「设置 → 外部访问 API」生成 token
-
-**各客户端挂载**（`<你的token>` 替换为上一步生成的值）：
-
-| 客户端 | 挂载方式 |
-|--------|---------|
-| **Claude Code** | 项目根 `.mcp.json`：`{"mcpServers": {"mneme-memory": {"command": "mneme-mcp", "env": {"MNEME_TOKEN": "<你的token>"}}}}` |
-| **Cursor** | 设置 → MCP → Add Server，command 填 `mneme-mcp`，env 加 `MNEME_TOKEN` |
-| **Codex** | `~/.codex/config.toml`：`[mcp_servers.mneme-memory]` 段，`command = "mneme-mcp"`，`env = { MNEME_TOKEN = "<你的token>" }` |
-| **Hermes** | `~/.hermes/config.yaml` 的 `mcp_servers:` 段：`mneme-memory: {command: "mneme-mcp", env: {MNEME_TOKEN: "<你的token>"}}`，重启生效 |
-| **OpenCode** | `opencode.json`：`{"mcp": {"mneme-memory": {"type": "local", "command": ["mneme-mcp"], "environment": {"MNEME_TOKEN": "<你的token>"}}}}` |
-| **OpenClaw** | `openclaw mcp add mneme-memory --command mneme-mcp --env MNEME_TOKEN=<你的token>`，或 Control UI → Settings → MCP |
-
-> **旧挂载兼容**：已部署的 `dsh-mneme-mcp` + `DSH_MNEME_TOKEN` 写法继续有效（bin 与 env 变量均保留，无需迁移）。未全局安装 npm 包时，把 `command` 换成 `npx` 并追加参数 `-p mneme-memory mneme-mcp`（Claude Code/OpenCode 写进 args 数组，Codex 写 `args = ["-p", "mneme-memory", "mneme-mcp"]`）。配置细节与安全注意事项见[完整文档](dsh-mneme/README.md#mcp-server任意-mcp-客户端接入)。
-
-## 不开 DSH 也能服务（独立服务 daemon）
-
-`dsh-mneme-serve` 把记忆库跑成常驻数据面——DSH 关着，第三方集成（网页端桥接、脚本、自有面板）照样读写同一份记忆：token 与 DSH 面板/CLI 共用，路由与「外部访问 API」同源，端口被占直接报错（与 DSH 外部访问二选一）。第一期无 LLM（巩固/蒸馏仍属 DSH 宿主）；检索默认 local 嵌入（首次启动自动取件模型，`--embed off` 可关）。
-
-```bash
-npm i -g @modusensus/dsh-mneme
-dsh-mneme-serve          # 默认 ~/.dsh/memory + 127.0.0.1:8790
-```
-
-## 社区适配器
-
-社区项目把 mneme 接入更多平台——它们不是本仓库的一部分，兼容性由各自维护者跟进：
-
-| 项目 | 平台 | 说明 |
-|------|------|------|
-| [Mneme-Bridge](https://github.com/SternChiri/Mneme-Bridge) | DeepSeek 网页端 | 浏览器扩展 + 本地服务：网页端会话蒸馏进 mneme 记忆库、DSH 侧记忆按话题回注，两侧共享同一份记忆。embedded（挂载 lib）与 remote（standalone API，不开 DSH 时配合上面的 daemon）双模式 |
-
-> 想被收录？在 [Discussions](https://github.com/slow-stack/mneme/discussions) 开帖介绍你的项目，或直接提 PR 补充本表。
-
-## 文档
-
-| 文档 | 路径 |
-|------|------|
-| 插件完整文档（功能 / 安装 / 配置 / 架构） | [dsh-mneme/README.md](dsh-mneme/README.md) |
-| stdio MCP server——Claude Code / Cursor 等任意 MCP 客户端接入记忆六件套 | [dsh-mneme/README.md · MCP Server](dsh-mneme/README.md#mcp-server任意-mcp-客户端接入) |
-| 独立服务 daemon（不开 DSH 常驻数据面） | [dsh-mneme/docs/DAEMON.md](dsh-mneme/docs/DAEMON.md) |
-| 配置说明（全键参考） | [dsh-mneme/docs/CONFIGURATION.md](dsh-mneme/docs/CONFIGURATION.md) |
-| 目录归属：哪个目录是什么（`~/.dsh/memory` ≠ `~/.dsh/mneme` ≠ `~/.dsh-mneme`） | [dsh-mneme/docs/DIRECTORIES.md](dsh-mneme/docs/DIRECTORIES.md) |
-| 蒸馏原文留存与记忆级溯源（#399） | [dsh-mneme/docs/DISTILL.md](dsh-mneme/docs/DISTILL.md) |
-| 记忆分享包：出包与收包（`dsh-mneme share` / `receive` / `undo-share`） | [dsh-mneme/docs/SHARE.md](dsh-mneme/docs/SHARE.md) |
-| 实体结构化设计 | [dsh-mneme/docs/ENTITIES.md](dsh-mneme/docs/ENTITIES.md) |
-| 工作流（M.O.）：本体住仓库、证据住记忆库 | [dsh-mneme/docs/WORKFLOWS.md](dsh-mneme/docs/WORKFLOWS.md) |
-| 语义架构 | [dsh-mneme/docs/SEMANTIC.md](dsh-mneme/docs/SEMANTIC.md) |
-| 本地模型部署指南 | [dsh-mneme/docs/LOCAL_MODEL.md](dsh-mneme/docs/LOCAL_MODEL.md) |
-| 与 Zep / Mem0 / Letta / Hindsight 的能力对比 | [docs/COMPARISON.md](docs/COMPARISON.md) |
-| 版本历史 | [dsh-mneme/CHANGELOG.md](dsh-mneme/CHANGELOG.md) |
-| 安全策略 | [SECURITY.md](SECURITY.md) |
-| 行为守则（署名归人、按证据分配发言权） | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |
-
-## 🗺️ 路线图
-
-```
-🧬 记忆基因 → 🛡️ 审计加固 → 💤 睡眠维护 → 🕸️ 召回融合与图谱 → ✨ 面板增强 → 🌡️ 自进化记忆 → 🔐 作用域隔离 → 🌐 生态（MCP / daemon）→ 🧭 M.O.（项目级工作流）
-```
+*版本表由发版准备脚本维护，当前版本行随 tag 更新。*
 
 | 版本 | 主题 | 状态 |
 |------|------|------|
-| **v0.3** | 记忆基因：实体 / 属性（带时间轴）/ 关系 | ✅ |
-| **v0.4** | Sleep Mode：空闲四阶段深度维护 | ✅ |
-| **v0.5** | 召回融合与记忆可视化：BM25 + 图谱 + 热记忆 | ✅ |
-| **v0.6** | 会话生命周期：删对话 ≠ 删记忆 | ✅ |
-| **v0.7** | 自进化记忆：热度衰减 + 睡眠双保护 + 桌面端工作台/功能开关 | ✅ |
-| **v0.8** | 作用域隔离（agent/workspace 双维隔离 + 检索加权 + opt-in 硬过滤）+ 冲突队列人工裁决 + 归属显式声明 + 生态化（stdio MCP server / 图召回轴 / 冷启动 / 注入截断与状态条 / 蒸馏可靠性 / 注入形态与 agent 主动整理接口 / 配置说明与 issue 模板） | ✅ 已发布（至 v0.8.16） |
-| **v0.9** | M.O.（Modus Operandi）beta：项目级工作流本体 + 候选分层与升格判据 + 面板清单/图同屏；设置面板按「新手之外」重划折叠线（#427）；安全审计与供应链加固（声明式路由鉴权、OSV 阻断、发布签名）；**v0.9.1 补上写侧**：执行窗口、运行账、归属候选、观察旁挂与脱节检出、步骤 `assert`/`optional`、沉淀链草稿挖掘、人格定义页（按 agent 多卡）；**v0.9.2 让看不见的失败显形**：功能开关第三态「待重启」、作用域级可逆闸门（#471）、巩固 `max_tokens` 超上限自动降级（#478）；**v0.9.3 接通自动沉淀**：按会话头 `cwd` 反查项目桶、挂 `turn/end`、冷却 10 分钟、单次预算 4 秒，只产提议不产草稿（#489），并修作用域反查自 v0.8.0 起静默降级（#487）、`/nudge` 写盘口漏拦 `PATCH`/`DELETE`、多帧 zstd 反证断言绑 Node 整块解语义（#490）；**v0.9.4 补上三条链的最后一环**：agent 主动整理接口有了工具（`memory_organize`，`organizeEnabled` 默认关，关时模型根本看不到它）、画像可以从记忆提取**草稿**（`profileExtractEnabled` 默认关，只出草稿、采用是用户再点一次，手写的原文不被模型改写）、人格 `default` 卡不再无条件进「没建卡」的身份（#497，`personaStrictAddressing` 默认关），面板那段「注入生效文本」改成由后端单源渲染，另补蒸馏转录围栏与解析失败护栏（#494）；**v0.9.5 让记忆递得出去也收得回来**：分享包 `mneme.share/v1`（只含活跃行、scope 与 home 前缀不进包、密钥/PII 整条不进、报告先于下载、3 MiB 水位、一条不合格整包拒、干跑为默认、按 `share_external_id` 幂等、整包退出走物删），「本机巩固不改写别人导入的原文」由单一谓词守在汇流口与九个行池，记忆溯源读出口 `GET /memory/provenance`（@z2Ace0107，409 与 503 两种「没有」分开），并修同标题重复入库（#505）、模式扫描窗口饿死（#515）、五处 prompt 未围栏（#501/#493）与 dream 合并护栏整类误拦（#521），面板加设置页分组目录（#518） | ✅ 已发布（v0.9.5） |
-| **v0.10** | 归因与闸门：蒸馏归因补上「运行」身份（`distill_runs` 窗口级 + `memory_mints` 行级，历史行不猜）、溯源补上反方向 `?sessionId=`、会话级无痕闸门（`sessionGateEnabled`，判据只认宿主委派标记 + 有界记账）、防谄媚补到写入面（蒸馏与总览的立场 / 叙述纪律）、`differentiate` 改落账本不改正文（#533）、sleep 冲突相位输入侧预算与续排（#529）、面板「最近巩固」区分 organize 回执（#495）、面板首次有移动端与 481–519px 中间带断点（#542） | ✅ 已发布（v0.10.0） |
-| **v0.13** | 情绪终于有地方可放：「这一次很焦虑」与「你是个焦虑的人」在存储上不再一样——`affective_context` 关系类型带情绪词与归因；sleep 新增情感相位，按三个独立会话才升成稳定倾向，不足就降级不丢弃，降级与丢弃全部记账；同场合的边按会话合并而不是每轮重写。同版：日记本、M.O. 下架、面板几处修复 | ✅ 已发布（v0.13.0） |
-| **v0.12** | pin 显式化（`pinned_memories` 表 + `memory_pin`（取消钉选传 `unpin: true`），钉住的行在注入里优先占位，不再靠类型推断；`pinnedInjectBudget` 默认 0 = pin 池关闭）+ pin 池不再被向量路 `poolSize` 封顶挤出 + 「Agent 眼中的你」自动事实（`profileFactsEnabled` 默认关）+ 向量解析缓存跟工作集自适应（命中率 0% → 100%，单轮检索快 5.6 倍，存储换 `Float32Array`）+ 修 #579 地志工具错误路径与「读不到答成没匹配」+ 修 #590 严格寻址把「一张卡都没建」判成「没有这张卡」 | ✅ 已发布（v0.12.0） |
-
-> 完整逐小版本说明见 [CHANGELOG](dsh-mneme/CHANGELOG.md)。
-
-## 🧪 本地开发
-
-```bash
-cd dsh-mneme && npm install
-npm test        # 3401 个测试
-npm run stress  # 三轴线压测
-npm run sync    # src → lib 同步
-```
+| **v0.14** | 图像与情绪都成了记忆；修掉两处静默召回截断（词法语料 500 行、注入候选池 200 行） | ✅ 已发布（v0.14.0） |
+| **v0.13** | 情绪终于有地方可放：单次场合与稳定倾向在存储上分开 | ✅ 已发布（v0.13.0） |
+| **v0.12** | pin 显式化（`memory_pin`），并上下文本地自适应 | ✅ 已发布（v0.12.0） |
+| **v0.9 / v0.10** | 归因与闸门：蒸馏归因落到运行身份、会话级无痕闸门、防谄媚补到写入面 | ✅ 已发布 |
 
 ---
 
-## 🙏 致谢
+## 隐私承诺
 
-autoDream 的理念溯源（理念借鉴、实现原创）：
+- **只落在本机。** SQLite 存储加一份可手工编辑的 Markdown 镜像，中间没有任何 mneme 服务器。
+- **记忆是你能打开的文件。** Markdown，人类可读、可手改，手改过的内容在合并回库时优先保留。
+- **不需要 mneme 自己的 API Key。** 巩固与摘要走你已配置的宿主模型（`autoDream` / `autoSummarize` 默认开）。
+- **想连巩固也完全离线**：把宿主换成本地模型，并清空 `dreamProvider` / `dreamModel` 与 `summarizeProvider` / `summarizeModel`（配了这两组会绕过宿主直连，只换宿主不生效），或直接关掉这两个开关。
+- **无遥测、无分析、无远程日志。**
 
-- **[Claude Code 的 Auto Dream](https://code.claude.com/docs/en/memory)**（Anthropic，Memory 2.0）：理念源头——会话间隙由后台子代理整理记忆文件（去重、修矛盾、清衰减）。
-- **[Sleep-time Compute: Beyond Inference Scaling at Test-time](https://arxiv.org/abs/2504.13171)**（UC Berkeley & Letta，arXiv:2504.13171）：Auto Dream「离线巩固」思想背后的学术脉络。
-- **cc-haha**：早期实现思路的参照之一。
+<div align="center">
 
-在上述工作之上，dsh-mneme 做了自己的工程发展：K-Means++ 聚类预分组、类型化决策清单（keep / merge / archive / conflict / update，及 sleep 侧 supersede / differentiate）与可回放的 sha256 摘要审计链（`dream_runs` / `receipt_chain`）。如有遗漏的灵感来源，欢迎提 issue 指出。
+&nbsp;
 
-## 📚 相关研究
+> *"记忆不是把对话存下来，是让下一次对话从上次继续。"*
 
-dsh-mneme 的机制设计与下列公开研究相互印证（以下引用均逐一核对过 arXiv 收录页；机制对应关系为我们自己的映射，非原论文观点）：
+&nbsp;
 
-- **在线写入 + 离线巩固**：[Dual-Layer Agentic Memory with Fast Write Routing and Slow Consolidation](https://arxiv.org/abs/2608.22215)（arXiv:2608.22215）——与 autoDream 的「快写慢巩固」分工同构。
-- **热度衰减与访问强化**：[FadeMem](https://arxiv.org/abs/2601.18642)（arXiv:2601.18642）——heat 记忆热度模型（指数衰减 × 访问强化 × 重要性调制）的学术近亲。
-- **冲突裁决与状态追踪**：[StateMemBench](https://arxiv.org/abs/2608.19652)（arXiv:2608.19652）——记忆系统追踪演化状态的考卷；C1 冲突裁决（supersede 后不再引用旧值）以其为验收靶子。
-- **何时该忘 / scope 门控**：[PersistBench](https://arxiv.org/abs/2602.01146)（arXiv:2602.01146）；呈现层缓解见 [Structured Memory](https://arxiv.org/abs/2608.08300)（arXiv:2608.08300）——scope 语义域门控的问题出处与零契约变更改法。
-- **领域全景**：[Write–Manage–Read 综述](https://arxiv.org/abs/2603.07670)（arXiv:2603.07670）——「写入 / 管理 / 读取」三段式与插件整体形状互证。
-- **数月尺度的可靠性工程**：[Memory as Infrastructure](https://arxiv.org/abs/2609.05510)（arXiv:2609.05510）——与 sha256 审计链、fail-safe 降级同属「记忆即基础设施」路线。
-- **相邻系统（对照）**：[Zep](https://arxiv.org/abs/2501.13956)（时序知识图谱）、[Mem0](https://arxiv.org/abs/2504.19413)（生产级抽取式记忆）、[Hindsight](https://arxiv.org/abs/2512.12818)（retain / recall / reflect 三操作）走「写入时 LLM 抽取 + 向量/图检索」路线；dsh-mneme 的差异点在于：巩固由 LLM 参与但产物全程留痕可回放，冲突冻结待人工复核，记忆只落本机。
+<sub>© 2026 MODUSENSUS · MIT</sub>
+
+&nbsp;
+
+</div>
+
+---
 
 <a name="english"></a>
 
-# 🧬 Give Your LLM a Memory That Evolves
+```
+$ whoami
+mneme — the memory that dreams
 
-**dsh-mneme** is a cross-session memory plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). It does not just *store* your memories — it *manages* them: background deduplication and merging, conflicts frozen for your review, a fully replayable audit trail, memory kept on your machine, and export to human-readable Markdown.
+$ cat /etc/mneme
+cross-session memory for DeepSeek Harness
+every memory keeps its provenance
+conflicts freeze until you decide
+the only copy stays on your machine
+```
 
-> **Mneme** (Μνήμη) comes from **Mnemosyne**, the Greek goddess of memory and dreams — just as `autoDream` quietly consolidates your memory store in the background.
+### 01 · What it is
 
-## 📰 Recent updates
+*Every new chat, the AI meets you for the first time.*
 
-**v0.14.0-beta.3 — the affective panel no longer goes blank, and an overridden tier now says so** (2026-11-12, pre-release)
+**dsh-mneme** gives [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) cross-session memory. Projects you discussed, preferences you mentioned, decisions you made — close the window, open it later, and it still remembers.
 
-The regression that blanked the whole affective panel is fixed. One call to `formatRelativeTime(it.lastSeen)` was missing its `t` argument; the function reaches for that to look up a label, so it threw — and because the line runs inside render, React unmounted the entire tree and left nothing in the log. That is why it looked like "I clicked it and nothing happened". Both `v0.14.0-beta.1` and `beta.2` shipped this; it only triggers when the library holds an affective edge with `lastSeen`, so not every user hits it.
-This release also fixes one case where the panel disagreed with behaviour: with the tier set to `off` or `shadow` and **conflict freeze** on, contradicting pairs still park in the pending queue no matter which tier is chosen — and that mutual exclusion was only documented in a settings hint, invisible from the dropdown itself. The tier row now shows "⚠ conflict freeze is overriding this tier". The condition is the same one the backend uses, defaults and semantics are untouched, and stopping new arrivals still requires turning conflict freeze off.
+It is not a vector store. Memories live in a local SQLite file, with a Markdown mirror beside it: a file you can open, read, and edit, and your edits are not overwritten by the machine.
 
-> Full list in [CHANGELOG](dsh-mneme/CHANGELOG.md) · version history in [Releases](https://github.com/slow-stack/mneme/releases)
+### 02 · Why you can trust it
 
-## What problem does it solve
+*The parts you never see decide whether it holds up over months.*
 
-Every time you start a new chat, the AI acts like it's never met you?
+- **Every memory carries its provenance** — which conversation it came from, when it changed, who touched it. Consolidation leaves a receipt too: input snapshot, decision detail, result hash, so the same run can be replayed.
+- **Conflicts are not decided for you** — when two memories disagree, both are frozen and shown side by side, and you pick which one stays.
+- **Your edits win** — memories are local Markdown; hand-edited text is kept when it is merged back into the store.
+- **It works when you are idle** — frequently used memories stay hot, stale ones compress into summaries, old ones archive. The store gets leaner, not fatter.
+- **Isolation and offline** — memories can be scoped per agent and workspace; point the embedder at a local model and semantic search runs fully offline, with no API key.
+- **Delete the session ≠ delete the memory** — memories are cross-session knowledge; clearing a chat window leaves what was saved alone.
 
-**dsh-mneme gives DeepSeek Harness cross-session memory.** Projects you've discussed, preferences you've mentioned, decisions you've made — the AI remembers them even after you close the window.
+> How does it compare with Zep / Mem0 / Letta / Hindsight? There is an 11-row table — storage, retrieval, write-time extraction, offline consolidation, conflicts, forgetting, scoping, auditability, multi-host, offline, license. **"—" does not mean "worse"**: [capability comparison](docs/COMPARISON.md) (Chinese).
 
-| Scenario | Without plugin | With plugin |
-|----------|---------------|-------------|
-| Continue a project discussion from Monday on Wednesday | "Can you describe your project again?" | "You mean the blog refactor from last week? You mentioned wanting to use Astro." |
-| Tell the AI your coding habits | Repeat every session | Set once, remember forever |
-| Close window after organizing research | Notes are lost | Auto-archived, retrievable anytime |
-
-> But what makes dsh-mneme trustworthy lives in the background you never see. These are the traits that set it apart from "a plugin that just saves things."
-
-## Why you can trust it
-
-- 🧾 **Replayable, accountable** — every consolidation leaves a "decision receipt": input snapshot + decision detail + result hash. The same run reproduces the same outcome. **No silent mis-merges, no untraceable changes.**
-- ⚖️ **Conflicts freeze, you decide** (opt-in) — when two memories contradict, it does not take sides for you. The suspected conflict is **parked for review**, compared side-by-side in the status-page conflict queue, and resolved with one click (keep A / keep B / mark reviewed). On hard judgments, a human stays in the loop.
-- 🔐 **Memories isolated by agent & workspace** (opt-in) — with `scopeEnabled`, every memory is stamped with which agent wrote it and in which workspace; retrieval favors the current scope (weighted hits, out-of-scope demoted but visible); `strictScope` goes further — memories **explicitly** scoped to other agents/workspaces become invisible to search and injection (auto carrier labels are demoted only, never hard-blocked). Multiple agents and projects, zero cross-talk.
-- 🌙 **It works while you sleep** (opt-in) — idle time triggers tiered archiving: frequent memories stay hot, stale ones compress to summaries, old ones archive. The store **stays lean as it grows**.
-- 🧠 **Semantic search that can run fully offline** — set `embedProvider` to `local` and retrieval uses local embedding + reranking, no API key needed; without an embedder, keyword / BM25 retrieval still works.
-- 📝 **Two-way Markdown sync** — memories are local `.md` files you can open and edit; **human edits are respected**, never clobbered by the machine.
-- 💾 **Delete the session ≠ delete the memory** — memories are cross-session global knowledge; clearing a chat window keeps what was saved (unbound from sessions since v0.7.11).
-
-> **How does it compare with Zep / Mem0 / Letta / Hindsight?** There is a row-by-row table — storage, retrieval, write-time extraction, offline consolidation, conflicts, forgetting, scoping, auditability, multi-host, offline, license: 11 rows, and **"—" does not mean "worse"**: [capability comparison](docs/COMPARISON.md) (Chinese).
-
-## 5-minute quickstart
+### 03 · Install
 
 ```bash
-# Install the plugin (the easy path: npm package name)
 dsh plugin --profile web add @modusensus/dsh-mneme
 dsh web
 ```
 
-### Four install sources
+Two hard requirements — without them it will not install:
 
-**Settings → Plugins → Add plugin** and `dsh plugin add` accept four kinds of spec — whatever you paste is what gets installed. This repository is a **multi-package repo**: the `package.json` at the root is only a **repo shell** (`private`, no `dsh` field), while the installable plugin lives in `dsh-mneme/`. So Git and tarball specs must point at that subdirectory; otherwise you install the shell itself.
+- **Node 24+** — the store uses `node:sqlite`; on Node 22 the database will not open.
+- **DSH 0.1.x or 0.2.x** — both lines are in range, and CI is green on the 0.2 line.
 
-> Why ship an uninstallable shell at the repo root? Because some multi-package detectors (dshfind's plugin probe, for one) only look at the root manifest — without it this repository is judged "not an installable plugin package," which says nothing about whether it actually installs. The root manifest is `private` + `0.0.0` + carries no `dsh` field precisely so such tools can find the real subpackage while it can **never** be installed or published as the plugin itself.
+> This repository is a **multi-package repo**: the installable plugin lives in `dsh-mneme/`, and the root `package.json` is only a repo shell (`private`, no `dsh` field). Git and tarball specs must point at the subdirectory, or you install the shell itself. All four install sources are in the [full docs](dsh-mneme/README.md) (Chinese).
 
-| Source | Paste this | Note |
-|--------|-----------|------|
-| **npm name** | `@modusensus/dsh-mneme` | Recommended; a version range works too (`@0.9.0`) |
-| **Git repo** | `git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme` | `#path:` is not optional. Without it you get the root shell (`0.0.0`, no `dsh` field) — the host does not treat it as a plugin |
-| **tarball** | `C:\\path\\to\\modusensus-dsh-mneme-0.9.0.tgz` | Produced by `npm pack` inside `dsh-mneme/`; `pnpm pack` fails on the bin script's CRLF line endings |
-| **local directory** | `C:\\path\\to\\mneme\\dsh-mneme` | **Must be absolute** — a relative path is rejected outright (`a local path must be absolute`) |
+Where it lands on your machine:
 
-```bash
-# From source (local directory; edit code, restart, done)
-git clone https://github.com/slow-stack/mneme.git
-dsh plugin --profile web add "$(pwd)/mneme/dsh-mneme"
+| Path | What it is |
+|------|------------|
+| `~/.dsh/memory` | The store itself: the SQLite original plus ten hand-editable Markdown mirrors |
+| `~/.dsh/mneme` | Local embedding model and runtime cache; delete it and it refetches |
+| `~/.dsh-mneme` | CLI / MCP connection settings (url and token) |
 
-# Or straight from Git (no checkout; good for just running a version)
-dsh plugin --profile web add 'git+https://github.com/slow-stack/mneme.git#path:/dsh-mneme'
-```
-
-> The "Install guide and examples" panel only demonstrates the npm form; all four above are verified. Git and tarball sources get one repository-reachability check at install time (5-second timeout by default).
-
-It works out of the box. To feel its value in five minutes:
-
-1. **Chat** — start a session and tell the AI something about your preferences or a project (e.g. "I prefer 4-space indentation.").
-2. **Verify** — close the window, open a new one. If it recalls what you said, the memory has landed.
-3. **Optional** — injection and background consolidation are on from install; touch nothing first. Only if you want fully-offline embeddings, entity extraction, or per-agent isolation, open **Settings → Memory Settings** and change what you need (see Quick config). Note that entity extraction is already on for bundle installs and off for manual installs — trust what the settings page shows.
-
-## Quick config (optional)
-
-| Need | Config key | Default | Change |
-|------|-----------|---------|--------|
-| Fully offline | `embedProvider` | `openai` | Change to `local` |
-| Background consolidation | `autoDream` | `true` | Change to `false` to disable |
-| Structured entity extraction | `entityExtractionEnabled` | `false` (`true` for bundle installs) | Manual installs change it to `true`; bundle installs already have it on, change it to turn it off |
-| Memory isolation per agent / workspace | `scopeEnabled` (add `strictScope` for stronger isolation — hard blocking applies to explicit declarations only) | `false` | Change to `true` |
-
-> All of these live in DSH Settings → Memory Settings. Full config docs in the [Configuration section](dsh-mneme/README.md) (Chinese, bilingual file).
-
-### Where to put the memory library
-
-The library defaults to `~/.dsh/memory`, which is naturally outside any host profile scope; the actual location follows your `memoryDir` config. If it points inside a profile scope (a path like `…/profiles/<name>/…`), the library is taken away along with the profile when the host cleans or migrates it (an actual incident recorded in #218). The plugin logs a warning at startup when it detects such a location — **advisory only, it never moves your data**. Safe practice: keep `memoryDir` outside profiles (the default already is); to migrate, stop writing → copy the whole directory → point the config at the new location → restart.
-
-## Upgrading (your settings survive)
-
-**An upgrade replaces code, not your memories or settings.**
-
-Settings and memories are tables in the **same SQLite file** (`user_settings`, `memories`, …). Its location is set by `memoryDir` and defaults to `~/.dsh/memory` — **not inside the plugin install directory**. Removing and adding the plugin never touches it.
-
-Upgrading means reinstalling over the top, then restarting once:
+To remove it:
 
 ```bash
-# replace "web" with the profile name you originally installed into; web is the default
 dsh plugin --profile web remove @modusensus/dsh-mneme
-dsh plugin --profile web add @modusensus/dsh-mneme
-dsh web
 ```
 
-> The commands above are for an npm install; if you installed from Git, a tarball or a local directory, reinstall from the same source (see "Four install sources" above). The only requirement is **remove first, then add**.
-> Do not reinstall DSH itself; that rewrites your profile, which is a much larger change and unrelated to the plugin version.
-> Do not `add` without `remove` first — the host may reuse a cached copy, and the version badge not changing is the sign it did.
+The plugin directory goes away, the memories in `~/.dsh/memory` stay — delete that directory yourself if you want them gone. The three names are easy to mix up: [directories](dsh-mneme/docs/DIRECTORIES.md).
 
-**This was measured, not assumed**: a database built and filled by v0.12.0 (profile, rules, persona card, four feature flags) opened by the code in this release reads every one of them back unchanged. The reverse was checked too — a database written by this release is readable by v0.12.0. Upgrading and rolling back both keep your settings.
-
-The one way to lose data is pointing the library **inside** your profile scope (`…/profiles/<name>/…`), where a profile cleanup takes it along — see "Where to put the memory library" below.
-
-## The memory loop in one diagram
-
-```
-  write ──► quality filter (drop noise first)
-    │
-    ▼
-  SQLite + local Markdown mirror
-    │ (when idle)
-    ├─ autoDream   : dedupe / merge / archive / fix / freeze-conflict
-    └─ Sleep Mode  : tiered compression + pattern discovery + relation completion (opt-in)
-    │
-    ▼
-  recall (hybrid search + rerank) ──► inject into the conversation
-```
-
-## 🧭 M.O.: make "how it's done" live in the repo (v0.9 beta; retired from the panel in v0.13.0)
-
-> **Status (v0.13.0)**: this group is no longer rendered in the settings panel. The three flags (`actionPipelineEnabled` / `actionRunEnabled` / `actionNudgeEnabled`), the `/mo-run` command and the seat-registration logic are all unchanged — to bring the UI back, add the group back to `FEATURE_GROUPS` and `FEATURE_FIRST_SCREEN`. What follows is the original design write-up.
-
-The memory store remembers **why** a thing was done that way, but not **how the thing actually runs**. Where a workflow lives decides whether it can be changed at all: as a line in the memory store it has no diff; as a session prompt it exists once; in someone's head it can't be edited and leaves no trace.
-
-So v0.9 moves workflows into the project repository — one file per workflow:
-
-```
-<project>/.mneme/pipelines/<id>.json   ← project layer (commit, diff, PR, readable by CI)
-<plugin>/pipelines/<id>.json           ← global layer (fallback; the package ships none today, on purpose)
-```
-
-One sentence of division of labour: **memory is the "why", the repo is the "how", the graph is the "what it looks like"**.
-
-- **Guardrails, not tracks** — the graph must leave a legal escape hatch: when the agent judges this path wrong *this time*, the risk tier decides whether it goes ahead and records it, or stops and asks. *Skipped* means this step wasn't needed (≥3 times → propose deleting the step); *bypassed* means the whole path was wrong (≥3 times → propose revisiting the path). **Counted separately** — merged together, neither proposal can ever fire.
-- **Candidates never enter the repo** — drafts live in `<memoryDir>/candidates/<project-key>/`, local only. Ten a day, nine dead: in the repo that's just garbage. Promotion requires **both** "walked twice (at least once successfully)" and "can state the counterfactual"; even then the system only *proposes* — commit and push stay a human gate.
-- **The panel and the agent read the same data** — render-only means the agent reads nothing. Node states (`refuted` / `trusted` / `stale` / `candidate`) are derived from run records, never authored; there is no run-record sink yet, so every node is `candidate` — which is exactly why that beta label has to be on the surface.
-
-Off by default (`actionPipelineEnabled`). Design trade-offs and pitfalls: [docs/WORKFLOWS.md](dsh-mneme/docs/WORKFLOWS.md) (Chinese).
-
-## Screenshots
-
-> The panel is bilingual and follows your DSH interface language. English shots below; see the [Chinese](#中文) section for the localized UI.
+### 04 · The panel
 
 <p align="center">
-  <img src="images/screenshot-memories-en.png" alt="Memory browse" width="720"/><br/>
+  <img src="images/screenshot-memories-en.png" alt="Memory browse" width="760"/><br/>
   <i>Record, browse and filter your memories.</i>
 </p>
 
 <p align="center">
-  <img src="images/screenshot-entities-en.png" alt="Entities & relations" width="720"/><br/>
-  <i>Entities are extracted from your memories, building a relation graph with attributes.</i>
+  <img src="images/screenshot-entities-en.png" alt="Entities & relations" width="760"/><br/>
+  <i>Entities are distilled from your memories into a relation graph with attributes.</i>
 </p>
 
 <p align="center">
-  <img src="images/screenshot-status-en.png" alt="Status & audit" width="720"/><br/>
-  <i>The status panel shows your vector index, LLM spend and consolidation activity at a glance.</i>
+  <img src="images/screenshot-status-en.png" alt="Status & audit" width="760"/><br/>
+  <i>Vector index, LLM spend and consolidation activity at a glance.</i>
 </p>
 
-<p align="center">
-  <img src="images/screenshot-settings-en.png" alt="Memory settings" width="720"/><br/>
-  <i>Retrieval, entity extraction and consolidation toggles are all configured in one place.</i>
-</p>
+### 05 · Elsewhere
 
-<p align="center">
-  <img src="images/screenshot-help-en.png" alt="Help & feedback" width="720"/><br/>
-  <i>Optional write-protect token and feedback channels for a fully local, auditable setup.</i>
-</p>
+| Way in | What you get |
+|--------|--------------|
+| **MCP** | A zero-dependency stdio server (standalone package `mneme-memory`); Claude Code / Cursor / Codex / OpenCode and any other MCP client can mount the six memory tools |
+| **Standalone daemon** | `dsh-mneme-serve` keeps the store running: with DSH closed, scripts, web bridges and your own panels read and write the same memories |
+| **Community adapters** | Such as [Mneme-Bridge](https://github.com/SternChiri/Mneme-Bridge), which brings the DeepSeek web chat into the same store |
 
-## Privacy
+### 06 · Docs
 
-- Memories stay on your machine: a local SQLite store plus editable Markdown mirrors, with no mneme server in the path
-- Memories are Markdown files, human-readable and editable
-- No mneme API key required; consolidation and summarization use the host model you already configured (`autoDream` / `autoSummarize` are on by default)
-- Want consolidation fully offline too? Point the host at a local model **and** clear `dreamProvider` / `dreamModel` plus `summarizeProvider` / `summarizeModel` (setting those routes talks straight to that provider, so switching the host alone will not help) — or just turn off `autoDream` / `autoSummarize`
-- No telemetry, no analytics, no remote logging
+| To learn | Where |
+|----------|-------|
+| Features, install, config, architecture (full) | [dsh-mneme/README.md](dsh-mneme/README.md) |
+| Every configuration key | [Configuration](dsh-mneme/docs/CONFIGURATION.md) |
+| Which directory is which: `~/.dsh/memory` ≠ `~/.dsh/mneme` | [Directories](dsh-mneme/docs/DIRECTORIES.md) |
+| Head-to-head with Zep / Mem0 / Letta / Hindsight | [Comparison](docs/COMPARISON.md) |
+| Version history | [CHANGELOG](dsh-mneme/CHANGELOG.md) |
 
-## Use it in other AI tools (MCP)
+### 07 · The road here
 
-The plugin ships a zero-dependency stdio MCP server (standalone npm package **`mneme-memory`**, bin `mneme-mcp`). Any MCP client can mount the six memory tools (`memory_save` / `memory_search` / `memory_list` / `memory_get` / `memory_update` / `memory_delete`).
-
-**One-time prerequisites**:
-
-1. DSH is running with the plugin installed (the MCP data plane goes through the plugin's standalone API at `127.0.0.1:8790`)
-2. Generate a token in the DSH panel under **Settings → External API**
-
-**Per-client setup** (replace `<your-token>` with the value from the previous step):
-
-| Client | Setup |
-|--------|-------|
-| **Claude Code** | Project-root `.mcp.json`: `{"mcpServers": {"mneme-memory": {"command": "mneme-mcp", "env": {"MNEME_TOKEN": "<your-token>"}}}}` |
-| **Cursor** | Settings → MCP → Add Server; command `mneme-mcp`, env `MNEME_TOKEN` |
-| **Codex** | `~/.codex/config.toml`: `[mcp_servers.mneme-memory]` section, `command = "mneme-mcp"`, `env = { MNEME_TOKEN = "<your-token>" }` |
-| **Hermes** | `mcp_servers:` section of `~/.hermes/config.yaml`: `mneme-memory: {command: "mneme-mcp", env: {MNEME_TOKEN: "<your-token>"}}`, then restart |
-| **OpenCode** | `opencode.json`: `{"mcp": {"mneme-memory": {"type": "local", "command": ["mneme-mcp"], "environment": {"MNEME_TOKEN": "<your-token>"}}}}` |
-| **OpenClaw** | `openclaw mcp add mneme-memory --command mneme-mcp --env MNEME_TOKEN=<your-token>`, or Control UI → Settings → MCP |
-
-> **Legacy mounts keep working**: `dsh-mneme-mcp` + `DSH_MNEME_TOKEN` remain supported (both the bin and env vars are preserved; no migration needed). If the npm package is not installed globally, use `npx` as the command with args `-p mneme-memory mneme-mcp` (an args array in Claude Code/OpenCode; `args = ["-p", "mneme-memory", "mneme-mcp"]` in Codex). Full config details and security notes: [full docs](dsh-mneme/README.md#mcp-server任意-mcp-客户端接入) (Chinese).
-
-## Serve memories without DSH (standalone daemon)
-
-`dsh-mneme-serve` runs the memory store as a long-lived data plane — with DSH closed, third-party integrations (web-bridge tools, scripts, your own panels) still read and write the same memories: the Bearer token is shared with the DSH panel/CLI, routes mirror the external API, and a busy port is a hard error (pick either the daemon or DSH's external API, not both). Phase 1 is LLM-free (consolidation/distillation stay with the DSH host); retrieval defaults to local embeddings (runtime + model auto-provisioned on first boot, `--embed off` to disable).
-
-```bash
-npm i -g @modusensus/dsh-mneme
-dsh-mneme-serve          # defaults: ~/.dsh/memory + 127.0.0.1:8790
-```
-
-## Community adapters
-
-Community projects that wire mneme into more platforms — not part of this repository; compatibility is tracked by their maintainers:
-
-| Project | Platform | Description |
-|---------|----------|-------------|
-| [Mneme-Bridge](https://github.com/SternChiri/Mneme-Bridge) | DeepSeek web | Browser extension + local service: web chats are distilled into the mneme store and DSH memories are injected back by topic, so both sides share one memory. Embedded (mounts the lib) and remote (standalone API — pairs with the daemon above) modes |
-
-> Want your project listed? Open a Discussion or send a PR adding a row to this table.
-
-## Docs
-
-| Doc | Path |
-|-----|------|
-| Full plugin docs (features / install / config / architecture) | [dsh-mneme/README.md](dsh-mneme/README.md)（中文） |
-| stdio MCP server — plug the six memory tools into any MCP client (Claude Code / Cursor / …) | [dsh-mneme/README.md · MCP Server](dsh-mneme/README.md#mcp-server任意-mcp-客户端接入)（中文） |
-| Standalone daemon (serve memories without DSH) | [dsh-mneme/docs/DAEMON.md](dsh-mneme/docs/DAEMON.md)（中文） |
-| Configuration reference (all keys) | [dsh-mneme/docs/CONFIGURATION.md](dsh-mneme/docs/CONFIGURATION.md)（中文） |
-| Directory ownership: which directory is what (`~/.dsh/memory` ≠ `~/.dsh/mneme` ≠ `~/.dsh-mneme`) | [dsh-mneme/docs/DIRECTORIES.md](dsh-mneme/docs/DIRECTORIES.md)（中文） |
-| Distill record retention & memory-level provenance (#399) | [dsh-mneme/docs/DISTILL.md](dsh-mneme/docs/DISTILL.md)（中文） |
-| Memory share pack: export and import (`dsh-mneme share` / `receive` / `undo-share`) | [dsh-mneme/docs/SHARE.md](dsh-mneme/docs/SHARE.md)（中文） |
-| Entity structure design | [dsh-mneme/docs/ENTITIES.md](dsh-mneme/docs/ENTITIES.md) |
-| Workflows (M.O.): the workflow lives in the repo, the evidence in memory | [dsh-mneme/docs/WORKFLOWS.md](dsh-mneme/docs/WORKFLOWS.md)（中文） |
-| Semantic architecture | [dsh-mneme/docs/SEMANTIC.md](dsh-mneme/docs/SEMANTIC.md) |
-| Local model guide | [dsh-mneme/docs/LOCAL_MODEL.md](dsh-mneme/docs/LOCAL_MODEL.md) |
-| Capability comparison vs Zep / Mem0 / Letta / Hindsight | [docs/COMPARISON.md](docs/COMPARISON.md)（中文） |
-| Changelog | [dsh-mneme/CHANGELOG.md](dsh-mneme/CHANGELOG.md) |
-| Security | [SECURITY.md](SECURITY.md) |
-| Code of Conduct (attribution, evidence over identity) | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) |
-
-## 🗺️ Roadmap
-
-```
-🧬 Gene → 🛡️ Audit hardening → 💤 Sleep maintenance → 🕸️ Recall fusion & graph → ✨ Panel enhancement → 🌡️ Self-evolving memory → 🔐 Scope isolation → 🌐 Ecosystem (MCP / daemon) → 🧭 M.O. (project-level workflows)
-```
+*Rows are maintained by the release-prep script; the current one is updated with the tag.*
 
 | Version | Theme | Status |
 |---------|-------|--------|
-| **v0.3** | Gene: entities / time-boxed attributes / relations | ✅ |
-| **v0.4** | Sleep Mode: idle 4-phase deep maintenance | ✅ |
-| **v0.5** | Recall fusion & visualization: BM25 + graph + hot memory | ✅ |
-| **v0.6** | Session lifecycle: delete session ≠ delete memory | ✅ |
-| **v0.7** | Self-evolving memory: heat decay + sleep dual-protection + desktop workbench/feature toggles | ✅ |
-| **v0.8** | Scope isolation (agent/workspace stamping + retrieval weighting + opt-in hard filter) + conflict review queue + explicit attribution + ecosystem (stdio MCP server / graph recall axis / cold-start bootstrap / injection truncation & status bar / distill reliability / injection shaping & agent-driven organize / configuration reference & issue templates) | ✅ Released (up to v0.8.16) |
-| **v0.9** | M.O. (Modus Operandi) beta: project-level workflows + candidate tiering & promotion criteria + panel list-and-graph view; settings panel re-folded at "beyond the newcomer" (#427); security & supply-chain hardening (declarative route auth, OSV gate, signed releases); **v0.9.1 adds the write side**: execution windows, run ledger, attribution candidates, observation sidecar with drift detection, step `assert`/`optional`, draft mining from session logs, persona page (per-agent cards); **v0.9.2 makes silent failures visible**: feature-flag third state "pending restart", scope-level reversible gate (#471), automatic max_tokens downgrade for consolidation (#478); **v0.9.3 wires up auto-distillation**: resolves the project bucket from the session header's `cwd`, hooks `turn/end`, 10-minute cooldown, 4-second budget, proposals only and never drafts (#489), and fixes the scope reverse-lookup that had been silently degrading since v0.8.0 (#487), the `/nudge` write gate missing `PATCH`/`DELETE`, and a multi-frame zstd counter-assertion bound to Node's whole-buffer decode semantics (#490); **v0.9.4 supplies the missing last link on three chains**: the agent-driven organizing interface finally gets a tool (`memory_organize`, behind `organizeEnabled`, off by default — off means the model cannot even see it), the profile can be drafted from memory (`profileExtractEnabled`, off by default; a draft only — applying it is another user action, and hand-written text is never rewritten by the model), and the persona `default` card is no longer handed to identities that simply have no card (#497, `personaStrictAddressing`, off by default); the panel's "injected text" card is now rendered by a single backend source, plus the distillation transcript fence and parse-failure guard (#494); **v0.9.5 makes memory shareable and recallable**: the `mneme.share/v1` pack (active rows only, no scopes or home prefixes, secret/PII rows dropped whole, report before file, 3 MiB watermark, one bad row rejects the whole pack, dry-run by default, idempotent on `share_external_id`, withdrawal deletes rather than archives), a single predicate guarding "local consolidation never rewrites someone else's imported text" at the dedupe choke point and nine row pools, the provenance read endpoint `GET /memory/provenance` (@z2Ace0107, with 409 and 503 kept as two different answers), plus fixes for duplicate same-title writes (#505), a starved pattern-scan window (#515), five unfenced consolidation prompts (#501/#493) and a merge guard skipping whole categories (#521), and a sticky settings section index (#518) | ✅ Released (v0.9.5) |
-| **v0.10** | Attribution and gates: distillation provenance gains a **run** identity (`distill_runs` per window plus `memory_mints` per row; historical rows left NULL rather than guessed), provenance gains the reverse direction `?sessionId=`, a per-session incognito gate (`sessionGateEnabled`, keyed on the host's own delegation markers with a bounded ledger), anti-sycophancy rules reaching the write side (stance and narration discipline in distillation and overview), `differentiate` moving to a ledger instead of rewriting text (#533), an input budget and catch-up for the sleep conflict phase (#529), the "last consolidation" card no longer showing organize receipts (#495), and the panel's first mobile and 481–519px breakpoints (#542) | ✅ Released (v0.10.0) |
-| **v0.13** | Emotion finally has a place to live: "anxious this time" and "an anxious person" no longer look identical in storage. A new `affective_context` relation carries the emotion word and its attribution; a new sleep phase promotes an emotion to a stable trait only after three independent sessions, downgrading rather than discarding when it falls short, with every downgrade and drop accounted for. Edges for the same occasion merge by session instead of being rewritten each run. Same release: the diary, M.O. removed from the panel, several panel fixes | ✅ Released (v0.13.0) |
-| **v0.12** | Explicit pinning (a `pinned_memories` table behind `memory_pin` — release with `unpin: true` — so pinned rows take their place in the injected block instead of relying on their type; `pinnedInjectBudget` defaults to 0, which leaves the pin pool off) + pinned rows no longer squeezed out by the vector path's `poolSize` cap + automatic facts for "you as the agent sees it" (`profileFactsEnabled`, off by default) + an embedding-resolution cache that follows the working set (hit rate 0% → 100%, single-round retrieval 5.6x faster, storage on `Float32Array`) + #579 chorography tool error paths and "cannot read" no longer answered as "no match" + #590 strict addressing no longer reading "no card was ever created" as "no card for this identity" | ✅ Released (v0.12.0) |
-
-> Full per-minor-version changelog in [CHANGELOG](dsh-mneme/CHANGELOG.md).
-
-## 🧪 Local development
-
-```bash
-cd dsh-mneme && npm install
-npm test        # 3401 tests
-npm run stress  # three-axis stress test
-npm run sync    # src → lib sync
-```
+| **v0.14** | Images and moods became memories; two silent recall truncations removed (500-row lexical corpus, 200-row injection pool) | ✅ Released (v0.14.0) |
+| **v0.13** | Moods finally had somewhere to live: one-off occasions kept apart from stable tendencies | ✅ Released (v0.13.0) |
+| **v0.12** | Explicit pins (`memory_pin`) and an adaptive context budget | ✅ Released (v0.12.0) |
+| **v0.9 / v0.10** | Attribution and gates: distillation runs carry an identity, session-level no-trace gate, anti-sycophancy on the write path | ✅ Released |
 
 ---
 
-## Acknowledgements
+## Privacy
 
-Provenance of the autoDream concept (ideas credited, implementation original):
+- **Local only.** A SQLite store plus an editable Markdown mirror, with no mneme server in the path.
+- **Memory is a file you can open.** Markdown, human-readable and hand-editable; your edits win when it merges back.
+- **No mneme API key of its own.** Consolidation and summarization use the host model you already configured (`autoDream` / `autoSummarize` are on by default).
+- **Fully offline if you want it** — point the host at a local model *and* clear `dreamProvider` / `dreamModel` plus `summarizeProvider` / `summarizeModel` (setting those routes talks straight to that provider, so switching the host alone will not help), or just turn both switches off.
+- **No telemetry, no analytics, no remote logging.**
 
-- **[Auto Dream in Claude Code](https://code.claude.com/docs/en/memory)** (Anthropic, Memory 2.0): the conceptual origin — a background sub-agent consolidates memory files between sessions (dedupe, resolve contradictions, prune decay).
-- **[Sleep-time Compute: Beyond Inference Scaling at Test-time](https://arxiv.org/abs/2504.13171)** (UC Berkeley & Letta, arXiv:2504.13171): the academic thread behind the offline-consolidation idea.
-- **cc-haha**: an early reference for the implementation approach.
+<div align="center">
 
-On top of these, dsh-mneme adds its own engineering: K-Means++ cluster pre-grouping, a typed decision list (keep / merge / archive / conflict / update, plus supersede / differentiate on the sleep side), and a replayable sha256-digest audit chain (`dream_runs` / `receipt_chain`). If any source of inspiration is missing, please open an issue.
+&nbsp;
 
-## Related Research
+> *"Memory is not what you save from a conversation. It is what lets the next one continue."*
 
-dsh-mneme's design echoes the following public research (every citation below has been verified against its arXiv page; the mechanism mappings are our own, not the papers' claims):
+&nbsp;
 
-- **Fast write + slow consolidation**: [Dual-Layer Agentic Memory](https://arxiv.org/abs/2608.22215) (arXiv:2608.22215) — mirrors autoDream's online-write / offline-consolidate split.
-- **Heat decay & access reinforcement**: [FadeMem](https://arxiv.org/abs/2601.18642) (arXiv:2601.18642) — academic kin of the heat model (exponential decay × access reinforcement × importance modulation).
-- **Conflict resolution & state tracking**: [StateMemBench](https://arxiv.org/abs/2608.19652) (arXiv:2608.19652) — a benchmark for tracking evolving state; C1 conflict adjudication (no stale reads after supersede) treats it as its acceptance target.
-- **When to forget / scope gating**: [PersistBench](https://arxiv.org/abs/2602.01146) (arXiv:2602.01146); presentation-layer mitigation in [Structured Memory](https://arxiv.org/abs/2608.08300) (arXiv:2608.08300).
-- **Field survey**: [Write–Manage–Read survey](https://arxiv.org/abs/2603.07670) (arXiv:2603.07670) — the write/manage/read taxonomy matches the plugin's overall shape.
-- **Months-scale reliability**: [Memory as Infrastructure](https://arxiv.org/abs/2609.05510) (arXiv:2609.05510) — the same "memory as infrastructure" school as the sha256 audit chain and fail-safe degradation.
-- **Adjacent systems (contrast)**: [Zep](https://arxiv.org/abs/2501.13956) (temporal knowledge graph), [Mem0](https://arxiv.org/abs/2504.19413) (production-grade extraction) and [Hindsight](https://arxiv.org/abs/2512.12818) (retain / recall / reflect) extract with LLM at write time and retrieve via vectors/graphs; dsh-mneme instead keeps consolidation replayable with a full audit trail, freezes conflicts for human review, and keeps memory local by default.
+<sub>© 2026 MODUSENSUS · MIT</sub>
 
-## 📜 License
+&nbsp;
 
-MIT
+</div>
