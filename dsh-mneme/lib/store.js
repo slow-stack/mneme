@@ -4491,6 +4491,37 @@ export function createStore(path) {
       .all(...wanted).map(toRow);
   }
 
+  /**
+   * 取词法召回（BM25）用的整份语料：全量活跃行，只带索引真正需要的四列。
+   *
+   * 为什么单独开一个口，而不是 store.list({ limit: null })：
+   *
+   * - 不能截断。语料被截到 500 行时，排序在 500 名之外的记忆永远进不了词法召回
+   *   ——实测 8 个查询里 top10 与全量语料只有 1-4 条重合，这是静默的召回缺失，
+   *   不是慢。
+   * - 也不能走 list 的宽投影。list 按 PRAGMA 派生列清单搬全部列，无界时 9k 行
+   *   实测 340-400ms；这里只要 id / title / content / updated_at，实测 74-108ms。
+   * - updated_at 是增量维护的判据：调用方按它判断某行是否变了，只对变了的行
+   *   重新分词，而不是每次重建都重算整份语料。刻意不取 content_hash：把
+   *   content_hash 进这条查询会让耗时涨到 310ms（覆盖索引失效），比省下的分词
+   *   还贵。
+   *
+   * 排序用 updated_at DESC 走 idx_memories_updated（与 #430 无界 chrono 档同一
+   * 个索引），这里排序本身不重要，命中索引才是。
+   */
+  function listBm25Corpus() {
+    return db.prepare(
+      `SELECT id, title, content, updated_at FROM memories
+       WHERE archived = 0 AND forgotten = 0
+       ORDER BY updated_at DESC`
+    ).all().map((row) => ({
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      updated_at: row.updated_at,
+    }));
+  }
+
   function getFailureStats({ since } = {}) {
     const clause = since ? "WHERE created_at >= ?" : "";
     const params = since ? [since] : [];
@@ -5959,6 +5990,7 @@ export function createStore(path) {
     countPinned,
     isPinned,
     listByIdsForInject,
+    listBm25Corpus,
     createEntity,
     findEntityByName,
     findEntityById,

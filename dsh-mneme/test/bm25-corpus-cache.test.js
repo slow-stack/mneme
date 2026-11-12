@@ -5,8 +5,8 @@ import { createService } from "../src/service.js";
 
 // #617 审计 O2 回归：BM25 语料索引按 mirror_state.generation 缓存。
 //
-// 断言观测点选 store.list({ limit: 500 }) 的调用次数，不选耗时——耗时在 CI 上
-// 抖动大，而「这一轮到底有没有重新取语料重建索引」是确定性事实。
+// 断言观测点选语料取数（store.listBm25Corpus）的调用次数，不选耗时——耗时在 CI
+// 上抖动大，而「这一轮到底有没有重新取语料并对齐索引」是确定性事实。
 //
 // 一正一反两把尺子：正向锁「缓存真的命中了」，反向（写入 / 归档 / 开关）锁
 // 「该失效的时候真的失效了」——只有正向会让「永不失效」的实现也全绿。
@@ -15,12 +15,12 @@ function setup(over = {}) {
   const store = createStore(":memory:");
   const config = { entitySearchEnabled: false, bm25SearchEnabled: true, ...over };
   const service = createService({ store, mirror: null, config, logger: null });
-  // 只数语料取数：searchMemories 里还有别的 list 调用，按 limit 精确匹配。
+  // 只数语料取数：searchMemories 里还有别的 list 调用，只挂钩语料那一个口。
   let corpusLoads = 0;
-  const origList = store.list.bind(store);
-  store.list = (opts) => {
-    if (opts?.limit === 500) corpusLoads += 1;
-    return origList(opts);
+  const origCorpus = store.listBm25Corpus.bind(store);
+  store.listBm25Corpus = () => {
+    corpusLoads += 1;
+    return origCorpus();
   };
   return { store, service, loads: () => corpusLoads };
 }
