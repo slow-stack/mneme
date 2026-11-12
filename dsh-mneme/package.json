@@ -27,7 +27,7 @@
   },
   "type": "module",
   "main": "lib/index.js",
-  "icon": "assets/icon.svg",
+  "icon": "assets/icon.png",
   "bin": {
     "dsh-mneme": "bin/cli.mjs",
     "dsh-mneme-choro": "bin/dsh-mneme-choro.mjs",

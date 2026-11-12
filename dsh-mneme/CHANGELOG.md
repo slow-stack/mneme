@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- **品牌视觉换新：README 头图与插件列表图标**。三处 README（根、`dsh-mneme/`、`mcp/`）顶部改用 `images/mneme-banner-hero.webp`（1672×941，282 KiB）——原图 2.1 MiB 的 PNG 会让 `images/` 目录体积翻倍。根目录用相对路径，两个子目录用 raw 绝对地址：npm 详情页不解析相对图片路径，`../images/...` 在 npmjs.com 上必然裂图。
+- **插件列表图标从手绘 SVG 换成位图**：`package.json` 的 `icon` 改为 `assets/icon.png`（256×256 RGBA、圆角透明、120 KiB，仍在宿主 `iconOf()` 的 256 KiB 上限内）；`assets/icon.svg` 删除。列表图标不再要求与客户端内联 mark（`MNEME_MARK_D`）同形，`test/client.test.js` 的图标用例改验 PNG 魔数、IHDR 边长、位深与 RGBA 通道——宿主对坏文件是静默回落成通用插画，不报错。
+
 ## [0.14.0] - 2026-11-12
 
 - **注入的规则池只看得到前 200 条记忆：候选池此前固定 `store.list({ limit: 200 })`，合格行 8400+ 条里 8200 条永远进不了窗（#619）**。这个窗口按 `importance DESC` 取，于是注入位实际上由「谁更重要」决定一个固定的前 200 名，而真正的排序规则（summary 优先档 → preference → importance×quality×heat×scope）只在这 200 条**内部**生效。实测本机库 9067 条活跃记忆里，按注入闸门（`injectType` / 非 narrative / importance ≥ 3）合格的有 8421 条，其中 8210 条永远进不了候选窗；窗口内 200 条的 importance 分布是**全部 5**——也就是说 summary 优先档这条规则，在最需要它的场景里根本没机会触发。
