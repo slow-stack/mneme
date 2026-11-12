@@ -11,7 +11,7 @@ $ cat ~/.dsh/memory/preferences.md
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm version"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm downloads"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=EFE7D8"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=111111" alt="CI"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/tests-3446%20total-EFE7D8?style=flat-square"><img src="https://img.shields.io/badge/tests-3446%20total-111111?style=flat-square" alt="tests"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/tests-3440%20total-EFE7D8?style=flat-square"><img src="https://img.shields.io/badge/tests-3440%20total-111111?style=flat-square" alt="tests"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/license-MIT-EFE7D8?style=flat-square&label=license&labelColor=B03A2E&logoColor=1C1C1C"><img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square&label=license&labelColor=B03A2E&logoColor=FFFFFF" alt="license"></picture>
 <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
@@ -291,30 +291,6 @@ v0.3.0 起新增**记忆基因**层：从记忆里抽取**命名实体**、**带
 - **会话级短期热记忆**（`src/hot-memory.js`）：最近 N 轮对话（默认 5 轮，`hotMemoryRounds`）按 token 预算（默认 2000，`hotMemoryMaxTokens`）滚动截断，从会话事件日志无状态重建、不落库；注入顺序为「短期上下文 → 长期记忆召回 → 摘要」
 - **选择性注入**：query 向量可用时注入候选按主题相似度重排（`selectiveInjectEnabled` 可关）；**搜索时语义去重**为激进选项（`searchSemanticDedup=true` 显式开启，近重复行 Rerank 前丢弃）
 - **召回基准**（`scripts/benchmark-recall.js`）：标准查询集驱动，计算 Recall@5 与 MRR，`legacy`（三特性全关）vs `fused`（默认配置）双跑对比
-
-## 📜 版本历史
-
-🧬 基因 → 🛡️ 审计加固 → 💤 睡眠巩固 → 🕸️ 召回融合与图谱 → 🌡️ 自进化 → 🔐 作用域隔离 → 🌐 MCP 生态 → 🧭 M.O. → 💭 情绪归因 → 📔 日记本
-
-当前版本的能力以本 README 正文的配置章节为准——**这张表只留一句话头条**，每一版具体怎么实现见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/slow-stack/mneme/releases)。
-
-| 版本 | 头条 |
-|------|------|
-| **v0.13.0**（2026-11-10） | 情绪终于有地方可放：`affective_context` 带情绪词与归因，三个独立会话才升成稳定倾向，不足就降级不丢弃 |
-| **v0.14.0**（2026-11-12） | 图像描述有了溯源表（摘要能回指哪张图），单次场合的情绪补上注入出口；召回侧两处静默截断（词法语料 500 行、注入池 200 行）改成全量 + 增量；后台 LLM 调用统一补 `sessionId` |
-| **v0.12.0**（2026-11-07） | pin 从「按类型猜」变成你亲手钉的事实；向量缓存从恒 0% 命中改为跟工作集自适应（1.8–2.4s → 370–424ms） |
-| **v0.11.0**（2026-11-05） | 记忆读得懂仓库：文件树与 import 图编译成模块划分与地志页 |
-| **v0.10.1**（2026-11-03） | 打开记忆详情不再崩掉整个宿主 |
-| **v0.10.0**（2026-11-02） | 记忆开始按「哪一轮」算账：蒸馏有了运行身份，溯源补上反方向 |
-| **v0.9.5**（2026-10-30） | 记忆能安全地递出去，也能整包收回来 |
-| **v0.9.4**（2026-10-21） | 三条链各自补上「最后一环」：主动整理、画像提取草稿、人格寻址收口 |
-| **v0.9.3**（2026-10-20） | M.O. 从「挖得出来」跑到「会被叫去挖」 |
-| **v0.9.2**（2026-10-19） | 让「看不见的失败」显形 |
-| **v0.9.1**（2026-10-18） | M.O. 从「看得见」跑到「跑得出账」 |
-| **v0.9.0**（2026-10-17） | M.O.（工作流）进入 beta：工作流住进项目仓库、可提交可 diff |
-| **v0.8.x** | 作用域隔离（agent / workspace 双维）、冲突队列人工裁决、stdio MCP server、图召回轴、冷启动 |
-
-> 早期版本中的实验性功能（Wiki-Link、tag 系统等）已在 v0.7.11 移除，详见 CHANGELOG 对应条目。
 
 ## 📦 安装
 
@@ -775,7 +751,7 @@ src/
 ├── api.js            # HTTP 路由（Web 面板数据通道，含 /conflicts 冲突队列）
 └── index.js          # 插件接线
 lib/                  # src 的同步分发产物（npm run sync，prepack 钩子在发布时自动跑；一致性由 scripts/check-sync.js 在 CI 与 release.yml 校验——它只查不同步；唯一手写例外 lib/client.js——Web 面板 bundle，sync 不覆盖）
-test/                 # 3446 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
+test/                 # 3440 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
 scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压测 · sync-lib.js 同步 · check-sync.js 发布闸门 · benchmark-recall.js / benchmark-embed.js / benchmark-rerank.js 基准 · sync-test-badge.mjs 测试徽章 · build-runtime-manifest.mjs 运行时清单
 ```
 
@@ -784,7 +760,7 @@ scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压
 ```bash
 cd dsh-mneme
 npm install        # 安装 peer 依赖（以 devDependencies 形式，用于本地测试）
-npm test           # 运行 3446 个测试
+npm test           # 运行 3440 个测试
 npm run stress     # 三轴线压测：长会话检索 / 冲突仲裁 / 多 Agent 并发（离线 mock LLM）
 npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动执行）
 ```
