@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- **`dream_runs` 第一次有了保留期：`dreamRunsTrimDays`（opt-in 默认 0）裁掉窗口外轮次的重载列，行与骨架一个字节都不动（#557）**：这张表是四个 `*RetentionDays` 都不覆盖、也没有任何 `DELETE` 路径的唯一一张——单行 `input` 快照体量随记忆数涨、轮数随天数涨，两个因子**相乘超线性**（报告库占约 43% 的页），再叠加热快照 `VACUUM INTO` 是整库副本，它同时放大库与备份两处开销。issue 的建议 1（加保留期键 + 启动期清理）方向对，但按 11-04 的评论对齐口径落地：维护者 2026-09-23 拍板 3 是「**裁列同意、删行不同意**」，而 `dream_runs` 的每一行能回放一次巩固是 `distill_runs` 不复用它的理由——所以这里**不删行、不判「最近 N 轮」**（那三处读最新行的消费者 `lastDreamRunAt` / `lastDreamBaseline` / `getLatestPolicyEpoch` 读的全是骨架列，不受裁剪影响，自然也不必为它们保尾）。裁的是三列重载：`input`（记忆库快照，可由库重建）、`decisions`（原始 LLM 决策）、`outcome`（action 映射）——issue 评论实测列文本 13.26 MB 里 50.1% + 30.5% + 17.8%；`snapshot_hash` / `status` / `provider` / `receipt` / `policy_epoch` / `store_count` 等骨架列与行本身永远保留，窗口外轮次的离线回放降级为**骨架级**（与 `reclaim` 清 input、`dreamInputSummaryEnabled` 的瘦身同一条口径，`docs/CONFIGURATION.md` 写明三处互不冲突）。**`organize` 行整体豁免**：它的 `input` 是 apply 的重放载荷、`outcome` 挂着 `dry_run_id` / `applied_at` 链，裁了会让 apply 静默空转并锁死报告——谓词与 `clearDreamRunInputs` 同一条边界。**opt-in 默认 0 = 不裁**：升级后行为逐字节不变，键的形态对齐 `recallRetentionDays` 一族（顶层扁平键、只从配置文件改、`settings.js` 白名单同族现状一样不进——族里还没人开「进面板」这个头，要开得同时补 `api.js` 的 NESTED 表与 `client.js` 的面板行）。启动期执行（与其余四张表同策略：读装配后的 cfg、失败只 warn 不挡启动），**真裁到了才出一行 info**——常态一个字都不出，别把启动日志刷成心跳。`dreamRunsTrimStats` 与 `trimDreamRunPayloads` 共用同一谓词，报告数字与执行数字同源。回归测试 7 条（窗口外裁三列且骨架列逐列不变 / 行永不删 / organize 整体豁免 / 重跑 changes 为 0 / stats 与执行同口径 / 空表与无命中不抛 / 配置键默认 0 与边界 + 文档面列出该键 + 接线锁「0 不裁、读 cfg、失败只 warn」）。变异自证 4 例（删 organize 豁免 → 2 红；`> 0` 改 `>= 0` → 1 红；默认改 90 → 1 红；裁剪 SQL 漏掉 `outcome` → 3 红），恢复后全绿。
+
+## [0.14.0-beta.3] - 2026-11-12
+
 ## [0.14.0-beta.3] - 2026-11-12
 
 - **情绪页白屏（beta.1 起的回归，beta.2 仍在）：点开「情感」页整块面板变空白，且此后每次打开都空白**。根因是 `lib/client.js` 的 `AffectivePanel` 里一行 `formatRelativeTime(it.lastSeen)` 漏传第二个参数 `t`——该函数内部要调 `t("memory.time.now")`，缺参就抛 `t is not a function`，而这行跑在 render 里，React 整棵树卸载，日志里什么都不留。引入提交是 #619（`244da66d`），`v0.14.0-beta.1` 与 `v0.14.0-beta.2` 都带它；只有库里存在带 `lastSeen` 的情绪边时才触发，所以不是每个用户都会遇到。修法是补上 `, t`，并加一条静态断言：扫出所有 `formatRelativeTime(` 调用点，逐个做括号配对、数顶层逗号，实参不足 2 个就红。全库只有这一处漏传（`formatDate`/`formatDateShort` 本来只收一个参数，扫描器报的几处是误报）。变异自证：撤掉修复后断言变红并直接指出 `:8168 (argc=1)`。

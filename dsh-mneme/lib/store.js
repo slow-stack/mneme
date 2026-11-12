@@ -3769,6 +3769,38 @@ export function createStore(path) {
     ).run(before).changes;
   }
 
+  // #557 的裁列面：input 之外的大头是 decisions / outcome 两列 JSON（issue 评论区
+  // 实测 13.26 MB 列文本里 50.1% + 30.5%）。拍板 3 的口径是「裁列同意、删行不同意」
+  // ——行与骨架列（status / provider / receipt / policy_epoch / store_count…）永远
+  // 保留，回放能力对窗口外的轮次降级为骨架级（与 reclaim 清 input、#625 的瘦身同
+  // 一条口径）。organize 行整体豁免：input 是 apply 的重放载荷、outcome 挂着
+  // dry_run_id / applied_at 链，裁了会让 apply 静默空转（clearDreamRunInputs 的同一
+  // 条边界）。读侧已逐个核对：lastDreamRunAt / lastDreamBaseline / getLatestPolicyEpoch
+  // 读的都是骨架列，/dream-status 的 decisions.demotion 是可选链（裁掉的老轮退化成
+  // null）；reclaim 的 A 项刻意不碰 decisions/outcome——那是「随手跑的无损回收」的
+  // 边界，这里是显式配置键（dreamRunsTrimDays，opt-in 默认 0 = 关）驱动的启动期裁剪。
+  function dreamRunsTrimStats(before) {
+    const row = db.prepare(
+      `SELECT count(*) AS c,
+              COALESCE(SUM(LENGTH(input)), 0) + COALESCE(SUM(LENGTH(decisions)), 0)
+                + COALESCE(SUM(LENGTH(outcome)), 0) AS b
+         FROM dream_runs
+        WHERE created_at < ? AND run_type != 'organize'
+          AND (input IS NOT NULL OR decisions IS NOT NULL OR outcome IS NOT NULL)`
+    ).get(before);
+    return { runs: row.c, bytes: row.b };
+  }
+
+  /** 裁掉窗口外 run 的三列重载（organize 豁免）。返回实际改动的行数；重跑幂等。 */
+  function trimDreamRunPayloads(before) {
+    return db.prepare(
+      `UPDATE dream_runs
+          SET input = NULL, decisions = NULL, outcome = NULL
+        WHERE created_at < ? AND run_type != 'organize'
+          AND (input IS NOT NULL OR decisions IS NOT NULL OR outcome IS NOT NULL)`
+    ).run(before).changes;
+  }
+
   /**
    * 归档行仍带的向量统计（#275 B 项）。检索 SQL 恒带 `archived = 0`，所以这部分
    * 向量按定义不可达，清掉不改变任何检索结果。
@@ -5767,6 +5799,8 @@ export function createStore(path) {
     // 存储生命周期（#275 第一批）：无损回收的统计、清理与体积口径。
     dreamRunInputStats,
     clearDreamRunInputs,
+    dreamRunsTrimStats,
+    trimDreamRunPayloads,
     archivedEmbeddingStats,
     clearArchivedEmbeddings,
     storageStats,

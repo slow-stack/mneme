@@ -304,6 +304,7 @@
 | `evalPersistTestResults` | `false` | 检索评测快照落 `recall_evals` | 生产检索恒只进 `recall_runs`，与此键无关 |
 | `recallRecordDefault` | `true` | `recall_runs` 记录默认开 | 显式传 `false` 的调用方不受影响 |
 | `recallRetentionDays` | `90` | `recall_runs` 滚动清理保留天数 | — |
+| `dreamRunsTrimDays` | `0` | `dream_runs` 重载列（input / decisions / outcome）的启动期裁剪窗口（天） | opt-in，`0` = 不裁（#557：该表单行体量随记忆数、轮数随天数，相乘超线性，是四个保留期键都不覆盖的无界大户）。**裁列不删行**（拍板 3）：骨架列与 receipt 永远保留，窗口外轮次的离线回放降级为骨架级；`organize` 行整体豁免（input 是 apply 的重放载荷）。与 `dreamInputSummaryEnabled`（写入期瘦身）、`dsh-mneme reclaim`（手动回收）互不冲突：三处都只是把对应列置空 |
 | `trustEpistemicWeighting` | `false` | 来源可信度（observation/subjective/inferred）参与排序与标注 | opt-in；关时 epistemic_status 只是惰性数据 |
 
 ### 重排层
