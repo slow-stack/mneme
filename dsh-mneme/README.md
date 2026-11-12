@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/slow-stack/mneme/main/images/mneme-banner-hero.webp" alt="Mneme — The Memory That Dreams" width="100%" />
+</p>
+
 <p align="center"><strong>中文 | <a href="docs/SEMANTIC.md">English（语义增强）</a></strong></p>
 
 # dsh-mneme
