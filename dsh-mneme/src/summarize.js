@@ -1,6 +1,8 @@
 import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { STR, langOf } from "./lang.js";
 import { withBackgroundSession } from "./llm-session.js";
+// v2 图像溯源：子开关的生效判定复用注入侧那一把（父关 = 子不生效、值保留）。
+import { injectChildEnabled } from "./config.js";
 // Issue #315：蒸馏链路的 effort 降级复用巩固侧的 withEffortFallback（拒绝
 // 重试一次不带 effort 字段）与 describeStreamFailure（流失败原因归一）——
 // 三条链路同一降级语义，不另造第二份实现。
@@ -14,7 +16,7 @@ import { breakFenceMarkers } from "./fence.js";
 import { contentToText, countImages, IMAGE_PLACEHOLDER_PREFIX } from "./attachment-text.js";
 // 图像描述档（docs/DISTILL.md:346）：占位之外再补一段「图里是什么」。本文件只
 // 负责把描述并进转录行；出描述的调用、准入判断都在 image-describe.js。
-import { appendDescriptions, describeImages, imageBlocks, canSeeImages, DESCRIPTION_PREFIX } from "./image-describe.js";
+import { appendDescriptions, describeImages, imageBlocks, canSeeImages, DESCRIPTION_PREFIX, imageRefOf } from "./image-describe.js";
 // #512：每轮蒸馏一个 run id（归因主体）。store 侧也能铸造，但这里必须知道它——
 // 写记忆时要把它一路带到 saveMemoryProvenance / 落 run 行，拿回来再写就是两次往返。
 import { randomUUID } from "node:crypto";
@@ -296,6 +298,12 @@ function eventSeq(event) {
 
 const SUBAGENT_MESSAGE_KINDS = new Set(["agent-message", "subagent-settled"]);
 
+// v2 图像溯源：一个蒸馏窗口最多记多少张图。取 50 的理由是叉积：50 张 × 本轮
+// 记忆条数（summarizeMaxEntriesPerRun 的默认量级）+ 一次窗口的写入都在同一个
+// 事务里，再高就会把一个本来毫秒级的提交拖成秒级。超出的部分不记——溯源少记
+// 是「没证据」，记错才是「假证据」。
+const IMAGE_SOURCE_MAX = 50;
+
 // 兼容严格形状 [{type:"text",text}] 与宽松形状 ["字符串", ...]（lib-smoke 用例
 // 直接传字符串数组）。只取公开文本块；reasoning 私有推理块不进蒸馏上下文。
 //
@@ -433,6 +441,13 @@ async function collectMessages(session, maxChars = 8000, language = "zh", afterS
   // 必须是个能读到的数——否则 off 档和旧版静默丢弃在观测上无法区分，下次再有人
   // 问「图到底进来没有」还是得翻源码。计量只数窗口内事件，不受截断影响。
   let imageCount = 0;
+  // v2 图像溯源：这一窗里出现过的图（按事件 seq 定位），供写库时挂到
+  // image_sources 上。与 imageCount 同一份判定（publicTranscriptParts 的 part、
+  // 去重之后），所以「数到几张」与「记了哪几张」不可能对不上。
+  //
+  // 上限 IMAGE_SOURCE_MAX：一个窗口里几百张图时，逐图 × 逐记忆的叉积会把
+  // 一次蒸馏变成上万行插入。截断是诚实的——它只是少记，不会记错。
+  const imageSources = [];
   const trim = (s, n) => (typeof s === "string" && s.length > n ? `${s.slice(0, n)}…` : s);
   const trimTranscript = (s, n) => {
     if (typeof s !== "string" || s.length <= n) return s;
@@ -469,6 +484,16 @@ async function collectMessages(session, maxChars = 8000, language = "zh", afterS
       // 会报「这一窗有 2 张图」而转录里一张都没有。part 是渲染与落盘共用的同一份
       // 判定，计量跟着它走，两处不会再各有一套口径。
       imageCount += countImages(part.blocks);
+      if (imageSources.length < IMAGE_SOURCE_MAX) {
+        const eventSeqValue = eventSeq(event);
+        if (Number.isSafeInteger(eventSeqValue)) {
+          const blocks = imageBlocks(part.blocks);
+          for (const [index, block] of blocks.entries()) {
+            if (imageSources.length >= IMAGE_SOURCE_MAX) break;
+            imageSources.push({ seq: eventSeqValue, ...imageRefOf(block, index) });
+          }
+        }
+      }
       // 图像描述档（docs/DISTILL.md:346）：开关开着且这一 part 真的带图时，才
       // 去出描述。describePart 由调用方注入（默认 undefined）——本函数不认识
       // 任何路由配置，只负责「文本最后长什么样」，这样单测可以只塞一个桩进去。
@@ -543,6 +568,8 @@ async function collectMessages(session, maxChars = 8000, language = "zh", afterS
     // Issue #611：这一窗折成占位的图片张数。调用方把它写进审计 metadata，
     // 让「图进来了几张」成为可对账的事实而不是推断。
     imageCount,
+    // v2：这一窗出现过的图（seq + 附件键），写库时挂到 image_sources。
+    imageSources,
     // Issue #493：只数**转录正文**的字符数。minWindowChars 闸门与审计里的
     // distillChars 量的都是「这一窗有多少可提炼内容」，不是「我们额外包了多少
     // 提示词」——若把围栏与角色句算进去，一条「短」也会凭空越过任何阈值，
@@ -855,6 +882,9 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
     let distillRunId = null;
     let distillRunOpenedAt = null;
     let distilledMemoryCount = 0;
+    // v2 图像溯源：本轮实际写进 image_sources 的行数（审计用）。0 与「没图」
+    // 在审计里必须能分开看，所以只在真写了时才落键。
+    let imageSourcesWritten = 0;
     let distilledWindow = null;
     let distillRunStatus = null;
     let distillRunError = null;
@@ -957,6 +987,9 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       );
       const minWindowChars = config.summarizeMinWindowChars ?? 0;
       const imageCount = collected.imageCount ?? 0;
+      // v2 图像溯源：本窗的图（seq + 附件键）。写库在 writeWindow 里，
+      // 与记忆写入同一个事务——溯源与它的派生记忆必须同生共死。
+      const imageSources = Array.isArray(collected.imageSources) ? collected.imageSources : [];
       if (minWindowChars > 0 && distillChars < minWindowChars) {
         commitCursor(session.id, nextSeq);
         writeAudit({
@@ -1294,6 +1327,47 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
             }
           }
         }
+        // v2 图像溯源：这一窗出现过的图，挂到这一窗写成功的每条记忆上。
+        //
+        // 为什么挂在**本窗全部**记忆而不是逐条挑：蒸馏是模型从整段转录提炼的，
+        // 没有任何信号能证明「这张图只贡献了第 3 条」。按行去猜（拿描述文本跟
+        // 记忆正文做匹配）会把「恰好同词」写成「确有此证」。归因宁可粗，不能编。
+        //
+        // 三重前置，任一不满足就一行不写（默认关时审计与盘上逐字节等于加它之前）：
+        //   ① 子开关生效（父 imageDescribeEnabled 显式关时恒不生效）。
+        //      注意：这一条今天被 ② 完全覆盖——父关就没有描述，described 必为 0。
+        //      保留它是因为两者表达的是不同契约：② 说「没有证据就不许挂」，
+        //      ① 说「用户关了这条线，就别再写它的表」。将来描述档若被别的开关
+        //      带起来（比如某个预设顺手开了描述），② 就不再隐含 ①，而写库仍然
+        //      必须尊重用户对溯源的表态。变异测试里唯一存活的就是它——留着但
+        //      明说它当前不可被单独触发，比假装它守着一道门的诚实。
+        //   ② 本窗真的描述成功过至少一张图——没描述时图只是占位，记忆里没有
+        //      任何一句是「从图里看出来的」，此时挂图是把同窗口谎报成因果；
+        //   ③ 本窗真的出现了图、且真的写成了记忆。
+        if (imageSources.length > 0 && savedIds.length > 0
+          && injectChildEnabled(config, "imageMemoryEnabled")
+          && (describeStats.described ?? 0) > 0
+          && typeof service.saveImageSources === "function") {
+          const rows = [];
+          for (const memoryId of savedIds) {
+            for (const source of imageSources) {
+              rows.push({
+                memoryId,
+                sessionId: session.id,
+                seq: source.seq,
+                attachmentId: source.attachmentId,
+                fallbackKey: source.fallbackKey,
+                keyStability: source.keyStability,
+                mediaType: source.mediaType,
+                name: source.name,
+                width: source.width,
+                height: source.height,
+                createdAt: distilledAt
+              });
+            }
+          }
+          imageSourcesWritten = service.saveImageSources(rows) ?? 0;
+        }
         persistCursor(session.id, nextSeq);
       };
       if (writes.length || (transcript && transcript.records.length)) {
@@ -1323,6 +1397,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           distillChars,
           ...(imageCount > 0 ? { imageCount } : {}),
           ...describeAuditPatch(describeStats),
+          ...(imageSourcesWritten > 0 ? { imageSources: imageSourcesWritten } : {}),
           parsed: parsed.length,
           ...(parsedResult.salvaged ? { json_salvaged: true } : {}),
           ...(capped > 0 ? { capped } : {}),

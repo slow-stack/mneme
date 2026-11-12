@@ -302,6 +302,8 @@ const FEATURE_FLAG_BOOLEANS = [
   // LIGHT_MODE_OFF —— 它是一次额外的视觉调用，与低资源档互斥。路由两个键走
   // FEATURE_FLAG_STRINGS（留空 = 不描述，理由写在 config.js 那三个键的注释里）。
   "imageDescribeEnabled",
+  // 图像溯源（v2）：面板可写、父关即不生效。白名单是写入面的门，漏了面板点了 400。
+  "imageMemoryEnabled",
   // #539：逐会话无痕默认关闭；子代理开关受总开关约束。手动 session id 名单留在配置，
   // 不进入只支持标量的 feature_flags 白名单。
   "sessionGateEnabled",
