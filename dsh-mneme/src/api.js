@@ -7,6 +7,7 @@ import { timingSafeEqual, randomBytes } from "node:crypto";
 import { TYPES } from "./store.js";
 import { TYPE_FILE, renderMirrorText, renderFileHeader, parseHumanEdits, MIRROR_READONLY_TYPES } from "./mirror.js";
 import { langOf } from "./lang.js";
+import { withBackgroundSession } from "./llm-session.js";
 // issue #607：面板空态要显示「能直接粘贴就跑」的命令，而面板 bundle 拿不到
 // CLI 入口路径（独立 bundle 不能 import src）——所以由这条路由把命令算好发给它。
 import { choroCliCommandFrom } from "./wiki/cli-hint.js";
@@ -827,7 +828,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     const attempt = async (effort) => {
       streamError = "";
       let reply = "";
-      for await (const chunk of llm.stream({
+      for await (const chunk of llm.stream(withBackgroundSession({
         provider,
         model,
         purpose: "dsh-mneme-connectivity-test",
@@ -847,7 +848,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" }
           }
         ]
-      })) {
+      }))) {
         if (chunk.type === "text-delta" && typeof chunk.text === "string") reply += chunk.text;
         if (chunk.type === "finish" && (chunk.reason?.kind === "error" || chunk.reason?.kind === "aborted")) {
           streamError = describeStreamFailure(chunk.reason);

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/slow-stack/mneme/main/images/mneme-banner-hero.webp" alt="Mneme — The Memory That Dreams" width="100%" />
+</p>
+
 # mneme-memory
 
 Cross-session memory for any MCP client — a stdio MCP server that exposes the

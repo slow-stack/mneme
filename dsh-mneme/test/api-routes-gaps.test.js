@@ -10,6 +10,7 @@ import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { createMaintenance } from "../src/maintenance.js";
+import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -58,7 +59,7 @@ function handler(routes, path) {
 // /api/dsh-mneme/delete
 // ---------------------------------------------------------------------------
 test("delete is auth-gated and rejects non-POST", async () => {
-  const { routes } = setup("secret-token");
+  const { routes } = setup(FAKE_API_TOKEN);
   const route = handler(routes, "/api/dsh-mneme/delete");
 
   // 未带 token → 401
@@ -70,19 +71,19 @@ test("delete is auth-gated and rejects non-POST", async () => {
   // 带 token 但 GET → 404
   res = new FakeRes();
   const ok = req("/api/dsh-mneme/delete", "GET");
-  ok.headers = { authorization: "Bearer secret-token" };
+  ok.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(ok, res);
   assert.equal(res.statusCode, 404);
 });
 
 test("delete validates id and reports missing/unknown 404", async () => {
-  const { routes, service } = setup("secret-token");
+  const { routes, service } = setup(FAKE_API_TOKEN);
   const route = handler(routes, "/api/dsh-mneme/delete");
 
   // 空 id → 400
   let res = new FakeRes();
   let ok = req("/api/dsh-mneme/delete", "POST", { id: "  " });
-  ok.headers = { authorization: "Bearer secret-token" };
+  ok.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(ok, res);
   assert.equal(res.statusCode, 400);
   assert.equal(JSON.parse(res.body).error, "missing-id");
@@ -90,7 +91,7 @@ test("delete validates id and reports missing/unknown 404", async () => {
   // 不存在的 id → 404（store.remove 静默，靠前置 getById 区分）
   res = new FakeRes();
   ok = req("/api/dsh-mneme/delete", "POST", { id: "no-such-memory" });
-  ok.headers = { authorization: "Bearer secret-token" };
+  ok.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(ok, res);
   assert.equal(res.statusCode, 404);
   assert.equal(JSON.parse(res.body).error, "not-found");
@@ -100,7 +101,7 @@ test("delete validates id and reports missing/unknown 404", async () => {
 });
 
 test("delete removes an existing memory", async () => {
-  const { routes, service } = setup("secret-token");
+  const { routes, service } = setup(FAKE_API_TOKEN);
   const route = handler(routes, "/api/dsh-mneme/delete");
 
   const { memory } = service.saveWithDedupe({ type: "project", title: "要删的", content: "删掉我" });
@@ -108,7 +109,7 @@ test("delete removes an existing memory", async () => {
 
   const res = new FakeRes();
   const ok = req("/api/dsh-mneme/delete", "POST", { id: memory.id });
-  ok.headers = { authorization: "Bearer secret-token" };
+  ok.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(ok, res);
   assert.equal(res.statusCode, 200);
   assert.deepEqual(JSON.parse(res.body), { ok: true });
@@ -129,7 +130,7 @@ test("entities directory is read-only and returns empty list", async () => {
 });
 
 test("entities lists seeded entities without auth", async () => {
-  const { routes, service } = setup("secret-token"); // 有 token 但读路由不校验
+  const { routes, service } = setup(FAKE_API_TOKEN); // 有 token 但读路由不校验
   service.createEntity({ name: "SQLite", type: "technology" });
   service.createEntity({ name: "记忆", type: "concept" });
 
@@ -230,7 +231,7 @@ test("external-api GET materializes and persists a token", async () => {
 });
 
 test("external-api PUT requires auth and validates port/host", async () => {
-  const { routes } = setup("secret-token");
+  const { routes } = setup(FAKE_API_TOKEN);
   const route = handler(routes, "/api/dsh-mneme/external-api");
 
   // 未带 token → 401
@@ -241,7 +242,7 @@ test("external-api PUT requires auth and validates port/host", async () => {
   // 端口越界 → 400
   res = new FakeRes();
   let ok = req("/api/dsh-mneme/external-api", "PUT", { port: 70000 });
-  ok.headers = { authorization: "Bearer secret-token" };
+  ok.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(ok, res);
   assert.equal(res.statusCode, 400);
   assert.equal(JSON.parse(res.body).error, "invalid-port");
@@ -249,19 +250,19 @@ test("external-api PUT requires auth and validates port/host", async () => {
   // host 带协议 → 400
   res = new FakeRes();
   ok = req("/api/dsh-mneme/external-api", "PUT", { host: "https://example.com" });
-  ok.headers = { authorization: "Bearer secret-token" };
+  ok.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(ok, res);
   assert.equal(res.statusCode, 400);
   assert.equal(JSON.parse(res.body).error, "invalid-host");
 });
 
 test("external-api PUT applies valid config and echoes it", async () => {
-  const { routes } = setup("secret-token");
+  const { routes } = setup(FAKE_API_TOKEN);
   const route = handler(routes, "/api/dsh-mneme/external-api");
 
   const res = new FakeRes();
   const ok = req("/api/dsh-mneme/external-api", "PUT", { enabled: true, port: 8790, host: "127.0.0.1" });
-  ok.headers = { authorization: "Bearer secret-token" };
+  ok.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(ok, res);
   assert.equal(res.statusCode, 200);
   const cfg = JSON.parse(res.body).config;
@@ -324,7 +325,7 @@ test("external-api GET with token=omit neither materializes nor returns a token"
 // 路径、同一套去重键。历史缺口是面板只有看/改/删/导入，用户想手写一条必须开
 // 终端或调外部 API——两条旁路都绕开了面板的去重提示。
 test("create is auth-gated and rejects non-POST", async () => {
-  const { routes } = setup("secret-token");
+  const { routes } = setup(FAKE_API_TOKEN);
   const route = handler(routes, "/api/dsh-mneme/create");
   assert.ok(route, "route must be registered");
 
@@ -337,17 +338,17 @@ test("create is auth-gated and rejects non-POST", async () => {
   // 带 token 但 GET → 404（不是 405：与既有写路由一致，避免探测路由存在性）
   res = new FakeRes();
   const ok = req("/api/dsh-mneme/create", "GET");
-  ok.headers = { authorization: "Bearer secret-token" };
+  ok.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   await route.handler(ok, res);
   assert.equal(res.statusCode, 404);
 });
 
 test("create validates type/title/content and refuses document rows", async () => {
-  const { routes, service } = setup("secret-token");
+  const { routes, service } = setup(FAKE_API_TOKEN);
   const route = handler(routes, "/api/dsh-mneme/create");
   const post = async (body) => {
     const r = req("/api/dsh-mneme/create", "POST", body);
-    r.headers = { authorization: "Bearer secret-token" };
+    r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
     const res = new FakeRes();
     await route.handler(r, res);
     return res;
@@ -384,7 +385,7 @@ test("create validates type/title/content and refuses document rows", async () =
 });
 
 test("create saves a memory and reports action=created with 201", async () => {
-  const { routes, service } = setup("secret-token");
+  const { routes, service } = setup(FAKE_API_TOKEN);
   const route = handler(routes, "/api/dsh-mneme/create");
 
   const r = req("/api/dsh-mneme/create", "POST", {
@@ -394,7 +395,7 @@ test("create saves a memory and reports action=created with 201", async () => {
     importance: 4,
     tags: ["panel"]
   });
-  r.headers = { authorization: "Bearer secret-token" };
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   const res = new FakeRes();
   await route.handler(r, res);
 
@@ -411,12 +412,12 @@ test("create saves a memory and reports action=created with 201", async () => {
 });
 
 test("create merges into an existing row with the same (type, title) and says so", async () => {
-  const { routes, service } = setup("secret-token");
+  const { routes, service } = setup(FAKE_API_TOKEN);
   const route = handler(routes, "/api/dsh-mneme/create");
   service.saveWithDedupe({ type: "project", title: "同标题", content: "原来的正文" });
 
   const r = req("/api/dsh-mneme/create", "POST", { type: "project", title: "同标题", content: "追加的正文" });
-  r.headers = { authorization: "Bearer secret-token" };
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   const res = new FakeRes();
   await route.handler(r, res);
 
@@ -434,13 +435,13 @@ test("create maps a denied write to 422 instead of leaking a 500", async () => {
   // 恰好不带 _sessionKey，所以这条分支当前到不了。仍然要锁：一旦有人把会话身份接
   // 进面板，落回 toApiList([null]) 会把「被拒」伪装成「服务器出错」——用户看到的
   // 是「新建失败」，实际是准入拒绝，两者的处置完全不同。
-  const { routes, service } = setup("secret-token");
+  const { routes, service } = setup(FAKE_API_TOKEN);
   const route = handler(routes, "/api/dsh-mneme/create");
   const original = service.saveWithDedupe;
   service.saveWithDedupe = () => ({ action: "denied", reason: "too-many-writes", memory: null });
   try {
     const r = req("/api/dsh-mneme/create", "POST", { type: "project", title: "t", content: "c" });
-    r.headers = { authorization: "Bearer secret-token" };
+    r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
     const res = new FakeRes();
     await route.handler(r, res);
     assert.equal(res.statusCode, 422);
@@ -453,7 +454,7 @@ test("create maps a denied write to 422 instead of leaking a 500", async () => {
 });
 
 test("create returns 500 (not a leaked throw) when the store rejects the write", async () => {
-  const { routes, service } = setup("secret-token");
+  const { routes, service } = setup(FAKE_API_TOKEN);
   const route = handler(routes, "/api/dsh-mneme/create");
   // 绕过路由校验直达 saveWithDedupe 的守卫：document 行会 throw。这里用打桩
   // 模拟「路由认为合法、存储层仍然拒绝」的那类情况（类型白名单漂移等）。
@@ -461,7 +462,7 @@ test("create returns 500 (not a leaked throw) when the store rejects the write",
   service.saveWithDedupe = () => { throw new Error("invalid memory type: whatever"); };
   try {
     const r = req("/api/dsh-mneme/create", "POST", { type: "project", title: "t", content: "c" });
-    r.headers = { authorization: "Bearer secret-token" };
+    r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
     const res = new FakeRes();
     await route.handler(r, res);
     assert.equal(res.statusCode, 500);
@@ -487,7 +488,7 @@ const RECLAIM_PATH = "/api/dsh-mneme/maintenance/reclaim";
  * null（store.js:2134），而报告的口径就是「按 VACUUM 前后体积量」——用内存库测，
  * 体积那几格永远测不到数字。
  */
-function reclaimSetup(apiToken = "secret-token", { logger = null } = {}) {
+function reclaimSetup(apiToken = FAKE_API_TOKEN, { logger = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-reclaim-api-"));
   const store = createStore(join(dir, "memory.db"));
   const service = createService({ store, mirror: null, config: {} });
@@ -565,7 +566,7 @@ function reqRaw(path, method, text, headers = {}) {
 }
 
 async function callReclaim(route, {
-  path = RECLAIM_PATH, method = "GET", body = null, raw = false, token = "secret-token"
+  path = RECLAIM_PATH, method = "GET", body = null, raw = false, token = FAKE_API_TOKEN
 } = {}) {
   const sendBody = body !== null || raw;
   const r = sendBody
@@ -814,7 +815,7 @@ test("reclaim POST validates olderThanDays as a JSON number, not a string", asyn
 test("reclaim without the maintenance dependency answers 503 instead of crashing", async () => {
   // 既有 14 处 createApi(...) 调用全是位置传参、不传第 9 个。它们必须继续工作：
   // 「没接线」要如实报 unavailable，而不是把 undefined.reclaim 落成崩溃。
-  const { routes } = setup("secret-token");
+  const { routes } = setup(FAKE_API_TOKEN);
   const route = handler(routes, RECLAIM_PATH);
   assert.ok(route, "路由注册与接线无关，少传依赖也要注册出来");
 
@@ -842,7 +843,7 @@ test("reclaim maps a throwing maintenance.reclaim to 500 instead of leaking", as
   // 只剩一个「内部错误」，查不出是哪次回收炸的）。GET 那侧尤其要注意——外层 catch
   // 也能兜成 500，所以只断言状态码抓不住内层 catch 的消失，必须看日志。
   const warnings = [];
-  const bench = reclaimSetup("secret-token", { logger: { warn: (m) => warnings.push(String(m)) } });
+  const bench = reclaimSetup(FAKE_API_TOKEN, { logger: { warn: (m) => warnings.push(String(m)) } });
   try {
     const route = handler(bench.routes, RECLAIM_PATH);
     const original = bench.maintenance.reclaim;

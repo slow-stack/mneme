@@ -5,6 +5,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
+import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 
 // Ego-graph read API (graph panel P1). The routes under test:
 //   GET /api/dsh-mneme/semantic/graph/ego?entity=&depth=&limit=
@@ -57,7 +58,7 @@ function buildChain(service, names, linkType = "related_to") {
 }
 
 test("ego route is registered and open without apiToken", async () => {
-  const { routes } = setup("secret-token");
+  const { routes } = setup(FAKE_API_TOKEN);
   const ego = graphRoute(routes, "/api/dsh-mneme/semantic/graph/ego");
   const attrs = graphRoute(routes, "/api/dsh-mneme/semantic/graph/entity-attrs");
   assert.ok(ego, "ego route must be registered");

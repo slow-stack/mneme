@@ -11,6 +11,7 @@ import { scopeKeyOf } from "./scope.js";
 import { isInPeakWindow, nextOffPeakAt } from "./peak-hours.js";
 import { createHash, randomUUID } from "node:crypto";
 import { STR, langOf } from "./lang.js";
+import { withBackgroundSession } from "./llm-session.js";
 // 巩固读的是行池，而动行的写手不经汇流口：applyDecisions 归档败者直接走
 // service.setArchived（dream/decisions.js），所以「不许改写外来行」这条契约要在
 // 每个池子各挡一遍。清单与静态锁见 share-imported-guard.test.js。
@@ -289,7 +290,7 @@ function buildRecordReceipts({ runId, committed, snapshot, policyEpoch }) {
  */
 async function streamText(ctx, options, onUsage, onStreamError) {
   let text = "";
-  for await (const chunk of ctx.llm.stream(options)) {
+  for await (const chunk of ctx.llm.stream(withBackgroundSession(options))) {
     if (chunk.type === "text-delta" && typeof chunk.text === "string") text += chunk.text;
     // DSH 的 StreamChunk 契约把用量嵌在 chunk.usage（TokenUsage：inputTokens /
     // outputTokens / …），chunk 顶层没有 token 字段——把整个 chunk 当用量对象交给

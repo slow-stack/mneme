@@ -53,6 +53,7 @@ flowchart TD
 | `sleepPatternLookbackDays` | `30` | 模式发现回溯的时间窗口（天） |
 | `sleepMaxPatternPerRun` | `3` | 单次运行最多创建的模式数量上限 |
 | `sleepAffectiveEnabled` | `false` | 情感归因相位（#619，opt-in）：情境情绪写成 `affective_context` 关系，跨多次独立会话的稳定倾向才铸成 pattern。是 `sleepModeEnabled` 的子相，父开关关着整个 sleep 不跑 |
+| `affectiveInjectEnabled` | `false` | 注入侧情绪注释（#619 补链）：单次场合的情绪边挂成记忆行下的一行注释。`sleepAffectiveEnabled` 的子项，父关则无从挂起 |
 | `sleepAffectiveTraitMinSessions` | `3` | 判「稳定倾向」所需的**独立会话**数（2–10）。下界 2 是故意的：N=1 就是单次场合，正是必须禁止升成特质的那个情形 |
 | `sleepAffectiveMaxRelationsPerRun` | `10` | 单轮最多写多少条 `affective_context` 关系（0–50，0 = 一条不写） |
 | `sleepProvider` | `''` | 睡眠模式专用 LLM Provider（留空则复用默认） |

@@ -13,6 +13,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { createApi, createRouteRegistrar, ROUTE_POLICIES } from "../src/api.js";
+import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 
 class FakeRes extends EventEmitter {
   constructor() { super(); this.statusCode = 200; this.body = ""; }
@@ -32,7 +33,7 @@ function req(method) {
   return r;
 }
 
-function registrar(apiToken = "secret-token") {
+function registrar(apiToken = FAKE_API_TOKEN) {
   const mounted = [];
   const { register, count } = createRouteRegistrar(fakeWebServer(mounted), apiToken, []);
   return { register, count, mounted };
@@ -79,7 +80,7 @@ test("token：任何方法都要 Bearer，handler 根本进不去", () => {
   assert.equal(called, 0);
 
   const okReq = req("GET");
-  okReq.headers = { authorization: "Bearer secret-token" };
+  okReq.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   const ok = new FakeRes();
   mounted[0].handler(okReq, ok);
   assert.equal(called, 1);
@@ -103,7 +104,7 @@ test("装配后每条路由都带 policy，count() 与实际挂载数一致", ()
   const settings = createSettings(store.db);
   const mounted = [];
   const ctx = { webServer: fakeWebServer(mounted) };
-  const api = createApi(ctx, service, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "secret-token");
+  const api = createApi(ctx, service, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, FAKE_API_TOKEN);
   assert.ok(mounted.length >= 30, "路由数异常：" + mounted.length);
   for (const route of mounted) {
     assert.ok(ROUTE_POLICIES.includes(route.policy), route.path + " 的 policy 非法：" + route.policy);

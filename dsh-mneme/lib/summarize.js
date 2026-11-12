@@ -1,5 +1,8 @@
 import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { STR, langOf } from "./lang.js";
+import { withBackgroundSession } from "./llm-session.js";
+// v2 图像溯源：子开关的生效判定复用注入侧那一把（父关 = 子不生效、值保留）。
+import { injectChildEnabled } from "./config.js";
 // Issue #315：蒸馏链路的 effort 降级复用巩固侧的 withEffortFallback（拒绝
 // 重试一次不带 effort 字段）与 describeStreamFailure（流失败原因归一）——
 // 三条链路同一降级语义，不另造第二份实现。
@@ -10,10 +13,10 @@ import { createScopeResolver } from "./scope.js";
 // 原先能提前闭合围栏——那是把用户消息升格成指令最短的一条路。
 import { breakFenceMarkers } from "./fence.js";
 // Issue #611：图片块的文本口径（占位，不是空串）。三个 textOf 副本共用这一份。
-import { contentToText, countImages } from "./attachment-text.js";
+import { contentToText, countImages, IMAGE_PLACEHOLDER_PREFIX } from "./attachment-text.js";
 // 图像描述档（docs/DISTILL.md:346）：占位之外再补一段「图里是什么」。本文件只
 // 负责把描述并进转录行；出描述的调用、准入判断都在 image-describe.js。
-import { appendDescriptions, describeImages, imageBlocks, canSeeImages } from "./image-describe.js";
+import { appendDescriptions, describeImages, imageBlocks, canSeeImages, DESCRIPTION_PREFIX, imageRefOf } from "./image-describe.js";
 // #512：每轮蒸馏一个 run id（归因主体）。store 侧也能铸造，但这里必须知道它——
 // 写记忆时要把它一路带到 saveMemoryProvenance / 落 run 行，拿回来再写就是两次往返。
 import { randomUUID } from "node:crypto";
@@ -295,6 +298,12 @@ function eventSeq(event) {
 
 const SUBAGENT_MESSAGE_KINDS = new Set(["agent-message", "subagent-settled"]);
 
+// v2 图像溯源：一个蒸馏窗口最多记多少张图。取 50 的理由是叉积：50 张 × 本轮
+// 记忆条数（summarizeMaxEntriesPerRun 的默认量级）+ 一次窗口的写入都在同一个
+// 事务里，再高就会把一个本来毫秒级的提交拖成秒级。超出的部分不记——溯源少记
+// 是「没证据」，记错才是「假证据」。
+const IMAGE_SOURCE_MAX = 50;
+
 // 兼容严格形状 [{type:"text",text}] 与宽松形状 ["字符串", ...]（lib-smoke 用例
 // 直接传字符串数组）。只取公开文本块；reasoning 私有推理块不进蒸馏上下文。
 //
@@ -400,6 +409,30 @@ function snapshotSessionEvents(session, afterSeq, throughSeq) {
   });
 }
 
+/**
+ * 图像描述档的审计片段（#619 补链，图像侧）。
+ *
+ * 为什么单独一个函数：三处写审计 metadata 的分支（窗口过小 / 解析失败 / 成功）
+ * 都必须带同一份口径，抄三遍就一定会漂移。规则是「有数才写」——全零时返回空
+ * 对象，于是关闭态（默认）的审计行与加这段之前逐字节一致。
+ *
+ * attempted 是分母、described 是分子：两者相减才是「试了没成」。只看 described
+ * 会把「一张都没试」和「试了全失败」混成同一行，而那正是这次要修的静默。
+ */
+function describeAuditPatch(stats) {
+  if (!stats || typeof stats !== "object") return {};
+  const attempted = stats.attempted ?? 0;
+  const described = stats.described ?? 0;
+  const failed = stats.failed ?? 0;
+  const out = {};
+  if (attempted > 0) out.imageDescribed = described;
+  if (attempted > 0) out.imageDescribeFailed = failed;
+  if (stats.firstError) out.imageDescribeError = String(stats.firstError).slice(0, 120);
+  if (stats.unavailable) out.imageDescribeUnavailable = String(stats.unavailable).slice(0, 120);
+  if (stats.skipped) out.imageDescribeSkipped = String(stats.skipped);
+  return out;
+}
+
 async function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, throughSeq, describePart) {
   const events = snapshotSessionEvents(session, afterSeq, throughSeq);
   const lines = [];
@@ -408,6 +441,13 @@ async function collectMessages(session, maxChars = 8000, language = "zh", afterS
   // 必须是个能读到的数——否则 off 档和旧版静默丢弃在观测上无法区分，下次再有人
   // 问「图到底进来没有」还是得翻源码。计量只数窗口内事件，不受截断影响。
   let imageCount = 0;
+  // v2 图像溯源：这一窗里出现过的图（按事件 seq 定位），供写库时挂到
+  // image_sources 上。与 imageCount 同一份判定（publicTranscriptParts 的 part、
+  // 去重之后），所以「数到几张」与「记了哪几张」不可能对不上。
+  //
+  // 上限 IMAGE_SOURCE_MAX：一个窗口里几百张图时，逐图 × 逐记忆的叉积会把
+  // 一次蒸馏变成上万行插入。截断是诚实的——它只是少记，不会记错。
+  const imageSources = [];
   const trim = (s, n) => (typeof s === "string" && s.length > n ? `${s.slice(0, n)}…` : s);
   const trimTranscript = (s, n) => {
     if (typeof s !== "string" || s.length <= n) return s;
@@ -444,6 +484,16 @@ async function collectMessages(session, maxChars = 8000, language = "zh", afterS
       // 会报「这一窗有 2 张图」而转录里一张都没有。part 是渲染与落盘共用的同一份
       // 判定，计量跟着它走，两处不会再各有一套口径。
       imageCount += countImages(part.blocks);
+      if (imageSources.length < IMAGE_SOURCE_MAX) {
+        const eventSeqValue = eventSeq(event);
+        if (Number.isSafeInteger(eventSeqValue)) {
+          const blocks = imageBlocks(part.blocks);
+          for (const [index, block] of blocks.entries()) {
+            if (imageSources.length >= IMAGE_SOURCE_MAX) break;
+            imageSources.push({ seq: eventSeqValue, ...imageRefOf(block, index) });
+          }
+        }
+      }
       // 图像描述档（docs/DISTILL.md:346）：开关开着且这一 part 真的带图时，才
       // 去出描述。describePart 由调用方注入（默认 undefined）——本函数不认识
       // 任何路由配置，只负责「文本最后长什么样」，这样单测可以只塞一个桩进去。
@@ -518,6 +568,8 @@ async function collectMessages(session, maxChars = 8000, language = "zh", afterS
     // Issue #611：这一窗折成占位的图片张数。调用方把它写进审计 metadata，
     // 让「图进来了几张」成为可对账的事实而不是推断。
     imageCount,
+    // v2：这一窗出现过的图（seq + 附件键），写库时挂到 image_sources。
+    imageSources,
     // Issue #493：只数**转录正文**的字符数。minWindowChars 闸门与审计里的
     // distillChars 量的都是「这一窗有多少可提炼内容」，不是「我们额外包了多少
     // 提示词」——若把围栏与角色句算进去，一条「短」也会凭空越过任何阈值，
@@ -830,6 +882,9 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
     let distillRunId = null;
     let distillRunOpenedAt = null;
     let distilledMemoryCount = 0;
+    // v2 图像溯源：本轮实际写进 image_sources 的行数（审计用）。0 与「没图」
+    // 在审计里必须能分开看，所以只在真写了时才落键。
+    let imageSourcesWritten = 0;
     let distilledWindow = null;
     let distillRunStatus = null;
     let distillRunError = null;
@@ -849,6 +904,11 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       // 判定放在这里而不是 image-describe.js 里：路由来自 config，准入是一次可能
       // 很贵的 resolveModelInfo 调用，两者都该只问一次，而不是每张图问一次。
       let describePart;
+      // 描述档的逐次计数（#619 补链，图像侧）：attempted/described/failed 与第一条
+      // 失败原因。原先这条链路上只有一个 imageCount（图块数），「开了开关但一次
+      // 都没跑成」在审计里与「这个窗口没有图」长得完全一样——静默失效。整档不跑
+      // 的原因也记在这里，审计 metadata 会带上它。
+      const describeStats = { attempted: 0, described: 0, failed: 0 };
       if (config.imageDescribeEnabled === true) {
         const describeProvider = typeof config.imageDescribeProvider === "string" ? config.imageDescribeProvider.trim() : "";
         const describeModel = typeof config.imageDescribeModel === "string" ? config.imageDescribeModel.trim() : "";
@@ -856,7 +916,9 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           const sight = await canSeeImages(ctx, describeProvider, describeModel);
           // "unknown"（老适配器不声明能力）照发：宿主那侧对未知是不投影，照原样
           // 交给适配器，它若真看不到再降级成占位——这里替它决定就是猜。
-          if (sight !== false) {
+          if (sight === false) {
+            describeStats.skipped = "model-cannot-see-images";
+          } else {
             const describeRoute = { provider: describeProvider, model: describeModel };
             // 同一张图在一次蒸馏里只描述一次：同一附件常被重复贴（追问、引用），
             // 按 attachmentId 缓存，省掉重复的视觉调用。
@@ -869,12 +931,17 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
                 return !described.has(key);
               });
               if (fresh.length > 0) {
-                const got = await describeImages(ctx, describeRoute, config, fresh, { signal: controller.signal });
+                const got = await describeImages(ctx, describeRoute, config, fresh, { signal: controller.signal, stats: describeStats });
                 for (const [key, value] of got) described.set(key, value);
               }
               return appendDescriptions(part.text, blocks, described);
             };
           }
+        } else {
+          // 开着却没配路由：用户以为自己开了，实际一次都没跑——这正是要能看见的
+          // 那一种静默，所以写进审计。反过来，开关关着（默认）不写任何东西，审计行
+          // 必须与加这段之前逐字节一致。
+          describeStats.skipped = "no route";
         }
       }
       const collected = await collectMessages(
@@ -920,6 +987,9 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       );
       const minWindowChars = config.summarizeMinWindowChars ?? 0;
       const imageCount = collected.imageCount ?? 0;
+      // v2 图像溯源：本窗的图（seq + 附件键）。写库在 writeWindow 里，
+      // 与记忆写入同一个事务——溯源与它的派生记忆必须同生共死。
+      const imageSources = Array.isArray(collected.imageSources) ? collected.imageSources : [];
       if (minWindowChars > 0 && distillChars < minWindowChars) {
         commitCursor(session.id, nextSeq);
         writeAudit({
@@ -927,7 +997,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           model_id: route ? `${route.provider}:${route.model}` : "unknown",
           status: "skipped",
           error_message: "window-too-small",
-          metadata: { distillChars, minWindowChars, ...(imageCount > 0 ? { imageCount } : {}) }
+          metadata: { distillChars, minWindowChars, ...(imageCount > 0 ? { imageCount } : {}), ...describeAuditPatch(describeStats) }
         });
         return;
       }
@@ -971,7 +1041,16 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       // （可注入 now()，测试用假时钟）；锚点行同时是 prompt 里「按提示末尾给出的
       // 当前时间换算」那句的落点，改写/移动随两处一起动。
       const distillPrompt = config.codingRetrospect ? STR.prompts.codingSummary[langOf(config)] : STR.prompts.summary[langOf(config)];
-      const anchoredPrompt = `${distillPrompt}${STR.distillTimeAnchor[langOf(config)](new Date(now()).toISOString())}`;
+      // 图像描述档真的产出了描述时，才补一句「描述行是事实来源」。这一句必须在
+      // 拿到 stats 之后拼（describeStats.described 是本次窗口实际写进转录的条数）：
+      // 没有描述却告诉模型「描述行可信」是在描述一个不存在的行，只会让它去找。
+      // 前缀字面量从两个模块导入，不在这里抄一遍——文案与生成端漂移过一次就会
+      // 变成「提示词说要找『描述：』、转录里写的却是别的」这种最难查的静默失效。
+      const describedCount = describeStats.described ?? 0;
+      const imageHint = describedCount > 0
+        ? STR.imageDistillHint[langOf(config)](IMAGE_PLACEHOLDER_PREFIX, DESCRIPTION_PREFIX)
+        : "";
+      const anchoredPrompt = `${distillPrompt}${STR.distillTimeAnchor[langOf(config)](new Date(now()).toISOString())}${imageHint}`;
 
       const options = {
         provider: route.provider,
@@ -997,9 +1076,9 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         const baseDelayMs = config.distillRateLimitBaseDelayMs ?? 1000;
         // 每次尝试独立拼 effort 字段：降级重试（withEffort=false）必须真的
         // 不带 reasoningEffort，不能复用带字段的同一 options 对象。
-        const callOptions = withEffort && summarizeEffort
+        const callOptions = withBackgroundSession(withEffort && summarizeEffort
           ? { ...options, reasoningEffort: summarizeEffort }
-          : options;
+          : options);
         for (let attempt = 0; ; attempt++) {
           // 每次尝试重置审计状态：effort 拒收/429 的失败 attempt 会把 status 置
           // error，若后续重试成功，审计必须记录最终成功而不是残留第一次的失败
@@ -1135,6 +1214,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           audit.metadata = {
             distillChars,
             ...(imageCount > 0 ? { imageCount } : {}),
+            ...describeAuditPatch(describeStats),
             ...failureAudit.metadata,
             streak,
             ...(maxParseRetries > 0 ? { maxRetries: maxParseRetries } : {}),
@@ -1247,6 +1327,47 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
             }
           }
         }
+        // v2 图像溯源：这一窗出现过的图，挂到这一窗写成功的每条记忆上。
+        //
+        // 为什么挂在**本窗全部**记忆而不是逐条挑：蒸馏是模型从整段转录提炼的，
+        // 没有任何信号能证明「这张图只贡献了第 3 条」。按行去猜（拿描述文本跟
+        // 记忆正文做匹配）会把「恰好同词」写成「确有此证」。归因宁可粗，不能编。
+        //
+        // 三重前置，任一不满足就一行不写（默认关时审计与盘上逐字节等于加它之前）：
+        //   ① 子开关生效（父 imageDescribeEnabled 显式关时恒不生效）。
+        //      注意：这一条今天被 ② 完全覆盖——父关就没有描述，described 必为 0。
+        //      保留它是因为两者表达的是不同契约：② 说「没有证据就不许挂」，
+        //      ① 说「用户关了这条线，就别再写它的表」。将来描述档若被别的开关
+        //      带起来（比如某个预设顺手开了描述），② 就不再隐含 ①，而写库仍然
+        //      必须尊重用户对溯源的表态。变异测试里唯一存活的就是它——留着但
+        //      明说它当前不可被单独触发，比假装它守着一道门的诚实。
+        //   ② 本窗真的描述成功过至少一张图——没描述时图只是占位，记忆里没有
+        //      任何一句是「从图里看出来的」，此时挂图是把同窗口谎报成因果；
+        //   ③ 本窗真的出现了图、且真的写成了记忆。
+        if (imageSources.length > 0 && savedIds.length > 0
+          && injectChildEnabled(config, "imageMemoryEnabled")
+          && (describeStats.described ?? 0) > 0
+          && typeof service.saveImageSources === "function") {
+          const rows = [];
+          for (const memoryId of savedIds) {
+            for (const source of imageSources) {
+              rows.push({
+                memoryId,
+                sessionId: session.id,
+                seq: source.seq,
+                attachmentId: source.attachmentId,
+                fallbackKey: source.fallbackKey,
+                keyStability: source.keyStability,
+                mediaType: source.mediaType,
+                name: source.name,
+                width: source.width,
+                height: source.height,
+                createdAt: distilledAt
+              });
+            }
+          }
+          imageSourcesWritten = service.saveImageSources(rows) ?? 0;
+        }
         persistCursor(session.id, nextSeq);
       };
       if (writes.length || (transcript && transcript.records.length)) {
@@ -1275,6 +1396,8 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         audit.metadata = {
           distillChars,
           ...(imageCount > 0 ? { imageCount } : {}),
+          ...describeAuditPatch(describeStats),
+          ...(imageSourcesWritten > 0 ? { imageSources: imageSourcesWritten } : {}),
           parsed: parsed.length,
           ...(parsedResult.salvaged ? { json_salvaged: true } : {}),
           ...(capped > 0 ? { capped } : {}),
