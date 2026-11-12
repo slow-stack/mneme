@@ -528,7 +528,10 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
         }
         // 先读链（setForget 不改 superseded_by，两侧等价；放在前面是为了让「找不到
         // 链」与「行不存在」共用一个前置检查，不产生第二次 getById）。
-        const chain = service.supersedeContext(args.id);
+        // typeof 守卫与 service.js 的 store 层守卫对称：生产 createService 一定有这个
+        // 方法，但旧装配/手写测试替身没有时，裸调用会抛 TypeError 把整条遗忘操作打掉
+        // ——回执增强不该有否决权。缺方法按「无链信息」降级。
+        const chain = typeof service.supersedeContext === "function" ? service.supersedeContext(args.id) : null;
         const memory = service.setForget(args.id, args.forgotten ?? true);
         return {
           memory: { id: memory.id, forgotten: memory.forgotten },

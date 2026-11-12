@@ -128,3 +128,26 @@ test("supersedeContext：不存在的行返回 null，计数只认指向本行�
     store.close();
   }
 });
+// 回执增强不得有否决权（#532 审计观察）：旧装配 / 手写测试替身没有
+// service.supersedeContext 时，裸调用会抛 TypeError，把真正的遗忘操作一起打掉。
+// 生产 createService 一定提供它，所以这条锁的是「替身/旧装配」这一侧。
+test("memory_forget：service 缺 supersedeContext 时降级为无链信息，遗忘本身照常完成", async () => {
+  const registered = [];
+  const ctx = { tools: { register(def) { registered.push(def); return () => {}; } } };
+  const calls = [];
+  const stubService = {
+    getById: (id) => ({ id }),
+    setForget: (id, forgotten) => { calls.push([id, forgotten]); return { id, forgotten: forgotten !== false }; }
+    // 刻意不提供 supersedeContext（旧装配形状）
+  };
+  createTools(ctx, stubService, {}, undefined);
+  const forget = registered.find((d) => d.name === "memory_forget");
+  assert.ok(forget, "memory_forget 必须注册");
+
+  const out = await forget.execute({ id: "m1", forgotten: true });
+  assert.deepEqual(calls, [["m1", true]], "遗忘操作必须真的执行");
+  assert.equal(out.memory.forgotten, true);
+  assert.equal(out.chain, undefined, "缺链信息时不编造 chain 对象");
+  const text = forget.output.render({ id: "m1" }, out);
+  assert.doesNotMatch(typeof text === "string" ? text : JSON.stringify(text), /supersedes/);
+});
