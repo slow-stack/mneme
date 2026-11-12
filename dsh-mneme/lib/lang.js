@@ -182,6 +182,26 @@ export const STR = {
     zh: (type, title, content, date) => `- [线索/${type}] ${date ? `${date} ` : ""}${title}：${content}`,
     en: (type, title, content, date) => `- [hint/${type}] ${date ? `${date} ` : ""}${title}: ${content}`
   },
+  // #619 补链（注入侧）：单次场合的情绪注释，挂在它所属的记忆行下面。
+  // 三个信息缺一不可——谁、什么心情、哪件事：只写「她不高兴」是没用的注入，
+  // 模型会把一次场合的情绪当成稳定评价用；场合数说明了「这是一次，不是一贯」。
+  // `why` 是 sleep 侧给的理由（可缺省），有就带上，没有不补空话。
+  affectiveNote: {
+    zh: (person, emotion, target, occasions, why) =>
+      `〔情绪记录·单次场合〕${person} 在「${target}」这件事上${emotion}` +
+      (occasions > 1 ? `（记了 ${occasions} 次，仍属同一场合）` : "") +
+      (why ? `；当时的原因：${why}` : "") +
+      "。这是场合性的，不要当作一贯表现。",
+    en: (person, emotion, target, occasions, why) =>
+      `[affect record · single occasion] ${person} was ${emotion} about "${target}"` +
+      (occasions > 1 ? ` (recorded ${occasions}× in the same occasion)` : "") +
+      (why ? `; reason at the time: ${why}` : "") +
+      ". Occasion-bound — do not read it as a standing disposition."
+  },
+  affectiveTraitNote: {
+    zh: (target, occasions) => `〔情绪记录·多次独立场合〕这一态度在 ${occasions} 个独立场合都出现过：「${target}」。`,
+    en: (target, occasions) => `[affect record · repeated occasions] This attitude recurred across ${occasions} independent occasions: "${target}".`
+  },
   userSettingsHeader: {
     zh: "[用户设置] 来自 dsh-mneme 的用户画像与规则：",
     en: "[User settings] Profile and rules from dsh-mneme:"

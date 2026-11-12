@@ -8,6 +8,18 @@
   - **不覆盖宿主已经给的真会话**：`options.sessionId` 已存在时原样返回，不覆盖。注入链路上宿主可能带着真实用户会话进来，那时把 id 换成插件标识等于伪造来源。
   - **测试**：`test/llm-session.test.js` 6 条（填 id 且不改入参、已给真 id 时不覆盖、容忍 undefined/null、七个调用点源码各含预期 needle、`src` 全域不得再出现裸 `.stream(options)` 或 `.stream({ ...route,`、常量值就是 `"dsh-mneme"` 且长度 1–64 符合网关约束）。变异自证五轮各自变红：撤掉 `src/dream.js` 接线、把 helper 改成恒等返回、撤掉 `src/image-describe.js` 接线、改成无条件覆盖 sessionId、撤掉 `src/summarize.js` 接线。
 
+- **情感记忆此前只写在库里、模型看不见：单次场合的情绪（occasion 档）补上注入出口，`affectiveInjectEnabled` 默认关**。`sleep` 的 affective 相位从 0.13 就在跑——它扫情绪归因、往 `entity_relations` 写 `affective_context` 边（`emotion` / `attribution` / `sessionCount` / `evidence`），面板的「情感」页也能按「谁·情绪·对象·场合/倾向」聚合展示。但**边不是记忆**：`INJECT_TYPES` 是 memory 类型白名单，边不在里面，所以 occasion 档一百条也进不了模型视野。跨够 `sleepAffectiveTraitMinSessions`（默认 3）个独立会话升上来的 trait 会铸成 `type: "pattern"`，那是真进注入的——可模型读到的是一条普通 pattern，不知道它是情绪归因。于是最典型的「她那天很焦虑」写进了库、面板看得见，问模型的时候它答不出来。
+  - **复用 #641 的注释通道，不新开块**：`src/inject.js` 渲染每行时已经会拼 `m.conflictNote`（矛盾对标注），情绪线索挂在同一位置、另起字段 `affectiveNote`，顺序是「正文 → 情绪 → 冲突」——情绪说明背景，矛盾标注是决策指令必须贴最后。这样不新增 `ctx.systemPrompt.context`（那会改变整个注入块的顺序与预算分配），也不动 schema。
+  - **挂哪条边、挂不挂由 service 决定**：`src/store.js` 新增 `affectiveRelationsByMemories(memoryIds, perMemory = 1)`，一次 SQL 按候选记忆 id 批量取边（`WHERE relation_type = 'affective_context' AND memory_id IN (…)`，两端 LEFT JOIN entities 取人名与对象名），按 `created_at` 倒序、每条记忆最多一条。`src/service.js` 在 `injectCandidates` 的 superseded 过滤之后、pinnedStats 之前挂注释，**trait 档跳过**（`attribution === "trait"` 或 `promotedToTrait === true`）——它已经以 pattern 身份进来了，再挂一遍等于同一件事说两次。名字为空的边（实体被删）直接跳过，不渲染「unknown 对 unknown」。
+  - **注释吃注入块预算，所以限长**：`MAX_BLOCK = maxContent + 600`，一条超长注释会把同批候选挤成降级标题行。`AFFECTIVE_NOTE_MAX = 160` 字，超了整条不挂（不是截断——截一半的情绪说明比没有更误导），`why` 单独截 60 字。
+  - **开关是子项，不占新座位**：`affectiveInjectEnabled` 默认 false，父开关是 `sleepAffectiveEnabled`（后端 `INJECT_CHILD_FLAGS`，面板 `FEATURE_CHILDREN`，两表同源由 `test/inject-parent-gate.test.js` 锁）。父关时子项一并不挂但持久值保留，父开关缺省（未写过）时只按子项自己判。进 `LIGHT_MODE_OFF`：低资源档本来就连 `sleepAffectiveEnabled` 一起关，情绪边都不会产出，留着这个注入开关没有意义。
+  - **测试**：`test/affective-inject.test.js` 8 条（默认关不改注入、开着带全四项事实且单次场合不写次数、trait 档不重复挂、父关一并不挂与父缺省只按子项判、实体被删不挂、超长整条放弃但记忆仍在块里、同一记忆多条边只挂最新一条、配置默认值与轻量档）。变异自证五轮各自变红：删掉 `inject.js` 的拼接、删掉 trait 跳过、把父闸换成裸读子项、把「任一侧名字为空」写成「两侧都空」、删掉长度闸。
+
+- **图像描述档此前整档静默：开了开关、配了模型、一次都没跑成，审计里与「这个窗口没有图」长得一样——现在四种结局都留痕**。`describeImages` 的 `catch {}` 吞掉所有异常，provider/model 留空整档不跑也不报，宿主 `textOnly` 降级同样无声；审计 metadata 里只有一个 `imageCount`（图块数）。于是「我明明开了」和「库里从来没进过图」在运维上无法区分（实测本库 273MB 里含 `[图` 的记忆 6 条，全是关于这个功能本身的说明文字，没有一条来自真实图片）。
+  - **计数走出参，不认开关态**：`describeImages(..., options.stats)` 多一个可选出参（口径同 `injectCandidates` 的 `pinnedStats`：不传时行为逐字节等于改前），逐张记 `attempted`、成功记 `described`、空描述与抛异常各记 `failed` 并留首条错误原文（截 120 字）。`src/summarize.js` 加的 `describeAuditPatch(stats)` 是唯一出口，三处写审计的分支（窗口过小 / 解析失败 / 成功）共用，避免抄三遍漂移。
+  - **四条结局**：跑成了写 `imageDescribed` + `imageDescribeFailed: 0`（失败数显式给 0，缺键会被读成「没跑」，那正是要避免的模糊）；试了失败写失败数与 `imageDescribeError`；开着没配路由写 `imageDescribeSkipped: "no route"`；模型明确不能看图写 `"model-cannot-see-images"`。**默认关着时一个 `imageDescribe*` 键都不写**，老档位审计行逐字节不变。
+  - **测试**：`test/image-description.test.js` 增 5 条（跑成 / 失败带原文 / 没路由 / 看不懂图 / 关闭态不写任何键）。变异自证三轮：去掉成功分支的 patch（4 红）、去掉 no route 的记账（1 红）、去掉 `attempted` 计数（2 红）。
+
 ## [0.14.0-beta.3] - 2026-11-12
 
 - **情绪页白屏（beta.1 起的回归，beta.2 仍在）：点开「情感」页整块面板变空白，且此后每次打开都空白**。根因是 `lib/client.js` 的 `AffectivePanel` 里一行 `formatRelativeTime(it.lastSeen)` 漏传第二个参数 `t`——该函数内部要调 `t("memory.time.now")`，缺参就抛 `t is not a function`，而这行跑在 render 里，React 整棵树卸载，日志里什么都不留。引入提交是 #619（`244da66d`），`v0.14.0-beta.1` 与 `v0.14.0-beta.2` 都带它；只有库里存在带 `lastSeen` 的情绪边时才触发，所以不是每个用户都会遇到。修法是补上 `, t`，并加一条静态断言：扫出所有 `formatRelativeTime(` 调用点，逐个做括号配对、数顶层逗号，实参不足 2 个就红。全库只有这一处漏传（`formatDate`/`formatDateShort` 本来只收一个参数，扫描器报的几处是误报）。变异自证：撤掉修复后断言变红并直接指出 `:8168 (argc=1)`。

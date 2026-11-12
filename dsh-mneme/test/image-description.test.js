@@ -269,3 +269,70 @@ test("imageBlocks 只挑带 attachment 的 image 块", () => {
   assert.equal(imageBlocks(content).length, 1, "没有 attachment 的 image 块无从描述");
   assert.deepEqual(imageBlocks(null), [], "非数组返回空，不抛");
 });
+
+// ── 审计：整档静默失效必须在 metadata 里留下痕迹 ─────────────────────────
+// 这一组的理由：这条链路上原先只有 imageCount（图块数），于是「开了开关但一次
+// 都没跑成」与「这个窗口本来没有图」在审计里长得一模一样。四条用例分别钉住
+// 「跑成了」「试了失败」「开着没路由」「默认关着不写」四种结局，少任何一条，
+// 下次有人把计数删了都不会有测试变红。
+
+function auditRow(service) {
+  return service.listLlmAudits().find((r) => r.status === "success");
+}
+
+test("审计：开着且跑成，写 imageDescribed 与 imageDescribeFailed=0", async () => {
+  const r = setup(
+    { imageDescribeEnabled: true, imageDescribeProvider: "vision", imageDescribeModel: "v1" },
+    fakeLlm({ description: "一张截图" })
+  );
+  await distill(r, sessionOf("img-audit-ok", [imageMessage(1, "看下这个"), { seq: 2, type: "turn/end" }]));
+  const row = auditRow(r.service);
+  assert.ok(row, "成功行要存在");
+  assert.equal(row.metadata?.imageDescribed, 1, "跑成一张就记 1");
+  assert.equal(row.metadata?.imageDescribeFailed, 0, "失败数必须是显式的 0，不能缺键");
+  assert.equal(row.metadata?.imageDescribeError, undefined, "没失败就不写原因");
+  assert.equal(row.metadata?.imageCount, 1, "图块数照旧");
+});
+
+test("审计：描述调用失败，写 imageDescribeFailed 与首条错误原文", async () => {
+  const r = setup(
+    { imageDescribeEnabled: true, imageDescribeProvider: "vision", imageDescribeModel: "v1" },
+    fakeLlm({ throwOnDescribe: true })
+  );
+  await distill(r, sessionOf("img-audit-fail", [imageMessage(1, "看下这个"), { seq: 2, type: "turn/end" }]));
+  const row = auditRow(r.service);
+  assert.ok(row, "描述挂了，蒸馏本身仍是成功行");
+  assert.equal(row.metadata?.imageDescribed, 0, "一张都没成");
+  assert.equal(row.metadata?.imageDescribeFailed, 1, "试了一张、失败一张");
+  assert.ok(
+    String(row.metadata?.imageDescribeError ?? "").includes("vision route down"),
+    "首条错误要留原文，否则只知道失败了不知道为什么"
+  );
+});
+
+test("审计：开着但路由留空，写 imageDescribeSkipped=no route", async () => {
+  const r = setup({ imageDescribeEnabled: true, imageDescribeProvider: "", imageDescribeModel: "" });
+  await distill(r, sessionOf("img-audit-noroute", [imageMessage(1, "看下这个"), { seq: 2, type: "turn/end" }]));
+  const row = auditRow(r.service);
+  assert.equal(row.metadata?.imageDescribeSkipped, "no route", "「我开了但没配」必须能看见");
+  assert.equal(row.metadata?.imageDescribed, undefined, "没试过就不该有尝试数");
+});
+
+test("审计：模型明确不能看图，写 imageDescribeSkipped=model-cannot-see-images", async () => {
+  const r = setup(
+    { imageDescribeEnabled: true, imageDescribeProvider: "text", imageDescribeModel: "t1" },
+    fakeLlm({ modalities: ["text"] })
+  );
+  await distill(r, sessionOf("img-audit-blind", [imageMessage(1, "看下这个"), { seq: 2, type: "turn/end" }]));
+  const row = auditRow(r.service);
+  assert.equal(row.metadata?.imageDescribeSkipped, "model-cannot-see-images");
+});
+
+test("审计：默认关着时不写任何 imageDescribe* 键（老档位逐字节不变）", async () => {
+  const r = setup({ imageDescribeProvider: "vision", imageDescribeModel: "v1" });
+  await distill(r, sessionOf("img-audit-off", [imageMessage(1, "看下这个"), { seq: 2, type: "turn/end" }]));
+  const row = auditRow(r.service);
+  assert.equal(row.metadata?.imageCount, 1, "图块数照旧要数");
+  const extra = Object.keys(row.metadata ?? {}).filter((k) => k.startsWith("imageDescribe"));
+  assert.deepEqual(extra, [], `关闭态不该多出任何键，实得多出 ${extra.join(",")}`);
+});

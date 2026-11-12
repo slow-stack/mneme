@@ -401,6 +401,30 @@ function snapshotSessionEvents(session, afterSeq, throughSeq) {
   });
 }
 
+/**
+ * 图像描述档的审计片段（#619 补链，图像侧）。
+ *
+ * 为什么单独一个函数：三处写审计 metadata 的分支（窗口过小 / 解析失败 / 成功）
+ * 都必须带同一份口径，抄三遍就一定会漂移。规则是「有数才写」——全零时返回空
+ * 对象，于是关闭态（默认）的审计行与加这段之前逐字节一致。
+ *
+ * attempted 是分母、described 是分子：两者相减才是「试了没成」。只看 described
+ * 会把「一张都没试」和「试了全失败」混成同一行，而那正是这次要修的静默。
+ */
+function describeAuditPatch(stats) {
+  if (!stats || typeof stats !== "object") return {};
+  const attempted = stats.attempted ?? 0;
+  const described = stats.described ?? 0;
+  const failed = stats.failed ?? 0;
+  const out = {};
+  if (attempted > 0) out.imageDescribed = described;
+  if (attempted > 0) out.imageDescribeFailed = failed;
+  if (stats.firstError) out.imageDescribeError = String(stats.firstError).slice(0, 120);
+  if (stats.unavailable) out.imageDescribeUnavailable = String(stats.unavailable).slice(0, 120);
+  if (stats.skipped) out.imageDescribeSkipped = String(stats.skipped);
+  return out;
+}
+
 async function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, throughSeq, describePart) {
   const events = snapshotSessionEvents(session, afterSeq, throughSeq);
   const lines = [];
@@ -850,6 +874,11 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       // 判定放在这里而不是 image-describe.js 里：路由来自 config，准入是一次可能
       // 很贵的 resolveModelInfo 调用，两者都该只问一次，而不是每张图问一次。
       let describePart;
+      // 描述档的逐次计数（#619 补链，图像侧）：attempted/described/failed 与第一条
+      // 失败原因。原先这条链路上只有一个 imageCount（图块数），「开了开关但一次
+      // 都没跑成」在审计里与「这个窗口没有图」长得完全一样——静默失效。整档不跑
+      // 的原因也记在这里，审计 metadata 会带上它。
+      const describeStats = { attempted: 0, described: 0, failed: 0 };
       if (config.imageDescribeEnabled === true) {
         const describeProvider = typeof config.imageDescribeProvider === "string" ? config.imageDescribeProvider.trim() : "";
         const describeModel = typeof config.imageDescribeModel === "string" ? config.imageDescribeModel.trim() : "";
@@ -857,7 +886,9 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           const sight = await canSeeImages(ctx, describeProvider, describeModel);
           // "unknown"（老适配器不声明能力）照发：宿主那侧对未知是不投影，照原样
           // 交给适配器，它若真看不到再降级成占位——这里替它决定就是猜。
-          if (sight !== false) {
+          if (sight === false) {
+            describeStats.skipped = "model-cannot-see-images";
+          } else {
             const describeRoute = { provider: describeProvider, model: describeModel };
             // 同一张图在一次蒸馏里只描述一次：同一附件常被重复贴（追问、引用），
             // 按 attachmentId 缓存，省掉重复的视觉调用。
@@ -870,12 +901,17 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
                 return !described.has(key);
               });
               if (fresh.length > 0) {
-                const got = await describeImages(ctx, describeRoute, config, fresh, { signal: controller.signal });
+                const got = await describeImages(ctx, describeRoute, config, fresh, { signal: controller.signal, stats: describeStats });
                 for (const [key, value] of got) described.set(key, value);
               }
               return appendDescriptions(part.text, blocks, described);
             };
           }
+        } else {
+          // 开着却没配路由：用户以为自己开了，实际一次都没跑——这正是要能看见的
+          // 那一种静默，所以写进审计。反过来，开关关着（默认）不写任何东西，审计行
+          // 必须与加这段之前逐字节一致。
+          describeStats.skipped = "no route";
         }
       }
       const collected = await collectMessages(
@@ -928,7 +964,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           model_id: route ? `${route.provider}:${route.model}` : "unknown",
           status: "skipped",
           error_message: "window-too-small",
-          metadata: { distillChars, minWindowChars, ...(imageCount > 0 ? { imageCount } : {}) }
+          metadata: { distillChars, minWindowChars, ...(imageCount > 0 ? { imageCount } : {}), ...describeAuditPatch(describeStats) }
         });
         return;
       }
@@ -1136,6 +1172,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           audit.metadata = {
             distillChars,
             ...(imageCount > 0 ? { imageCount } : {}),
+            ...describeAuditPatch(describeStats),
             ...failureAudit.metadata,
             streak,
             ...(maxParseRetries > 0 ? { maxRetries: maxParseRetries } : {}),
@@ -1276,6 +1313,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         audit.metadata = {
           distillChars,
           ...(imageCount > 0 ? { imageCount } : {}),
+          ...describeAuditPatch(describeStats),
           parsed: parsed.length,
           ...(parsedResult.salvaged ? { json_salvaged: true } : {}),
           ...(capped > 0 ? { capped } : {}),

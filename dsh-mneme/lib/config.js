@@ -764,6 +764,15 @@ export const Config = z.object({
   // sleepMaxPatternPerRun for the relation channel: a runaway model that
   // "finds" an emotion in every memory must be capped, not trusted.
   sleepAffectiveMaxRelationsPerRun: z.natural().min(0).max(50).default(10),
+  // #619 补链（注入侧）：把**单次场合**（attribution=occasion）的情绪边作为一行
+  // 注释挂到它所属的那条记忆下，让模型看得见「她那天为什么那样」，而不是只在
+  // 面板里留着。trait 档不走这条——它已被铸成 type=pattern 的记忆，本来就会
+  // 自己进注入，再挂一遍是同一件事说两次。
+  //
+  // 默认关：它与 sleepAffectiveEnabled 是父子关系（父关则无情绪边可挂），父开
+  // 子留关时行为与加这个开关之前逐字节一致。违反「不加开关就默认生效」的直觉
+  // 是有意的——这条注释每轮都会重复出现，未经用户同意不该占注入预算。
+  affectiveInjectEnabled: z.boolean().default(false),
   // Optional LLM route override for sleep's bulk passes (empty = use dream
   // route / agent default model).
   sleepProvider: z.string().default("").description("sleep 深维护专用模型服务商，留空用巩固模型或当前模型。"),
@@ -1238,6 +1247,8 @@ const LIGHT_MODE_OFF = [
   // #619：情感归因相位要调模型、且依赖实体抽取产出（抽取关掉就没有实体可挂边），
   // 与低资源档双重互斥。默认本就是关，这里只是轻量预设再确认一次。
   "sleepAffectiveEnabled",
+  // 注入侧的情绪注释同理：轻量档不开情感线，注释自然无从挂起。
+  "affectiveInjectEnabled",
   "rerankEnabled",
   "autoReindexOnBoot",
   "hybridInject",
@@ -1349,7 +1360,11 @@ export function applyLightModePreset(cfg) {
  * 是扁平键，不受这条限制。
  */
 export const INJECT_CHILD_FLAGS = Object.freeze({
-  autoInject: Object.freeze(["injectGuidanceEnabled", "continuityRescueEnabled"])
+  autoInject: Object.freeze(["injectGuidanceEnabled", "continuityRescueEnabled"]),
+  // #619 补链（注入侧）：情绪注释是「情感归因」的下游——父关掉（不再产生新情绪
+  // 边）之后，库里遗留的边不该继续往注入里说话。父关 = 注释一并不挂，子项持久
+  // 值原样保留，与 autoInject 那组同一条纪律。
+  sleepAffectiveEnabled: Object.freeze(["affectiveInjectEnabled"])
 });
 
 /** 子开关的运行时生效值：父开关显式关（false）时恒不生效。 */

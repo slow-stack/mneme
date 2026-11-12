@@ -307,7 +307,12 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
       // Issue #641（T4 注入标注）：conflictNote 由 injectCandidates 在 enforce
       // 档下挂上（矛盾对同批时的机械排位说明）。#537 的教训：标注必须进注入
       // 文本本体，不能只留在账本里——消费方看不见的标注等于没标。
+      // #619 补链（注入侧）：affectiveNote 由 injectCandidates 挂上（单次场合的
+      // 情绪记录）。顺序刻意是「内容 → 情绪记录 → 矛盾标注」：情绪说明这条记忆
+      // 是在什么心情下发生的，矛盾标注说的是它跟同批另一条的取信关系——后者是
+      // 决策指令，必须贴在最后，别被一大段情绪描述顶到视线之外。
       const content = injectMemory(m, pinned ? PINNED_CONTENT_MAX : maxContent)
+        + (m.affectiveNote ? "\n" + m.affectiveNote : "")
         + (m.conflictNote ? "\n" + m.conflictNote : "");
       const full = m.graphHint === true
         ? STR.graphHintLine[language](m.type, title, content, date)

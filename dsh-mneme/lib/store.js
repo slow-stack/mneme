@@ -4849,6 +4849,51 @@ export function createStore(path) {
   }
 
   /**
+   * 按一批记忆 id 一次取回它们的情绪边（叠加在注入行上的「情绪记录」注释用）。
+   *
+   * 为什么不复用 getRelationsByMemory 逐条查：注入每轮都有 3-5 个候选，逐条就是一个
+   * N+1；而且注释要显示「谁对什么」，那边只回实体 id，还得再查两次名字。这里
+   * 一次 SQL 带 LEFT JOIN 把两端名字取回，按 memory_id 分组成 Map。
+   *
+   * 只读、只取 affective_context，limit 由调用方给（默认按候选数）。排序与
+   * relationsByType 一致：created_at DESC，最近记的优先——同一记忆上的多条情绪
+   * 边里，注入只挂最新那条（多挂会把注入块撑爆，也会把历史情绪误读成现状）。
+   */
+  function affectiveRelationsByMemories(memoryIds, perMemory = 1) {
+    const ids = Array.isArray(memoryIds)
+      ? memoryIds.filter((id) => typeof id === "string" && id.length > 0)
+      : [];
+    if (ids.length === 0) return new Map();
+    const cap = Number.isFinite(perMemory) ? Math.max(1, Math.trunc(perMemory)) : 1;
+    const placeholders = ids.map(() => "?").join(", ");
+    const rows = db.prepare(
+      `SELECT r.*, f.name AS from_name, f.type AS from_type,
+              t.name AS to_name, t.type AS to_type
+         FROM entity_relations r
+         LEFT JOIN entities f ON f.id = r.from_entity
+         LEFT JOIN entities t ON t.id = r.to_entity
+        WHERE r.relation_type = 'affective_context' AND r.memory_id IN (${placeholders})
+        ORDER BY r.created_at DESC`
+    ).all(...ids);
+    const out = new Map();
+    for (const row of rows) {
+      const key = row.memory_id;
+      if (!key) continue;
+      const bucket = out.get(key) ?? [];
+      if (bucket.length >= cap) continue;
+      bucket.push({
+        ...toRelation(row),
+        from_name: row.from_name ?? null,
+        from_type: row.from_type ?? null,
+        to_name: row.to_name ?? null,
+        to_type: row.to_type ?? null
+      });
+      out.set(key, bucket);
+    }
+    return out;
+  }
+
+  /**
    * 按关系类型取全部边（#619 可见化 C）。情感边散在 23k 个实体之间，`ego` 端点
    * 是「从某个实体往外看」，天然不适合回答「这库里一共记了哪些情绪」——那要的
    * 是反向的、全局的一眼。所以单开一条按类型全表取，一次 SQL，不做 N 次往返。
@@ -5837,6 +5882,7 @@ export function createStore(path) {
     relationsByType,
     getEntityNeighbors,
     getRelationsByMemory,
+    affectiveRelationsByMemories,
     setMirrorState,
     getMirrorState,
     markMirrorDirty,

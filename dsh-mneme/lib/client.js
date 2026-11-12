@@ -1003,6 +1003,8 @@ window.__ModuleLoader__.load({
         // #619：情感归因是 sleep 的子相——父开关关着它就一定不跑，所以紧挨着摆。
         "memory.features.sleepAffectiveEnabled": "情感归因",
         "memory.features.sleepAffectiveEnabled.hint": "整理时记下「谁在哪件事上什么心情」，反复出现才认。",
+        "memory.features.affectiveInjectEnabled": "情绪带进对话",
+        "memory.features.affectiveInjectEnabled.hint": "把记下的单次情绪附在相关记忆后面，模型才知道「那天为什么那样」。",
         // #427 建议 5：hybridInject / selectiveInjectEnabled / adaptiveThresholdEnabled
         // 是同一件事「带什么回来」的三档，相邻摆放并在 hint 里点明，不再摊成
         // 三个不相干的并列开关。
@@ -2142,6 +2144,8 @@ window.__ModuleLoader__.load({
         // the parent is off, so it sits next to it.
         "memory.features.sleepAffectiveEnabled": "Affect attribution",
         "memory.features.sleepAffectiveEnabled.hint": "Records who feels what about which matter, across repeated occasions.",
+        "memory.features.affectiveInjectEnabled": "Bring affect into chat",
+        "memory.features.affectiveInjectEnabled.hint": "Attaches a recorded one-off emotion to the related memory, so the model knows why that day felt like that.",
         // #427 suggestion 5: hybridInject / selectiveInjectEnabled /
         // adaptiveThresholdEnabled are three dials of one question — what comes
         // back. Adjacent placement plus a hint that names the other two.
@@ -4644,7 +4648,10 @@ window.__ModuleLoader__.load({
       heatEnabled: ["injectHeatEnabled"],
       // 地志的两个子开关贴着总闸（#607 后续）：都是「地志开着才有意义」的
       // 口径开关——读路径自动重跑 T0、面板按钮能否发起 T1。
-      chorographyEnabled: ["chorographyAutoRefresh", "chorographyT1FromPanel"]
+      chorographyEnabled: ["chorographyAutoRefresh", "chorographyT1FromPanel"],
+      // #619 补链：情绪注释是情感归因的下游——写下的情绪要能进模型视野，否则
+      // 面板上看得见、对话里看不见。贴着父开关摆，父关时这一行标注不生效。
+      sleepAffectiveEnabled: ["affectiveInjectEnabled"]
     };
     // Issue #427 建议 1：折叠线挪到「新手之外」。group.basic 是首屏层，只列新
     // 用户敢动的总开关；group.scope 也在首屏——它回答新用户的第二个必答题

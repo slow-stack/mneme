@@ -7,7 +7,7 @@ import { STR, langOf } from "./lang.js";
 import { computeHeat } from "./heat.js";
 import { recallStats } from "./recall-stats.js";
 import { evaluateMemoryQuality } from "./quality-filter.js";
-import { CAPACITY_WARNING_DEFAULTS } from "./config.js";
+import { CAPACITY_WARNING_DEFAULTS, injectChildEnabled } from "./config.js";
 // 外来行（source='imported'，导入路径落的来源）的身份判定只许有一个定义处——本文件的
 // 两处汇流口与巩固/降级那些读侧行池都调这同一个谓词，避免各处自己写字符串比较然后各自漂移。
 import { isImportedRow } from "./memory-source.js";
@@ -38,6 +38,12 @@ const INJECT_TYPES = new Set(["preference", "project", "decision", "summary", "r
 // 集合而非常改共享 Set——INJECT_TYPES 本身是「类型可注入」的静态事实，flag
 // 是运行时状态，两者不能搅在一起。
 const INJECT_TYPES_WITH_DOCUMENT = new Set([...INJECT_TYPES, "document"]);
+
+// #619 补链（注入侧）：情绪注释的长度上限。注释拼在记忆行内容之后、按整行扣注入
+// 块预算（src/inject.js 的 MAX_BLOCK），所以它必须有一个硬上限——否则一条啰嗦的
+// 情绪记录就能把同批后面的候选全挤成标题行。160 字够写完「谁·什么心情·哪件事·
+// 几次·为什么」，超过的多半是模型在复述理由，边际价值低于它挤掉的记忆。
+const AFFECTIVE_NOTE_MAX = 160;
 
 // 编码记忆类型（codingRetrospect）：rejected_solution / pitfall / constraint
 // 只在编码任务时注入（防噪声污染其他业务），且编码场景下按 codingBoostFactor
@@ -2155,6 +2161,40 @@ export function createService({ store, mirror, config, onWrite, logger, document
         if (pi > oi) {
           selected.splice(pi, 1);
           selected.splice(oi, 0, preferred);
+        }
+      }
+    }
+    // #619 补链（注入侧）：单次场合的情绪边挂成注释行。到这里为止，#641 已把
+    // 矛盾标注写进注入文本本体；情绪走同一条通道（m.affectiveNote，由 inject.js
+    // 拼在该行内容之后），不新开注入块、不动 schema。
+    //
+    // 只挂 occasion：trait 档已被 sleep 铸成 type=pattern 的记忆，本来就自己进
+    // 注入（见 INJECT_TYPES 里 pattern 的收编说明），再挂一遍是同一件事说两次。
+    // 开关默认关；关着时这一段整段不执行，注入结果与加它之前逐字节一致。
+    if (injectChildEnabled(config, "affectiveInjectEnabled") && selected.length) {
+      const language = langOf(config);
+      const byMemory = store.affectiveRelationsByMemories(selected.map((m) => m.id), 1);
+      if (byMemory.size) {
+        for (const m of selected) {
+          const edge = byMemory.get(m.id)?.[0];
+          if (!edge?.metadata || typeof edge.metadata !== "object") continue;
+          if (edge.metadata.attribution === "trait" || edge.metadata.promotedToTrait === true) continue;
+          const emotion = String(edge.metadata.emotion ?? "").trim();
+          if (!emotion) continue;
+          // 谁、对什么：端点名字取自这次 SQL 的 LEFT JOIN；实体被删了（名字为
+          // null）就宁可不挂——「某个已删实体不高兴」是噪声不是信息。
+          const person = String(edge.from_name ?? "").trim();
+          const target = String(edge.to_name ?? "").trim();
+          if (!person || !target) continue;
+          const occasions = Number.isFinite(edge.metadata.sessionCount)
+            ? Math.max(1, Math.trunc(edge.metadata.sessionCount))
+            : 1;
+          const why = typeof edge.metadata.why === "string" ? edge.metadata.why.trim().slice(0, 60) : "";
+          // 长度闸：注释会吃注入块预算（MAX_BLOCK − 块头），一条长注释能把后面
+          // 的候选挤成标题行。情绪记录的边际价值不值这个价，超了就不挂。
+          const note = STR.affectiveNote[language](person, emotion, target, occasions, why);
+          if (note.length > AFFECTIVE_NOTE_MAX) continue;
+          m.affectiveNote = note;
         }
       }
     }
