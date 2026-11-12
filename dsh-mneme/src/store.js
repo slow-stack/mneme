@@ -612,7 +612,7 @@ CREATE TABLE IF NOT EXISTS choro_repos (
   git_baseline     TEXT,              -- 上次成功 run 的 HEAD
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL,
-  portable_key     TEXT               -- 可移植身份（#581）：remote URL 归一化，无 remote 退化仓库名
+  portable_key     TEXT               -- 可移植身份（#581）：remote URL 归一化，无 remote 退化根提交哈希（git:<sha>）
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_repos_root ON choro_repos(root_path);
 
@@ -5230,7 +5230,7 @@ export function createStore(path) {
   }
 
   // 位置行 upsert（#581）：同一身份同一台机器只一行，root_path 与 last_seen_at
-  // 反映最近一次登记。repo_key 为空（无 remote 且名字算不出）就不落——位置表
+  // 反映最近一次登记。repo_key 为空（无 remote 且连根提交都读不到，非 git 目录）就不落——位置表
   // 只为可移植身份服务，没有身份的行留在 choro_repos.root_path 的旧语义里。
   function upsertChoroRepoPath(repoKey, hostId, rootPath, nowIso) {
     if (!repoKey || !hostId) return;
@@ -5260,7 +5260,7 @@ export function createStore(path) {
   // 页面与 claims 挂在 repo_id 上，机器间合并行等于改写归属；所以 UPDATE
   // root_path 前先查目标值是否被别的行占着（被占就保留本行原值，位置走位置表）
   // ——否则升格期登记会撞 idx_choro_repos_root 直接抛。portable_key 缺席（无
-  // remote 且名字算不出）时退回旧的 root_path 冲突口径，存量语义不变。
+  // remote 且读不到根提交，非 git 目录）时退回旧的 root_path 冲突口径，存量语义不变。
   function upsertChoroRepo(rootPath, name, planFingerprint, gitBaseline, updatedAt, portableKey = null) {
     let existing = portableKey
       ? (db.prepare("SELECT * FROM choro_repos WHERE portable_key = ?").get(portableKey) ?? undefined)

@@ -2,7 +2,7 @@
 // 双机共享同一个 memory.db 时它把 per-host 状态写进了 shared 状态——Windows 端
 // 登记的行，macOS 端拼出来的路径不存在，再跑一次 T0 又多出第二行（从此不带
 // repo 参数的调用命中 repo-ambiguous）。身份与位置从此分家：身份 = portable_key
-// （remote URL 归一化；无 remote 时退化为仓库名），位置 = choro_repo_paths
+// （remote URL 归一化；无 remote 时退化为根提交哈希），位置 = choro_repo_paths
 // 每机一行（host_id = os.hostname()）。
 import { execFileSync } from "node:child_process";
 import os from "node:os";
