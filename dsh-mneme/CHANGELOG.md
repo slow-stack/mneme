@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-12
+
 - **注入的规则池只看得到前 200 条记忆：候选池此前固定 `store.list({ limit: 200 })`，合格行 8400+ 条里 8200 条永远进不了窗（#619）**。这个窗口按 `importance DESC` 取，于是注入位实际上由「谁更重要」决定一个固定的前 200 名，而真正的排序规则（summary 优先档 → preference → importance×quality×heat×scope）只在这 200 条**内部**生效。实测本机库 9067 条活跃记忆里，按注入闸门（`injectType` / 非 narrative / importance ≥ 3）合格的有 8421 条，其中 8210 条永远进不了候选窗；窗口内 200 条的 importance 分布是**全部 5**——也就是说 summary 优先档这条规则，在最需要它的场景里根本没机会触发。
   - **窗口改成只限制回表条数，不再决定谁能参与排序**。`store.listInjectPool()` 取全部活跃行的排序键（12 列：`id / type / source / importance / quality_score / last_accessed_at / created_at / updated_at / agent_scope / workspace_scope / archived / forgotten`），过滤与排序都在 JS 侧做，最后只对入选的 `max(200, poolSize)` 条回表补正文。回表深度与改动前一致（200），所以 backfill（槽位没填满时往下补）的行为不变。
   - **不走 `store.list({ limit: null })`**：list 的投影由 PRAGMA 派生、搬全部列（含 content），9k 行实测 340-400ms；这里 12 列实测 200ms，正文只对 200 条用 `listByIdsForInject` 点查回来（6.8ms）。加起来仍低于改动前那条 `LIMIT 200` 查询的 ~76ms + 后续排序，但账要算清：**这不是变快，是把「看不见的记忆」换成了「多扫一遍排序键」**，换来召回覆盖面。
