@@ -4522,6 +4522,45 @@ export function createStore(path) {
     }));
   }
 
+  /**
+   * 取注入规则池的排序键：全部活跃行，只带过滤与排序真正需要的列。
+   *
+   * 为什么单独开一个口，而不是 store.list({ limit: Math.max(200, poolSize) })：
+   * 那个窗口按 importance DESC 取（store.list 的默认 order），实测合格行 8410 条
+   * 里有 8210 条永远进不了窗——importance 4 且质量满分、本就该排在前面的记忆，
+   * 一条都到不了排序。这与 #616 的 BM25 语料是同一种病：截断不是慢，是静默的
+   * 候选缺失。
+   *
+   * 为什么不用 list({ limit: null })：list 按 PRAGMA 派生列清单搬全部列（含
+   * content），9k 行实测 340-400ms；这里只要 12 列，实测 200ms。content 只对真正
+   * 入选的那 200 条用 listByIdsForInject 点查回来（实测 7ms）。
+   *
+   * updated_at 一并取出，供排序末位平局键使用：同分组的行此前靠 Array.sort 的
+   * 稳定性继承 SQL 行序，改一行 updated_at 就能造成上千对交换。
+   */
+  function listInjectPool() {
+    return db.prepare(
+      `SELECT id, type, source, importance, quality_score, last_accessed_at,
+              created_at, updated_at, agent_scope, workspace_scope,
+              archived, forgotten
+         FROM memories
+        WHERE archived = 0 AND forgotten = 0`
+    ).all().map((row) => ({
+      id: row.id,
+      type: row.type,
+      source: row.source,
+      importance: row.importance,
+      quality_score: row.quality_score,
+      last_accessed_at: row.last_accessed_at,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      agent_scope: row.agent_scope,
+      workspace_scope: row.workspace_scope,
+      archived: row.archived,
+      forgotten: row.forgotten,
+    }));
+  }
+
   function getFailureStats({ since } = {}) {
     const clause = since ? "WHERE created_at >= ?" : "";
     const params = since ? [since] : [];
@@ -5990,6 +6029,7 @@ export function createStore(path) {
     countPinned,
     isPinned,
     listByIdsForInject,
+    listInjectPool,
     listBm25Corpus,
     createEntity,
     findEntityByName,
