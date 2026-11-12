@@ -75,7 +75,7 @@
 - `<os.tmpdir()>/mneme-choro-t1-*/`——T1 子进程的临时 overlay，跑完即删（`src/wiki/t1.js`）。
 - 原子写会产生与目标同目录的 `<目标>.tmp-<pid>-<rand>` 兄弟文件，崩溃时自清（`writeFileAtomic`）。
 - 分享包**没有固定目录**：`dsh-mneme share --out <path>` 由人指定落点（`bin/cli.mjs`）。
-- 包内只读资源：`runtime-manifest.json`（下载清单）、`locale/`（宿主面板注入槽）、`assets/icon.svg`。daemon 无 pid / socket / 日志文件——HTTP 是 TCP，审计都在 `memory.db` 里。
+- 包内只读资源：`runtime-manifest.json`（下载清单）、`locale/`（宿主面板注入槽）、`assets/icon.png`（插件列表图标，256×256 RGBA）。daemon 无 pid / socket / 日志文件——HTTP 是 TCP，审计都在 `memory.db` 里。
 
 ## 删了会怎样
 
