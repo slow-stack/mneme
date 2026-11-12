@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseShareBody, shareReply, shareFilename } from "../src/share-http.js";
+import { fakePassword } from "./helpers/fake-auth-values.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = (f) => readFileSync(resolve(here, "../src", f), "utf8");
@@ -50,7 +51,7 @@ test("reply returns the pack body with kind and disposition-ready filename", () 
 });
 
 test("oversized packs answer 413 with the measured size and the batching hint", () => {
-  const secret = "P@ssw0rd-for-prod-db";
+  const secret = fakePassword();
   const fat = [
     { id: "f", type: "decision", title: "t", content: "字".repeat(2_000_000), tags: [], archived: 0, forgotten: 0 },
     // 这条是给「拒发也带 report」那格用的：整库被水位挡下时，出口照样看得见跳过清单，

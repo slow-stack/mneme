@@ -8,6 +8,7 @@ import { createTools } from "../src/tools.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { normalizeExplicitScope } from "../src/scope.js";
+import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 
 // v0.8.1 底座（issue #170）：scope 归属的显式声明与人工纠偏。
 //   - 三列可空迁移（agent_scope_source / workspace_scope_source / scope_decided_at），
@@ -373,14 +374,14 @@ function setupApi() {
   const commands = { add: () => {}, remove: () => {}, list: () => [] };
   const routes = [];
   const ctx = { webServer: { register(route) { routes.push(route); return () => {}; } } };
-  createApi(ctx, service, settings, commands, null, undefined, "secret-token");
+  createApi(ctx, service, settings, commands, null, undefined, FAKE_API_TOKEN);
   return { store, service, routes };
 }
 
 async function postUpdate(routes, body) {
   const route = routes.find((r) => r.path === "/api/dsh-mneme/update");
   const request = apiReq("/api/dsh-mneme/update", "POST", body);
-  request.headers = { authorization: "Bearer secret-token" };
+  request.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
   const res = new FakeRes();
   await route.handler(request, res);
   return { status: res.statusCode, body: res.body ? JSON.parse(res.body) : {} };

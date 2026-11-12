@@ -18,6 +18,7 @@ import {
   NEGATIVE_SAMPLES,
   SAMPLE_VALUES
 } from "./helpers/write-admission-samples.js";
+import { fakeAwsSecretAccessKeyEnv, fakeAssignedApiKeySample } from "./helpers/fake-auth-values.js";
 
 // #164 A2 的语料里那几条凭据值走 helper 的拼接导出，别在测试里另抄一份字面量：
 // GitHub 的 push protection 会按形状拦真实凭据（本 PR 实测：`sk_live_` 一条就够
@@ -115,12 +116,12 @@ test("语料之外的探针：漏放那一类锁一条（实现期实测出来�
   // 没有前缀，`secret` 关键词规则又要求它后面紧跟赋值号，多词键
   // （`AWS_SECRET_ACCESS_KEY=`）两条都够不着 → 补了专用的键名规则。
   assert.equal(
-    scanSensitive("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY").kind,
+    scanSensitive(fakeAwsSecretAccessKeyEnv()).kind,
     "aws_secret_key"
   );
   // 反向确认「值 + 赋值键」这条兜底规则还在工作，而且**不**看值的形状：`api_key =`
   // 后面跟任何 8 位以上的值都报（判据不知道哪个值是真的）。
-  assert.equal(scanSensitive("api_key = sk-abcdefghijklmnopqrst").kind, "assigned_secret");
+  assert.equal(scanSensitive(fakeAssignedApiKeySample()).kind, "assigned_secret");
   // 收紧后的开关键字仍然认 24 位以上的真 key（44 位正文，语料那条）。
   assert.equal(scanSensitive(openaiProjKey(OPENAI_BODY)).kind, "openai_key");
 });

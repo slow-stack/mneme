@@ -396,3 +396,44 @@ emoji 占两个单元，切在中间就留下一个孤立的高位代理——�
 `test/continuity.test.js` 那条静态 import 锁同步从「恰好一行」改成「恰好两行」——
 新增一行仍然转红，仍然要人看一眼它是不是纯的（`attachment-text.js` 不 import 任何东西，
 所以它不调模型这条约束没被削弱）。
+
+### 图像溯源（`imageMemoryEnabled`，默认关）
+
+描述档解决的是「图里的字进不进得了记忆」，这一档解决的是「进了记忆之后还能不能找回那张图」。
+落地只有一张表 `image_sources`（`src/store.js` 的 SCHEMA），每行是
+`(memory_id, session_id, seq, attachment_id, fallback_key, key_stability, …)`：它与既有的
+`memory_provenance`（记忆 ← 蒸馏窗口）拼起来，才回答得出「这条记忆 ← 这个窗口 ← 这几张图」。
+
+四条设计约束，每条都踩过一遍：
+
+1. **粒度是窗口级，不是逐条记忆。** 蒸馏是模型从整段转录里提炼的，没有任何信号能证明
+   「这张图只贡献了第 3 条记忆」。拿描述文本跟记忆正文做匹配看起来能细化，实际会把
+   「恰好同词」写成「确有此证」。归因宁可粗，不能编——所以本窗出现的图挂到本窗写成功的
+   每条记忆上。这与 `memory_provenance` 的选择同源：能表达的只有窗口，就只记窗口。
+2. **只在真的有描述时才写。** 前置是 `describeStats.described > 0`。没描述时图只是一个
+   `[图: …]` 占位，记忆里没有任何一句话是「从图里看出来的」；此时把窗口里的图挂上去，
+   等于把「同窗口」谎报成「因果」。这是它做成 `imageDescribeEnabled` 子开关的原因
+   （`INJECT_CHILD_FLAGS`），不是顺手加的层级。
+3. **只存引用，不存字节。** `attachment_id` 是宿主的 `AttachmentId`
+   （`@deepseek-ai/dsh-attachment` 明确承诺「never a filesystem path or bearer URL」），
+   交给宿主 `attachments.readImage()` 才是取图的正路。本表不存图、不存路径，273MB 那条
+   边界没有变。
+4. **降级键必须自带不确定性。** 附件没有 `attachmentId` 时按元数据四元组 + 序号造键，
+   此时 `key_stability = 'unstable'`：重发一次同名同尺寸的图就可能撞上同一个键。读侧
+   必须能看见这个标记，不能把它当稳定外键去做「同一张图」的判断。
+
+`seq` 是图块所在事件的 seq（窗口内定位），`created_at` 取本轮蒸馏时间。主键
+`(memory_id, session_id, seq, fallback_key)` 配 `ON CONFLICT DO NOTHING`，同窗口重跑不重复记账。
+上限 `IMAGE_SOURCE_MAX = 50`：50 张 × 本轮记忆条数的叉积都在同一个事务里，再高会把毫秒级
+提交拖成秒级；超出的不记——少记是「没证据」，记错才是「假证据」。
+
+**审计**：写成功时 `llm_audit_logs.metadata.imageSources` = 实际插入行数；0 行不写键，
+默认关时审计行逐字节等于加它之前。与 `imageCount`（图块数）、`imageDescribed`
+（成功描述数）三者分工不同：一个说「看到了几张」，一个说「描述成几张」，一个说
+「记了几条溯源」。
+
+**读出口**：`service.imageSourcesFor(memoryId)` → 按 `seq, fallback_key` 排的引用数组
+（camelCase，`attachmentId` 可能缺席）。
+
+**不做的两件事**：不做按图找图（没有图像向量，做出来就是拿描述文本相似度冒充图像相似度），
+不把 `type='image'` 加进记忆类型（`TYPES` 是五道锁的源头，为一个溯源字段改类型表不划算）。

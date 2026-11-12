@@ -7,7 +7,7 @@ import { STR, langOf } from "./lang.js";
 import { computeHeat } from "./heat.js";
 import { recallStats } from "./recall-stats.js";
 import { evaluateMemoryQuality } from "./quality-filter.js";
-import { CAPACITY_WARNING_DEFAULTS } from "./config.js";
+import { CAPACITY_WARNING_DEFAULTS, injectChildEnabled } from "./config.js";
 // 外来行（source='imported'，导入路径落的来源）的身份判定只许有一个定义处——本文件的
 // 两处汇流口与巩固/降级那些读侧行池都调这同一个谓词，避免各处自己写字符串比较然后各自漂移。
 import { isImportedRow } from "./memory-source.js";
@@ -15,7 +15,7 @@ import { applyDecisions, EPISTEMIC_PRIORITY } from "./dream/decisions.js";
 import { createDocumentRegistrar } from "./document.js";
 import { createOrganizer } from "./organize.js";
 import { createShareImport } from "./share-import.js";
-import { createBM25Index } from "./search/bm25.js";
+import { createCorpusIndex } from "./search/bm25.js";
 import { adaptiveThreshold } from "./search/adaptive.js";
 import { anchorSeeds, normalizePath, cascadeDepths, HOP_QUOTA } from "./graph/anchoring.js";
 
@@ -38,6 +38,12 @@ const INJECT_TYPES = new Set(["preference", "project", "decision", "summary", "r
 // 集合而非常改共享 Set——INJECT_TYPES 本身是「类型可注入」的静态事实，flag
 // 是运行时状态，两者不能搅在一起。
 const INJECT_TYPES_WITH_DOCUMENT = new Set([...INJECT_TYPES, "document"]);
+
+// #619 补链（注入侧）：情绪注释的长度上限。注释拼在记忆行内容之后、按整行扣注入
+// 块预算（src/inject.js 的 MAX_BLOCK），所以它必须有一个硬上限——否则一条啰嗦的
+// 情绪记录就能把同批后面的候选全挤成标题行。160 字够写完「谁·什么心情·哪件事·
+// 几次·为什么」，超过的多半是模型在复述理由，边际价值低于它挤掉的记忆。
+const AFFECTIVE_NOTE_MAX = 160;
 
 // 编码记忆类型（codingRetrospect）：rejected_solution / pitfall / constraint
 // 只在编码任务时注入（防噪声污染其他业务），且编码场景下按 codingBoostFactor
@@ -550,7 +556,13 @@ export function createService({ store, mirror, config, onWrite, logger, document
   // 只缓存索引、不缓存查询结果：search() 返回的是 {...row, score} 副本，索引里
   // 留着的原始行不会被调用方改到；缓存结果则会跨 step 串味（同一 query 在不同
   // 池子状态下该给不同答案）。
-  let bm25IndexCache = null; // { generation, index } | null
+  //
+  // #616（语料截断）：索引本身换成增量形态（createCorpusIndex），语料也换成全量。
+  // 此前语料固定 store.list({ limit: 500 })，排在 500 名之外的记忆永远进不了词法
+  // 召回——实测 8 个查询里 top10 与全量语料只有 1-4 条重合。截断不是慢，是静默的
+  // 召回缺失，所以这里必须全量；全量的代价靠增量维护摊掉：整份语料只在索引不存在
+  // 或需要对齐时取一次，之后每轮只对变过的行重新分词。
+  let bm25IndexCache = null; // { generation, index, seen } | null
 
   /**
    * BM25 third recall path (v0.5.0 1.1). Scores the query tokens against the
@@ -563,7 +575,21 @@ export function createService({ store, mirror, config, onWrite, logger, document
     try {
       const index = bm25CorpusIndex();
       if (!index) return [];
-      return index.search(q, { limit });
+      const hits = index.search(q, { limit });
+      if (!hits.length) return [];
+      // 索引只留 id + 频次（省掉整行常驻内存），命中后按 id 回表补全：融合层与
+      // 注入渲染都要完整字段（fuseRecall 直接把行塞进结果集）。
+      const byId = new Map();
+      for (const row of store.listByIdsForInject(hits.map((h) => h.id))) byId.set(row.id, row);
+      const out = [];
+      for (const hit of hits) {
+        const row = byId.get(hit.id);
+        // 索引与回表之间可能有并发写入（另一个宿主进程归档/遗忘该行），
+        // 取不到或已不可见的命中直接丢弃，不拿它冒充结果。
+        if (!row || row.archived || row.forgotten) continue;
+        out.push({ ...row, score: hit.score });
+      }
+      return out;
     } catch {
       return [];
     }
@@ -581,18 +607,65 @@ export function createService({ store, mirror, config, onWrite, logger, document
     if (bm25IndexCache && generation !== null && bm25IndexCache.generation === generation) {
       return bm25IndexCache.index;
     }
-    const docs = store.list({ limit: 500, includeForgotten: false }).filter((m) => !m.archived);
+    const docs = store.listBm25Corpus();
     if (!docs.length) {
       bm25IndexCache = null;
       return null;
     }
-    const index = createBM25Index(docs);
+    const index = bm25IndexCache ? bm25IndexCache.index : createCorpusIndex();
+    const seen = bm25IndexCache ? bm25IndexCache.seen : new Map();
+    // 增量维护：只对 updated_at 变过（或新出现）的行重新分词，语料里已经不存在的
+    // id 从索引移除。删除不会在行上留痕（行都没了），所以判据是「本轮全量 id 集合」
+    // 减去「索引里还留着的 id」——这也是必须每轮取一次全量语料的原因，省钱的空间
+    // 在分词与建索引，不在取数。
+    const alive = new Set();
+    for (const doc of docs) {
+      alive.add(doc.id);
+      if (seen.get(doc.id) === doc.updated_at) continue;
+      index.upsert(doc);
+      seen.set(doc.id, doc.updated_at);
+    }
+    for (const id of [...seen.keys()]) {
+      if (alive.has(id)) continue;
+      index.remove(id);
+      seen.delete(id);
+    }
     // 水位读不到时**不碰缓存**，保留上一份「已知有效 generation」的条目：读失败
     // 若只是偶发（库锁、迁移窗口）而期间没有写入，恢复后水位与条目一致，直接命中；
     // 期间真有写入，水位已经变了，下一轮自然重建。反过来把 null 当键存进去则是纯
     // 噪声——那样的条目永远命不中，还把有效的那份挤掉了。
-    if (generation !== null) bm25IndexCache = { generation, index };
+    if (generation !== null) bm25IndexCache = { generation, index, seen };
     return index;
+  }
+
+  // #619（规则池截断）：注入候选池的排序键缓存。与 bm25IndexCache 同一套纪律——
+  // 失效键用 mirror_state.generation（读到就用，读不到就现扫一次且不写缓存），
+  // 只缓存「行 + 排序键」、不缓存过滤与排序结果：injectTypes、threshold、
+  // codingKeywords 都是每次调用现读的配置，缓存结果会串味。
+  //
+  // heat 是这套缓存唯一的例外：heatOf 读 last_accessed_at，而 touchLastAccess
+  // 刻意不 bump generation（#617 同一纪律），于是缓存会让热度停在上一轮。所以
+  // 那两个开关同时开时绕开缓存，宁可每轮多扫一次 200ms，也不让热度失真。
+  let injectPoolCache = null; // { generation, rows } | null
+
+  function injectPoolRows() {
+    const heatSensitive = config?.heatEnabled === true && config?.injectHeatEnabled === true;
+    let generation = null;
+    if (!heatSensitive) {
+      try {
+        generation = store.getMirrorState().generation;
+      } catch {
+        generation = null;
+      }
+      if (injectPoolCache && generation !== null && injectPoolCache.generation === generation) {
+        return injectPoolCache.rows;
+      }
+    }
+    const rows = store.listInjectPool();
+    // 水位读不到时不碰缓存，理由同 bm25CorpusIndex：那样的条目永远命不中，还会
+    // 把有效的那份挤掉。
+    if (generation !== null) injectPoolCache = { generation, rows };
+    return rows;
   }
 
   /**
@@ -1782,7 +1855,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // #230 拍板：叙述条解禁进注入受生成总闸约束——门必须对全部候选路径一致
     // （规则/向量/缓存/BM25），只锁规则路的话语义路仍会漏进 narrative 行。
     const allowNarrative = config?.dreamNarrativeEnabled === true;
-    const filtered = store.list({ limit: Math.max(200, poolSize), includeForgotten: false })
+    // #619：规则池不再从 200 行窗口里筛。此前这里是 store.list({ limit: 200 })，
+    // 窗口按 importance DESC 取（合格行 8410 条里 8210 条永远进不了窗）。
+    // listInjectPool 取全部活跃行的排序键，过滤与排序都在 JS 侧做；正文只对真正
+    // 入选的那一批回表补全（见下方排序段）。
+    const filtered = injectPoolRows()
       .filter((m) => !m.archived && injectTypes.has(m.type) && !m.forgotten &&
         // 叙述条：#228 落地为纯按需检索；#230 合并拍板解禁为次优先档注入
         // （per-topic 叙述常驻位仍只留给 dream 总览 source=dream）。
@@ -1810,32 +1887,54 @@ export function createService({ store, mirror, config, onWrite, logger, document
     const softScopeActive = config?.scopeEnabled === true && scope != null &&
       Boolean(scope.agent_scope || scope.workspace_scope);
     const scopeMultOf = (m) => (softScopeActive ? scopeMultiplier(m, scope) : 1);
-    const items = filtered.sort((a, b) => {
-        // 编码记忆在编码任务时优先于普通 decision（与 preference 同级），
-        // importance 乘 codingBoostFactor 加权（封顶 5，保持 importance 语义）。
-        const priority = (m) => {
-          // #230：叙述条与 document 摘要行同为次优先档——蒸馏摘要（0）仍最
-          // 先，指针型聚合产物（1）先于普通 project/decision（2）。叙述条是
-          // type=summary，判 source 必须在判 type 之前。
-          if (m.source === "narrative") return 1;
-          if (m.type === "summary") return 0;
-          if (m.type === "preference") return 1;
-          if (m.type === "document") return 1;
-          if (isCoding && CODING_MEMORY_TYPES.has(m.type)) return 1;
-          return 2;
-        };
-        const effImportance = (m) =>
-          (isCoding && CODING_MEMORY_TYPES.has(m.type))
-            ? Math.min(5, m.importance * (config.codingBoostFactor ?? 2))
-            : m.importance;
-        const pa = priority(a);
-        const pb = priority(b);
+    // #619：排序键逐条算一次，而不是在 comparator 里现算（8k 行要算十几万次
+    // priority/effImportance）；末位补 updated_at DESC + id 两个平局键，让同分组
+    // 内的次序可复现——此前靠 Array.sort 的稳定性继承 SQL 行序，改一行 updated_at
+    // 就能造成上千对交换，同分组的行谁进注入位实际上是随机的。
+    const priority = (m) => {
+      // #230：叙述条与 document 摘要行同为次优先档——蒸馏摘要（0）仍最
+      // 先，指针型聚合产物（1）先于普通 project/decision（2）。叙述条是
+      // type=summary，判 source 必须在判 type 之前。
+      if (m.source === "narrative") return 1;
+      if (m.type === "summary") return 0;
+      if (m.type === "preference") return 1;
+      if (m.type === "document") return 1;
+      if (isCoding && CODING_MEMORY_TYPES.has(m.type)) return 1;
+      return 2;
+    };
+    // 编码记忆在编码任务时优先于普通 decision（与 preference 同级），
+    // importance 乘 codingBoostFactor 加权（封顶 5，保持 importance 语义）。
+    const effImportance = (m) =>
+      (isCoding && CODING_MEMORY_TYPES.has(m.type))
+        ? Math.min(5, m.importance * (config.codingBoostFactor ?? 2))
+        : m.importance;
+    const windowSize = Math.max(200, poolSize);
+    const rankedOrder = filtered
+      .map((m) => ({
+        m,
+        p: priority(m),
         // 软加权乘在层内数值积上（priority 档位不动）：foreign ×0.5 后压不过
         // 同档自己行——E7 的同 importance 档设计正是这个场景。
-        return pa - pb ||
-          (effImportance(b) * qualityWeight(b) * heatOf(b) * scopeMultOf(b)) -
-          (effImportance(a) * qualityWeight(a) * heatOf(a) * scopeMultOf(a));
-      });
+        s: effImportance(m) * qualityWeight(m) * heatOf(m) * scopeMultOf(m),
+      }))
+      .sort((a, b) =>
+        a.p - b.p ||
+        b.s - a.s ||
+        (a.m.updated_at === b.m.updated_at ? 0 : (a.m.updated_at ?? "") < (b.m.updated_at ?? "") ? 1 : -1) ||
+        (a.m.id < b.m.id ? -1 : a.m.id > b.m.id ? 1 : 0))
+      .slice(0, windowSize)
+      .map((row) => row.m.id);
+    // 排序键那版没有 title/content，而注入渲染要全文；只回表这一批（实测 200 条
+    // 约 7ms），且保持排序后的次序。回表时行可能已被归档/遗忘/删除——丢弃，
+    // 不为它占位。
+    const fullById = new Map();
+    if (rankedOrder.length) {
+      for (const row of store.listByIdsForInject(rankedOrder)) fullById.set(row.id, row);
+    }
+    const items = rankedOrder
+      .map((id) => fullById.get(id))
+      .filter((m) => m && !m.archived && !m.forgotten);
+
     let candidates = items;
     // #617 第 2 条（前半）：向量路与 BM25 路此前是**互斥**的——`if (!semanticItems.length)`
     // 包住 BM25，于是「有向量」等于「词法命中整批消失」。可两条路测的不是同一件事：
@@ -2155,6 +2254,40 @@ export function createService({ store, mirror, config, onWrite, logger, document
         if (pi > oi) {
           selected.splice(pi, 1);
           selected.splice(oi, 0, preferred);
+        }
+      }
+    }
+    // #619 补链（注入侧）：单次场合的情绪边挂成注释行。到这里为止，#641 已把
+    // 矛盾标注写进注入文本本体；情绪走同一条通道（m.affectiveNote，由 inject.js
+    // 拼在该行内容之后），不新开注入块、不动 schema。
+    //
+    // 只挂 occasion：trait 档已被 sleep 铸成 type=pattern 的记忆，本来就自己进
+    // 注入（见 INJECT_TYPES 里 pattern 的收编说明），再挂一遍是同一件事说两次。
+    // 开关默认关；关着时这一段整段不执行，注入结果与加它之前逐字节一致。
+    if (injectChildEnabled(config, "affectiveInjectEnabled") && selected.length) {
+      const language = langOf(config);
+      const byMemory = store.affectiveRelationsByMemories(selected.map((m) => m.id), 1);
+      if (byMemory.size) {
+        for (const m of selected) {
+          const edge = byMemory.get(m.id)?.[0];
+          if (!edge?.metadata || typeof edge.metadata !== "object") continue;
+          if (edge.metadata.attribution === "trait" || edge.metadata.promotedToTrait === true) continue;
+          const emotion = String(edge.metadata.emotion ?? "").trim();
+          if (!emotion) continue;
+          // 谁、对什么：端点名字取自这次 SQL 的 LEFT JOIN；实体被删了（名字为
+          // null）就宁可不挂——「某个已删实体不高兴」是噪声不是信息。
+          const person = String(edge.from_name ?? "").trim();
+          const target = String(edge.to_name ?? "").trim();
+          if (!person || !target) continue;
+          const occasions = Number.isFinite(edge.metadata.sessionCount)
+            ? Math.max(1, Math.trunc(edge.metadata.sessionCount))
+            : 1;
+          const why = typeof edge.metadata.why === "string" ? edge.metadata.why.trim().slice(0, 60) : "";
+          // 长度闸：注释会吃注入块预算（MAX_BLOCK − 块头），一条长注释能把后面
+          // 的候选挤成标题行。情绪记录的边际价值不值这个价，超了就不挂。
+          const note = STR.affectiveNote[language](person, emotion, target, occasions, why);
+          if (note.length > AFFECTIVE_NOTE_MAX) continue;
+          m.affectiveNote = note;
         }
       }
     }
@@ -2995,6 +3128,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
     saveDistillRecords: (records) => store.saveDistillRecords(records),
     saveMemoryProvenance: (link) => store.saveMemoryProvenance(link),
     provenanceFor: (memoryId) => store.provenanceFor(memoryId),
+    // 图像溯源（v2）：与 saveMemoryProvenance 同一组 passthrough——写侧在蒸馏窗口
+    // 事务里一并落，读侧给面板/CLI 回答「这条记忆能回指哪张图」。不碰 syncMirror：
+    // 引用行不是记忆内容，改它不该把记忆文件标脏。
+    saveImageSources: (rows) => store.saveImageSources(rows),
+    imageSourcesFor: (memoryId) => store.imageSourcesFor(memoryId),
     // #421 读出口：按 (session, seq 区间) 取蒸馏原文。与 provenanceFor 成对——
     // 一个给区间、一个给区间里的原文，合起来才是「这条记忆从哪几句蒸出来的」。
     distillRecordsFor: (sessionId, seqStart, seqEnd) => store.distillRecordsFor(sessionId, seqStart, seqEnd),

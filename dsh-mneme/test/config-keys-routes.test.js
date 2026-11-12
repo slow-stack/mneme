@@ -17,6 +17,7 @@ import { createSettings } from "../src/settings.js";
 import { Config } from "../src/config.js";
 import { describeConfigKeys, schemaLeafKeys, defaultedLeafKeys, flagKeysFromSpec } from "../src/config-keys.js";
 import { bootstrapReply } from "../src/bootstrap-http.js";
+import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 
 class FakeRes extends EventEmitter {
   constructor() { super(); this.statusCode = 200; this.body = ""; }
@@ -63,7 +64,7 @@ async function call(routes, path, opts) {
 // --- /bootstrap -------------------------------------------------------------
 
 test("bootstrap route is registered with the token policy", () => {
-  const { routes } = setup({ apiToken: "secret-token" });
+  const { routes } = setup({ apiToken: FAKE_API_TOKEN });
   const route = routes.find((r) => r.path === BOOTSTRAP);
   assert.ok(route, "route must be registered");
   // 它写库（虽然幂等），所以不能是 open；也不该借 token-write 的读写双义——这条
@@ -72,7 +73,7 @@ test("bootstrap route is registered with the token policy", () => {
 });
 
 test("bootstrap demands a token when one is configured", async () => {
-  const { routes } = setup({ apiToken: "secret-token" });
+  const { routes } = setup({ apiToken: FAKE_API_TOKEN });
   const { res } = await call(routes, BOOTSTRAP, { method: "POST", body: JSON.stringify({ dir: "/tmp" }) });
   assert.equal(res.statusCode, 401);
   assert.equal(JSON.parse(res.body).error, "unauthorized");
@@ -159,7 +160,7 @@ test("bootstrap imports deterministic artifacts from a real directory", async ()
 // --- /config-keys -----------------------------------------------------------
 
 test("config-keys route is open and read-only", async () => {
-  const { routes } = setup({ apiToken: "secret-token" });
+  const { routes } = setup({ apiToken: FAKE_API_TOKEN });
   const { route, res } = await call(routes, CONFIG_KEYS, { method: "GET" });
   assert.equal(route.policy, "open");
   assert.equal(res.statusCode, 200, "read-only route must not demand a token");
@@ -172,13 +173,13 @@ test("config-keys rejects non-GET", async () => {
 });
 
 test("config-keys returns key names but never the apiToken value", async () => {
-  const { routes } = setup({ config: { apiToken: "super-secret-value" }, apiToken: "super-secret-value" });
+  const { routes } = setup({ config: { apiToken: FAKE_API_TOKEN }, apiToken: FAKE_API_TOKEN });
   const { res } = await call(routes, CONFIG_KEYS, { method: "GET" });
   assert.equal(res.statusCode, 200);
   // 名字必须在：用户正是要靠这份清单知道「apiToken 只能改配置文件」。
   assert.ok(res.body.includes("apiToken"), "the key name must be listed");
   // 值必须不在：这条断言是这整条路由存在的安全边界。
-  assert.ok(!res.body.includes("super-secret-value"), "the value must never leave the server");
+  assert.ok(!res.body.includes(FAKE_API_TOKEN), "the value must never leave the server");
 });
 
 test("config-keys only reads the schema — it never echoes a configured value", async () => {

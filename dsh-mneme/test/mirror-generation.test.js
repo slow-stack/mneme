@@ -10,6 +10,7 @@ import { createMirror } from "../src/mirror.js";
 import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
+import { fakeToken } from "./helpers/fake-auth-values.js";
 
 /**
  * v0.3.6 回归测试（audit peer 4 类阻断）。
@@ -308,7 +309,7 @@ test("V0.3.6-D3: syncMirror 失败时逐 type 记录 failed，recoverMirror 后�
 test("V0.3.6-E1: apiToken 设置后未鉴权访问 /health 返回 401，正确 token 才放行", () => {
   const { dir, store, mirror, service } = setup();
   try {
-    const TOKEN = "secret-token-123";
+    const TOKEN = fakeToken("mirror");
     const health = healthRouteSetup(store, service, TOKEN);
     const res401 = new FakeRes();
     health.handler({ url: "/api/dsh-mneme/health", method: "GET", headers: {} }, res401);
