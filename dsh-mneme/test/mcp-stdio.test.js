@@ -16,6 +16,10 @@ import { createSettings } from "../src/settings.js";
 import { createStandaloneApi } from "../src/api-standalone.js";
 import { createTools } from "../src/tools.js";
 import { MCP_TOOLS, resolveMcpConfig } from "../bin/dsh-mneme-mcp.mjs";
+import { fakeToken } from "./helpers/fake-auth-values.js";
+
+const FILE_TOKEN = fakeToken("file");
+const ENV_TOKEN = fakeToken("env");
 
 const MCP_BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "dsh-mneme-mcp.mjs");
 
@@ -278,7 +282,7 @@ test("memory_get unknown id → isError 'memory not found' (no existence leak)",
 
 test("wrong token → isError with the unauthorized hint", async () => {
   const api = await setupApi();
-  const mcp = startMcp({ DSH_MNEME_URL: api.base, DSH_MNEME_TOKEN: "wrong-token" });
+  const mcp = startMcp({ DSH_MNEME_URL: api.base, DSH_MNEME_TOKEN: fakeToken("wrong") });
   try {
     await initialize(mcp);
     const res = await mcp.request("tools/call", {
@@ -366,15 +370,15 @@ test("resolveMcpConfig: env beats cli.json beats defaults", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "dsh-mneme-mcp-"));
   try {
     const configPath = path.join(dir, "cli.json");
-    await writeFile(configPath, JSON.stringify({ url: "http://127.0.0.1:9999", token: "file-token" }), "utf8");
+    await writeFile(configPath, JSON.stringify({ url: "http://127.0.0.1:9999", token: FILE_TOKEN }), "utf8");
 
     const fromFile = resolveMcpConfig({}, configPath);
     assert.equal(fromFile.url, "http://127.0.0.1:9999");
-    assert.equal(fromFile.token, "file-token");
+    assert.equal(fromFile.token, FILE_TOKEN);
 
-    const fromEnv = resolveMcpConfig({ DSH_MNEME_URL: "http://127.0.0.1:7001/", DSH_MNEME_TOKEN: "env-token" }, configPath);
+    const fromEnv = resolveMcpConfig({ DSH_MNEME_URL: "http://127.0.0.1:7001/", DSH_MNEME_TOKEN: ENV_TOKEN }, configPath);
     assert.equal(fromEnv.url, "http://127.0.0.1:7001", "env wins; trailing slash trimmed");
-    assert.equal(fromEnv.token, "env-token");
+    assert.equal(fromEnv.token, ENV_TOKEN);
 
     const defaults = resolveMcpConfig({}, path.join(dir, "missing.json"));
     assert.equal(defaults.url, "http://127.0.0.1:8790");

@@ -9,6 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHostCall } from "../src/dsh-go/host.js";
+import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 
 function fakeServer(routes) {
   return {
@@ -74,11 +75,11 @@ test("配了 apiToken 就把令牌放进 x-dsh-mneme-token 头", async () => {
     ctxWith({
       "/api/dsh-mneme/update": (req, res) => {
         const token = req.headers["x-dsh-mneme-token"] ?? "";
-        res.writeHead(token === "secret-token" ? 200 : 401);
-        res.end(JSON.stringify(token === "secret-token" ? { ok: true } : { error: "unauthorized" }));
+        res.writeHead(token === FAKE_API_TOKEN ? 200 : 401);
+        res.end(JSON.stringify(token === FAKE_API_TOKEN ? { ok: true } : { error: "unauthorized" }));
       },
     }),
-    { apiToken: "secret-token" },
+    { apiToken: FAKE_API_TOKEN },
   );
   assert.deepEqual(await call("/update", { method: "POST", body: { id: "m1" } }), { ok: true });
 });

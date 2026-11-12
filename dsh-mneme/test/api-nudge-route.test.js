@@ -9,6 +9,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
+import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 
 // /api/dsh-mneme/nudge 的接线锁。三件事分开守，因为它们混在一起时各自的失败长得一样：
 //   1. policy 是 token-write —— GET 免 token（面板每刷一次就 GET 一次），POST 要 token（会写盘）；
@@ -87,7 +88,7 @@ function setup({ apiToken = "", memoryDir = null } = {}) {
 }
 
 test("/nudge：policy 是 token-write —— GET 免 token，POST 要 token", async () => {
-  const { route } = setup({ apiToken: "secret-token" });
+  const { route } = setup({ apiToken: FAKE_API_TOKEN });
 
   // GET 是预览（只读），与 /pipeline、/candidates 同级：不带 token 也要能读。
   // 面板每次展开 M.O. 都会 GET 一次，要 token 等于让预览永远 401。
@@ -105,7 +106,7 @@ test("/nudge：policy 是 token-write —— GET 免 token，POST 要 token", as
   // 带 token 才放行到业务判断（这里 project 是相对路径，应当由业务层回 400）。
   const ok = new FakeRes();
   const okDone = awaitEnd(ok);
-  route.handler(req("/api/dsh-mneme/nudge?project=relative", "POST", {}, { authorization: "Bearer secret-token" }), ok);
+  route.handler(req("/api/dsh-mneme/nudge?project=relative", "POST", {}, { authorization: `Bearer ${FAKE_API_TOKEN}` }), ok);
   await okDone;
   assert.equal(ok.statusCode, 400);
 });
@@ -238,11 +239,11 @@ test("/nudge：PATCH/DELETE 一律 405，绝不落进「不是 GET/HEAD 就算�
     const prev = process.env.DSH_HOME;
     process.env.DSH_HOME = dshHome;
     try {
-      const { route } = setup({ apiToken: "secret-token", memoryDir });
+      const { route } = setup({ apiToken: FAKE_API_TOKEN, memoryDir });
       for (const verb of ["PATCH", "DELETE"]) {
         const res = new FakeRes();
         // 带合法 token：证明拦住它的是方法白名单，不是鉴权。
-        await route.handler(req("/api/dsh-mneme/nudge?project=" + encodeURIComponent(projectRoot), verb, {}, { authorization: "Bearer secret-token" }), res);
+        await route.handler(req("/api/dsh-mneme/nudge?project=" + encodeURIComponent(projectRoot), verb, {}, { authorization: `Bearer ${FAKE_API_TOKEN}` }), res);
         assert.equal(res.statusCode, 405, verb + " 必须回 405");
         const doc = JSON.parse(res.body);
         assert.equal(doc.error, "method-not-allowed");

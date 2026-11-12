@@ -18,11 +18,12 @@
 //    长数字）。一个只按关键词命中的扫描器会在这组里全军覆没，这正是这组样本的
 //    用处——它量的不是「抓得住多少」，而是「抓错多少」。
 //
-// 3. 样本里的凭据都是公开占位值（AWS 官方文档的 AKIAIOSFODNN7EXAMPLE、GitHub /
+// 3. 样本里的凭据都是公开占位值（AWS 官方文档的 AKIA…EXAMPLE（AWS 公开示例）、GitHub /
 //    OpenAI / Stripe 的文档格式、Stripe 与银行的官方测试卡号），不是真凭据。
 //
 // 用法（测试侧）：
 //   import { allSamples, NEGATIVE_SAMPLES, referenceScan } from "./helpers/write-admission-samples.js";
+import { fakeLeakedPassword, fakeAwsAccessKeyId, fakePemHeader } from "./fake-auth-values.js";
 
 // 这几条样本的**值**在密钥扫描器眼里就是真凭据的形状。字面量直接写进仓库有两重代价：
 // GitHub 侧 push protection 会直接拒推（GH013），CI 的 gitleaks 全历史扫描会红掉
@@ -35,7 +36,7 @@
 //
 // 别为了绕开扫描器把它们简化成一眼假的占位串：正样本的价值恰恰在于压在检测器的形状
 // 边界上，改成 `xoxb-xxx` 就等于把这条样本删了。AWS 那条用的是官方文档自己的示例值
-// AKIAIOSFODNN7EXAMPLE，两套扫描器本来就认它是样例，保持字面量。
+// AKIA…EXAMPLE（AWS 公开示例），两套扫描器本来就认它是样例，保持字面量。
 const assemble = (...parts) => parts.join("");
 
 /** 语料里那几条被扫描器盯着形状的凭据值。测试侧要拼句子时从这里取，别另抄一份。 */
@@ -61,7 +62,7 @@ export const SECRET_SAMPLES = [
     kind: "aws_access_key",
     label: "AWS access key id",
     title: "部署脚本",
-    content: "部署脚本里写死了 AKIAIOSFODNN7EXAMPLE，回头要换掉",
+    content: `部署脚本里写死了 ${fakeAwsAccessKeyId()}，回头要换掉`,
     why: "AKIA + 16 位大写字母数字，长度与字符集都固定"
   },
   {
@@ -93,7 +94,7 @@ export const SECRET_SAMPLES = [
     kind: "private_key",
     label: "PEM private key",
     title: "issue 正文",
-    content: "把 -----BEGIN RSA PRIVATE KEY----- 整段贴到了 issue 里",
+    content: `把 ${fakePemHeader()} 整段贴到了 issue 里`,
     why: "PEM 头是明文私钥的确定标志，有没有正文都不影响判定"
   },
   {
@@ -101,7 +102,7 @@ export const SECRET_SAMPLES = [
     kind: "assigned_secret",
     label: "assigned credential literal",
     title: "本地配置",
-    content: 'config 里 password = "Tr0ub4dor&3xKcd" 这一行得删掉',
+    content: `config 里 password = ${fakeLeakedPassword()} 这一行得删掉`,
     why: "赋值号右边是字面量凭据——这是最常见的一类，也是最需要防误杀的一类"
   },
   {
