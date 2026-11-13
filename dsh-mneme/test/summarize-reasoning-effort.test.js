@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { createSummarizer } from "../src/summarize.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const ENTRIES_JSON = JSON.stringify([
   { type: "decision", title: "选型", content: "确定用 node:sqlite", importance: 4 }
@@ -30,7 +31,7 @@ function userMessage(text, seq) {
 
 function setup(configOver = {}, stream) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const calls = [];
   const events = [];
   const ctx = {
@@ -50,7 +51,7 @@ function setup(configOver = {}, stream) {
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s315",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("帮我选型", 1), { seq: 2, type: "turn/end" }]
   };
   return { store, service, calls, handler, session };

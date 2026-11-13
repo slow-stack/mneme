@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSleepScheduler } from "../src/dream/sleep.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归（issue #187）：idle 计时器到点时若撞上 sleepMinIntervalHours（CD）未满，
 // maybeSchedule 返回 false 后没有任何东西重排——armIdleTimer 的回调把返回值丢掉、
@@ -17,11 +18,11 @@ function makeHarness(overrides = {}) {
   const timers = [];
   let seq = 1;
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   let runs = 0;
   const sched = createSleepScheduler({
     service,
-    config: { sleepModeEnabled: true, sleepIdleMinutes: 5, sleepMinIntervalHours: 1, ...overrides },
+    config: testConfig({ sleepModeEnabled: true, sleepIdleMinutes: 5, sleepMinIntervalHours: 1, ...overrides }),
     logger: { warn: () => {} },
     onRun: async () => { runs++; return { ok: true }; },
     now: () => nowMs,

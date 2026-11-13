@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSleepScheduler } from "../src/dream/sleep.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Issue #529（C 项）：sleep 连续失败退避（sleepFailureBackoff，opt-in）。
 //
@@ -27,17 +28,17 @@ function makeHarness(overrides = {}) {
   const timers = [];
   let seq = 1;
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   let runs = 0;
   let outcome = () => ({ ok: false, status: "failed" });
   const sched = createSleepScheduler({
     service,
-    config: {
+    config: testConfig({
       sleepModeEnabled: true,
       sleepIdleMinutes: 5,
       sleepMinIntervalHours: 1,
       ...overrides
-    },
+    }),
     logger: { warn: () => {} },
     onRun: async () => {
       runs++;
