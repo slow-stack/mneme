@@ -6,6 +6,7 @@ import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Ego-graph read API (graph panel P1). The routes under test:
 //   GET /api/dsh-mneme/semantic/graph/ego?entity=&depth=&limit=
@@ -29,7 +30,7 @@ function req(path) {
 
 function setup(apiToken = "") {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const commands = { add: () => {}, remove: () => {}, list: () => [] };
   const routes = [];

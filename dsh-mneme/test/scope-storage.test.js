@@ -4,6 +4,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createTools } from "../src/tools.js";
 import { createScopeResolver } from "../src/scope.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // v0.8.0 A1（issue #17）：scope 隔离存储层。
 // 四列可空（agent_scope/workspace_scope/sensitivity/occurred_at）、迁移纯增量
@@ -73,7 +74,7 @@ test("store.update keeps scope columns untouched (write-time annotation is immut
 
 test("scopeEnabled=false: cross-scope same-title does NOT merge (issue #170 复核项 1)", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   // A1 时代本测试断言「flag 关=跨 scope 合并」；显式声明落地后那是内容挂错
   // 归属的 bug（strictScope 下原主人反而看不见）——去重键恒按 scope 比较。
   store.save({ type: "project", title: "T", content: "scoped body", agent_scope: "agentA" });
@@ -84,7 +85,7 @@ test("scopeEnabled=false: cross-scope same-title does NOT merge (issue #170 复�
 
 test("scopeEnabled=true: dedupe key extends with agent_scope/workspace_scope/sensitivity", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { scopeEnabled: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ scopeEnabled: true }) });
   const save = (fields) => service.saveWithDedupe({ type: "project", title: "T", content: "body", ...fields });
 
   assert.equal(save({ agent_scope: "agentA" }).action, "created");
@@ -101,7 +102,7 @@ test("scopeEnabled=true: dedupe key extends with agent_scope/workspace_scope/sen
 
 test("scopeEnabled=true: unscoped writes match legacy NULL rows but not stamped ones", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { scopeEnabled: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ scopeEnabled: true }) });
   // 存量形状（NULL scope）。
   store.save({ type: "preference", title: "P", content: "legacy" });
   // 未标注新写入与存量 NULL 行互相匹配。
@@ -113,7 +114,7 @@ test("scopeEnabled=true: unscoped writes match legacy NULL rows but not stamped 
 
 test("scopeEnabled=true: _mergeInto across scopes is rejected and falls back to a fresh row", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { scopeEnabled: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ scopeEnabled: true }) });
   const scoped = store.save({ type: "project", title: "S", content: "scoped", agent_scope: "agentA" });
   const cross = service.saveWithDedupe({
     type: "project", title: "S", content: "summary text", _mergeInto: scoped.id
@@ -175,7 +176,7 @@ test("memory_save with the flag off writes rows without any scope annotation", a
 });
 
 test("createScopeResolver returns identity even when scopeEnabled is off (gate lives at the write-annotation site, issue #170 复核项 2)", () => {
-  const resolve = createScopeResolver({ ctx: {}, config: {} });
+  const resolve = createScopeResolver({ ctx: {}, config: testConfig({}) });
   // flag 关只关自动标注：读取侧（strictVisibility/get/注入）与显式声明仍需身份。
   assert.deepEqual(
     resolve({ agent: { session: { id: "s1", header: { agentPreset: "coder", cwd: "D:\\p" } } } }),
@@ -187,27 +188,27 @@ test("createScopeResolver returns identity even when scopeEnabled is off (gate l
 
 test("resolver stamps agentPreset and header cwd; registry hit wins over header cwd", () => {
   const resolve = createScopeResolver({
-    config: { scopeEnabled: true },
+    config: testConfig({ scopeEnabled: true }),
     ctx: { workspaceRegistry: { list: () => [{ path: "C:\\canon", sessionIds: ["s1"] }] } }
   });
   const exec = { agent: { session: { id: "s1", header: { agentPreset: "coder", cwd: "D:\\raw" } } } };
   assert.deepEqual(resolve(exec), { agent_scope: "coder", workspace_scope: "C:\\canon" });
 
   const resolveNoHit = createScopeResolver({
-    config: { scopeEnabled: true },
+    config: testConfig({ scopeEnabled: true }),
     ctx: { workspaceRegistry: { list: () => [{ path: "C:\\canon", sessionIds: ["other"] }] } }
   });
   assert.deepEqual(resolveNoHit(exec), { agent_scope: "coder", workspace_scope: "D:\\raw" });
 });
 
 test("resolver falls back to the static .header property on old hosts", () => {
-  const resolve = createScopeResolver({ config: { scopeEnabled: true }, ctx: {} });
+  const resolve = createScopeResolver({ config: testConfig({ scopeEnabled: true }), ctx: {} });
   const exec = { agent: { session: { id: "s1", header: { agentPreset: "novelist" } } } };
   assert.deepEqual(resolve(exec), { agent_scope: "novelist", workspace_scope: null });
 });
 
 test("session.header wins over requestHeader() (EpochHeader must not shadow the durable header)", () => {
-  const resolve = createScopeResolver({ config: { scopeEnabled: true }, ctx: {} });
+  const resolve = createScopeResolver({ config: testConfig({ scopeEnabled: true }), ctx: {} });
   // 本地 web 复验（2026-09-13）实测踩中的形状：requestHeader() 返回请求级
   // EpochHeader（模型路由头，无 agentPreset/cwd），曾在首个请求后遮蔽
   // session.header，导致标注全空。
@@ -216,7 +217,7 @@ test("session.header wins over requestHeader() (EpochHeader must not shadow the 
       session: {
         id: "s1",
         header: { agentPreset: "coder", cwd: "D:\\proj" },
-        requestHeader: () => ({ config: { provider: "deepseek-official", model: "deepseek-v4-flash" } })
+        requestHeader: () => ({ config: testConfig({ provider: "deepseek-official", model: "deepseek-v4-flash" }) })
       }
     }
   };
@@ -224,12 +225,12 @@ test("session.header wins over requestHeader() (EpochHeader must not shadow the 
 });
 
 test("hosts without .header fall back to requestHeader().config shape", () => {
-  const resolve = createScopeResolver({ config: { scopeEnabled: true }, ctx: {} });
+  const resolve = createScopeResolver({ config: testConfig({ scopeEnabled: true }), ctx: {} });
   const exec = {
     agent: {
       session: {
         id: "s2",
-        requestHeader: () => ({ config: { agentPreset: "legacy", cwd: "E:\\old" } })
+        requestHeader: () => ({ config: testConfig({ agentPreset: "legacy", cwd: "E:\\old" }) })
       }
     }
   };
@@ -239,7 +240,7 @@ test("hosts without .header fall back to requestHeader().config shape", () => {
 test("resolver never throws: registry explosion degrades to header cwd and warns once", () => {
   const warnings = [];
   const resolve = createScopeResolver({
-    config: { scopeEnabled: true },
+    config: testConfig({ scopeEnabled: true }),
     ctx: { workspaceRegistry: { list: () => { throw new Error("boom"); } } },
     logger: { warn: (m) => warnings.push(String(m)) }
   });
@@ -249,7 +250,7 @@ test("resolver never throws: registry explosion degrades to header cwd and warns
 });
 
 test("resolver without a session or header lands all-NULL", () => {
-  const resolve = createScopeResolver({ config: { scopeEnabled: true }, ctx: {} });
+  const resolve = createScopeResolver({ config: testConfig({ scopeEnabled: true }), ctx: {} });
   assert.deepEqual(resolve(undefined), { agent_scope: null, workspace_scope: null });
   assert.deepEqual(resolve({ agent: { session: { id: "s2" } } }), { agent_scope: null, workspace_scope: null });
 });

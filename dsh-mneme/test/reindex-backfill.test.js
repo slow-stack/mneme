@@ -4,6 +4,7 @@ import { backfillMissingEmbeddings } from "../src/index.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Issue #128：boot 回填曾被模型指纹门短路——任意一条嵌入成功写入 vector_meta
 // 指纹后，指纹匹配的每次启动都在门上直接 return，写入时嵌入失败（embedder 未
@@ -12,7 +13,7 @@ import { createVectorIndex } from "../src/vector-index.js";
 
 test("Issue #128: fingerprint match no longer blocks backfill; archived rows are skipped", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const active = service.saveWithDedupe({ type: "preference", title: "活跃", content: "内容" }).memory;
   const dead = service.saveWithDedupe({ type: "preference", title: "死行", content: "内容" }).memory;
   store.setArchived(dead.id, true);
@@ -44,7 +45,7 @@ test("Issue #128: fingerprint match no longer blocks backfill; archived rows are
 
 test("Issue #128: backfill is bounded by maxTotal; the rest stays queued", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 5; i++) {
     service.saveWithDedupe({ type: "preference", title: `记忆${i}`, content: `内容${i}` });
   }
@@ -67,7 +68,7 @@ test("Issue #128: backfill is bounded by maxTotal; the rest stays queued", async
 
 test("maxTotal: 0 drains the whole backlog in one run", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 5; i++) {
     service.saveWithDedupe({ type: "preference", title: `记忆${i}`, content: `内容${i}` });
   }
@@ -90,7 +91,7 @@ test("a full-model switch re-embeds old vectors, not just the empty ones", async
   // stayed "present" forever and were never re-embedded, so they kept
   // inflating coverage while being incomparable to the new query embedding.
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const a = service.saveWithDedupe({ type: "preference", title: "旧向量", content: "甲" }).memory;
   const b = service.saveWithDedupe({ type: "preference", title: "无向量", content: "乙" }).memory;
   store.setEmbedding(a.id, [1, 0, 0], "old-model#aaa");
@@ -114,7 +115,7 @@ test("a full-model switch re-embeds old vectors, not just the empty ones", async
 
 test("rows with unknown provenance (NULL embedding_model) count as stale", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const r = service.saveWithDedupe({ type: "preference", title: "存量", content: "丙" }).memory;
   // Simulate a pre-migration row: vector present, provenance unknown.
   store.setEmbedding(r.id, [1, 0, 0]);
@@ -131,7 +132,7 @@ test("#604: a permanently failing row is tried once, not once per batch", async 
   // one bad row, and the summary still said "capped" — as if the budget had run
   // out with other work waiting behind it.
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 12; i++) {
     service.saveWithDedupe({ type: "preference", title: `记忆${i}`, content: `内容${i}` });
   }
@@ -168,7 +169,7 @@ test("#604: maxTotal: 0 with a permanently failing row terminates", async () => 
   // forever. Measured: still running after 25s, embedSingle called in a tight
   // loop. This must return, and return quickly.
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 4; i++) {
     service.saveWithDedupe({ type: "preference", title: `行${i}`, content: `C${i}` });
   }
@@ -206,7 +207,7 @@ test("#604: a dead prefix at the queue head does not starve the healthy tail", a
   // ended `stalled` without trying a single healthy row behind them — measured
   // on this code: okCalls 0, indexed 0, 20 rows still stale.
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   // Written first ⇒ older updated_at ⇒ BEHIND the failing block under DESC.
   for (let i = 0; i < 10; i++) {
     service.saveWithDedupe({ type: "preference", title: `好行${i}`, content: `good-${i}` });
@@ -250,7 +251,7 @@ test("#604: a dead prefix deeper than the pick window reports 'stalled', not 'ca
   // AND the budget stopped us; a run that embedded nothing made no progress
   // and has to say so, so the next boot becomes the retry point.
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 10; i++) {
     service.saveWithDedupe({ type: "preference", title: `好行${i}`, content: `good-${i}` });
   }
@@ -290,7 +291,7 @@ test("#604: a whole batch of transient failures reports 'errored', not 'stalled'
   // 判据在 failureReasons：抛错落 `error:` 桶（瞬时），null 向量落
   // `empty-vector`（对该行是永久性）。
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 10; i++) {
     service.saveWithDedupe({ type: "preference", title: `好行${i}`, content: `good-${i}` });
   }
@@ -327,7 +328,7 @@ test("#604: permanent failures still report 'stalled' even mixed with the same c
   // 与上一条同样的形状（10 条、一条没嵌上），唯一区别是失败形态：null 而不是抛错。
   // 两条并列，锁住「分档看的是失败种类，不是数量」。
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 10; i++) {
     service.saveWithDedupe({ type: "preference", title: `坏行${i}`, content: `bad-${i}` });
   }
@@ -354,7 +355,7 @@ test("#604: a detailed adapter turns a provider outage into 'errored' on the leg
   // 它的 embedSingle() 只回向量、把原因丢掉，所以 provider 挂掉与「这行坏了」
   // 在旧路径上是同一个 null。embedSingleDetailed() 把原因带出来，回填才能分档。
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 10; i++) {
     service.saveWithDedupe({ type: "preference", title: `行${i}`, content: `legacy-${i}` });
   }
@@ -391,7 +392,7 @@ test("#604: a detailed adapter keeps an unembeddable row permanent", async () =>
   // 同一个详细适配器、同样的条数，只把 reason 换成永久的那一类。分档必须跟着
   // 原因走，而不是跟着「有没有 detailed 方法」走。
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 10; i++) {
     service.saveWithDedupe({ type: "preference", title: `行${i}`, content: `bad-${i}` });
   }
@@ -416,7 +417,7 @@ test("#604: a missing config field is permanent, so it must not buy error retrie
   // config-incomplete 也以 error: 开头，但它每次都会以同样方式失败。若按前缀
   // 一律算瞬时，配置不全的机器会在每次启动时空跑 1+3 轮。
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 10; i++) {
     service.saveWithDedupe({ type: "preference", title: `行${i}`, content: `cfg-${i}` });
   }
@@ -442,7 +443,7 @@ test("#604: a missing config field is permanent, so it must not buy error retrie
 
 test("#604: a run with no failures can reach 'drained' even with a nonzero budget", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 3; i++) {
     service.saveWithDedupe({ type: "preference", title: `行${i}`, content: `C${i}` });
   }
@@ -461,7 +462,7 @@ test("#604: a run with no failures can reach 'drained' even with a nonzero budge
 
 test("setEmbedding records provenance and clearing the vector clears it", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const r = service.saveWithDedupe({ type: "preference", title: "出身", content: "丁" }).memory;
 
   store.setEmbedding(r.id, [1, 0, 0], "m#1");

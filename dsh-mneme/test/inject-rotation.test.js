@@ -5,6 +5,7 @@ import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { createInjector } from "../src/inject.js";
 import { createSettings } from "../src/settings.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归（issue #205）：注入位跨轮轮换。长会话（几十上百轮、注入位有限）中
 // 同一批条目在相邻轮次反复出现——报告者 15.5 小时实测 86 次注入 93% 重复，
@@ -15,7 +16,7 @@ import { createSettings } from "../src/settings.js";
 
 function setup(configOver = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const contexts = [];
   const ctx = {
@@ -123,7 +124,7 @@ test("#205: backfill keeps slots full when fresh candidates run out", () => {
 // 正好测不到这个边界——本用例刻意用 8 条 + 窗口 2 压过旧上限。
 test("#205 补测: semantic pool grows with the rotation window (no forced repeats)", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const vectorIndex = createVectorIndex({ store });
   service.setVectorIndex(vectorIndex);
   const ids = [];

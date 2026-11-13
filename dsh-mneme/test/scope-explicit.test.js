@@ -9,6 +9,7 @@ import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { normalizeExplicitScope } from "../src/scope.js";
 import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // v0.8.1 底座（issue #170）：scope 归属的显式声明与人工纠偏。
 //   - 三列可空迁移（agent_scope_source / workspace_scope_source / scope_decided_at），
@@ -110,7 +111,7 @@ test("normalizeExplicitScope: global sentinels land as null; labels are trimmed"
 // ---------------------------------------------------------------------------
 test("saveWithDedupe passes provenance through to the created row", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const out = service.saveWithDedupe({
     type: "preference",
     title: "editor theme",
@@ -124,7 +125,7 @@ test("saveWithDedupe passes provenance through to the created row", () => {
 
 test("explicit save with the same scope values upgrades a merged auto row to explicit", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { scopeEnabled: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ scopeEnabled: true }) });
   const first = service.saveWithDedupe({
     type: "preference", title: "editor theme", content: "v1",
     agent_scope: "coder", agent_scope_source: "auto"
@@ -161,7 +162,7 @@ test("explicit save with the same scope values upgrades a merged auto row to exp
 
 test("updateMemory stamps explicit scope, records audit row, and honors actor", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const row = store.save({ type: "preference", title: "editor theme", content: "body", agent_scope: "coder", agent_scope_source: "auto" });
 
   // 工具路径（默认 actor=tool）：global 归一化为 NULL + explicit 章。
@@ -290,7 +291,7 @@ test("memory_save: dirty (non-string) scope args are rejected at the schema laye
 
 test("dedupe compares scope keys even with scopeEnabled off (review item 1: explicit rows never cross-merge)", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   // flag 关 + 显式声明：不同归属的同标题行绝不物理合并（否则内容挂错归属，
   // strictScope 下原主人反而看不见）。
   const first = service.saveWithDedupe({
@@ -369,7 +370,7 @@ function apiReq(path, method, body) {
 
 function setupApi() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const commands = { add: () => {}, remove: () => {}, list: () => [] };
   const routes = [];
