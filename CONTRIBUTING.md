@@ -354,11 +354,10 @@ DSH 上游仍处于 developer preview 阶段，API 与服务接口变动频繁�
 
 版本号遵循语义化版本（`MAJOR.MINOR.PATCH`）。机械的部分交给工作流，编辑判断的部分留给人——**版本号自己能确定的东西机器写，需要判断的东西人写**。完整流程：
 
-1. **跑 Release Prep 工作流**（`.github/workflows/release-prep.yml`，手动触发，只填目标版本号）。它做这些：改 `dsh-mneme/package.json` 与 `package-lock.json` 的 `version`；刷新两个 README 的测试数（徽章 + 四种 `# N …测试` 注释形状）；在 `[Unreleased]` 下面开新版本节，并把里面攒的条目整段搬进去（只有 `[Unreleased]` 本来是空的才留一条 `- （待填）`）；给两个 README 的版本表各插一行占位；把路线图上遗留的「🚧 准备中」回填成已发布；最后推 `release-prep/X.Y.Z` 分支并开 PR。**最后那一步吃仓库级开关**：Settings → Actions → General →「Allow GitHub Actions to create and approve pull requests」要打开，否则分支已经推上去了、PR 却开不出来（v0.9.4 于 2026-10-21 就是这样）。这时**别重跑工作流**——机器产出已经在那条分支上了，人直接 `gh pr create --base main --head release-prep/X.Y.Z` 补开就行。
+1. **跑 Release Prep 工作流**（`.github/workflows/release-prep.yml`，手动触发，只填目标版本号）。它做这些：改 `dsh-mneme/package.json` 与 `package-lock.json` 的 `version`；刷新两个 README 的测试数（徽章 + 四种 `# N …测试` 注释形状）；在 `[Unreleased]` 下面开新版本节，并把里面攒的条目整段搬进去（只有 `[Unreleased]` 本来是空的才留一条 `- （待填）`）；给两份 README 的版本表插占位行、回填路线图状态格的代码**已随版本表一起删除**（两份 README 不再承载版本历史：入口页只回答「它是什么、怎么装、凭什么信」，每版改了什么由 CHANGELOG 与 GitHub Releases 承担）；最后推 `release-prep/X.Y.Z` 分支并开 PR。**最后那一步吃仓库级开关**：Settings → Actions → General →「Allow GitHub Actions to create and approve pull requests」要打开，否则分支已经推上去了、PR 却开不出来（v0.9.4 于 2026-10-21 就是这样）。这时**别重跑工作流**——机器产出已经在那条分支上了，人直接 `gh pr create --base main --head release-prep/X.Y.Z` 补开就行。
 2. **在这个 PR 里补上只有人能写的内容**：
    - CHANGELOG 条目的措辞与取舍（`[Unreleased]` 攒的条目工作流已整段搬进新版本节，**不用手搬**；把它们分节并改写成外部读者能看懂的话）。小节末尾加 `### 贡献者 / Thanks` 汇总本版外部贡献者（`git log v上一版..HEAD --format='%an <%ae>' | sort -u`，非维护者逐条列「GitHub 用户名 + 一句话做了什么」，条目内也保留「感谢 @用户名」）；无外部贡献者时省掉该小节。**条目一律用中性措辞**：不引用非公开的 issue 编号、不出现内部实验代号——它们在公开仓库里解析不出来，读者只会困惑。
-   - 两个 README 里新占位行的主题描述；
-   - 根 README 的「📰 最近更新」与「📰 Recent updates」那一段的头条（现在是标题式散文、不是表格；纯编辑内容，工作流从不改它）。
+   - ~~两个 README 里新占位行的主题描述~~、~~根 README 的「📰 最近更新」头条~~：两项都已不存在——版本表与 News 表在 2026-11-13 从两份 README 里删掉了，发版时不再需要在 README 里补位。
 3. **只有跨 minor 发版时**：`SECURITY.md` 的支持版本表还写着上一个 minor 时，工作流只警告不失败。在同一份 PR 里把中英两张表向下挪一格（新 minor 进活跃行、上一版进尽力维护行，并同步改下面的停止维护通知）；在那之前 `test/security-doc.test.js` 是红的——那正是它该红的时候。
 4. **全量测试**：`npm test` 确认通过（动过 `lib/` 的话 `node scripts/check-sync.js` 也要过）。
 5. **合并 PR**，然后打 tag：`git tag vX.Y.Z` → `git push origin vX.Y.Z`。到此为止，发布是自动的。
