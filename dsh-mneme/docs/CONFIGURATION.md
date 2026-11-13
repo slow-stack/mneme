@@ -101,7 +101,7 @@
 |---|---|---|---|
 | `writeAdmission.enabled` | `false` | 跑第 1 级确定性判据：空白 / 纯噪声 + 密钥 / PII（判据来源是 #164 A2，经 `sensitiveScan` 注入） | 关 = 不判定、不拒绝，`evaluate` 返回与只计量阶段逐字段一致。命中 → 审计行带 `metadata.deny` |
 | `writeAdmission.enforce` | `false` | 命中时真的拒绝（`store.save` 之前返回） | 关 = 仅告警：判据照跑、审计照留、写入不拦（读审计时「`deny` 非空且 `decision=allow`」即这一档的指纹）。被拒写入不落库、不通知、不排嵌入，`memory_save` 返回 `action:"denied"` + `reason` |
-| `sensitiveScanEnabled` | `false` | A2 密钥 / PII 判据的来源（`sensitive-scan.js`）。开 = 判定结果可被写入准入消费；只覆盖带 sessionKey 的写入路径 | 关 = 扫描器不参与，`writeAdmission` 第 1 级只剩空白/噪声判据。**经 MCP / 8790 / `/import` 的写入不带 sessionKey，不进这道闸**（`write-admission.js` 的文件头注释点名了这条边界） |
+| `sensitiveScanEnabled` | `false` | A2 密钥 / PII 判据的来源（`sensitive-scan.js`）。开 = 判定结果可被写入准入消费；覆盖**所有**写入的第 1 级判据，含 autoSummarize / dream 总览 / bootstrap / share 导入这些没有 sessionKey 的路径 | 关 = 扫描器不参与，`writeAdmission` 第 1 级只剩空白/噪声判据。**无 sessionKey 的写入只过第 1 级**：预算、同话题冷却、内容哈希仍只覆盖带 sessionKey 的写入（#663） |
 
 第 1 级的判据面刻意收窄：**去重键命中不进第 1 级**（归 write-update 放行——同步近重复门跑在异步矛盾检测之前会把本该被裁决的矛盾直接拒掉），G1/G2 阈值也只是计量。两个键都走 feature_flags 白名单（面板可启停）。
 

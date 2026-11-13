@@ -36,8 +36,12 @@
 // 排除归档），同样的内容再写一次就是一条新行，这正是这条信号要量的穿透。两个穿透口与
 // pinned 豁免同口径：pinned 在这里返回得更早，连候选集查询都不发。
 //
-// 信号跟着同一行审计走，所以内容哈希与 g1/g2 覆盖同一批写入（会话内新建行）；无会话
-// 身份的系统写入（dream / summarize / import / organize）要另立行形状，不在本批。
+// 信号跟着同一行审计走，所以内容哈希与 g1/g2 覆盖同一批写入（会话内新建行）。无会话
+// 身份的系统写入（dream 总览 / autoSummarize / bootstrap / standalone HTTP 保存）自
+// #663 起只走第 1 级判据：命中即拒的那档落一行（session_key 为 NULL，无 g1/g2/dup 测量
+// 点），放行档不落行——预算、话题冷却、内容哈希都要一条会话时间线做基准。
+// 唯一没进来的是 share 收包那条路：它走 store.save（docs/SHARE.md 的信任边界），
+// 判据挂在 saveWithDedupe 的汇流口，要接得先把那条路改到汇流口。
 //
 // 与 llmAudit.enabled 的关系：那个开关同时关掉审计行的启动期清理（index.js 的
 // deleteOldLlmAudits），所以关掉时本模块一行都不写，否则就是在无保留期的表里做
@@ -281,25 +285,33 @@ export function createWriteAdmission({ store, config, logger, now = Date.now, se
       exempt: null,
       deny: null
     };
-    // 无会话身份 = 系统写入（dream / summarize / import / organize），不进预算。
-    // 第 1 级判定同样在这里之外：#164 A2 定的判据面含 autoSummarize / dream 输出，
-    // 那三处的接线是 A2 的落地范围（本模块跑的是会话内的 memory_save 路径）。
-    if (!sessionKey) return verdict;
     // 审计关掉时不记行、也不推进话题表（见文件头：那个开关连启动期清理一起关掉）。
+    // 判据也一并跳过：拒绝面是「可解释」的承诺，审计关掉之后拒绝就只能静默发生，
+    // 而静默丢弃比不拦更坏——调用方会以为记忆已经写进去了。
     if (config?.llmAudit?.enabled === false) return verdict;
 
+    // #663：第 1 级判据与会话身份无关。autoSummarize / dream 输出 / bootstrap /
+    // share 导入这些写入没有 sessionKey，但它们落库的同样是**文本**，密钥/PII 与
+    // 空白噪声的判据面照样适用；此前这里提前 return，等于三处系统出口整片没判。
     const hit = config?.writeAdmission?.enabled === true ? firstLevelHit(memory) : null;
     const judged = hit ? { ...verdict, deny: hit } : verdict;
 
     // 命中且 enforce：决策已定，不再发候选集查询、不再比较话题（纯白花成本）。
+    // gate 跟着会话身份走：无会话身份不记预算行（没有可比的时间线），但拒绝照样
+    // 生效，审计行由 record 落（session_key 为 NULL）。
     if (hit && config?.writeAdmission?.enforce === true) {
       return {
         ...judged,
         decision: ADMISSION_DECISION_DENY,
-        gate: ADMISSION_GATE_SESSION_BUDGET,
+        gate: sessionKey ? ADMISSION_GATE_SESSION_BUDGET : null,
         topics: extractTopicKeys(memory)
       };
     }
+
+    // 无会话身份 = 系统写入（dream / summarize / import / bootstrap）：只过第 1 级，
+    // 不进预算、不查内容哈希、不算话题冷却。三者都要一条会话时间线做基准；硬凑一个
+    // 假 session_key 会把真实会话的分布污染成两截，读审计的人再也分不开。
+    if (!sessionKey) return judged;
 
     const topics = extractTopicKeys(memory);
     const pinned = PINNED_MEMORY_TYPES.has(String(memory?.type ?? ""));
@@ -335,7 +347,11 @@ export function createWriteAdmission({ store, config, logger, now = Date.now, se
    * @returns {object[]} 落下的审计行（无测量点或失败时为空数组）
    */
   function record({ sessionKey, verdict, memoryId } = {}) {
-    if (!sessionKey || !verdict || verdict.gate == null) return [];
+    if (!verdict) return [];
+    // #663：系统写入没有 gate（不进预算），但**被拒**是一次真实的丢弃，必须留行——
+    // 否则三条系统出口的拒绝就是静默的，正与验收第 2 条相反。放行档不落行：没有
+    // 会话基准的计量行读不出任何分布，只会把审计表撑大（同 llmAudit 保留期纪律）。
+    if (!verdict.deny && (!sessionKey || verdict.gate == null)) return [];
     const at = now();
     const topics = Array.isArray(verdict.topics) ? verdict.topics : [];
     const enforced = verdict.decision === ADMISSION_DECISION_DENY;
@@ -393,7 +409,8 @@ export function createWriteAdmission({ store, config, logger, now = Date.now, se
     // 前面（重启回填会得到另一条时间线），pinned 写入整个不在闸门里。被拦下的写入
     // 同样不推进——它没进库，成为下一次 g2 的基准就会造出一条不存在的时间线。
     // 仅告警档（deny 非空但 decision=allow）**要**推进：那条行确实落库了。
-    if (rows.length > 0 && !verdict.exempt && !enforced) {
+    // 系统写入（无 sessionKey）没有话题表可用，跳过这一步即可。
+    if (sessionKey && rows.length > 0 && !verdict.exempt && !enforced) {
       const table = topicTable(sessionKey);
       for (const topic of topics) table.set(topic, at);
     }

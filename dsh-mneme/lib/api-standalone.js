@@ -627,10 +627,10 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
               ...(body.workspace_scope !== undefined ? { workspace_scope: body.workspace_scope, workspace_scope_source: "explicit" } : {})
             });
             const { action } = result;
-            // #254 写入准入：这条 HTTP 路径今天不带会话身份，evaluate 在无 sessionKey
-            // 时直接早退，所以拦不到；仍然显式分支——将来真接上会话身份时，落到
-            // `toApiList([null])` 上会变成 500，把「被拒」伪装成「服务器出错」，而
-            // 这两件事对调用方的处置完全不同（改内容 vs 重试）。
+            // #254 写入准入：这条 HTTP 路径不带会话身份，只过第 1 级判据（#663）——
+            // 密钥/PII 与空白噪声仍会被拒，预算 / 冷却 / 内容哈希不跑。显式分支是
+            // 必需的：落到 `toApiList([null])` 会变成 500，把「被拒」伪装成「服务器
+            // 出错」，而这两件事对调用方的处置完全不同（改内容 vs 重试）。
             if (action === "denied") {
               sendJson(res, 422, { error: "write-rejected", reason: result.reason });
               return;
