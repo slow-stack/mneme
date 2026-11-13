@@ -28,11 +28,15 @@ CREATE TABLE IF NOT EXISTS entities (
   type TEXT,                     -- person|project|concept|technology|organization
   first_seen TEXT NOT NULL,      -- 首次出现时间
   last_seen TEXT NOT NULL,       -- 最近出现时间
-  mention_count INTEGER DEFAULT 1, -- 提及次数（同名去重后递增）
-  canonical_memory_id TEXT       -- 规范来源记忆（保留位）
+  mention_count INTEGER DEFAULT 1 -- 提及次数（同名去重后递增）
 );
 CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
 CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
+-- #688 写入侧归一：命中键在 SQL 里折叠（lower + trim），索引与查询同源。
+-- 必须带 type 维度——只按 name 折叠会把 95 组跨类型同名实体误并成一个
+-- （如 DeepSeek 这个技术 与 deepseek 这个组织）；也不剥版本号后缀，
+-- DeepSeek-V3 与 V4 是两个对象。存量行不改写，只在写入/查找时归一。
+CREATE INDEX IF NOT EXISTS idx_entities_name_key ON entities(lower(trim(name)), type);
 ```
 
 ### `entity_attrs` — 属性（快照式时间轴）

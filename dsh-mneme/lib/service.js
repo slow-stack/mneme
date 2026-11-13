@@ -3403,7 +3403,7 @@ export function createService({ store, mirror, config, onWrite, logger, document
     },
     saveAttr: (r) => store.saveAttr(r),
     createEntity: (r) => store.createEntity(r),
-    findEntityByName: (n) => store.findEntityByName(n),
+    findEntityByName: (n, t) => store.findEntityByName(n, t),
     findEntityById: (id) => store.findEntityById(id),
     getAttrsByMemory: (id) => store.getAttrsByMemory(id),
     // 记忆详情侧栏：一条记忆关联到的实体（entity_attrs.memory_id 反查，纯读）。

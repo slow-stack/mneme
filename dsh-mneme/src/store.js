@@ -540,11 +540,16 @@ CREATE TABLE IF NOT EXISTS entities (
   type TEXT,
   first_seen TEXT NOT NULL,
   last_seen TEXT NOT NULL,
-  mention_count INTEGER DEFAULT 1,
-  canonical_memory_id TEXT
+  mention_count INTEGER DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
 CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
+-- #688: 写入侧归一的查找键是 lower(trim(name)) + type（见 findEntityByName）。表达式索引
+-- 让这条查询不必扫全表——本机实体表 25,474 行，实体抽取是每条记忆都要走的写入热路径。
+-- 折叠在 SQL 里做（不是先在 JS 里折好再绑），是为了让「命中键」与「索引键」逐字节同源：
+-- JS 的 toLowerCase 与 SQLite 的 lower() 只在 ASCII 上一致，混用会在含特殊字符的名字上
+-- 造出一行查不到自己的孤儿。存量行不改写，索引只是给旧值补一个可查的键。
+CREATE INDEX IF NOT EXISTS idx_entities_name_key ON entities(lower(trim(name)), type);
 
 CREATE TABLE IF NOT EXISTS entity_attrs (
   id TEXT PRIMARY KEY,
@@ -1215,8 +1220,7 @@ function toEntity(row) {
     type: row.type ?? undefined,
     first_seen: row.first_seen,
     last_seen: row.last_seen,
-    mention_count: row.mention_count,
-    canonical_memory_id: row.canonical_memory_id ?? undefined
+    mention_count: row.mention_count
   };
 }
 
@@ -1479,6 +1483,29 @@ export function createStore(path) {
   // 行缺列 → 默认 manual 1.0（最保守：既有语义不因迁移而变弱）。
   addColumn("entity_relations", "weight", "ALTER TABLE entity_relations ADD COLUMN weight REAL NOT NULL DEFAULT 1.0");
   addColumn("entity_relations", "source", "ALTER TABLE entity_relations ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'");
+
+  // #688：entities.canonical_memory_id 是 v0.7.1 预留的「规范行指针」，此后长成了
+  // 一根孤儿——全仓只有 plumbing（DDL、行映射、INSERT、patch、UPDATE），没有一处 SELECT
+  // 或业务写入，真实库里 25,474 行全是 NULL。留着它不是中性的：下一位读者会把它当成
+  // 一条可用的判据（#688 的实体归并讨论里就差点被当成「同一条记忆的实体该并」）。
+  // 删列没有数据要保（本来就全空），也不需要 applied_migrations 登记——判定条件是
+  // 「列还在不在」，跑完恒不命中，和 addColumn 同一族。
+  //
+  // 前提：SQLite >= 3.35 才有 DROP COLUMN（本项目 node:sqlite 在支持的运行时上是
+  // 3.46+，本机 3.51.3）。竞态与 addColumn 同理：两个进程可能同时通过检查，后到的
+  // 那个收到的是 "no such column"，那是预期结局而不是错误。
+  const dropColumn = (table, column) => {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    if (!cols.includes(column)) return false;
+    try {
+      db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+      return true;
+    } catch (e) {
+      if (/no such column/i.test(String(e?.message ?? e))) return false;
+      throw e;
+    }
+  };
+  dropColumn("entities", "canonical_memory_id");
   // 列序是 content_hash 打头：哈希几乎唯一，等值 seek 就已收窄到候选行，type 只当同
   // 一次 seek 里的第二列过滤；反过来（type 打头）下面的存量回填就得全表扫——每次打开
   // 都要把全部正文读一遍。
@@ -4685,15 +4712,49 @@ export function createStore(path) {
   function createEntity({ name, type }) {
     const id = randomUUID();
     const now = nowIso();
+    // 落库前只去掉首尾空白，保留原大小写：显示名是给人看的（"DeepSeek" 不该被写成
+    // "deepseek"），大小写折叠只发生在查找键上。存量行按 #688 口径一行不动。
+    const storedName = String(name ?? "").trim();
     db.prepare(
-      `INSERT INTO entities (id, name, type, first_seen, last_seen, mention_count, canonical_memory_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, name, type ?? null, now, now, 1, null);
+      `INSERT INTO entities (id, name, type, first_seen, last_seen, mention_count)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(id, storedName, type ?? null, now, now, 1);
     return toEntity(db.prepare("SELECT * FROM entities WHERE id = ?").get(id));
   }
 
-  function findEntityByName(name) {
-    return toEntity(db.prepare("SELECT * FROM entities WHERE name = ?").get(name));
+  /**
+   * Resolve an entity by its normalized key: lower(trim(name)), optionally
+   * narrowed to one type.
+   *
+   * #688: the pre-fix lookup was `WHERE name = ?` — byte equality. "DeepSeek" and
+   * "deepseek " were two rows forever, even though the extractor means the same
+   * object; the measured stock was 170 same-type groups collapsed by this fold.
+   *
+   * Why the type dimension is not optional in the write path: folding name alone
+   * merges 95 groups that are genuinely different objects — "DeepSeek" the
+   * technology vs "deepseek" the organization is the canonical example. Callers
+   * that resolve a *mention* must pass the type; callers that look up by a
+   * user-supplied name (panel search) may omit it and get the most recently seen
+   * row across types.
+   *
+   * Why no version-suffix stripping: "DeepSeek-V3" and "DeepSeek-V4" are distinct
+   * models; collapsing them loses which one a constraint is about.
+   *
+   * @param {string} name
+   * @param {string|null} [type] entity type; when undefined/null the lookup is
+   *   type-agnostic (panel / entity-name search path)
+   * @returns {object|undefined}
+   */
+  function findEntityByName(name, type) {
+    if (name === undefined || name === null) return undefined;
+    const hasType = type !== undefined && type !== null;
+    const sql = hasType
+      ? `SELECT * FROM entities WHERE lower(trim(name)) = lower(trim(?)) AND type IS ?
+           ORDER BY last_seen DESC LIMIT 1`
+      : `SELECT * FROM entities WHERE lower(trim(name)) = lower(trim(?))
+           ORDER BY last_seen DESC LIMIT 1`;
+    const params = hasType ? [String(name), String(type)] : [String(name)];
+    return toEntity(db.prepare(sql).get(...params));
   }
 
   function findEntityById(id) {
@@ -4711,16 +4772,13 @@ export function createStore(path) {
     const has = (k) => Object.prototype.hasOwnProperty.call(patch, k);
     const name = has("name") ? patch.name : old.name;
     const type = has("type") ? patch.type : old.type;
-    const canonical_memory_id = has("canonical_memory_id")
-      ? patch.canonical_memory_id
-      : old.canonical_memory_id;
     const mention_count = has("mention_count")
       ? patch.mention_count
       : (old.mention_count ?? 1) + 1;
     const now = nowIso();
     db.prepare(
-      `UPDATE entities SET name = ?, type = ?, last_seen = ?, mention_count = ?, canonical_memory_id = ? WHERE id = ?`
-    ).run(name, type ?? null, now, mention_count, canonical_memory_id ?? null, id);
+      `UPDATE entities SET name = ?, type = ?, last_seen = ?, mention_count = ? WHERE id = ?`
+    ).run(name, type ?? null, now, mention_count, id);
     return findEntityById(id);
   }
 
