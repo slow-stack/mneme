@@ -848,8 +848,8 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       skipInvalid: config.dreamSkipInvalid !== false,
       allowCrossTypeMerge: config.allowCrossTypeMerge === true,
       // issue #339 / E8：guarded 类型 merge 护栏（默认开，dreamMergeGuard），
-      // 与 dream 主链路同一判据。
-      mergeGuard: config.dreamMergeGuard === true,
+      // 与 dream 主链路同一判据。issue #692：`!== false` 读，裸配置下默认开同样生效。
+      mergeGuard: config?.dreamMergeGuard !== false,
       // Issue #126 review（Copilot）：默认档必须真的只放行旧动作集——只换 prompt 挡不住
       // 模型自发输出 supersede / differentiate，那样"opt-in 零行为变化"就不成立。
       allowedActions: actionSet === "full" ? null : LEGACY_ACTIONS

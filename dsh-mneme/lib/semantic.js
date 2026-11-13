@@ -395,6 +395,16 @@ export function scheduleBootBackfill({
  *   init 异步失败经 #118 重试后 service 侧降级,此处引用仍在(dream/sleep 语义面
  *   与搬移前一致)。dispose 清两个引导期计时器。
  */
+/**
+ * issue #692：`resilientModelDownload` 在 schema 里默认开，裸配置调用方（测试、
+ * 程序化建 service）拿到的是 undefined。LocalEmbedder / Reranker 的构造函数刻意
+ * 「只在显式 true 时启用」（直连构造的旧调用方保持裸 fetch，见 local-embedder.js
+ * 的 issue #194 注释），所以默认值必须在装配层落定——判据收在这里，两处装配共用。
+ */
+export function resilientDownloadEnabled(cfg) {
+  return cfg?.resilientModelDownload !== false;
+}
+
 export function createSemantic({ store, service, settings, cfg, logger, vectorIndex, applyHumanEdits, lightMode = false }) {
   let embedder = null;
   let reranker = null;
@@ -442,7 +452,8 @@ export function createSemantic({ store, service, settings, cfg, logger, vectorIn
         runtimeDir: cfg.runtimeDir,
         // #188：embedModelMirror 接成 transformers 的下载镜像（此前死配置）。
         remoteHost: cfg.embedModelMirror,
-        resilientModelDownload: cfg.resilientModelDownload,
+        // issue #692：默认开；裸配置下由这里的判据落定（构造函数只认显式 true）。
+        resilientModelDownload: resilientDownloadEnabled(cfg),
         baseUrl: cfg.ollamaBaseUrl,
         logger
       });
@@ -499,7 +510,8 @@ export function createSemantic({ store, service, settings, cfg, logger, vectorIn
         // embedModelMirror 此前是死配置，现接成 transformers 的下载镜像。
         useDtype: cfg.rerankDtype,
         remoteHost: cfg.embedModelMirror,
-        resilientModelDownload: cfg.resilientModelDownload,
+        // issue #692：默认开；裸配置下由这里的判据落定（构造函数只认显式 true）。
+        resilientModelDownload: resilientDownloadEnabled(cfg),
         logger
       });
       service.setReranker(reranker);

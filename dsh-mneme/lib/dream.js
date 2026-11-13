@@ -1437,7 +1437,10 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       skipInvalid: config.dreamSkipInvalid !== false,
       allowCrossTypeMerge: config.allowCrossTypeMerge === true,
       // issue #339 / E8：guarded 类型 merge 护栏（默认开，dreamMergeGuard）。
-      mergeGuard: config.dreamMergeGuard === true
+      // issue #692：按 `!== false` 读——裸配置调用方（测试、程序化建 service）
+      // 拿到的是 undefined，用 `=== true` 会让「默认开」落不了地。与 autoInject /
+      // autoDream / hybridInject / heatEnabled 那批默认开的键同一写法。
+      mergeGuard: config?.dreamMergeGuard !== false
     });
     // Issue #135：模型把 UUID 缩写成前缀时，唯一前缀已在校验前被解析回完整 id。
     // 解析量是模型输出质量的一个直接信号（>0 意味着模型在缩写 id），记一条 info
