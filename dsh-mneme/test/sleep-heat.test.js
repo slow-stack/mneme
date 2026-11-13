@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { runSleep } from "../src/dream/sleep.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // v0.7.0 待办③ sleep 降级热联合判定：
 //   降级需同时满足 时间窗 + heat<sleepHeatThreshold + importance<5 三条件；
@@ -15,7 +16,7 @@ const DAY = 86400000;
 
 function setup(config = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   return { store, service };
 }
 

@@ -4,6 +4,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createDreamScheduler, validateDecisions } from "../src/dream.js";
 import { mockCtx } from "./helpers/dream-mock.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归（issue #104 方向 2）：archive 决策语义越界 + 批量大扫除。
 // 实测事故：一轮 12 条互不相关主题被批量 archive，LLM 自述理由是「价值判断」
@@ -93,7 +94,7 @@ test("#104-2: archive cap is configurable", () => {
 
 test("#104-2: runDream skips a value-judgment archive of a long-retention type and lands the rest", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   service.saveWithDedupe({ type: "project", title: "旧项目", content: "已完结并被取代", importance: 3 });
   service.saveWithDedupe({ type: "constraint", title: "接口约束", content: "v1 接口只能串行调用", importance: 3 });
   const ctx = mockCtx({

@@ -22,6 +22,7 @@ import { createService } from "../src/service.js";
 import { createDreamScheduler, fenceListBody } from "../src/dream.js";
 import { parseEntries } from "./helpers/dream-mock.js";
 import { STR } from "../src/lang.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const LISTING = "id=a1 | type=project | importance=3 | updated=2026-10-20T00:00:00Z | title=旧1";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -55,7 +56,7 @@ test("清单里混进闭合标记时不许提前闭合围栏", () => {
 
 test("consolidate 走 runDream：user 段带围栏，失败行的审计 metadata 不再是 null", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   service.saveWithDedupe({ type: "project", title: "旧1", content: "第一段内容" });
   const calls = [];
   const ctx = {
@@ -97,7 +98,7 @@ test("consolidate 走 runDream：user 段带围栏，失败行的审计 metadata
 // （result === undefined）时不能写 parse_failure/raw_len:0——那是提供方错误，不是解析失败。
 test("总览摘要那一次调用的角色声明不许要求 JSON 数组", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   service.saveWithDedupe({ type: "project", title: "旧1", content: "第一段内容" });
   const calls = [];
   const ctx = {
@@ -127,7 +128,7 @@ test("总览摘要那一次调用的角色声明不许要求 JSON 数组", async
 
 test("流以错误结束时不写 parse_failure（那是提供方错误，不是解析失败）", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   service.saveWithDedupe({ type: "project", title: "旧1", content: "第一段内容" });
   const ctx = {
     logger: { warn: () => {}, info: () => {} },

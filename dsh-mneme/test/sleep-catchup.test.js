@@ -4,6 +4,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { createSleepScheduler, runSleep } from "../src/dream/sleep.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Issue #529（续排）：本轮被预算截断（conflict 相位还有没进这一轮的对）且送出去的每一对
 // 都落地了时，调度器不该等满一个 sleepMinIntervalHours（默认 8h）才跑下一轮——池子没清空，
@@ -44,7 +45,7 @@ function mockCtx(responder) {
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const vectorIndex = createVectorIndex({ store });
   service.setEmbedder(embedder);
   service.setVectorIndex(vectorIndex);
@@ -80,14 +81,14 @@ function makeHarness(overrides = {}) {
   const timers = [];
   let seq = 1;
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   let runs = 0;
   let outcome = () => ({ ok: true, status: "noop" });
   // 运行**期间**要发生的事（写入 / 耗时）——用来复现"跑完那一刻已挂着的表只剩几秒"。
   let duringRun = null;
   const sched = createSleepScheduler({
     service,
-    config: { sleepModeEnabled: true, sleepIdleMinutes: 5, sleepMinIntervalHours: 1, ...overrides },
+    config: testConfig({ sleepModeEnabled: true, sleepIdleMinutes: 5, sleepMinIntervalHours: 1, ...overrides }),
     logger: { warn: () => {} },
     onRun: async () => {
       runs++;

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { validateDecisions, applyDecisions } from "../src/dream/decisions.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // snapshot helper: memories eligible for consolidation (non-archived, non-summary)
 function makeSnapshot(store) {
@@ -15,7 +16,7 @@ function makeSnapshot(store) {
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return { store, service };
 }
 
@@ -153,7 +154,7 @@ test("update application preserves unspecified fields", () => {
 
 test("user correction records a failure_memories row", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { reflectionFailureTracking: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ reflectionFailureTracking: true }) });
   const mem = seedMemory(service, store, { type: "preference", title: "语言", content: "喜欢 Python" });
   service.update(mem.id, { content: "喜欢 Rust" });
   const failures = store.listFailures();
@@ -166,7 +167,7 @@ test("user correction records a failure_memories row", () => {
 
 test("user correction records failure when only title changes", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { reflectionFailureTracking: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ reflectionFailureTracking: true }) });
   const mem = seedMemory(service, store, { type: "preference", title: "语言", content: "喜欢 Python" });
   service.update(mem.id, { title: "编程语言" }); // title change, content same
   const failures = store.listFailures();
@@ -176,7 +177,7 @@ test("user correction records failure when only title changes", () => {
 
 test("user correction records query context when provided", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { reflectionFailureTracking: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ reflectionFailureTracking: true }) });
   const mem = seedMemory(service, store, { type: "preference", title: "语言", content: "喜欢 Python" });
   service.update(mem.id, { content: "喜欢 Rust" }, { query: "用户说：不对，我喜欢 Rust" });
   const failures = store.listFailures();
@@ -186,7 +187,7 @@ test("user correction records query context when provided", () => {
 
 test("user correction skips failure when nothing meaningful changes", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { reflectionFailureTracking: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ reflectionFailureTracking: true }) });
   const mem = seedMemory(service, store, { type: "preference", title: "语言", content: "喜欢 Python", importance: 3 });
   service.update(mem.id, { title: "语言", content: "喜欢 Python", importance: 3 }); // identical
   assert.equal(store.listFailures().length, 0, "no meaningful change -> no failure");
@@ -194,7 +195,7 @@ test("user correction skips failure when nothing meaningful changes", () => {
 
 test("deleteOldFailures removes rows older than the cutoff", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { reflectionFailureTracking: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ reflectionFailureTracking: true }) });
   const mem = seedMemory(service, store, { type: "preference", title: "语言", content: "喜欢 Python" });
   service.update(mem.id, { content: "喜欢 Rust" });
   assert.equal(store.listFailures().length, 1);
@@ -206,7 +207,7 @@ test("deleteOldFailures removes rows older than the cutoff", () => {
 
 test("failure tracking disabled by config", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { reflectionFailureTracking: false } });
+  const service = createService({ store, mirror: null, config: testConfig({ reflectionFailureTracking: false }) });
   const mem = seedMemory(service, store, { type: "preference", title: "语言", content: "喜欢 Python" });
   service.update(mem.id, { content: "喜欢 Rust" });
   assert.equal(store.listFailures().length, 0);
@@ -214,7 +215,7 @@ test("failure tracking disabled by config", () => {
 
 test("listFailures and getFailureStats work", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { reflectionFailureTracking: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ reflectionFailureTracking: true }) });
   const a = seedMemory(service, store, { type: "preference", title: "A", content: "x1" });
   const b = seedMemory(service, store, { type: "preference", title: "B", content: "y1" });
   service.update(a.id, { content: "x2" });

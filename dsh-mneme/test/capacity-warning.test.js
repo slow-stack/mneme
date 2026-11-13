@@ -21,6 +21,7 @@ import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { Config, CAPACITY_WARNING_DEFAULTS } from "../src/config.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function seed(service, n) {
   const ids = [];
@@ -37,7 +38,7 @@ function seed(service, n) {
 
 test("capacityStats 分活跃/归档两格；归档与还原都即时反映", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   try {
     const ids = seed(service, 3);
     assert.deepEqual(store.capacityStats(), { active: 3, archived: 0 });
@@ -78,7 +79,7 @@ test("capacityWarning schema：默认值锚定议题形态区间，边界与部�
 
 test("getCapacityHealth ok 态：检查齐全、占比归零；:memory: 库无体积检查（缺席≠伪装 ok）", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   try {
     seed(service, 1);
     const cap = service.getCapacityHealth();
@@ -109,7 +110,7 @@ test("getCapacityHealth 判级：archived_rows 到阈值 → warn，值/阈值�
   try {
     const mk = (threshold) => createService({
       store, mirror: null,
-      config: { capacityWarning: { dbSizeWarnMb: 0, archivedRowsWarn: threshold, archivedRatioWarn: 0 } }
+      config: testConfig({ capacityWarning: { dbSizeWarnMb: 0, archivedRowsWarn: threshold, archivedRatioWarn: 0 } })
     });
     const ids = seed(mk(2), 3);
     store.setArchived(ids[0], true);
@@ -132,7 +133,7 @@ test("getCapacityHealth 判级：archived_ratio 过线 → warn，值按千分�
   const store = createStore(":memory:");
   const service = createService({
     store, mirror: null,
-    config: { capacityWarning: { dbSizeWarnMb: 0, archivedRowsWarn: 0, archivedRatioWarn: 0.5 } }
+    config: testConfig({ capacityWarning: { dbSizeWarnMb: 0, archivedRowsWarn: 0, archivedRatioWarn: 0.5 } })
   });
   try {
     const ids = seed(service, 3);
@@ -155,7 +156,7 @@ test("getCapacityHealth 判级：db_size 过线 → warn（文件库，足迹含
     const store = createStore(join(dir, "memory.db"));
     const service = createService({
       store, mirror: null,
-      config: { capacityWarning: { dbSizeWarnMb: 1, archivedRowsWarn: 0, archivedRatioWarn: 0 } }
+      config: testConfig({ capacityWarning: { dbSizeWarnMb: 1, archivedRowsWarn: 0, archivedRatioWarn: 0 } })
     });
     // 单条 2MB 正文把库顶过 1 MB 预警线——dbSizeWarnMb 是整数 MB，比它小的只有关 (0)
     service.saveWithDedupe({ type: "project", title: "大块头", content: "x".repeat(2 * 1048576), importance: 3 });
@@ -174,7 +175,7 @@ test("getCapacityHealth 判级：db_size 过线 → warn（文件库，足迹含
 test("getCapacityHealth fail-safe：store 关掉后不抛、显式 unknown、绝不伪装 ok", () => {
   const store = createStore(":memory:");
   const warns = [];
-  const service = createService({ store, mirror: null, config: {}, logger: { warn: (...a) => warns.push(a) } });
+  const service = createService({ store, mirror: null, config: testConfig({}), logger: { warn: (...a) => warns.push(a) } });
   seed(service, 1);
   store.close();
   const cap = service.getCapacityHealth();
@@ -212,7 +213,7 @@ test("/health 挂 capacity：与 mirror 同面、数字可读、不带库文件�
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-cap-"));
   try {
     const store = createStore(join(dir, "memory.db"));
-    const service = createService({ store, mirror: null, config: {} });
+    const service = createService({ store, mirror: null, config: testConfig({}) });
     seed(service, 1);
     const route = makeHealthRoute(store, service);
     const res = new FakeRes();
@@ -242,7 +243,7 @@ test("/health 挂 capacity：与 mirror 同面、数字可读、不带库文件�
 
 test("/health：没接线 getCapacityHealth 的 service → capacity 显式 null，不编造形状", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   try {
     seed(service, 1);
     const route = makeHealthRoute(store, service);

@@ -15,6 +15,7 @@ import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { createEntityStreamAdapter } from "../src/index.js";
 import { mockCtx } from "./helpers/dream-mock.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Bug8: LLM audit trail. Every background LLM call (autoDream consolidation +
 // summary, autoSummarize compression) records tokens/time/status into
@@ -25,11 +26,11 @@ import { mockCtx } from "./helpers/dream-mock.js";
 
 function dreamSetup(over = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return {
     store,
     service,
-    config: { dreamProvider: "deepseek", dreamModel: "deepseek-chat", llmAudit: { enabled: true }, ...over }
+    config: testConfig({ dreamProvider: "deepseek", dreamModel: "deepseek-chat", llmAudit: { enabled: true }, ...over })
   };
 }
 
@@ -159,7 +160,7 @@ test("autoDream audit is skipped when llmAudit.enabled === false", async () => {
 
 test("autoSummarize writes an llm_audit_logs row (trigger_source autoSummarize)", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const events = [];
   const ctx = {
     on(name, fn) {
@@ -186,7 +187,7 @@ test("autoSummarize writes an llm_audit_logs row (trigger_source autoSummarize)"
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s1",
-    requestHeader: () => ({ config: {} }),
+    requestHeader: () => ({ config: testConfig({}) }),
     events: [
       { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "帮我选型" }] } },
       { seq: 2, type: "turn/end" }
@@ -253,7 +254,7 @@ test("autoDream records tokens from the nested usage chunk (chunk.usage)", async
 
 test("autoSummarize records tokens from the nested usage chunk (chunk.usage)", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const events = [];
   const ctx = withUsageChunk({
     on(name, fn) {
@@ -280,7 +281,7 @@ test("autoSummarize records tokens from the nested usage chunk (chunk.usage)", a
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s1",
-    requestHeader: () => ({ config: {} }),
+    requestHeader: () => ({ config: testConfig({}) }),
     events: [
       { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "帮我选型" }] } },
       { seq: 2, type: "turn/end" }
@@ -373,7 +374,7 @@ function req(path) {
 
 function apiSetup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const routes = [];
   const ctx = {
@@ -537,7 +538,7 @@ test("GET /api/dsh-mneme/semantic/llm-audit/stats breaks spend down by operation
 
 test("entity extraction writes an llm_audit row with the streamed usage tokens", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const streamEntityText = createEntityStreamAdapter({
     llm: {
       async *stream() {
@@ -576,7 +577,7 @@ test("entity extraction writes an llm_audit row with the streamed usage tokens",
 
 test("entity extraction success row still leaves the id empty when there is none to attribute", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const streamEntityText = createEntityStreamAdapter({
     llm: {
       async *stream() {
@@ -598,7 +599,7 @@ test("entity extraction success row still leaves the id empty when there is none
 
 test("entity extraction audit write failure only warns and never sinks the extraction", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   // 审计表写不进去（只读库 / 磁盘满）绝不能把抽取本身拖失败—— fail-safe 是硬约定。
   service.saveLlmAudit = () => { throw new Error("attempt to write a readonly database"); };
   const warnings = [];
@@ -626,7 +627,7 @@ test("entity extraction audit write failure only warns and never sinks the extra
 
 test("entity extraction writes no audit row when llmAudit.enabled === false", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const streamEntityText = createEntityStreamAdapter({
     llm: {
       async *stream() {
@@ -639,7 +640,7 @@ test("entity extraction writes no audit row when llmAudit.enabled === false", as
     logger: { warn: () => {} },
     service,
     // 单闸门：与 dream / sleep / summarize 同一个 llmAudit.enabled，不新增第二道。
-    config: { llmAudit: { enabled: false } }
+    config: testConfig({ llmAudit: { enabled: false } })
   });
   const text = await streamEntityText(
     [{ role: "user", content: [{ type: "text", text: "记忆内容" }] }],
@@ -657,7 +658,7 @@ test("entity extraction writes no audit row when llmAudit.enabled === false", as
 // 细节时退回旧字面量、归属 id 传得进来且不凭空造、抛错路径同样带归属。
 test("#405: entity extraction audit records the stream failure cause, not a constant", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const streamEntityText = createEntityStreamAdapter({
     llm: {
       async *stream() {
@@ -689,7 +690,7 @@ test("#405: entity extraction audit records the stream failure cause, not a cons
 
 test("#405: entity extraction audit keeps the legacy wording when the failure has no detail", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const streamEntityText = createEntityStreamAdapter({
     llm: {
       async *stream() {
@@ -712,7 +713,7 @@ test("#405: entity extraction audit keeps the legacy wording when the failure ha
 
 test("#405: entity extraction audit attributes a thrown stream error to the memory too", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const streamEntityText = createEntityStreamAdapter({
     llm: {
       async *stream() {

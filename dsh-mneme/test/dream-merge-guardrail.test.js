@@ -6,6 +6,7 @@ import { Config } from "../src/config.js";
 import { createSettings } from "../src/settings.js";
 import { createDreamScheduler, validateDecisions } from "../src/dream.js";
 import { mockCtx } from "./helpers/dream-mock.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归（#135 成本审计派生）：merge 决策的单轮数量闸 dreamMaxMergePerRun。
 //
@@ -149,7 +150,7 @@ test("#135-cost: dreamMaxMergePerRun is in the settings whitelist with the same 
 
 test("#135-cost: runDream rejects a runaway merge batch and leaves the memories untouched", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   // 84 条普通记忆 → 42 对 merge，超过默认闸 40。
   for (let i = 0; i < 84; i += 1) {
     service.saveWithDedupe({ type: "project", title: `记忆 ${i}`, content: `正文 ${i}`, importance: 3 });
@@ -187,7 +188,7 @@ test("#135-cost: runDream rejects a runaway merge batch and leaves the memories 
 
 test("#135-cost: runDream lands a merge batch below the cap", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 20; i += 1) {
     service.saveWithDedupe({ type: "project", title: `记忆 ${i}`, content: `正文 ${i}`, importance: 3 });
   }

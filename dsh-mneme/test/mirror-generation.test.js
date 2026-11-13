@@ -11,6 +11,7 @@ import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { fakeToken } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 /**
  * v0.3.6 回归测试（audit peer 4 类阻断）。
@@ -35,7 +36,7 @@ function setup({ dbPath } = {}) {
   const mirror = createMirror(mirrorDir);
   const warns = [];
   const logger = { warn: (...a) => warns.push(a.join(" ")) };
-  const service = createService({ store, mirror, config: {}, logger });
+  const service = createService({ store, mirror, config: testConfig({}), logger });
   return { dir, mirrorDir, store, mirror, service, warns };
 }
 
