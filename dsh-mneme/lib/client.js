@@ -1489,6 +1489,8 @@ window.__ModuleLoader__.load({
         "memory.status.token.sinkArchived": "归档",
         "memory.status.token.sinkGap": "巩固/新增",
         "memory.status.token.sinkEmpty": "最近还没有记录",
+        "memory.status.token.sinkAxis": "柱高同基准：按最近 8 周单周最高新增折算",
+        "memory.status.token.sinkArchivedOff": "未画入柱",
         "memory.status.token.sinkFoot": "巩固按去重记录数计，同一条被多轮合并只算一次",
         "memory.status.token.last7": "近 7 天",
         "memory.status.token.meterOnly": "（只计量）",
@@ -2631,6 +2633,8 @@ window.__ModuleLoader__.load({
         "memory.status.token.sinkArchived": "archived",
         "memory.status.token.sinkGap": "consolidated/added",
         "memory.status.token.sinkEmpty": "nothing recorded yet",
+        "memory.status.token.sinkAxis": "same scale for both bars: height is relative to the busiest week by added",
+        "memory.status.token.sinkArchivedOff": "not plotted",
         "memory.status.token.sinkFoot": "consolidated counts distinct records; re-merging the same record counts once",
         "memory.status.token.last7": "last 7 days",
         "memory.status.token.meterOnly": "(metered only)",
@@ -3437,6 +3441,15 @@ window.__ModuleLoader__.load({
       ".mneme-sinklabels span{flex:1;min-width:0;text-align:center;white-space:nowrap}",
       ".mneme-sinklegend{display:flex;flex-wrap:wrap;align-items:center;gap:var(--mneme-space-4) var(--mneme-space-10);margin-top:var(--mneme-space-8);font-size:10.5px;color:var(--mneme-fg-dim)}",
       ".mneme-sinklegend b{font-weight:600;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}",
+      // 图例色标：两根柱的颜色必须有一份能对照的说明，否则读者只能靠猜哪根是
+      // 「进来的」哪根是「稳住的」（#用户反馈：没图标标注、看不太懂）。尺寸走刻度
+      // （状态页不许新增裸 px），归档不画进曲线，所以干脆不给色块、只注明未画入——
+      // 给它一个空心点反而像第三根柱的别名。
+      ".mneme-sinklegend>span{display:inline-flex;align-items:center;gap:var(--mneme-space-4)}",
+      ".mneme-sinkdot{flex:none;width:var(--mneme-space-8);height:var(--mneme-space-8);border-radius:50%}",
+      ".mneme-sinkdot--added{background:var(--mneme-sink-added)}",
+      ".mneme-sinkdot--merged{background:var(--mneme-sink-merged)}",
+      ".mneme-sinkoff{font-style:normal;opacity:.75}",
       // 原 9 卡降级折叠区：默认收起，展开才挂载子卡（见 TokenFlowSection 注释）。
       ".mneme-legacy{max-width:1000px;margin:0 auto var(--mneme-space-12);border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-12);padding:var(--mneme-space-12) var(--mneme-space-16)}",
       ".mneme-legacy summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary)}",
@@ -7602,13 +7615,20 @@ window.__ModuleLoader__.load({
               // 图例只在有数据时给：加载中把三个 0 画出来等于谎报「最近没东西进库」。
               sinkDays && !sinkError
                 ? h("div", { className: "mneme-sinklegend" },
-                    h("span", null, `${t("memory.status.token.sinkAdded")} `, h("b", null, sinkAddedTotal.toLocaleString())),
-                    h("span", null, `${t("memory.status.token.sinkMerged")} `, h("b", null, sinkMergedTotal.toLocaleString())),
-                    h("span", null, `${t("memory.status.token.sinkArchived")} `, h("b", null, sinkArchivedTotal.toLocaleString())),
+                    h("span", null,
+                      h("i", { className: "mneme-sinkdot mneme-sinkdot--added", "aria-hidden": "true" }),
+                      t("memory.status.token.sinkAdded"), h("b", null, sinkAddedTotal.toLocaleString())),
+                    h("span", null,
+                      h("i", { className: "mneme-sinkdot mneme-sinkdot--merged", "aria-hidden": "true" }),
+                      t("memory.status.token.sinkMerged"), h("b", null, sinkMergedTotal.toLocaleString())),
+                    h("span", null,
+                      t("memory.status.token.sinkArchived"), h("b", null, sinkArchivedTotal.toLocaleString()),
+                      h("em", { className: "mneme-sinkoff" }, t("memory.status.token.sinkArchivedOff"))),
                     h("span", null, `${t("memory.status.token.sinkGap")} `, h("b", null, sinkGap))
                   )
                 : null,
-              h("div", { className: "mneme-statuscap", style: { marginTop: "6px", fontSize: "11px" } }, t("memory.status.token.sinkFoot"))
+              h("div", { className: "mneme-statuscap", style: { marginTop: "6px", fontSize: "11px" } }, t("memory.status.token.sinkAxis")),
+              h("div", { className: "mneme-statuscap", style: { marginTop: "2px", fontSize: "11px" } }, t("memory.status.token.sinkFoot"))
             )
           )
         )
