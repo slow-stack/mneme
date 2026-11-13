@@ -256,3 +256,51 @@ test("serve: 面板从没设过 distillRecords.enabled → daemon 这一面按�
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* win 文件锁偶发 */ }
   }
 });
+
+// --- #692:质量过滤的开关也要从持久化 flags 展开进 daemon 的 cfg ---------------
+// 与上面蒸馏那一格同源同坑,但方向相反:读法翻成「默认开、只有显式 false 才关」之后,
+// 最小 cfg 不携带这个键 = 开着。daemon 看不见宿主的 bundle config,只吃 kv 里的
+// "memoryQualityFilter.enabled"——不展开的话,用户在面板里关掉质量过滤,daemon 照样
+// 把短写入归档,而那正是他以为已经关掉的东西。
+async function saveShortMemory(rt) {
+  const res = await fetch(`http://127.0.0.1:${rt.api.port}/memories`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${rt.api.token}`, "content-type": "application/json" },
+    // importance 3 < exemptImportance 4,正文 2 字 < minContentLength 10:必吃短正文扣分。
+    body: JSON.stringify({ type: "preference", title: "短句", content: "喜欢", importance: 3 })
+  });
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  const id = body.memory?.id ?? body.id;
+  return rt.store.getById(id);
+}
+
+test("serve: 面板关掉质量过滤 → daemon 不评分也不归档（开关真的接线了）", async () => {
+  const dir = tmpDir();
+  await seedFlags(dir, { "memoryQualityFilter.enabled": false });
+  const rt = await createServeRuntime({ memoryDir: dir, port: 0, embed: "off" });
+  await rt.api.ready;
+  try {
+    const got = await saveShortMemory(rt);
+    assert.equal(got.archived, false, "面板关着,短正文不得被归档");
+    assert.equal(got.quality_score ?? null, null, "关着时不评分(未设是 undefined,不是 0)");
+    assert.ok(!got.tags.includes("low_quality"));
+  } finally {
+    rt.dispose();
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* win 文件锁偶发 */ }
+  }
+});
+
+test("serve: 面板从没设过质量过滤 → daemon 按默认开处理（与宿主同一默认）", async () => {
+  const dir = tmpDir();
+  const rt = await createServeRuntime({ memoryDir: dir, port: 0, embed: "off" });
+  await rt.api.ready;
+  try {
+    const got = await saveShortMemory(rt);
+    assert.equal(got.archived, true, "默认开:短正文在 daemon 侧也被归档");
+    assert.equal(typeof got.quality_score, "number", "开着就要落分数");
+  } finally {
+    rt.dispose();
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* win 文件锁偶发 */ }
+  }
+});

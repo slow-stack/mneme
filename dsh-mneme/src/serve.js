@@ -74,6 +74,16 @@ export async function createServeRuntime({
   if (typeof persistedFlags["distillRecords.enabled"] === "boolean") {
     cfg.distillRecords = { ...(cfg.distillRecords ?? {}), enabled: persistedFlags["distillRecords.enabled"] };
   }
+  // #692:质量过滤同一格。它的读法在 2026-11 翻成「默认开、只有显式 false 才关」之后,
+  // 最小 cfg **不再携带这个键**就等于开着;而 daemon 同样只吃持久化 flags、看不见宿主的
+  // bundle config。不展开的后果与上面蒸馏那一格同形,只是方向相反:用户在面板里把质量
+  // 过滤关掉(写的是 kv 的 "memoryQualityFilter.enabled": false),daemon 这边照样归档
+  // 短写入——面板上的开关对这块数据面无效,而那正是用户以为自己在关的东西。
+  // 没设过(键缺席)时保持不写进 cfg:默认值只在 src/config.js 的 schema 里,本处不复制
+  // 一份 10 / 30 / 4 之外的默认口径。
+  if (typeof persistedFlags["memoryQualityFilter.enabled"] === "boolean") {
+    cfg.memoryQualityFilter = { ...(cfg.memoryQualityFilter ?? {}), enabled: persistedFlags["memoryQualityFilter.enabled"] };
+  }
   const mirror = createMirror(dir, langOf(cfg));
   const service = createService({ store, mirror, config: cfg, logger });
 

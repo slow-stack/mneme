@@ -1550,14 +1550,18 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // records the score must never fail the save — wrap defensively.
     const qf = config.memoryQualityFilter;
     let quality = null;
-    if (qf?.enabled === true) {
+    // #692: 这个开关的默认值是开（config.js 的 schema 与宿主装配都会填 true），
+    // 所以读法必须是 `!== false`。写成 `=== true` 时，绕过 Config 的裸配置调用方
+    // （测试、第三方直接 import createService）会静默拿到「关」，与文档口径相反。
+    if (qf?.enabled !== false) {
       try {
         // #430：近重复判定只要最近 20 条正文，别再为了 slice(0,20) 先物化整库
         // （all() + 逐行 toRow，5k 行实测 100ms 级；本查询 0.06ms 级）。口径与
         // all().slice(0, 20) 一致：不加 WHERE、updated_at DESC、同刻顺序未定义。
         const recentContents = store.recentContents(20);
         quality = evaluateMemoryQuality(memory, {
-          minContentLength: qf.minContentLength ?? 10,
+          // #692: 默认开之后 qf 自身可能缺席（裸配置调用方），阈值读取必须可选链。
+          minContentLength: qf?.minContentLength ?? 10,
           recentContents
         });
       } catch { /* quality scoring is best-effort */ }
@@ -1779,15 +1783,16 @@ export function createService({ store, mirror, config, onWrite, logger, document
    * 记忆不该被规则分静默归档、无感知无豁免。
    */
   function applyQualityDisposition(memory, quality, qf) {
-    if (!quality || qf?.enabled !== true) return memory;
-    const archiveThreshold = qf.archiveThreshold ?? 30;
+    // 与 saveWithDedupe 同一个读法（#692）：默认开，只有显式 false 才跳过。
+    if (!quality || qf?.enabled === false) return memory;
+    const archiveThreshold = qf?.archiveThreshold ?? 30;
     // Signal tags (meta / repetitive / duplicate / short_content / low_quality)
     // are merged onto the stored row in every assessed band so the verdict is
     // observable, not just the numeric score. Below the archive threshold the
     // memory is additionally archived (still explicitly searchable) — unless
     // its importance reaches the exemption floor (kept active, demoted only).
     const tags = [...new Set([...(memory.tags ?? []), ...(quality.tags ?? [])])];
-    const exemptImportance = qf.exemptImportance ?? 4;
+    const exemptImportance = qf?.exemptImportance ?? 4;
     const importanceExempt = Number.isInteger(memory.importance) && memory.importance >= exemptImportance;
     if (tags.length === (memory.tags?.length ?? 0) && (quality.score >= archiveThreshold || importanceExempt)) {
       return memory; // no tag drift and not archived → nothing extra to write

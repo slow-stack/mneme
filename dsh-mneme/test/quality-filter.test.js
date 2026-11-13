@@ -9,17 +9,20 @@ import {
   REPETITION_THRESHOLD,
   repetitionRatio
 } from "../src/quality-filter.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Bug7: rule-based memory quality filter. Gated on
-// config.memoryQualityFilter.enabled === true — raw configs (`{}`) keep the
-// legacy behavior. Score bands:
+// config.memoryQualityFilter.enabled — **默认开**（src/config.js 的 schema 就是
+// .default(true)，宿主装配后 cfg 里恒为 true）。只有显式 false 才关；裸配置
+// （不传该键）按默认开处理，阈值读取走可选链回落到 10 / 30 / 4（#692）。
+// 本文件自己的 setup 显式传 true，因为下面考的就是判据本身。Score bands:
 //   >= 60       stored normally
 //   30 .. < 60  quality_score persisted, injection ranked by importance × score/100
 //   < 30        archived + tagged low_quality (explicit search still recalls it)
 
 function setup(over = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { memoryQualityFilter: { enabled: true }, ...over } });
+  const service = createService({ store, mirror: null, config: testConfig({ memoryQualityFilter: { enabled: true }, ...over }) });
   return { store, service };
 }
 
@@ -84,9 +87,9 @@ test("saveWithDedupe: near-duplicate content is archived", () => {
   assert.ok(got.tags.includes("low_quality"));
 });
 
-test("saveWithDedupe: filter disabled (raw config) skips scoring entirely", () => {
+test("saveWithDedupe: filter off by explicit enabled:false skips scoring entirely", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const { memory } = service.saveWithDedupe({ type: "preference", title: "语言", content: "短" });
   const got = store.getById(memory.id);
   assert.equal(got.archived, false, "nothing archived when filter off");
@@ -293,3 +296,31 @@ test("Issue #135 review: self_referential is a signal tag and survives a tagged 
   assert.ok(after.tags.includes("self_referential"), "self_referential preserved through the update");
   assert.ok(after.tags.includes("用户标签"), "user tags still applied");
 });
+
+// --- Issue #692：把「默认开」这条契约本身钉住 --------------------------------
+//
+// 上一版读法是 `qf?.enabled === true`：绕过 Config 的调用方（裸配置、第三方直
+// 接 createService）静默拿到「关」，与 schema 的 default(true) 相反。三件事
+// 一起锁：裸配置=开、显式 false 才是关、qf 缺席时阈值读取不许抛。
+
+test("Issue #692: 裸配置（不传 memoryQualityFilter）按默认开处理——短正文被归档", () => {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: {} });
+  const { memory } = service.saveWithDedupe({ type: "preference", title: "语言", content: "短", importance: 3 });
+  const got = store.getById(memory.id);
+  assert.equal(got.archived, true, "默认开：短正文跌破归档线");
+  assert.ok(got.tags.includes("low_quality"), "signal tag written");
+  assert.equal(typeof got.quality_score, "number", "判据确实跑过：分数必须落库");
+  assert.ok(got.quality_score < 30, `score below the archive band, got ${got.quality_score}`);
+});
+
+test("Issue #692: 显式 enabled:false 才是关——不评分、不归档、不打标", () => {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: { memoryQualityFilter: { enabled: false } } });
+  const { memory } = service.saveWithDedupe({ type: "preference", title: "语言", content: "短", importance: 3 });
+  const got = store.getById(memory.id);
+  assert.equal(got.archived, false, "关掉时不做归档");
+  assert.equal(got.quality_score ?? null, null, "关掉时不写分（NULL/未设，不是 0）");
+  assert.ok(!got.tags.includes("low_quality"), "关掉时不写判据标签");
+});
+
