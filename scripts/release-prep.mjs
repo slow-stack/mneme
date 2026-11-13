@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // 发布准备自动化：bump 版本号（dsh-mneme/package.json + package-lock 两处）+ 同步双 README 测试徽章
-// + CHANGELOG 顶部空节 + 双 README 版本表占位行与路线图状态回填。
+// + CHANGELOG 顶部空节。
 //
 // 分工（本脚本最重要的约定）：**机械的归机器，判断的归人**。
-//   - 机器：版本号、测试数、CHANGELOG 空节、占位行、路线图状态格（"已发布 vX.Y.Z" 是事实）
-//   - 人：CHANGELOG 与版本表里的**主题描述**、根 README 的 News 头条、SECURITY.md 支持版本表的
-//     跨 minor 挪格（那是维护策略的判断，写错就是「0.9.x 已停止支持」这种真事故）
+//   - 机器：版本号、测试数、CHANGELOG 空节（把 [Unreleased] 攒的条目整段搬进去）
+//   - 人：CHANGELOG 条目的**措辞与取舍**、SECURITY.md 支持版本表的跨 minor 挪格
+//     （那是维护策略的判断，写错就是「0.9.x 已停止支持」这种真事故）
+// 版本历史不进 README（2026-11-13）：两份 README 都不再放版本表，每版改了什么由 CHANGELOG
+// 与 GitHub Releases 承担。原先给表插占位行的 syncReadmeTables 已随表格删除。
 // 所以 SECURITY.md 只核对不改写：表没跟上就硬失败、PR 不生成，而不是替人写一句可能很危险的
 // 版本声明。核对逻辑在 dsh-mneme/scripts/release-docs.mjs，与测试共用同一份。
 //
@@ -15,7 +17,7 @@
 import fs from "node:fs";
 import { applyTestCount } from "../dsh-mneme/scripts/test-count-sync.mjs";
 import { insertReleaseSection } from "../dsh-mneme/scripts/changelog-prep.mjs";
-import { checkSupportTable, scanReleaseRows, syncReadmeTables } from "../dsh-mneme/scripts/release-docs.mjs";
+import { checkSupportTable } from "../dsh-mneme/scripts/release-docs.mjs";
 
 const version = (process.argv[2] || "").replace(/^v/, "");
 const testCount = process.argv[3];
@@ -117,49 +119,15 @@ if (testCount && /^\d+$/.test(testCount)) {
   }
 }
 
-// ── 4. 双 README 的版本表占位行 + 路线图状态回填（幂等）──
-// 旧实现只认三段式 **v0.9.0**，而根 README 的路线图写的是两段式 **v0.9**：于是根 README
-// 一个字节没改，打印的却是「无版本表格行，跳过」——把「没做」说成了「不需要做」。
-// 现在两种写法分开认，且每张表单独报告做了什么、或为什么没做。
-let touched = 0;
-for (const f of READMES) {
-  const t = fs.readFileSync(f, "utf8");
-  if (isPrerelease) {
-    // 版本表按 minor/patch 排条目，预发布版不是一次版本发布：给它插行会凭空造出
-    // 「**v0.14.0-beta.1**」这样一个版本历史条目，而正式的 0.14.0 还没发。
-    console.log("- " + f + " 版本表不随预发布版 " + version + " 插行（等正式版发布时再补）");
-    continue;
-  }
-  const r = syncReadmeTables(t, version, date);
-  if (!r.actions.length) {
-    const scanned = scanReleaseRows(t);
-    if (!scanned.three.length && !scanned.two.length) {
-      console.log("- " + f + " 没有版本表格（既无三段式也无两段式版本行），跳过");
-    } else {
-      console.log("- " + f + " 版本表已是最新，跳过");
-    }
-    continue;
-  }
-  if (r.text === t) {
-    // 只在真有变更时才返回新文本；相等说明是逻辑 bug，宁可硬失败也不静默发布。
-    console.error("✗ " + f + " 报告了 " + r.actions.length + " 项变更但文本未变——这是脚本 bug，请勿合并");
-    process.exit(1);
-  }
-  fs.writeFileSync(f, r.text);
-  touched += 1;
-  for (const a of r.actions) {
-    if (a.kind === "insert") console.log("✓ " + f + " " + a.table + "：在 v" + a.after.replace(/^v/, "") + " 之后插入占位行");
-    else console.log("✓ " + f + " " + a.table + "：状态 " + a.from + " → " + a.to);
-  }
-}
-
-// 机械部分一句话收口：让人一眼看出还剩下什么要自己写。
-// 机器能做的到此为止，剩下三件都是判断/编辑，写进同一个清单比散在三处提示里可靠。
+// ── 4. 版本历史不进 README ──
+// 两份 README 都不再放版本表（2026-11-13）：入口页只回答「它是什么、怎么装、凭什么信」，
+// 每版改了什么由 CHANGELOG 与 GitHub Releases 承担。原先往表里插占位行的
+// syncReadmeTables 已随表格一起删除——留着它只会对一份没有表格的 README 报告「跳过」，
+// 正是它自己注释里记的那类静默失效。
+console.log("- 两份 README 均不含版本表（版本历史在 CHANGELOG 与 Releases）");
 console.log("");
-console.log(touched ? "完成（" + touched + " 份 README 有改动）。还需要人写的：" : "完成（README 无需改动）。还需要人写的：");
+console.log("完成。还需要人写的：");
 console.log("  1. dsh-mneme/CHANGELOG.md 新节条目的**措辞与取舍**（[Unreleased] 攒的已整段搬过去，不用手搬）");
-console.log("  2. 双 README 版本表占位行里的主题描述" + (isPrerelease ? "（本版是预发布，表不插行，这条留给正式版）" : ""));
-console.log("  3. 根 README 的「📰 最近更新」与「📰 Recent updates」段落的头条（现在是标题式散文，已不是表格；纯编辑内容，脚本不碰）");
 if (supportTableProblems.length) {
   console.log("");
   console.log("⚠ 还有一件必须先做，否则这个 PR 的 CI 会是红的：");
