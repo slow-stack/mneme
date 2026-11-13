@@ -5,6 +5,21 @@
 - **品牌视觉换新：README 头图与插件列表图标**。三处 README（根、`dsh-mneme/`、`mcp/`）顶部改用 `images/mneme-banner-hero.webp`（1672×941，282 KiB）——原图 2.1 MiB 的 PNG 会让 `images/` 目录体积翻倍。根目录用相对路径，两个子目录用 raw 绝对地址：npm 详情页不解析相对图片路径，`../images/...` 在 npmjs.com 上必然裂图。
 - **插件列表图标从手绘 SVG 换成位图**：`package.json` 的 `icon` 改为 `assets/icon.png`（256×256 RGBA、圆角透明、120 KiB，仍在宿主 `iconOf()` 的 256 KiB 上限内）；`assets/icon.svg` 删除。列表图标不再要求与客户端内联 mark（`MNEME_MARK_D`）同形，`test/client.test.js` 的图标用例改验 PNG 魔数、IHDR 边长、位深与 RGBA 通道——宿主对坏文件是静默回落成通用插画，不报错。
 
+- **远程 embedding 下第一步的注入拿不到向量：预取还没回来，渲染已经同步跑完了（#683 第 1 条）**。`prefetchQueryVector` 在 `agent/inbox/claimed` 就发出去了（`src/inject.js:430`），渲染体在 `systemPrompt.context` 里同步读 `queryVectorCache`（`:555`）——本地 embedding 几毫秒，HTTP embedding 一个往返 20–200ms，于是本机看不出问题，走远程 embedding 的用户第一步恒退化为只有 BM25 词法路。上报者（#683，xueyue33）说的正是这条。
+  - **不能按建议写在 `agent/pre-step` 里等**。查宿主源码（`@deepseek-ai/dsh-agent-loop` 的 `src/agent.ts:290-324` 的 `preStep()`）：`:294` 先 `inbox.claim()`，`:301` 就 `await systemPrompt.assemble(...)`，`:303` 才 `dispatch.waterfall('agent/pre-step', …)`。**assemble 在 pre-step 之前**，监听器跑到时记忆文本早已渲染进消息，在那里等只能影响下一步。
+  - **唯一还能改这块文本的位置是 `system-prompt/assemble`**：`@deepseek-ai/dsh-system-prompt` 的 `src/index.ts:685` 在 context 求值之后、装配结果被拿去渲染之前走异步瀑布，且 `:622` 的 `assemble(context)` 会把带 `agent` 的 `AssembleContext` 传进来（`@deepseek-ai/dsh-agent` 的 `src/dispatch.ts:176`），所以监听器拿得到 session、能重放同一个渲染体。
+  - **等到就重算，等不到原样放过**：渲染体提成 `memoryContext` 常量（瀑布与 `systemPrompt.context` 共用一份实现，避免两处漂移）；监听器只在「这次查询的预取还在飞」时才等，`PREFETCH_WAIT_MS = 250` 封顶、计时器经 `sleepUnref` 卸载（不吊住进程）；拿到向量就把装配结果里 `memory` 条目的 `text` 换成重算的那份。没有预取、预取失败、超时三种情况一律 `return next()`——注入防线不能变成新的卡顿点。
+  - **重算不会污染注入历史**：同一步本来就会求值两次（assemble + 注入侧刷新），`recordInjection` 对同一 query 是覆盖 `last.ids` 而不是追加，embedding 请求由 `inflightPrefetches` 去重。
+  - **`text` 必须保持同步**：`PromptContext.text` 的类型是 `string | ((context: AssembleContext) => string)`，等待只能发生在瀑布里。测试夹具刻意复刻这条约束（先同步求值各 context，再走异步瀑布），任何把等待写进 `text` 的改法都会让用例直接挂掉。
+  - **测试**：`test/issue-683-stale-vector-and-fusion.test.js` 前 4 条（等到向量并重算、没有预取不等也不重算、预取失败不重算不抛、超过上限放弃等待）。反向对照：撤掉瀑布注册后第 1 条立刻变红。
+
+- **没有 embedding 的老记忆被判 0 分：词法精确命中反而输给「意思像但只有向量」的行（#683 第 2 条）**。`src/service.js` 的 `scopedSim`（`:2103-2113`）里 `0.5 * (s ?? 0)`——索引建立前入库的行没有向量，`sim.get(m.id)` 是 `undefined`，于是整条词法路白跑。上报者给的修法是 `s ?? 0.5` 中性基线。
+  - **账要算清**：两条路各排一份名单，各自的第 1 名都拿到 `1/(60+1)` 的 RRF 分、归一化后各贡献 0.25；余弦只占剩下的一半权重。于是词法命中那行的融合分本来是 0.25，纯向量命中那行是 `0.5×余弦 + 0.25`——余弦只要落在 (0, 0.5) 区间，「词面撞上但没有向量」就被系统性压到下面，而这正是专有名词、issue 编号、函数名这类查询最该命中的一行。
+  - **两路都缺的行仍然沉底**：`:2106` 的 `if (s === undefined && rrf === undefined) return -1;` 一字未动，中性基线不会把没有信号的行复活。
+  - **测试**：同文件后 2 条（余弦 0.42 时词法命中回到首位；两路都缺的行不会被基线抬到有信号行之前）。反向对照：把 `?? 0.5` 改回 `?? 0` 后第 1 条立刻变红。
+
+- 测试 3440 → **3446**。
+
 ## [0.14.0] - 2026-11-12
 
 - **注入的规则池只看得到前 200 条记忆：候选池此前固定 `store.list({ limit: 200 })`，合格行 8400+ 条里 8200 条永远进不了窗（#619）**。这个窗口按 `importance DESC` 取，于是注入位实际上由「谁更重要」决定一个固定的前 200 名，而真正的排序规则（summary 优先档 → preference → importance×quality×heat×scope）只在这 200 条**内部**生效。实测本机库 9067 条活跃记忆里，按注入闸门（`injectType` / 非 narrative / importance ≥ 3）合格的有 8421 条，其中 8210 条永远进不了候选窗；窗口内 200 条的 importance 分布是**全部 5**——也就是说 summary 优先档这条规则，在最需要它的场景里根本没机会触发。

@@ -2104,7 +2104,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
             const s = sim.get(m.id);
             const rrf = fusedRrf?.get(m.id);
             if (s === undefined && rrf === undefined) return -1;
-            const fused = 0.5 * (s ?? 0) + 0.5 * (rrf ?? 0) * RRF_NORM;
+            // #683 第 2 条：余弦缺失时用 0.5 中性基线，不再判 0 分。老行大量没有
+            // embedding（索引建立前入库的），而 0 会把「词法精确命中但没向量」的
+            // 行系统性压到「意思像但只有向量」的行之下——两路融合的本来目的就是
+            // 让这两类各守一段，缺失一项不该等于这一项判了负分。
+            const fused = 0.5 * (s ?? 0.5) + 0.5 * (rrf ?? 0) * RRF_NORM;
             return fused * scopeMultOf(m);
           };
           candidates = [...candidates].sort((a, b) => scopedSim(b) - scopedSim(a));
