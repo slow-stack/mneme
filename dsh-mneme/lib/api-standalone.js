@@ -35,6 +35,39 @@ const MAX_PAGE_LIMIT = 1000;
 const MAX_SEARCH_TOP_K = 200;
 
 /**
+ * 对外契约版本与能力表（GET /health 的握手面）。
+ *
+ * 网页端桥接（浏览器扩展 / userscript / 本地注入器）没法读源码，只能先握手
+ * 再决定怎么用这张数据面：版本对上就注入记忆，对不上就降级为「不注入」、
+ * 绝不阻断宿主自己的聊天请求。所以 /health 必须同时给出**版本**与**能力**，
+ * 只回 `{ok:true}` 的话调用方除了「端口活着」什么都判断不了。
+ *
+ * 加一条路由就要在这里加一条能力——`test/standalone-api.test.js` 有一条锁
+ * 扫源码里的 `pathname === "…"`，漏登记会红。这不是文档纪律，是一张真实
+ * 契约：外部程序按这张表决定自己能不能用。
+ */
+const API_CONTRACT_VERSION = 1;
+const API_CAPABILITIES = Object.freeze([
+  "status",
+  "profile",
+  "persona.read",
+  "persona.write",
+  "rules",
+  "memories.list",
+  "memories.read",
+  "memories.write",
+  "memories.update",
+  "provenance",
+  "search",
+  "context",
+  "share",
+  "receive",
+  "receive.undo",
+  "bootstrap",
+  "maintenance.reclaim"
+]);
+
+/**
  * /context 降级原因枚举（#383，issue #508 评审后定稿）——**日志读数**的唯一真源。
  * 它不进响应体：响应只多 `tier` 一个键，具体原因走 daemon stderr 那行 warn。
  *
@@ -134,6 +167,47 @@ function isAuthorized(req, apiToken) {
   if (token === "" || token.length !== apiToken.length) return false;
   // Constant-time comparison: no timing oracle on the token.
   return timingSafeEqual(Buffer.from(token), Buffer.from(apiToken));
+}
+
+/** Origin 归一：浏览器发的一定是 `scheme://host[:port]`，尾斜杠只可能来自人写配置。 */
+function normalizeOrigin(value) {
+  return typeof value === "string" ? value.trim().replace(/\/+$/, "") : "";
+}
+
+/**
+ * 允许的来源白名单。空数组 = 不发任何 CORS 头 = 与旧版逐字节一致（默认）。
+ *
+ * 只做**精确**匹配，不支持通配：`*` 与「带 Authorization 头的跨域请求」在
+ * 规范里不能同时成立（`Access-Control-Allow-Credentials` 那一套），而这张面
+ * 的鉴权恰好是 Bearer 头。要放宽就得用 `*` + 把 token 挪进 URL，那是另一种
+ * 安全取舍，不在本键范围内。
+ */
+function allowedOriginSet(list) {
+  const out = new Set();
+  if (!Array.isArray(list)) return out;
+  for (const item of list) {
+    const origin = normalizeOrigin(item);
+    if (origin === "" || origin === "*") continue; // `*` 刻意不支持（见上）
+    out.add(origin);
+  }
+  return out;
+}
+
+/**
+ * 给本次响应挂上 CORS 头（仅当 Origin 命中白名单）。
+ *
+ * 走 `res.setHeader` 而不是改 `sendJson` 的 writeHead 参数：一次挂上，
+ * 之后所有出口（含 401 / 413 / 500 这些错误分支）都带上——浏览器在读错误
+ * 响应体的那一刻同样需要这些头，否则调用方只会看到一个空的 CORS 错误，
+ * 连「token 不对」都读不到。
+ */
+function applyCorsHeaders(res, origin) {
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Dsh-Mneme-Token");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Expose-Headers", "Content-Type");
+  res.setHeader("Access-Control-Max-Age", "600");
 }
 
 /**
@@ -379,14 +453,44 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
     ?? config.externalApiPort
     ?? DEFAULT_PORT;
 
+  // CORS 白名单来自配置；默认空数组 = 一个头都不发，行为与旧版逐字节一致。
+  const allowedOrigins = allowedOriginSet(config.externalApiAllowedOrigins);
+
   const server = createServer((req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://localhost");
       const pathname = url.pathname;
 
-      // Health is the single unauthenticated probe (monitor checks).
+      // --- CORS 与预检：必须排在鉴权之前 -----------------------------------
+      // 浏览器对带 Authorization 头的跨域请求先发 OPTIONS 预检，而预检**不带**
+      // Authorization——夹在下面的鉴权之后，预检就恒 401，真正的请求发不出去，
+      // 调用方只会看到一条读不到原因的浏览器 CORS 报错。
+      const origin = normalizeOrigin(req.headers?.origin);
+      const originAllowed = origin !== "" && allowedOrigins.has(origin);
+      if (originAllowed) applyCorsHeaders(res, origin);
+
+      if (req.method === "OPTIONS") {
+        if (!originAllowed) {
+          // 白名单没配对时明确回 403（带 origin-not-allowed），而不是空 204
+          // 让调用方对着浏览器的 CORS 抱怨猜原因。
+          sendJson(res, 403, { error: "origin-not-allowed" });
+          return;
+        }
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      // Health 是唯一的免鉴权探测口（监控用），同时是**握手面**：版本 + 能力
+      // 一起给，桥接才能在注入之前判断「这张数据面能不能用、能用哪些」。
       if (req.method === "GET" && pathname === "/health") {
-        sendJson(res, 200, { ok: true });
+        sendJson(res, 200, {
+          ok: true,
+          version: PACKAGE_VERSION,
+          contract: { name: "dsh-mneme-http", version: API_CONTRACT_VERSION },
+          capabilities: API_CAPABILITIES,
+          cors: allowedOrigins.size > 0
+        });
         return;
       }
 
