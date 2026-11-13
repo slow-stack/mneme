@@ -324,13 +324,20 @@ export function createT1({ store, runSession = null, limits = DEFAULT_LIMITS, no
   async function runT1({ repoRoot, model = DEFAULT_T1_MODEL, moduleSlug = null, retryFailed = false, dryRun = false, dshExe = null, limits: limitsOverride = null }) {
     const cap = { ...limits, ...limitsOverride };
     const rootPath = realpathSync(resolve(repoRoot));
-    // 登记校验（#581）：本机路径没登记时，按可移植身份认领——同一仓库已在别的
-    // 机器登记过（共享库），本机直接富化那一行，消灭「每端都必须先各自跑一次
-    // T0」。认领成功的同时把本机路径落进位置表，读侧从此能按 host 解析到它。
+    // 登记校验（#581）：**身份优先**（PR #679 评审）——共享库里另一台主机可能把
+    // 同一条绝对路径登记成了别的仓库；按路径先查会命中那一行，随后 T1 读的是本机
+    // 仓库的文件，却把 claims 与页状态写进对方的 repo.id。所以先按身份认领，路径
+    // 回退只接受「无键的存量行」或「键一致的行」。认领成功的同时把本机路径落进
+    // 位置表，读侧从此能按 host 解析到它。
     const portableKey = portableKeyFor(rootPath);
-    let repo = store.db.prepare("SELECT * FROM choro_repos WHERE root_path = ?").get(rootPath);
-    if (!repo && portableKey) {
-      repo = store.db.prepare("SELECT * FROM choro_repos WHERE portable_key = ?").get(portableKey) ?? undefined;
+    let repo = portableKey
+      ? (store.db.prepare("SELECT * FROM choro_repos WHERE portable_key = ?").get(portableKey) ?? undefined)
+      : undefined;
+    if (!repo) {
+      const byPath = store.db.prepare("SELECT * FROM choro_repos WHERE root_path = ?").get(rootPath);
+      if (byPath && (!portableKey || byPath.portable_key == null || byPath.portable_key === portableKey)) {
+        repo = byPath;
+      }
     }
     if (!repo) {
       throw new T1Refusal("not-registered", `${rootPath} 还没有登记：先跑一次 T0（${T1_CLI ?? "dsh-mneme-choro <repo> --apply"}）`);

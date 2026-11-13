@@ -4,7 +4,7 @@
 // 盘上缺页如实报 page-missing、检索分节与行号、repo 解析的歧义处理。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, unlinkSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, unlinkSync, readFileSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -428,5 +428,60 @@ test("共享库跨端：读侧按当前 host 的位置行解析本机根，未�
   } finally {
     store.close();
     rmTempBestEffort(root);
+  }
+});
+
+// ---- PR #679 评审：路径回退要核验身份、最长前缀比较候选自身长度 ----
+
+test("回退到身份行路径前核验目录身份：同路径的另一个仓库不能被当成本仓库（#679）", () => {
+  const rootA = makeFixture();
+  execFileSync("git", ["remote", "add", "origin", "git@github.com:slow-stack/repo-a.git"], { cwd: rootA, stdio: "pipe" });
+  const store = createStore(":memory:");
+  let rootB = null;
+  try {
+    runChoroT0({ repoRoot: rootA, store, apply: true, now: FIXED_NOW });
+    const row = store.db.prepare("SELECT id, root_path FROM choro_repos").get();
+    // 另一个仓库 B（不同 remote），把 A 的 .chorography 复制过去——这样「路径存在
+    // 且页面可读」，只有身份核验能挡住误读。
+    rootB = makeFixture("repo-b-mark");
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:slow-stack/repo-b.git"], { cwd: rootB, stdio: "pipe" });
+    cpSync(join(rootA, ".chorography"), join(rootB, ".chorography"), { recursive: true });
+    // 模拟「身份行指向另一台机器登记的同一条路径，本机没有位置行」
+    store.db.prepare("UPDATE choro_repos SET root_path = ? WHERE id = ?").run(rootB, row.id);
+    store.db.prepare("DELETE FROM choro_repo_paths").run();
+    const q = createChoroQueries({ store, hostId: () => "host-without-position" });
+    assert.equal(q.readPage(row.id, "src").error, "page-missing",
+      "身份不符时必须报本机不可达，不能读 B 的页面当成 A 的内容");
+    const page = q.readPage(row.id, "src");
+    assert.equal(page.content, undefined, "不许把 B 的正文交出去");
+  } finally {
+    store.close();
+    rmTempBestEffort(rootA);
+    if (rootB) rmTempBestEffort(rootB);
+  }
+});
+
+test("repoByCwd 的最长前缀比较候选自己的路径长度，而不是身份行里那条外地路径（#679）", () => {
+  const base = mkdtempSync(join(tmpdir(), "choro-prefix-"));
+  const inner = join(base, "nested");
+  const cwd = join(inner, "src");
+  mkdirSync(cwd, { recursive: true });
+  const store = createStore(":memory:");
+  try {
+    // 外层身份行留一条**很长**的外地路径；本机位置行指向 base。
+    const longForeign = "D:\\" + "foreign-very-long-segment\\".repeat(20) + "outer";
+    const outer = store.upsertChoroRepo(longForeign, "outer", null, "aa", "2026-11-10T00:00:00.000Z", "github.com/x/outer");
+    store.upsertChoroRepoPath("github.com/x/outer", "hostA", base, "2026-11-10T00:00:00.000Z");
+    // 内层身份行路径很短；本机位置行指向 inner（比 base 长）。
+    store.upsertChoroRepo("D:\foreign\inner", "inner", null, "bb", "2026-11-10T00:00:00.000Z", "github.com/x/inner");
+    store.upsertChoroRepoPath("github.com/x/inner", "hostA", inner, "2026-11-10T00:00:00.000Z");
+    const q = createChoroQueries({ store, hostId: () => "hostA" });
+    const hit = q.repoByCwd(cwd);
+    assert.ok(hit, "cwd 必须命中某个仓库");
+    assert.equal(hit.id, store.db.prepare("SELECT id FROM choro_repos WHERE name='inner'").get().id,
+      "内层本机路径更长，必须赢过外层的身份行长路径");
+  } finally {
+    store.close();
+    rmTempBestEffort(base);
   }
 });

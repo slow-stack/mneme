@@ -14,7 +14,7 @@ import { join, resolve, sep } from "node:path";
 import { gitHead } from "./t0.js";
 import { loadPlanFromRepo } from "./plan.js";
 import { TEMPLATE_VERSION, T1_SECTION_START } from "./render.js";
-import { hostId as defaultHostId } from "./portable.js";
+import { hostId as defaultHostId, portableKeyFor } from "./portable.js";
 // claim 失效判定的纯函数（借 openwiki 的 Grounded Claims）：解析 diff + 逐条比对
 // 三列证据。放独立模块是因为它零 DB、零 IO（除 diffSince 那一次 git），可单测。
 import { diffSince, summarizeClaims } from "./claims.js";
@@ -54,19 +54,29 @@ export function createChoroQueries({ store, hostId: hostIdFn = defaultHostId }) 
 
   // 本机路径解析（#581）：身份行（choro_repos）上的 root_path 是「最近一次登记
   // 的位置」，未必是本机的——跨端共享库时可能是另一台机器的路径。当前机器登记
-  // 过（choro_repo_paths 有本 host 的行）就用本机路径；没登记过退回行上的
-  // root_path。单机库两个值恒等，行为不变；跨端库在本机还没跑过 T0/T1 时拿不到
-  // 本机路径，文件访问落进既有的 page-missing / unreadable 失败口径（wiki-tools
-  // 的共享库用例锁着那个形状）——路径形状跨 OS 互不为前缀，不会拿别的机器的
-  // 路径读出错误内容。
+  // 过（choro_repo_paths 有本 host 的行）就用本机路径。
+  //
+  // **没有本机位置行时要核验回退目录的身份**（PR #679 评审）：两台主机的同一条
+  // 绝对路径可能各自检出不同仓库。只凭「路径存在」就回退，会把对方仓库的页面当成本
+  // 仓库的内容读出来，写路径还会往错的地方落页。核验用 portableKeyFor（一次 git
+  // 读取，结果按 键+路径 记忆化——回退只在「本机还没跑过 T0/T1」时发生，常态零成本）。
+  // 核验不过时返回空串：调用方按「本机不可达」处理，绝不拼相对路径去读 CWD。
+  const fallbackVerified = new Map();
   const localRootPath = (row) => {
     const key = row?.portable_key;
+    const rawRoot = String(row?.root_path ?? "");
     if (key) {
       const p = db.prepare("SELECT root_path FROM choro_repo_paths WHERE repo_key = ? AND host_id = ?")
         .get(key, hostIdFn());
       if (p && p.root_path) return p.root_path;
+      if (!rawRoot) return "";
+      const cacheKey = `${key}\u0000${rawRoot}`;
+      if (fallbackVerified.has(cacheKey)) return fallbackVerified.get(cacheKey);
+      const verified = portableKeyFor(rawRoot) === key ? rawRoot : "";
+      fallbackVerified.set(cacheKey, verified);
+      return verified;
     }
-    return row?.root_path ?? "";
+    return rawRoot;
   };
 
   /** 已登记仓库（含模块/页面计数，面板仓库选择器与工具的 repo 解析共用）。 */
@@ -249,7 +259,11 @@ export function createChoroQueries({ store, hostId: hostIdFn = defaultHostId }) 
     ).get(repoId, String(slug));
     if (!row) return null;
     const repo = db.prepare("SELECT root_path, portable_key, name FROM choro_repos WHERE id = ?").get(repoId);
-    const abs = join(localRootPath(repo), row.rel_path);
+    const repoRoot = localRootPath(repo);
+    // 空串 = 本机既没有位置行、回退目录的身份也对不上（PR #679 评审）：
+    // 必须当「页在本机不可达」，不能拿 join("", rel) 去读进程 CWD 里的巧合路径。
+    if (!repoRoot) return { error: "page-missing", slug: row.slug, relPath: row.rel_path };
+    const abs = join(repoRoot, row.rel_path);
     let content;
     try {
       content = readFileSync(abs, "utf8");
@@ -292,6 +306,8 @@ export function createChoroQueries({ store, hostId: hostIdFn = defaultHostId }) 
     const hits = [];
     const searchRoot = localRootPath(repo);
     for (const page of pages) {
+      // 空串 = 本机不可达（身份核验没过）：按「这一页读不到」上报，不拼相对路径。
+      if (!searchRoot) { onUnreadablePage?.(page.slug); continue; }
       const abs = join(searchRoot, page.rel_path);
       let text;
       try {
@@ -363,12 +379,16 @@ export function createChoroQueries({ store, hostId: hostIdFn = defaultHostId }) 
       if (row) candidates.push({ root: String(p.root_path ?? ""), row });
     }
     let best = null;
+    // 最长前缀必须比较**候选自己的路径长度**（PR #679 评审）：本机候选来自位置表
+    // 时，best 的 root_path 仍是身份行里那条（可能是另一台机器很长的路径），拿它
+    // 比长度会让短的内层本机路径永远赢不了，会话被外层仓库抢走。
+    let bestLen = 0;
     for (const { root, row } of candidates) {
       const croot = cmp(root);
       if (croot === "") continue;
       const hit = target === croot || target.startsWith(croot.endsWith(sep) ? croot : croot + sep);
       if (!hit) continue;
-      if (!best || croot.length > cmp(String(best.root_path)).length) best = row;
+      if (!best || croot.length > bestLen) { best = row; bestLen = croot.length; }
     }
     return best ?? null;
   }
@@ -475,7 +495,8 @@ export function createChoroQueries({ store, hostId: hostIdFn = defaultHostId }) 
     const pages = pageRows.map((p) => {
       let hasT1 = false;
       try {
-        hasT1 = readFileSync(join(rootPath, p.rel_path), "utf8").includes(T1_SECTION_START);
+        // rootPath 为空 = 本机不可达（身份核验没过）：不拼相对路径读 CWD。
+        hasT1 = rootPath !== "" && readFileSync(join(rootPath, p.rel_path), "utf8").includes(T1_SECTION_START);
       } catch { hasT1 = false; }
       const verifiedBaseline = String(p.verified_baseline ?? "").trim() || null;
       const verifiedAt = p.verified_at ?? null;
@@ -589,7 +610,9 @@ export function createChoroQueries({ store, hostId: hostIdFn = defaultHostId }) 
       const fresh = !dimDrift && row && row.source_generated_at === page.generated_at && row.vector;
       if (fresh) { result.skipped++; continue; }
       if (row && row.vector) result.stale++;
-      const abs = join(localRootPath(repo), page.rel_path);
+      const repoRoot = localRootPath(repo);
+      if (!repoRoot) continue; // 本机不可达：不嵌、不报错（与 existsSync 缺页同口径）
+      const abs = join(repoRoot, page.rel_path);
       if (!existsSync(abs)) continue;
       let text;
       try {

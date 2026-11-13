@@ -23,6 +23,21 @@ test("normalizeGitUrl：SSH / HTTPS / scp / 大小写归一到同一身份，凭
   assert.equal(normalizeGitUrl(null), null);
 });
 
+test("normalizeGitUrl：URL 端口与 scp 路径分隔符分开处理，路径里的 @ 不被当 userinfo（PR #679）", () => {
+  // 带协议头时 authority 的冒号是端口；只有 scp 形态的冒号才是路径分隔符。
+  assert.equal(normalizeGitUrl("ssh://git@example.org:2222/team/repo.git"), "example.org:2222/team/repo");
+  assert.equal(normalizeGitUrl("ssh://git@example.org/2222/team/repo.git"), "example.org/2222/team/repo");
+  assert.notEqual(
+    normalizeGitUrl("ssh://git@example.org:2222/team/repo.git"),
+    normalizeGitUrl("ssh://git@example.org/2222/team/repo.git")); 
+  // 默认端口剥掉：ssh 22 与省略端口的写法必须同一身份。
+  assert.equal(normalizeGitUrl("ssh://git@example.org:22/team/repo.git"), "example.org/team/repo");
+  assert.equal(normalizeGitUrl("https://example.org:443/team/repo.git"), "example.org/team/repo");
+  // 路径里的 @ 不是 userinfo：仓库名带 @stable 时不能把主机与路径一起切掉。
+  assert.equal(normalizeGitUrl("ssh://git@host-a/team/repo@stable.git"), "host-a/team/repo@stable");
+  assert.equal(normalizeGitUrl("git@host-b:team/repo@stable.git"), "host-b/team/repo@stable");
+});
+
 test("portableKeyFor：有 remote 用归一化 URL，无 remote 退化根提交哈希（同名仓库不撞键）", () => {
   const root = mkdtempSync(join(tmpdir(), "choro-portable-"));
   try {

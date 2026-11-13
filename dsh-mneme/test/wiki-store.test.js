@@ -267,3 +267,37 @@ test("upsertChoroRepo：升格期 root 被别的行占着时不强改 root（否
   assert.equal(store.choroRepoPathFor("github.com/x/y", "hostA")?.root_path, "D:\\repo", "本机位置照记");
   store.close();
 });
+
+// ---- PR #679 评审：身份唯一 + 路径回退必须校验身份 ----
+
+test("同一路径被另一身份占用时拒绝复用该行（否则会把对方的名字/基线/页一起改掉）", () => {
+  const store = openMemory();
+  store.upsertChoroRepo("D:\work\repo", "a", null, "aa11", "2026-11-10T00:00:00.000Z", "github.com/a/a");
+  assert.throws(
+    () => store.upsertChoroRepo("D:\work\repo", "b", null, "bb22", "2026-11-11T00:00:00.000Z", "github.com/b/b"),
+    /choro repo path conflict/);
+  const rows = store.db.prepare("SELECT name, portable_key, git_baseline FROM choro_repos").all();
+  assert.equal(rows.length, 1, "不许把原行改成另一身份");
+  assert.equal(rows[0].portable_key, "github.com/a/a");
+  assert.equal(rows[0].name, "a");
+  assert.equal(rows[0].git_baseline, "aa11");
+  store.close();
+});
+
+test("无键的存量行仍允许按路径认领（升格语义不变）", () => {
+  const store = openMemory();
+  store.upsertChoroRepo("D:\legacy", "old", null, "aa", "2026-11-09T00:00:00.000Z", null);
+  const r = store.upsertChoroRepo("D:\legacy", "new", null, "bb", "2026-11-11T00:00:00.000Z", "github.com/x/y");
+  assert.equal(r.portable_key, "github.com/x/y", "存量行被补上身份键");
+  assert.equal(store.db.prepare("SELECT COUNT(*) AS n FROM choro_repos").get().n, 1);
+  store.close();
+});
+
+test("portable_key 有唯一约束（部分索引）", () => {
+  const store = openMemory();
+  const idx = store.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_choro_repos_portable'").get();
+  assert.ok(idx, "索引必须存在");
+  assert.match(idx.sql, /UNIQUE/i, "同名身份不许两行");
+  assert.match(idx.sql, /WHERE portable_key IS NOT NULL/i, "存量 NULL 行不受约束");
+  store.close();
+});

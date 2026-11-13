@@ -1390,6 +1390,16 @@ export function createStore(path) {
   // 自己的机器上重跑 T0/T1 时补上，不猜（remote URL 拿不到就是拿不到）。
   // choro_repo_paths 建表走 SCHEMA 的 CREATE TABLE IF NOT EXISTS，老库重开自动补。
   addColumn("choro_repos", "portable_key", "ALTER TABLE choro_repos ADD COLUMN portable_key TEXT");
+  // 身份唯一（PR #679 评审）：同一 portable_key 只许一行，否则并发登记会各自插入、
+  // 之后任意取其中一行。部分索引（键非空才约束）保证升格前的 NULL 行不受影响。
+  // 建索引可能因存量重复键失败（本功能尚未发布，概率趋零，但不能因此让插件起不来）
+  // ——失败时退成非唯一索引，upsert 的「插入撞唯一键→回读再更新」分支只在索引建成
+  // 时生效，退化的库上并发仍可能重复，这是启动可用性与约束强度之间的取舍。
+  try {
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_repos_portable ON choro_repos(portable_key) WHERE portable_key IS NOT NULL;");
+  } catch {
+    db.exec("CREATE INDEX IF NOT EXISTS idx_choro_repos_portable ON choro_repos(portable_key);");
+  }
 
   // v0.8.0 A1（issue #17）scope 隔离存储层：四列全部可空、不带 DEFAULT——存量行
   // 零重写，读侧把 NULL 视为未标注（= 全局可见）。是否落值由 scopeEnabled 门控
@@ -5482,7 +5492,20 @@ export function createStore(path) {
     let existing = portableKey
       ? (db.prepare("SELECT * FROM choro_repos WHERE portable_key = ?").get(portableKey) ?? undefined)
       : undefined;
-    if (!existing) existing = choroRepoByRoot(rootPath);
+    if (!existing) {
+      // 路径回退必须校验身份（PR #679 评审）：两台主机的同一条绝对路径可能各自
+      // 检出不同仓库。若该路径已属另一身份的行，拿它复用会把对方的名字、基线、
+      // 键一起改掉，随后 T0 还会用本仓库的图替换对方的模块与 claims。无键的存量
+      // 行（升格前登记）仍允许按路径认领——那时候键还不存在，路径就是唯一线索。
+      const byRoot = choroRepoByRoot(rootPath);
+      if (byRoot && portableKey && byRoot.portable_key != null && byRoot.portable_key !== portableKey) {
+        throw new Error(
+          `choro repo path conflict: ${rootPath} is already registered as ${byRoot.portable_key}; ` +
+          `refusing to re-register it as ${portableKey}`
+        );
+      }
+      existing = byRoot;
+    }
     if (existing) {
       const rootTaken = db.prepare("SELECT id FROM choro_repos WHERE root_path = ? AND id != ?")
         .get(rootPath, existing.id);
@@ -5496,10 +5519,25 @@ export function createStore(path) {
       }
       return choroRepoByRoot(nextRoot);
     }
-    db.prepare(
-      `INSERT INTO choro_repos (root_path, name, plan_fingerprint, git_baseline, created_at, updated_at, portable_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(rootPath, name, planFingerprint, gitBaseline, updatedAt, updatedAt, portableKey);
+    try {
+      db.prepare(
+        `INSERT INTO choro_repos (root_path, name, plan_fingerprint, git_baseline, created_at, updated_at, portable_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(rootPath, name, planFingerprint, gitBaseline, updatedAt, updatedAt, portableKey);
+    } catch (err) {
+      // 并发登记（PR #679 评审）：两个进程可能都先查到「无记录」再各自插入。
+      // portable_key 的唯一索引会让后到者失败，此时重新按身份取行并走更新，
+      // 而不是把第二个写入变成用户可见的失败。
+      const message = String(err?.message ?? err);
+      if (!portableKey || !/UNIQUE constraint failed: choro_repos\.portable_key/i.test(message)) throw err;
+      const raced = db.prepare("SELECT * FROM choro_repos WHERE portable_key = ?").get(portableKey);
+      if (!raced) throw err;
+      db.prepare(
+        `UPDATE choro_repos SET root_path = ?, name = ?, plan_fingerprint = ?, git_baseline = ?, updated_at = ?
+          WHERE id = ?`
+      ).run(rootPath, name, planFingerprint, gitBaseline, updatedAt, raced.id);
+      return choroRepoByRoot(rootPath);
+    }
     return choroRepoByRoot(rootPath);
   }
 
