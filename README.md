@@ -30,6 +30,13 @@
 
 **dsh-mneme** 给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 一份跨会话的记忆：对话结束，值得留下的部分自动蒸馏进本机；下次开口，相关的几条自己浮上来。记忆不是锁在向量库里的一堆浮点数——它落在本机的一份 SQLite，旁边配一份 Markdown 镜像，你随时能打开、能改，改了不会被机器盖掉。
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/memory-loop-dark.svg">
+  <img src="docs/memory-loop.svg" width="100%" alt="记忆闭环：写入经质量闸成为原子记忆，存进本机 SQLite 与 Markdown 镜像；空闲时巩固；召回时四路并行、融合成一条排序后注入；出口是会话上下文、面板与其他插件">
+</picture>
+
+<p align="center"><sub>写进来 → 本机存着 → 空闲时整理 → 四路取回 → 送进会话。</sub></p>
+
 ## 安装
 
 ```bash
@@ -142,6 +149,8 @@ dsh plugin --profile web remove @modusensus/dsh-mneme
 Every new chat, the AI meets you for the first time. You explain the project again, restate your preferences, and re-argue a decision that was already settled.
 
 **dsh-mneme** gives [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) memory that outlives a conversation: when a chat ends, what is worth keeping is distilled into your machine, and the relevant pieces surface on their own next time. The memories are not a pile of floats locked in a vector store — they live in a local SQLite file with a Markdown mirror beside it: open it, read it, edit it, and your edits are not overwritten.
+
+The whole loop in one picture (labels in Chinese): [docs/memory-loop.svg](docs/memory-loop.svg) — [dark version](docs/memory-loop-dark.svg).
 
 ## Install
 
