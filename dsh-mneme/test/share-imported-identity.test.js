@@ -21,6 +21,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { IMPORTED_SOURCE } from "../src/memory-source.js";
 import { parseHumanEdits, renderMirrorText, createMirror } from "../src/mirror.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const FOREIGN_PACK_ID = "f0f0f0f0f0f0f0f0";
 const FOREIGN_EXTERNAL_ID = "deadbeef00000099";
@@ -51,7 +52,7 @@ test("mergeHumanEdits rewrites a foreign row's body but never its guard identity
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-imported-identity-"));
   const store = createStore(join(dir, "memory.db"));
   try {
-    const service = createService({ store, mirror: null, config: {} });
+    const service = createService({ store, mirror: null, config: testConfig({}) });
     const foreign = seedForeignRow(store);
 
     // 条目块由真渲染器（renderMirrorText → renderMemory）生成，测试只手改正文那一段。
@@ -83,7 +84,7 @@ test("reconcileHumanEdits (the syncMirror re-ingest route) rewrites the body and
   const store = createStore(join(dir, "memory.db"));
   try {
     const mirror = createMirror(join(dir, "mirror"));
-    const service = createService({ store, mirror, config: {} });
+    const service = createService({ store, mirror, config: testConfig({}) });
     const foreign = seedForeignRow(store);
 
     // 业务写触发 syncMirror：外来行第一次落到 preferences.md（渲染器写出的 digest 是

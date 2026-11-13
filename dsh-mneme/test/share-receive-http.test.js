@@ -39,6 +39,7 @@ import {
   SHARE_IMPORT_ERRORS,
   SHARE_IMPORT_UNAVAILABLE
 } from "../src/share-http.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = (f) => readFileSync(resolve(here, "../src", f), "utf8");
@@ -333,7 +334,7 @@ class FakeRes extends EventEmitter {
 function receiveSetup(apiToken = FAKE_API_TOKEN, { logger = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-receive-api-"));
   const store = createStore(join(dir, "memory.db"));
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const commands = { add: () => {}, remove: () => {}, list: () => [] };
   const routes = [];
@@ -606,9 +607,9 @@ test("undo through the panel counts before it deletes and needs confirm to delet
 function standaloneSetup() {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-receive-std-"));
   const store = createStore(join(dir, "memory.db"));
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
-  const api = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: 0 });
+  const api = createStandaloneApi({ service, store, config: testConfig({}), settings, logger: null, port: 0 });
   return api.ready.then(() => {
     const handlers = api.server.listeners("request");
     assert.equal(handlers.length, 1, "这台面上只许挂着一个 request handler，否则下面那条锁问不出是谁");

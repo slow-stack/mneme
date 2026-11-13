@@ -17,10 +17,11 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createTools } from "../src/tools.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function chainFixture() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   // 旧值行（两行都被新行取代，用来验回执的计数与「都保持隐藏」）
   const oldColor = service.saveWithDedupe({
     type: "preference", title: "纸模工具的收纳",

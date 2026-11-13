@@ -27,6 +27,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { deriveExternalId, importedTagFor, SHARE_KIND } from "../src/share.js";
 import { IMPORTED_SOURCE } from "../src/memory-source.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const PACK_ID = "f0f0f0f0f0f0f0f0";
 // packId 可换是第三个补的用例要的：external_id 的四格里含 pack_id，同 pack_id 的第二份
@@ -90,7 +91,7 @@ function setup() {
   const rowsOf = (s) => s.list({ limit: null, includeArchived: true, includeForgotten: true });
   const rows = () => rowsOf(raw);
   const service = createService({
-    store, mirror: null, config: { embeddingModel: "stub" },
+    store, mirror: null, config: testConfig({ embeddingModel: "stub" }),
     onWrite: () => { writes++; }
   });
   // 方法名照 src/service.js 探测的那两个（schedule ?? embedSingle）：猜错的话 lock d 那条

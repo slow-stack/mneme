@@ -25,6 +25,7 @@ import { createSettings } from "../src/settings.js";
 import { createApi } from "../src/api.js";
 import { createStandaloneApi } from "../src/api-standalone.js";
 import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const SHARE_PATH = "/api/dsh-mneme/share";
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -68,7 +69,7 @@ class FakeRes extends EventEmitter {
 function shareSetup(apiToken = FAKE_API_TOKEN, { logger = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-share-api-"));
   const store = createStore(join(dir, "memory.db"));
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const commands = { add: () => {}, remove: () => {}, list: () => [] };
   const routes = [];
@@ -246,11 +247,11 @@ test("the panel /share chain answers once when the sink fails mid-write", async 
 function standaloneSetup() {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-share-std-"));
   const store = createStore(join(dir, "memory.db"));
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   // 起法照 test/standalone-api.test.js：这个模块没有 start()/stop()，监听在构造里
   // 发起、由 ready 兑现，端口是 OS 给的（port: 0），token 挂在 api 上。
-  const api = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: 0 });
+  const api = createStandaloneApi({ service, store, config: testConfig({}), settings, logger: null, port: 0 });
   return api.ready.then(() => {
     const base = `http://127.0.0.1:${api.port}`;
     return {

@@ -18,6 +18,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createOrganizer } from "../src/organize.js";
 import { IMPORTED_SOURCE, isImportedRow } from "../src/memory-source.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -33,7 +34,7 @@ test("saveWithDedupe never merges into an imported row", () => {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-imported-guard-"));
   const store = createStore(join(dir, "memory.db"));
   try {
-    const service = createService({ store, mirror: null, config: {} });
+    const service = createService({ store, mirror: null, config: testConfig({}) });
     const foreign = store.save({ type: "decision", title: "选 SQLite", content: "对方的原文", tags: [], source: IMPORTED_SOURCE });
     const before = store.getById(foreign.id);
     const out = service.saveWithDedupe({ type: "decision", title: "选 SQLite", content: "我自己的新结论", tags: [] });
@@ -62,7 +63,7 @@ test("saveWithDedupe never merges into an imported row named by _mergeInto", () 
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-imported-merge-into-"));
   const store = createStore(join(dir, "memory.db"));
   try {
-    const service = createService({ store, mirror: null, config: {} });
+    const service = createService({ store, mirror: null, config: testConfig({}) });
     const foreign = store.save({ type: "decision", title: "选 SQLite", content: "对方的原文", tags: [], source: IMPORTED_SOURCE });
     const before = store.getById(foreign.id);
     const out = service.saveWithDedupe({
@@ -169,7 +170,7 @@ test("organize never names an imported row as an archive target", async () => {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-imported-organize-"));
   const store = createStore(join(dir, "memory.db"));
   try {
-    const service = createService({ store, mirror: null, config: {} });
+    const service = createService({ store, mirror: null, config: testConfig({}) });
     // 向量档给「无信号」：命中只能来自精确层，红了能立刻知道是哪一层出的问题。
     const { organize } = createOrganizer({
       store,
@@ -227,7 +228,7 @@ test("registerDocument's evidence absorb never archives a foreign row", async ()
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-doc-absorb-"));
   const store = createStore(join(dir, "memory.db"));
   try {
-    const service = createService({ store, mirror: null, config: { documentMemoryEnabled: true } });
+    const service = createService({ store, mirror: null, config: testConfig({ documentMemoryEnabled: true }) });
     const docFile = join(dir, "x.md");
     writeFileSync(docFile, "# Doc\n\n正文正文", "utf8");
     const foreign = store.save({ type: "pattern", title: "别人的模式", content: "正文正文正文", tags: [], source: IMPORTED_SOURCE });
@@ -259,7 +260,7 @@ test("the pattern-scan pool drops foreign rows before the LIMIT, not after", () 
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-imported-window-"));
   const store = createStore(join(dir, "memory.db"));
   try {
-    const service = createService({ store, mirror: null, config: {} });
+    const service = createService({ store, mirror: null, config: testConfig({}) });
     // 落行顺序就是时间顺序：store.js 的 nowIso() 单调递增（同毫秒也 +1ms），所以后落的
     // 那批必然更新。list 的默认序是 importance DESC → updated_at DESC，两边同权 3，
     // 于是外来行整体顶在窗口最前面。这就是「窗口被占满」那台机器，不用人为调时钟。

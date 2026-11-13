@@ -9,6 +9,7 @@ import { createDreamScheduler } from "../src/dream.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { Config } from "../src/config.js";
 import { mockCtx } from "./helpers/dream-mock.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // --- 状态追踪回归集（issue #218 前置）----------------------------------------
 //
@@ -28,7 +29,7 @@ import { mockCtx } from "./helpers/dream-mock.js";
 //      （search/list）也放开——(a)(b) 与 (c) 是一组：只放开任意一条就会
 //      在这里变红。这就是「保留旧记忆锚」策略的前置条件：保留 ≠ 可召回。
 //
-// 支路形状锁（第 (d)(e) 两条用例）：前三 (a)(b)(c) 跑在 config:{}（无 embedder）
+// 支路形状锁（第 (d)(e) 两条用例）：前三 (a)(b)(c) 跑在 config: testConfig({})（无 embedder）
 // 上，mode=auto 实际只落 keyword + BM25，语义支路一次都没被走到。后两条装上
 // 确定性假 embedder（纯函数、零网络、无真实模型）与向量索引，把同一个回归
 // 类型钉到语义支路上：
@@ -96,7 +97,7 @@ function semanticEmbedder() {
 
 async function supersededFixture({ embedder = null } = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const vectorIndex = embedder ? createVectorIndex({ store }) : null;
   if (embedder) {
     service.setEmbedder(embedder);

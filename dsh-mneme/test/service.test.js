@@ -6,10 +6,11 @@ import { join } from "node:path";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createMirror } from "../src/mirror.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return { store, service };
 }
 
@@ -100,7 +101,7 @@ test("mutations through passthroughs sync mirror; forgotten entries stay out of 
   const store = createStore(":memory:");
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-service-"));
   const mirror = createMirror(dir);
-  const service = createService({ store, mirror, config: {} });
+  const service = createService({ store, mirror, config: testConfig({}) });
   try {
     const saved = service.saveWithDedupe({ type: "project", title: "A", content: "a", importance: 4 });
     assert.ok(existsSync(join(dir, "projects.md")), "mirror written on save");
@@ -124,7 +125,7 @@ test("saveWithDedupe created branch keeps forgotten entries out of mirror", () =
   const store = createStore(":memory:");
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-service-"));
   const mirror = createMirror(dir);
-  const service = createService({ store, mirror, config: {} });
+  const service = createService({ store, mirror, config: testConfig({}) });
   try {
     const a = service.saveWithDedupe({ type: "project", title: "A", content: "a", importance: 4 });
     service.setForget(a.memory.id, true);
@@ -157,7 +158,7 @@ test("summary memory is a candidate at top priority", () => {
 test("write methods invoke onWrite hook when provided", () => {
   const { store } = setup();
   let called = 0;
-  const svc = createService({ store, mirror: null, config: {}, onWrite: () => { called++; } });
+  const svc = createService({ store, mirror: null, config: testConfig({}), onWrite: () => { called++; } });
   svc.saveWithDedupe({ type: "project", title: "a", content: "x" });
   assert.equal(called, 1, "saveWithDedupe hooks");
   svc.update(svc.all()[0].id, { content: "y" });
@@ -230,7 +231,7 @@ test("Bug4: injectCandidates with an empty query keeps the legacy rule-based sel
 
 test("Bug4: injectCandidates ignores the query when hybridInject is disabled", () => {
   const { store } = setup();
-  const svc = createService({ store, mirror: null, config: { hybridInject: false } });
+  const svc = createService({ store, mirror: null, config: testConfig({ hybridInject: false }) });
   svc.saveWithDedupe({ type: "preference", title: "p0", content: "偏好" });
   svc.saveWithDedupe({ type: "summary", title: "记忆库总览", content: "总览", importance: 5 });
   const noQuery = svc.injectCandidates({ maxItems: 5, threshold: 3 });
@@ -271,7 +272,7 @@ test("Bug5: _humanEdited overwrite replaces content directly and archives the ol
 
 function qualitySetup(config = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { memoryQualityFilter: { enabled: true, ...config } } });
+  const service = createService({ store, mirror: null, config: testConfig({ memoryQualityFilter: { enabled: true, ...config } }) });
   return { store, service };
 }
 
@@ -315,7 +316,7 @@ test("Bug7: repetitive (trigram > 0.7) content is scored into the degraded band"
 
 test("Bug7: memoryQualityFilter.enabled=false skips scoring entirely", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { memoryQualityFilter: { enabled: false } } });
+  const service = createService({ store, mirror: null, config: testConfig({ memoryQualityFilter: { enabled: false } }) });
   const result = service.saveWithDedupe({ type: "project", title: "记忆系统规则", content: "我需要记住用户喜欢中文阅读长篇小说和散文" });
   const row = store.getById(result.memory.id);
   assert.ok(row.quality_score == null, "no quality_score written");
@@ -325,7 +326,7 @@ test("Bug7: memoryQualityFilter.enabled=false skips scoring entirely", () => {
 
 test("Bug7: injection ranking re-weights by quality_score (degraded memories rank lower)", () => {
   const { store } = setup();
-  const svc = createService({ store, mirror: null, config: { memoryQualityFilter: { enabled: true } } });
+  const svc = createService({ store, mirror: null, config: testConfig({ memoryQualityFilter: { enabled: true } }) });
   svc.saveWithDedupe({ type: "preference", title: "高质量", content: "用户喜欢读科幻小说和散文" });
   svc.saveWithDedupe({ type: "preference", title: "元记忆", content: "我需要记住用户偏好的完整清单防止忘记" });
   const candidates = svc.injectCandidates({ maxItems: 5, threshold: 3 });

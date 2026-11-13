@@ -23,6 +23,7 @@ import { POSITIVE_SAMPLES, NEGATIVE_SAMPLES, SAMPLE_VALUES, referenceScan } from
 // 写错时照样过，真 config 才会红。
 import { Config } from "../src/config.js";
 import { createSensitiveScan } from "../src/sensitive-scan.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // #254 写入准入（第一阶段：只计量，不拦截）。
 // 本批次没有阈值、没有拦截分支，验收看两件事：默认路径零行为变化（无会话身份的
@@ -33,7 +34,7 @@ import { createSensitiveScan } from "../src/sensitive-scan.js";
 function setup({ wired = true, now, admissionConfig } = {}) {
   const store = createStore(":memory:");
   const writeAdmission = wired ? createWriteAdmission({ store, now, config: admissionConfig }) : null;
-  const service = createService({ store, mirror: null, config: {}, writeAdmission });
+  const service = createService({ store, mirror: null, config: testConfig({}), writeAdmission });
   return { store, service, writeAdmission };
 }
 
@@ -48,7 +49,7 @@ test("无会话身份的写入不进预算，也不写准入行", () => {
   assert.equal(store.listLlmAudits().length, 0, "系统写入（dream / summarize / import / organize）不记准入行");
 
   // 未接线写入准入的服务（老调用方 / 单测）同样零变化
-  const bare = createService({ store, mirror: null, config: {} });
+  const bare = createService({ store, mirror: null, config: testConfig({}) });
   assert.equal(bare.saveWithDedupe({ type: "project", title: "T2", content: "另一段内容" }).action, "created");
   assert.equal(store.listLlmAudits().length, 0, "未接线时不产生任何审计行");
 });
@@ -206,7 +207,7 @@ test("话题表由审计行重建：新实例（进程重启）仍能认出同�
 
   // 新实例 = 进程重启：内存视图为空，只能从审计行回填
   const revived = createWriteAdmission({ store });
-  const service2 = createService({ store, mirror: null, config: {}, writeAdmission: revived });
+  const service2 = createService({ store, mirror: null, config: testConfig({}), writeAdmission: revived });
   service2.saveWithDedupe({ _sessionKey: "s", type: "project", title: "B", content: "#99 又记了一笔" });
 
   const g2 = admissionRows(store, "s").filter((r) => r.metadata.g2);
@@ -254,7 +255,7 @@ test("计量失败不反噬写入（旁路，只 warn）", () => {
   const throwing = createService({
     store,
     mirror: null,
-    config: {},
+    config: testConfig({}),
     writeAdmission: {
       evaluate() { throw new Error("evaluate boom"); },
       record() { throw new Error("record boom"); }
@@ -271,7 +272,7 @@ test("计量失败不反噬写入（旁路，只 warn）", () => {
   const halfBroken = createService({
     store,
     mirror: null,
-    config: {},
+    config: testConfig({}),
     writeAdmission: { evaluate: real.evaluate, record() { throw new Error("record boom"); } }
   });
   assert.equal(
@@ -284,7 +285,7 @@ test("计量失败不反噬写入（旁路，只 warn）", () => {
 test("接线：memory_save 把会话键交给写入准入，缺会话身份的宿主落 null", async () => {
   const store = createStore(":memory:");
   const writeAdmission = createWriteAdmission({ store });
-  const service = createService({ store, mirror: null, config: {}, writeAdmission });
+  const service = createService({ store, mirror: null, config: testConfig({}), writeAdmission });
   const registered = [];
   createTools({ tools: { register(def) { registered.push(def); return () => {}; } } }, service, {}, null);
   const save = registered.find((t) => t.name === "memory_save");
@@ -368,10 +369,10 @@ function level1Store(opts = {}) {
   const writeAdmission = createWriteAdmission({
     store,
     now,
-    config: { writeAdmission: { enabled, enforce } },
+    config: testConfig({ writeAdmission: { enabled, enforce } }),
     sensitiveScan
   });
-  const service = createService({ store, mirror: null, config: {}, writeAdmission });
+  const service = createService({ store, mirror: null, config: testConfig({}), writeAdmission });
   return { store, service, writeAdmission };
 }
 
@@ -532,9 +533,9 @@ test("接线：被拒时 memory_save 返回 action=denied 与可行动的 reason
   const store = createStore(":memory:");
   const writeAdmission = createWriteAdmission({
     store,
-    config: { writeAdmission: { enabled: true, enforce: true } }
+    config: testConfig({ writeAdmission: { enabled: true, enforce: true } })
   });
-  const service = createService({ store, mirror: null, config: {}, writeAdmission });
+  const service = createService({ store, mirror: null, config: testConfig({}), writeAdmission });
   const registered = [];
   createTools({ tools: { register(def) { registered.push(def); return () => {}; } } }, service, {}, null);
   const save = registered.find((t) => t.name === "memory_save");
