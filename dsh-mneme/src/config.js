@@ -1053,6 +1053,16 @@ export const Config = z.object({
   recallRecordDefault: z.boolean().default(true),
   // recall_runs 滚动清理保留天数。
   recallRetentionDays: z.natural().min(1).max(3650).default(90),
+  // dream_runs 重载列（input 快照 / decisions / outcome）的启动期裁剪窗口（天），
+  // opt-in 默认 0 = 不裁（现状逐字节不变；#557：这张表是四个 *RetentionDays 都不
+  // 覆盖的无界增长大户，单行体量随记忆数涨、轮数随天数涨，相乘超线性）。拍板 3：
+  // 裁列同意、删行不同意——行与骨架列永远保留，回放能力对窗口外的轮次降级为骨架
+  // 级（与 reclaim 清 input、dreamInputSummaryEnabled 的瘦身同一条口径）；organize
+  // 行整体豁免（input 是 apply 的重放载荷）。顶层扁平键、只从配置文件改，与
+  // recallRetentionDays 同族（进面板要同时补 api.js 的 NESTED 表与 client.js 的
+  // 面板行，族里还没人开这个头）。窗口别配得比「最近几轮」还短：/dream-status 的
+  // 最近 5 轮里被裁掉的老轮，decisions.demotion 会退化成 null（骨架与时间戳不受影响）。
+  dreamRunsTrimDays: z.natural().min(0).max(3650).default(0),
 
   // --- tool exposure: 慢模型/轻量模型的工具往返节流（v0.8.5）----------------
   // 跨会话记忆已由 inject.js 每轮自动注入系统提示词，memory_search 只用于

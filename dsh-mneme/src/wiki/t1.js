@@ -25,7 +25,7 @@ import { tmpdir } from "node:os";
 import { realpathSync } from "node:fs";
 import {
   extractHumanBlocks, injectHumanBlocks, T1_SECTION_START, T1_SECTION_END,
-  FM_VERIFIED_AT, FM_VERIFIED_BASELINE, setFrontmatterKeys,
+  FM_VERIFIED_AT, FM_VERIFIED_BASELINE, FM_STATUS, setFrontmatterKeys,
 } from "./render.js";
 import { gitHead } from "./t0.js";
 // issue #607：拒绝文案里的 CLI 命令要给绝对路径入口（profile 装的插件没有全局
@@ -566,6 +566,13 @@ function enrichPageFile(pageFile, sections, { verifiedBaseline = null, verifiedA
   const finalContent = setFrontmatterKeys(withHuman, [
     [FM_VERIFIED_BASELINE, verifiedBaseline],
     [FM_VERIFIED_AT, verifiedAt],
+    // 文件里的 status 与库里的 choro_pages.status 同步推进（#582）：此前 T1
+    // 成功只改库（markChoroPageEnriched），文件那行永远停在 T0 写的 skeleton
+    // ——页面文件自身与数据库状态不一致，看文件的人会以为这页从没富化过。
+    // 失败路径不写它：文件停在 skeleton 与「首次失败不标 failed」的口径一致
+    // （recordChoroPageFailure 改的是库）。T0 重跑整页重写、status 回 skeleton，
+    // 与「T0 丢弃语义段」同一件事。
+    [FM_STATUS, "enriched"],
   ]);
   writeFileSync(pageFile, finalContent, "utf8");
 }
