@@ -3294,6 +3294,10 @@ export function createService({ store, mirror, config, onWrite, logger, document
       afterSync("write");
       return updated;
     },
+    // 取代链上下文（#532）：memory_forget 的回执要说清「这次抑制连带谁」。
+    // 只读，不走 afterSync——回执冒烟不该触发镜像重渲染。旧装配（测试替身）
+    // 没有这个方法时返回 null，工具侧按「无链信息」降级，不抛。
+    supersedeContext: (id) => (typeof store.supersedeContext === "function" ? store.supersedeContext(id) : null),
     setArchived: archiveMemory,
     // sleep-mode storage (v0.4.0). demoteToSummary / restoreContent mutate
     // content so they ride the normal write-hook path (mirror re-renders).

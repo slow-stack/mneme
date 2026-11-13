@@ -333,6 +333,21 @@ export const apply = (ctx, config) => {
     ctx.logger?.warn?.(`[dsh-mneme] recall_runs retention purge failed: ${String(err)}`);
   }
 
+  // #557：dream_runs 重载列（input / decisions / outcome）的启动期裁剪。opt-in 默认
+  // 0 = 不裁（零行为变化）；开窗后与上面四处同策略——读装配后的 cfg、失败只 warn
+  // 不挡启动。裁的是列不是行（拍板 3），organize 行豁免（store 层谓词，与 reclaim
+  // 的 clearDreamRunInputs 同一条边界）。真裁到了才出一行 info：常态（库还小 /
+  // 没开窗）一个字都不出，别把启动日志刷成心跳。
+  try {
+    const dreamRunsTrimDays = Number.isInteger(cfg.dreamRunsTrimDays) ? cfg.dreamRunsTrimDays : 0;
+    if (dreamRunsTrimDays > 0) {
+      const trimmed = store.trimDreamRunPayloads(new Date(Date.now() - dreamRunsTrimDays * 86400000).toISOString());
+      if (trimmed > 0) ctx.logger?.info?.(`[dsh-mneme] dream_runs payload trim: ${trimmed} run(s) beyond the ${dreamRunsTrimDays}d window (columns cleared, rows kept)`);
+    }
+  } catch (err) {
+    ctx.logger?.warn?.(`[dsh-mneme] dream_runs payload trim failed: ${String(err)}`);
+  }
+
   // 记忆语言（memory.language）：本实例逐层传入 inject / summarize / dream /
   // sleep / mirror，多实例（如 agent preset 内挂载）互不影响。
   const mirror = createMirror(memoryDir, langOf(cfg));
