@@ -346,6 +346,57 @@ export function gitHead(repoRoot) {
   }
 }
 
+/**
+ * 验证那一刻工作区里有哪些**已被 git 跟踪或未跟踪但未被忽略**的文件是脏的（#648）。
+ *
+ * 为什么需要它：claims 的行号取自**磁盘上的内容**，而 HEAD 只描述上一次提交。工作区
+ * 有未提交改动时，这两者不是同一个状态——改动被提交后 `diffSince(HEAD, 新HEAD)` 从
+ * 改动之后起算，这一段永远看不到，claim 会被误判成没被动过。所以富化时必须把「当时
+ * 哪些文件不在提交里」记下来，判定时这些文件上的 claim 只能判「无法用提交核对」，
+ * 不能冒充「没变」。
+ *
+ * 为什么不用写一个 tree 对象：`git write-tree` / stash 式 ref 会在仓库里留下悬空对象
+ * 或额外 ref，默认 2 周后被 gc 掉；靠它当基线等于把可解释性押在对象存活上。文件清单
+ * 是纯文本、随页面一起落库，重装/换机都还在。
+ *
+ * `--porcelain -z` 天然不含 .gitignore 命中的产物（除非它们本来就已被跟踪，那时它们
+ * 的改动确实会影响 claim，该算脏）。`--untracked-files=all` 让未跟踪目录展开成文件，
+ * 否则整个目录只报一行、里面具体哪个文件脏就丢了。
+ *
+ * 返回排好序的仓库相对路径数组（正斜杠）；读不出来返回 null —— null 是「不知道」，
+ * 不是「干净」，调用方不得把它当空数组用。
+ */
+export function gitDirtyFiles(repoRoot) {
+  try {
+    const out = execFileSync(
+      "git",
+      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      { cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+    );
+    const records = String(out).split("\0");
+    const paths = [];
+    const norm = (p) => String(p).replace(/\\/g, "/");
+    for (let i = 0; i < records.length; i += 1) {
+      const record = records[i];
+      if (record.length < 4 || record[2] !== " ") continue;
+      const xy = record.slice(0, 2);
+      paths.push(norm(record.slice(3)));
+      // rename/copy 在 -z 里把旧路径作为下一条独立记录（不带状态前缀）跟出来：
+      // 旧路径上的 claim 同样失去了提交层面的可比性，一起记。
+      if (xy.includes("R") || xy.includes("C")) {
+        const from = records[i + 1];
+        if (from) {
+          paths.push(norm(from));
+          i += 1;
+        }
+      }
+    }
+    return [...new Set(paths)].sort();
+  } catch {
+    return null;
+  }
+}
+
 function readState(repoRoot) {
   try {
     const raw = readFileSync(join(repoRoot, CHORO_DIR, "state.json"), "utf8");

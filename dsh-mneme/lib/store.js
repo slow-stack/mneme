@@ -697,7 +697,11 @@ CREATE TABLE IF NOT EXISTS choro_pages (
   -- T0 重建整页时随 T1 正文一起归 NULL。全仓 git_baseline 是 T0 的时点，拿它当 claims
   -- 的比对起点会把「T1 之前就发生、claim 早已算进去」的改动误报成 touched。
   verified_baseline TEXT,
-  verified_at       TEXT
+  verified_at       TEXT,
+  -- 验证那一刻工作区里哪些文件还没进提交（#648，JSON 数组）。claims 的行号取自磁盘
+  -- 内容，这些文件的改动在 baseline..head 的 diff 里永远看不到，只能凭这份清单判
+  -- 「无法用提交核对」。NULL = 不知道当时的工作区状态（本列之前富化的老数据）。
+  verified_dirty_files TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_pages_module ON choro_pages(module_id);
 
@@ -1386,6 +1390,9 @@ export function createStore(path) {
   // 存量行的 NULL 就是事实（那批页富化时还没记这个），不要伪造一个提交号。
   addColumn("choro_pages", "verified_baseline", "ALTER TABLE choro_pages ADD COLUMN verified_baseline TEXT");
   addColumn("choro_pages", "verified_at", "ALTER TABLE choro_pages ADD COLUMN verified_at TEXT");
+  // 工作区脏文件清单（#648）：同样是「不知道就留 NULL」，不给老行编一个空数组——
+  // 空数组的意思是「当时工作区是干净的」，与 NULL 的「没记过」必须分开。
+  addColumn("choro_pages", "verified_dirty_files", "ALTER TABLE choro_pages ADD COLUMN verified_dirty_files TEXT");
   // chorography 收尾档（P36）：v0.11.0 的 choro_vectors 是空壳表（spec §5 漏了
   // 向量本体列），存量库经 PRAGMA 检查补列。
   addColumn("choro_vectors", "vector", "ALTER TABLE choro_vectors ADD COLUMN vector TEXT");
@@ -5782,13 +5789,17 @@ export function createStore(path) {
   // verifiedBaseline 是 T1 那一刻的 HEAD：claims 的行号取自那个提交的代码，之后判失效
   // 只能从它起算（传 null 表示拿不到 HEAD——那时 diff 判不了，面板要说「不知道」，
   // 而不是退回全仓 git_baseline 假装知道）。
-  function markChoroPageEnriched(pageId, generatedAt, verifiedBaseline = null) {
+  function markChoroPageEnriched(pageId, generatedAt, verifiedBaseline = null, verifiedDirtyFiles = null) {
+    // 脏文件清单单独一列（#648）：基线记的是提交，清单记的是「提交之外还有哪些文件
+    // 在那一刻参与了 claim 抽取」。null（不知道/读不出）与 []（当时确实干净）严格分开，
+    // 面板据此才能说清这一页是用哪棵树验证的。
+    const dirtyJson = Array.isArray(verifiedDirtyFiles) ? JSON.stringify(verifiedDirtyFiles) : null;
     db.prepare(
       `UPDATE choro_pages
           SET status = 'enriched', generated_at = ?, fail_count = 0,
-              verified_baseline = ?, verified_at = ?
+              verified_baseline = ?, verified_at = ?, verified_dirty_files = ?
         WHERE id = ?`
-    ).run(generatedAt, verifiedBaseline, generatedAt, pageId);
+    ).run(generatedAt, verifiedBaseline, generatedAt, dirtyJson, pageId);
   }
 
   // 单页 claims 整页替换（P20 的表侧）：T1 一轮产出的 claims 删旧插新；evidence/
