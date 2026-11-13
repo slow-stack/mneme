@@ -6,10 +6,10 @@
 // heatEnabled / summarizeBatchCrossTypeDedupe 同一惯例），并各验一次显式关掉的反向
 // 对照——否则「改成恒真」也会让默认开那半条通过。
 //
-// 第三处 `memoryQualityFilter.enabled` 刻意不在本文件覆盖：它挂在**自身带
-// `.default({})` 的对象**里，经 Config 的调用方一直是开的；若把裸配置也翻成开，
-// 等于重定义「程序化 createService 的默认契约」，现有断言里有 421 条按旧契约
-// 写（短正文不被归档、检索能命中），属于要单独拍板的事，见 issue #692 的说明。
+// 第三处 `memoryQualityFilter.enabled` 已经翻过来了（#692 尾巴，见
+// test/quality-filter.test.js 的两条锁与 `test/helpers/test-config.js` 的前提），
+// 但它不归本文件：那处翻完会连带改变「裸配置调用方写的短正文会不会被归档」，
+// 属于接口契约级别的变化，落点放在质量过滤自己的测试里更近，这里只留这句话当路标。
 import test from "node:test";
 import assert from "node:assert/strict";
 
