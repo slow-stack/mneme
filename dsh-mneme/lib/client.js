@@ -5378,7 +5378,9 @@ window.__ModuleLoader__.load({
           ),
           searchEntries.map((e) => {
             if (e.kind === "enum") return enumRow(e.k, e.values);
-            if (e.kind === "str") return strRow(e.k);
+            // 错峰时段串解析失败时，正常视图会在输入框下方标红说明该值没生效；
+            // 搜索结果同样要带上，否则用户在搜索态改完时段看不到「这串没生效」。
+            if (e.kind === "str") return h(react.Fragment, { key: e.k }, strRow(e.k), peakInvalidHint(e.k));
             if (e.kind === "num") return numRow(e.k);
             return boolRow(e.k);
           }),

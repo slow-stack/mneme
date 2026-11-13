@@ -4867,3 +4867,14 @@ test("settings search: the placeholder and empty state describe the real match s
   assert.ok(zhNo.some((line) => /Feature switches/.test(line) && /groups and cards/.test(line)),
     "English no-results copy must separate the two match scopes");
 });
+
+test("settings search: an unparsed peak-hours string stays visible in results (#653)", () => {
+  // 正常视图在 peakHours 输入框下方用 peakInvalidHint 标红「这串没生效」；
+  // 搜索结果若只渲染 strRow，用户在搜索态改完时段就看不到失败提示（PR #677 评审）。
+  const branch = clientSource.slice(
+    clientSource.indexOf("if (state && Array.isArray(searchEntries)"),
+    clientSource.indexOf("if (error && !state)")
+  );
+  assert.ok(branch.includes("peakInvalidHint(e.k)"),
+    "the str branch must keep peakInvalidHint so an unparsed peak-hours spec is still reported");
+});
