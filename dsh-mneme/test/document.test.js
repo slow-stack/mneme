@@ -12,10 +12,11 @@ import { createService, PINNED_MEMORY_TYPES } from "../src/service.js";
 import { createDocumentRegistrar } from "../src/document.js";
 import { MEMORY_ITEM_SCHEMA } from "../src/tools.js";
 import { TYPE_DECAY_DEFAULTS } from "../src/heat.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function makeService(config = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   return { store, service, close: () => store.close() };
 }
 

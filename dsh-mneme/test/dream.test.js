@@ -4,6 +4,7 @@ import { validateDecisions, applyDecisions, createDreamScheduler } from "../src/
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { mockCtx, sessionDecisions } from "./helpers/dream-mock.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function snapshot(ids, type = "project") {
   return new Map(ids.map((id, i) => [id, { id, type, title: `t${i}`, content: `c${i}`, importance: 3, archived: false, forgotten: false }]));
@@ -192,7 +193,7 @@ test("merge across types rejects", () => {
 
 function dreamSetup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return { store, service };
 }
 
