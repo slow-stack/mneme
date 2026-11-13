@@ -1324,6 +1324,17 @@ test("consolidation chart: own 56-day window, null-vs-empty split, and a narrow-
   // 两根柱的语义色必须走语义层，不能直接拿宿主 label token 当填充色（#178）。
   assert.ok(clientSource.includes(".mneme-sinkbar--added{background:var(--mneme-sink-added)}"));
   assert.ok(clientSource.includes(".mneme-sinkbar--merged{background:var(--mneme-sink-merged)}"));
+  // ⑤ 图例必须带色标：图上两根柱是两种颜色，图例却只有四段文字，读者只能猜
+  //    哪根是「进来的」哪根是「稳住的」。归档不画进柱，也要标明这点。
+  assert.ok(
+    clientSource.includes(".mneme-sinkdot--added{background:var(--mneme-sink-added)}") &&
+      clientSource.includes(".mneme-sinkdot--merged{background:var(--mneme-sink-merged)}"),
+    "the legend needs colour swatches matching the two bar colours"
+  );
+  assert.ok(
+    /sinkArchivedOff/.test(clientSource) && !/mneme-sinkdot--archived/.test(clientSource),
+    "the archived entry must say it is not plotted and must not get a swatch of its own (a hollow dot reads as a third bar)"
+  );
 });
 
 // 巩固/睡眠模型路由 UI：下拉数据来自宿主侧已注册适配器（/llm-providers，
