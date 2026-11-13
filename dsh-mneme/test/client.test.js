@@ -4692,10 +4692,17 @@ test("wiki renderer hides machine marker lines but keeps them inside code fences
   const end = clientSource.indexOf("function renderDiaryBody(", start);
   assert.ok(start > 0 && end > start, "renderWikiMarkdown must exist before renderDiaryBody");
   const body = clientSource.slice(start, end);
-  const fenceAt = body.indexOf("if (inCode) { codeLines.push(line); continue; }");
+  // 围栏要记字符与长度（PR #678 评审）：只认三反引号时 `~~~html` 里的注释会被
+  // 当成正文删掉，四反引号块里的 ``` 也会提前结束代码态。锁三件事：识别两种
+  // 围栏字符、记录开启长度、结束必须同字符且不短于开启。
+  const fenceAt = body.indexOf("const fenceOpen = /^(`{3,}|~{3,})(.*)$/.exec(line.trim());");
+  assert.ok(fenceAt > 0, "the renderer must recognize both ``` and ~~~ fences");
+  assert.ok(body.includes("fence = { ch: fenceOpen[1][0], len: fenceOpen[1].length };"),
+    "the opening fence must record its character and length");
+  assert.ok(body.includes("fenceOpen[1][0] === fence.ch && fenceOpen[1].length >= fence.len"),
+    "a closing fence must use the same character and be at least as long as the opener");
   // 注意 \\s 要写成双反斜杠：JS 字符串里的 \s 会塌成 s，indexOf 就永远找不到。
   const skipAt = body.indexOf("if (/^\\s*<!--/.test(line)) continue;");
-  assert.ok(fenceAt > 0, "the fence branch must exist");
   assert.ok(skipAt > fenceAt, "the marker-skip must come after the fence branch so fenced comments survive");
   // 日记与 wiki 共用这个渲染器：日记正文没有 CHORO 标记，跳过规则对它是空转
   // 的——但如果将来日记里出现「整行 HTML 注释」，同样按注释隐藏（预期行为）。

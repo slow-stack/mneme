@@ -11586,6 +11586,11 @@ window.__ModuleLoader__.load({
       };
       let listItems = [];
       let inCode = false;
+      // 围栏要记「开启用的字符与长度」（PR #678 评审）：只认三反引号会把
+      // `~~~html` 整块当正文，于是一条 `<!-- -->` 注释行会被下面的隐藏规则
+      // 删掉；四反引号块内部出现三反引号时旧写法也会提前退出代码态。
+      // CommonMark：结束围栏必须与开启同字符、长度不小于开启、其后只有空白。
+      let fence = null;
       let codeLines = [];
       // --- 表格（v0.11.1 美化）：连续 `|` 行解析成真 table，不再按等宽行画竖线 ---
       const splitRow = (line) => String(line).trim().replace(/^\|/, "").replace(/\|$/, "")
@@ -11627,14 +11632,24 @@ window.__ModuleLoader__.load({
       };
       for (; i < lines.length; i++) {
         const line = lines[i];
-        if (line.trim().startsWith("```")) {
-          if (inCode) {
-            out.push(h("pre", { key: out.length, className: "mneme-wikipre" }, codeLines.join("\n")));
-            codeLines = []; inCode = false;
-          } else { flushList(); flushTable(); inCode = true; }
+        const fenceOpen = /^(`{3,}|~{3,})(.*)$/.exec(line.trim());
+        if (!inCode && fenceOpen) {
+          flushList(); flushTable();
+          inCode = true;
+          fence = { ch: fenceOpen[1][0], len: fenceOpen[1].length };
+          codeLines = [];
           continue;
         }
-        if (inCode) { codeLines.push(line); continue; }
+        if (inCode) {
+          if (fenceOpen && fenceOpen[1][0] === fence.ch && fenceOpen[1].length >= fence.len
+            && fenceOpen[2].trim() === "") {
+            out.push(h("pre", { key: out.length, className: "mneme-wikipre" }, codeLines.join("\n")));
+            codeLines = []; inCode = false; fence = null;
+          } else {
+            codeLines.push(line);
+          }
+          continue;
+        }
         // 机器标记行不进正文（#582）：`<!-- CHORO:T1:START/END -->` 与
         // `<!-- CHORO:HUMAN:START/END -->` 是 t0/t1 剥段与回填用的段落边界，
         // 给程序看的；排版里它们是一行裸文本噪音。只隐藏「整行以 <!-- 开头」
