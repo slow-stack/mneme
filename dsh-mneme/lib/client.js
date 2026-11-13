@@ -468,10 +468,10 @@ window.__ModuleLoader__.load({
         // #653 设置页搜索：一张框扫全部组，含两层折叠里的行——不用先展开
         // 「全部设置」再找。浏览器 Ctrl+F 搜不到「知识库」，正是因为收起的
         // 组根本不在 DOM 里；这里的搜索对象是行目录（见 buildSettingsSearchIndex）。
-        "memory.settings.search.placeholder": "搜索设置（名称、说明或键名）…",
+        "memory.settings.search.placeholder": "搜索功能开关（名称、说明或键名），或分组/卡片标题…",
         "memory.settings.search.aria": "搜索设置",
         "memory.settings.search.clear": "清除搜索",
-        "memory.settings.search.noResults": "没有匹配「{q}」的设置项。搜索覆盖每行的名称、说明与键名。",
+        "memory.settings.search.noResults": "没有匹配「{q}」的设置项。功能开关按名称、说明与键名匹配；分组与卡片按标题匹配。",
         "memory.settings.toc.jump": "跳到「{name}」",
         "memory.settings.profile": "用户画像",
         "memory.settings.profileHint": "写一段自我介绍（角色、背景、偏好），Agent 每轮对话都会自动带上。",
@@ -1642,10 +1642,10 @@ window.__ModuleLoader__.load({
         // #653 settings search: one box over every group, including rows that
         // live behind the two folds — browser find can't reach those because
         // folded groups are not in the DOM at all (the original complaint).
-        "memory.settings.search.placeholder": "Search settings (name, hint, or key)…",
+        "memory.settings.search.placeholder": "Search switches (name, hint, or key), or a group/card title…",
         "memory.settings.search.aria": "Search settings",
         "memory.settings.search.clear": "Clear search",
-        "memory.settings.search.noResults": "No settings match “{q}”. Search covers each row's name, hint, and key.",
+        "memory.settings.search.noResults": "No settings match “{q}”. Feature switches match by name, hint, or key; groups and cards match by title.",
         "memory.settings.toc.jump": "Jump to {name}",
         "memory.settings.profile": "User Profile",
         "memory.settings.profileHint": "Describe yourself once — the agent reads it every turn.",
@@ -4770,7 +4770,11 @@ window.__ModuleLoader__.load({
     // 后端白名单、面板够不着——而 CONFIGURATION.md 明写「面板可启停」。
     // 其余整数键（429 调速器参数、distillMaxChars、codingBoostFactor）是有意
     // 不上 UI 的调优噪音，见上方注释，别顺手搬进来。
-    const FEATURE_NUMBERS = ["distillRecords.retentionDays", "dreamMaxTokens", "sleepMaxTokens", "diaryWriteEveryMinutes"];
+    // injectRotationTurns 也在这张表里：#637 的轮换窗口由 rotationSub 用 numRow
+    // 渲染，但它挂在自己的总闸 autoInject 下、不在任何组项数组里——只扫常量表会
+    // 把它漏出搜索（CodeRabbit #677 评审指出的那一类：渲染了却没登记）。判断
+    // 「某行该不该在表里」看的是「它是否由通用渲染器渲染」，不是「它在哪个组」。
+    const FEATURE_NUMBERS = ["distillRecords.retentionDays", "dreamMaxTokens", "sleepMaxTokens", "diaryWriteEveryMinutes", "injectRotationTurns"];
     const EMBED_PROVIDERS = ["openai", "local", "ollama"];
     // 实体抽取思考强度（issue #109）：与后端 FEATURE_FLAG_ENUMS 枚举对齐。
     const ENTITY_REASONING = ["none", "low", "medium", "high"];
@@ -5377,7 +5381,11 @@ window.__ModuleLoader__.load({
             if (e.kind === "str") return strRow(e.k);
             if (e.kind === "num") return numRow(e.k);
             return boolRow(e.k);
-          })
+          }),
+          // 保存失败原因必须跟着搜索结果一起显示：put() 失败时控件会回滚到
+          // 生效值（布尔/枚举保持旧值、字符串与数字输入退回去），若这条分支
+          // 提前返回而不渲染 saveError，用户只会看到「改了没反应」。
+          saveError && h("div", { className: "mneme-mainterr" }, saveError)
         );
       }
 
@@ -5883,7 +5891,7 @@ window.__ModuleLoader__.load({
         personal: ["memory.settings.rules", "memory.settings.commands"],
         engine: ["memory.settings.mode.title", "memory.features.title"],
         search: ["memory.settings.vectorTitle"],
-        connect: ["memory.settings.extapi.title", "memory.settings.serve.title", "memory.settings.mcp.title", "memory.settings.apiTokenTitle"],
+        connect: ["memory.settings.extapi.title", "memory.settings.serve.title", "memory.settings.mcp.title", "memory.settings.apiTokenTitle", "memory.settings.configKeys.title"],
         help: ["memory.settings.feedback.title"]
       };
       const qTrim = settingsQuery.trim();

@@ -2644,8 +2644,10 @@ test("a rejected feature write is visible and reverts the draft", () => {
     "save failures need their own state slot"
   );
   // 渲染座位必须在主卡片里（描述行之后、运行时块之前），而不是被 !state 挡住。
+  // 从描述行之后找：搜索结果分支里也有一处同款渲染（PR #677 评审回归），按首个
+  // 命中会把它误当座位——那正是本条要锁的位置语义。
   const descAt = clientSource.indexOf('h("div", { className: "mneme-set-desc" }, t("memory.features.desc"))');
-  const seatAt = clientSource.indexOf('saveError && h("div", { className: "mneme-mainterr" }, saveError)');
+  const seatAt = clientSource.indexOf('saveError && h("div", { className: "mneme-mainterr" }, saveError)', descAt);
   const provAt = clientSource.indexOf("h(RuntimeProvisionBlock, { t })");
   assert.ok(descAt > 0 && seatAt > descAt, "the save-error seat must live in the main card body");
   assert.ok(provAt > seatAt, "the seat must sit in the card header area, before the runtime block");
@@ -4793,4 +4795,75 @@ test("settings search: the four i18n keys exist exactly once per language (#653)
   const texts = clientSource.match(/"memory\.settings\.search\.noResults":\s*"([^"]+)"/g) ?? [];
   assert.equal(texts.length, 2, "noResults must be bilingual");
   assert.ok(texts.every((line) => /\{q\}/.test(line)), "noResults must interpolate the query");
+});
+
+// ---- #653 评审回归（CodeRabbit 在 PR #677 上提的四条）--------------------
+
+test("settings search: every literal-rendered row key is registered in a searchable table (#653)", () => {
+  // 这一条锁的是「渲染了却没登记」整类：搜索索引只扫六张常量表，而某些行是在
+  // 子块里用字面量渲染的（#637 的 injectRotationTurns 就挂在自己的总闸下、不在
+  // 任何组项数组里）。只断言「索引引用了六张表」抓不到这种漏，必须反过来从
+  // 渲染点收键、再要求它出现在某张表里。
+  const grabTables = () => {
+    const grab = (re) => { const m = clientSource.match(re); return m ? m[1] : ""; };
+    return [
+      grab(/const FEATURE_GROUPS = \[([\s\S]*?)\n    \];/),
+      grab(/const FEATURE_CHILDREN = \{([\s\S]*?)\n    \};/),
+      grab(/const FEATURE_ADVANCED_BOOLS = \[([^\]]*)\]/),
+      grab(/const FEATURE_ENUMS = \[([^\]]*)\]/),
+      grab(/const FEATURE_STRINGS = \[([\s\S]*?)\];/),
+      grab(/const FEATURE_NUMBERS = \[([^\]]*)\]/),
+      grab(/const SEARCH_ENUM_SOURCES = \{([\s\S]*?)\n    \};/)
+    ];
+  };
+  const registered = new Set();
+  for (const t of grabTables()) {
+    for (const m of t.matchAll(/"([a-zA-Z][a-zA-Z0-9.]*)"/g)) registered.add(m[1]);
+    for (const m of t.matchAll(/^\s*([a-zA-Z][a-zA-Z0-9.]*):/gm)) registered.add(m[1]);
+  }
+  const literals = new Set();
+  for (const re of [/numRow\("([^"]+)"\)/g, /strRow\("([^"]+)"\)/g, /boolRow\("([^"]+)"/g]) {
+    for (const m of clientSource.matchAll(re)) literals.add(m[1]);
+  }
+  const missing = [...literals].filter((k) => !registered.has(k));
+  assert.deepEqual(missing, [],
+    `every row rendered with a literal key must be searchable; not registered: ${missing.join(", ")}`);
+});
+
+test("settings search: the result view keeps the save-failure notice (#653)", () => {
+  // 搜索结果分支会提前 return；put() 失败时控件回滚到生效值，若这条分支不渲染
+  // saveError，用户只会看到「改了没反应」（CodeRabbit PR #677 的 Major）。
+  const branch = clientSource.slice(
+    clientSource.indexOf("if (state && Array.isArray(searchEntries)"),
+    clientSource.indexOf("if (error && !state)")
+  );
+  assert.ok(branch.includes("saveError && h(\"div\", { className: \"mneme-mainterr\" }, saveError)"),
+    "the search branch must render saveError, otherwise a failed PUT looks like a no-op");
+});
+
+test("settings search: every card title in a section is reachable by title (#653)", () => {
+  // configKeys 卡在 connect 组里，但它的标题此前不在 SECTION_TITLE_KEYS.connect——
+  // 搜「配置键覆盖面」会落到空态。锁「connect 组渲染的每一张卡标题都登记过」是
+  // 这个类的最小形状（手工比对 JSX 与映射表，加卡时能看见）。
+  const map = clientSource.match(/const SECTION_TITLE_KEYS = \{([\s\S]*?)\n      \};/);
+  assert.ok(map, "SECTION_TITLE_KEYS must exist");
+  for (const key of ["memory.settings.rules", "memory.settings.commands", "memory.settings.mode.title", "memory.features.title",
+    "memory.settings.vectorTitle", "memory.settings.extapi.title", "memory.settings.serve.title", "memory.settings.mcp.title",
+    "memory.settings.apiTokenTitle", "memory.settings.configKeys.title", "memory.settings.feedback.title"]) {
+    assert.ok(map[1].includes(`"${key}"`), `${key} must be listed in SECTION_TITLE_KEYS so its section is reachable`);
+  }
+});
+
+test("settings search: the placeholder and empty state describe the real match scope (#653)", () => {
+  // 索引只覆盖功能开关行；非功能卡片只按组标题/卡片标题匹配。文案说「搜索设置」
+  // 会让人以为「端口」「API Key」这类也能搜到（CodeRabbit PR #677）。
+  const zh = clientSource.match(/"memory\.settings\.search\.placeholder": "([^"]+)"/)?.[1] ?? "";
+  const en = clientSource.match(/"memory\.settings\.search\.placeholder": "([^"]+)"/g) ?? [];
+  assert.match(zh, /功能开关/);
+  assert.ok(en.some((line) => /switches/i.test(line)), "the English placeholder must name the switch scope too");
+  const zhNo = clientSource.match(/"memory\.settings\.search\.noResults": "([^"]+)"/g) ?? [];
+  assert.ok(zhNo.some((line) => /功能开关/.test(line) && /分组与卡片/.test(line)),
+    "no-results copy must separate switch matching from title matching");
+  assert.ok(zhNo.some((line) => /Feature switches/.test(line) && /groups and cards/.test(line)),
+    "English no-results copy must separate the two match scopes");
 });
