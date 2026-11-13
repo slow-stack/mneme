@@ -537,12 +537,12 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
     })
     : null;
 
-  const disposers = [
-    ...(guideSection ? [guideSection] : []),
-    ctx.systemPrompt.context({
-      name: "memory",
-      order: 90,
-      text: (ctx) => {
+  // #683：渲染体留一份引用——assemble 瀑布要在等到向量之后用**同一份**实现重算，
+  // 两处各写一遍迟早漂移。
+  const memoryContext = {
+    name: "memory",
+    order: 90,
+    text: (ctx) => {
         if (sessionGate?.isOff(sessionOf(ctx))) return "";
         // Bug4: pass the latest user query so injection prefers semantically
         // relevant memories; liveStepQuery is best-effort (empty → legacy).
@@ -636,7 +636,55 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
         };
         return finalBody;
       }
-    }),
+    };
+
+  // #683 第 1 条：远程 embedding 有 HTTP 往返，而记忆块是在 assemble() 里**同步**
+  // 求值的，claim 与 assemble 之间只夹着一次 await tools.resolve()，抢不到那趟网。
+  //
+  // 这里一定要说清「为什么不是 agent/pre-step」：宿主 preStep 的顺序是
+  // inbox.claim() → await tools.resolve() → await systemPrompt.assemble() → 最后
+  // 才 await dispatch.waterfall('agent/pre-step', ...)（dsh-agent-loop 的
+  // src/agent.ts:301 与 :303）。pre-step 的监听器运行时模板早就渲染完、消息也拼好
+  // 了，等到的向量只能影响下一步。唯一还能改这张图纸的位置是
+  // system-prompt/assemble 这条异步瀑布：它在各 context 求值之后、装配结果被拿去
+  // 渲染消息之前跑，而且返回值就是权威文本（dsh-system-prompt 的
+  // src/index.ts:685）。所以流程是「等 → 用同一份渲染体重算这一块 → 交给下游」。
+  const PREFETCH_WAIT_MS = 250;
+  const sleepUnref = (ms) => new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    if (typeof timer?.unref === "function") timer.unref();
+  });
+  // 只在「这一帧确实因为没向量而落空、且确有一趟预取在飞」时等。正常步、工具轮、
+  // 压缩、admission 刷新都命中不了这两个条件，因此这条不为它们加任何延迟。
+  async function awaitStepQueryVector(promptCtx) {
+    let query = "";
+    try { query = liveStepQuery(promptCtx); } catch { return false; }
+    if (!query || queryVectorCache.has(query)) return false;
+    const inflight = inflightPrefetches.get(query);
+    if (!inflight) return false;
+    await Promise.race([inflight.catch(() => null), sleepUnref(PREFETCH_WAIT_MS)]);
+    return queryVectorCache.has(query);
+  }
+  const offAssembleWait = typeof ctx?.on === "function"
+    ? ctx.on("system-prompt/assemble", async (assembly, promptCtx, next) => {
+      try {
+        if (await awaitStepQueryVector(promptCtx)) {
+          const list = Array.isArray(assembly?.contexts) ? assembly.contexts : null;
+          const at = list ? list.findIndex((entry) => entry?.name === "memory") : -1;
+          // 重算是安全的：同一步本来就会被求值两次（assemble + refreshContext），
+          // recordInjection 对同一查询是覆盖而不是追加（见其 last.query 分支），
+          // 嵌入那一趟也已由 inflight 去重，不会多打一次网络。
+          if (list && at >= 0) list[at] = { ...list[at], text: memoryContext.text(promptCtx) };
+        }
+      } catch { /* 等待是尽力而为：装配绝不能因为这份优化失败 */ }
+      return next();
+    })
+    : null;
+
+  const disposers = [
+    ...(guideSection ? [guideSection] : []),
+    ctx.systemPrompt.context(memoryContext),
+    ...(offAssembleWait ? [offAssembleWait] : []),
     ctx.systemPrompt.context({
       name: "user-settings",
       order: 85,
