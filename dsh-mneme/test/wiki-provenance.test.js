@@ -19,6 +19,7 @@ import { createT1 } from "../src/wiki/t1.js";
 import {
   FM_VERIFIED_AT,
   FM_VERIFIED_BASELINE,
+  FM_VERIFIED_DIRTY,
   readFrontmatterKey,
   setFrontmatterKeys,
   T1_SECTION_START,
@@ -198,5 +199,132 @@ test("claimDrift：老数据（没有逐页基线）退到全仓基线，并标�
   } finally {
     store.close();
     rmTempBestEffort(root);
+  }
+});
+
+// --- #648：基线只有 HEAD，工作区脏时 claim 的行号来自一棵没进提交的树 -----------
+
+test("T1 在脏工作区富化：记下脏文件清单，脏文件上的 claim 判 uncommitted（#648）", async () => {
+  const root = makeFixture();
+  const store = createStore(":memory:");
+  try {
+    runChoroT0({ repoRoot: root, store, apply: true, now: FIXED_NOW });
+    // 未提交地改 a.js：GOOD_OUTPUT 的 claim 锚点（第 1 行）就落在这份磁盘内容上。
+    writeFileSync(join(root, "src", "a.js"), 'import { b } from "./b.js";\nexport const a = () => 7;\n', "utf8");
+    const head = gitHead(root);
+    const t1 = createT1({ store, runSession: async () => ({ ok: true, text: GOOD_OUTPUT }), now: FIXED_NOW });
+    const receipt = await t1.runT1({ repoRoot: root, moduleSlug: "src" });
+    assert.equal(receipt.enriched[0].verifiedBaseline, head, "基线仍记 HEAD：claims 的行号确实从这棵树上读的");
+    assert.equal(receipt.enriched[0].verifiedDirtyFiles, 1, "回执报脏文件条数，人不用翻库");
+
+    const page = readFileSync(join(root, ".chorography", "modules", "src.md"), "utf8");
+    assert.equal(readFrontmatterKey(page, FM_VERIFIED_DIRTY), "true", "页面文件写明这次验证不在干净 HEAD 上");
+    assert.equal(readFrontmatterKey(page, FM_VERIFIED_BASELINE), head);
+
+    const row = store.db.prepare(
+      "SELECT p.verified_dirty_files FROM choro_pages p JOIN choro_modules m ON p.module_id = m.id WHERE m.slug = 'src'"
+    ).get();
+    assert.deepEqual(JSON.parse(row.verified_dirty_files), ["src/a.js"], "清单落库（不是只写在回执里）");
+
+    const evidence = JSON.parse(readFileSync(join(root, ".chorography", "evidence", "src.json"), "utf8"));
+    assert.deepEqual(evidence.verifiedDirtyFiles, ["src/a.js"], "旁证同步：复核的人才知道锚点是从哪棵树读的");
+
+    const q = createChoroQueries({ store });
+    const repo = q.resolveRepo(undefined);
+    const drift = q.claimDrift(repo.id);
+    assert.equal(drift.totals.claims, 1);
+    assert.equal(drift.totals.uncommitted, 1, "diff 会说没事，但这段改动不在任何提交里");
+    assert.equal(drift.totals.atRiskClaims, 1);
+    assert.equal(drift.pages.find((p) => p.slug === "src").atRisk[0].reason, "uncommitted");
+    assert.equal(drift.clean, false, "判不出来就不能说干净");
+
+    // 提交之后不会自愈：改动发生时基线已指向提交前的树，这段永远补不回来。
+    commit(root, "把那次未提交改动提交掉");
+    const drift2 = q.claimDrift(repo.id);
+    assert.equal(drift2.pages.find((p) => p.slug === "src").atRisk[0].reason, "uncommitted", "提交后仍是同一档");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
+test("只有被 claim 引用的脏文件才判 uncommitted，其它脏文件不牵连整页（#648）", async () => {
+  const root = makeFixture();
+  const store = createStore(":memory:");
+  try {
+    runChoroT0({ repoRoot: root, store, apply: true, now: FIXED_NOW });
+    // b.js 未提交地改过，但 GOOD_OUTPUT 只 claim 了 a.js：整页降级会让一个无关脏文件
+    // 杀掉全部漂移检测，所以只有被引用的文件才算「无法用提交核对」。
+    writeFileSync(join(root, "src", "b.js"), "export const b = () => 9;\n", "utf8");
+    const t1 = createT1({ store, runSession: async () => ({ ok: true, text: GOOD_OUTPUT }), now: FIXED_NOW });
+    await t1.runT1({ repoRoot: root, moduleSlug: "src" });
+
+    // 之后真的提交一次碰了 a.js 锚点第 1 行的改动：这一条必须按 diff 判 touched。
+    writeFileSync(join(root, "src", "a.js"), 'export const a = () => 3;\n', "utf8");
+    commit(root, "碰了 a.js 的锚点");
+
+    const q = createChoroQueries({ store });
+    const repo = q.resolveRepo(undefined);
+    const drift = q.claimDrift(repo.id);
+    assert.equal(drift.totals.uncommitted, 0, "b.js 脏但没被 claim 引用，不该牵连");
+    assert.equal(drift.pages.find((p) => p.slug === "src").atRisk[0].reason, "touched", "干净文件的判定照旧精确");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
+test("老数据没有脏文件清单：不判 uncommitted，页上明说「不知道当时工作区状态」（#648）", () => {
+  const root = makeFixture();
+  const store = createStore(":memory:");
+  try {
+    runChoroT0({ repoRoot: root, store, apply: true, now: FIXED_NOW });
+    const q = createChoroQueries({ store });
+    const repo = q.resolveRepo(undefined);
+    // 本列之前富化的页：有 claims、有基线，但没有脏文件清单。
+    const page = store.choroPageBySlug(repo.id, "src");
+    store.saveChoroPageClaims(page.id, [
+      { statement: "a 依赖 b", kind: "architecture", sourcePath: "src/a.js", startLine: 2, endLine: 2, createdAt: FIXED_NOW() },
+    ]);
+    store.db.prepare(
+      "UPDATE choro_pages SET verified_baseline = ?, verified_at = ?, verified_dirty_files = NULL WHERE id = ?"
+    ).run(gitHead(root), FIXED_NOW(), page.id);
+
+    const drift = q.claimDrift(repo.id);
+    const pageDrift = drift.pages.find((p) => p.slug === "src");
+    assert.equal(pageDrift.verifiedDirtyFiles, null, "NULL = 不知道，不是「当时干净」");
+    assert.equal(drift.totals.uncommitted, 0, "没有清单就不编造 uncommitted");
+    assert.equal(drift.totals.atRiskClaims, 0, "没被 diff 碰到就是没事");
+
+    // 对照：清单存在且为空 → 明确的「当时干净」，与 NULL 不是一回事。
+    store.db.prepare("UPDATE choro_pages SET verified_dirty_files = '[]' WHERE id = ?").run(page.id);
+    const drift2 = q.claimDrift(repo.id);
+    assert.deepEqual(drift2.pages.find((p) => p.slug === "src").verifiedDirtyFiles, [], "空数组是明确答案");
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+  }
+});
+
+test("老库缺 verified_dirty_files 列：打开时幂等补上，老行留 NULL（#648）", () => {
+  const dir = mkdtempSync(join(tmpdir(), "choro-mig-"));
+  const dbPath = join(dir, "m.db");
+  try {
+    const s1 = createStore(dbPath);
+    s1.db.exec("ALTER TABLE choro_pages DROP COLUMN verified_dirty_files");
+    assert.equal(s1.db.prepare("PRAGMA table_info(choro_pages)").all().some((c) => c.name === "verified_dirty_files"), false);
+    s1.close();
+
+    const s2 = createStore(dbPath);
+    const cols2 = s2.db.prepare("PRAGMA table_info(choro_pages)").all().map((c) => c.name);
+    assert.ok(cols2.includes("verified_dirty_files"), "老库重开补列");
+    s2.close();
+
+    const s3 = createStore(dbPath);
+    const cols3 = s3.db.prepare("PRAGMA table_info(choro_pages)").all().map((c) => c.name);
+    assert.equal(cols3.filter((c) => c === "verified_dirty_files").length, 1, "幂等：不会重复加列");
+    s3.close();
+  } finally {
+    rmTempBestEffort(dir);
   }
 });

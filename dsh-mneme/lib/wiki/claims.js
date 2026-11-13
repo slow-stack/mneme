@@ -135,6 +135,10 @@ function normPath(p) {
  *                  锚点要重新指。刻意与 touched 分开：混成一个「失效」，面板就会
  *                  对着一堆只是行号错位的结论喊「要重写」，喊几次就没人信了。
  *   - unverifiable 所属文件改过，可这条 claim 当初就没记行号，无法定位到具体一行。
+ *   - uncommitted  验证那一刻这个文件还在工作区里没提交（#648）。claim 的行号取自
+ *                  磁盘内容而不是任何提交，提交层面的 diff 从改动之后起算，永远看不到
+ *                  这段——只能老实说「无法用提交核对」，不能冒充「没变」。这一档由
+ *                  summarizeClaims 依据页面记下的脏文件清单补，不在 diff 里算。
  *
  * 输入 diff 为 { files: Map, deleted: string[] }；输出与输入等长，未受影响的
  * reason 为 null（调用方自行过滤）。
@@ -174,7 +178,7 @@ export function assessClaims(claims, diff) {
  * 仓库级汇总：逐条判定 → 「哪几页、几条、因为什么」。
  *
  * claims 每项需带 pageSlug；pages 每项 { slug, title, hasT1, verifiedBaseline,
- * verifiedAt, diffBaseline, baselineApprox, baselineUnknown, anchorStale }。
+ * verifiedAt, verifiedDirtyFiles, diffBaseline, baselineApprox, baselineUnknown, anchorStale }。
  *
  * 为什么 pages 要带验证基线、为什么还要 diffByPage：claims 的行号是**各自那页被
  * 富化的那一刻**记下的。全仓只有一个 git_baseline（T0 的时点），拿它当所有 claims
@@ -192,6 +196,22 @@ export function summarizeClaims(claims, diff, { pages = [], diffByPage = null } 
   const assessed = diffByPage
     ? (claims ?? []).flatMap((claim) => assessClaims([claim], diffByPage(claim.pageSlug)))
     : assessClaims(claims, diff);
+  // 脏文件上的 claim 覆盖 diff 的判定（#648）：diff 比对的是两个提交，而 claim 的行号
+  // 取自验证时刻的磁盘。文件当时没进提交，diff 里就必然没有这段改动——这时 diff 说
+  // 「没碰过」是假阴性，必须换成 uncommitted。没有这份清单的页（老数据）不覆盖。
+  const dirtyBySlug = new Map();
+  for (const page of pages) {
+    if (Array.isArray(page.verifiedDirtyFiles) && page.verifiedDirtyFiles.length > 0) {
+      dirtyBySlug.set(page.slug, new Set(page.verifiedDirtyFiles.map((p) => normPath(p))));
+    }
+  }
+  const judged = dirtyBySlug.size === 0
+    ? assessed
+    : assessed.map((claim) => {
+      const dirty = dirtyBySlug.get(claim.pageSlug);
+      if (dirty && dirty.has(normPath(claim.sourcePath))) return { ...claim, reason: "uncommitted", shift: 0 };
+      return claim;
+    });
   const bySlug = new Map();
   for (const page of pages) {
     bySlug.set(page.slug, {
@@ -200,6 +220,8 @@ export function summarizeClaims(claims, diff, { pages = [], diffByPage = null } 
       hasT1: Boolean(page.hasT1),
       verifiedBaseline: page.verifiedBaseline ?? null,
       verifiedAt: page.verifiedAt ?? null,
+      // 原样透传：面板要说「这一页是在含未提交改动的状态下验证的」（#648）。
+      verifiedDirtyFiles: Array.isArray(page.verifiedDirtyFiles) ? page.verifiedDirtyFiles : null,
       // 实际拿来跑 diff 的起点：新数据就是 verifiedBaseline；老数据（本功能之前富化）
       // 退到全仓基线，baselineApprox 标记「这不是当真的验证点，是保底起点」。
       diffBaseline: page.diffBaseline ?? page.verifiedBaseline ?? null,
@@ -211,7 +233,7 @@ export function summarizeClaims(claims, diff, { pages = [], diffByPage = null } 
       inconsistent: false,
     });
   }
-  for (const claim of assessed) {
+  for (const claim of judged) {
     const slug = claim.pageSlug;
     if (!bySlug.has(slug)) {
       bySlug.set(slug, { slug, title: claim.pageTitle ?? slug, hasT1: false, claims: 0, atRisk: [], inconsistent: false });
@@ -259,6 +281,7 @@ export function summarizeClaims(claims, diff, { pages = [], diffByPage = null } 
       shifted: count("shifted"),
       deleted: count("deleted"),
       unverifiable: count("unverifiable"),
+      uncommitted: count("uncommitted"),
       inconsistentPages: list.filter((p) => p.inconsistent).length,
       baselineUnknownPages: list.filter((p) => p.baselineUnknown).length,
       anchorStalePages: list.filter((p) => p.anchorStale).length,

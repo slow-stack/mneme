@@ -373,10 +373,12 @@ window.__ModuleLoader__.load({
         "wiki.drift.shifted": "上方有增删，行号挪了 {n}",
         "wiki.drift.deleted": "文件已删",
         "wiki.drift.unverifiable": "这条没记行号，无法定位",
+        "wiki.drift.uncommitted": "验证时这行还没提交，提交层面的比对看不到它",
         "wiki.drift.inconsistent": "正文有语义段、库里却没有结论记录（上次 T1 没写完），这页证据无法核对。",
         // 语义段 provenance（①）：每页的结论是「对着哪个提交」读出来的。不说清这一点，
         // 「证据复核」就只是在和某个不明时点比——页越晚富化，误报越多。
         "wiki.drift.verified": "对着 {sha} 验证",
+        "wiki.drift.verifiedDirty": "对着 {sha} 验证（当时工作区有未提交改动）",
         "wiki.drift.verifiedUnknown": "这页没记下是哪个提交验证的（早期富化没有记录），所以判不出它有没有过时。重跑一次 T1 就会记上。",
         "wiki.drift.verifiedApprox": "这页是早期富化的，没记下自己的验证点；下面按全仓基线 {sha} 比对（起点比实际更早，只会多报不会漏报）。",
         "wiki.drift.anchorStalePage": "这页记下的验证提交在 git 里已经找不到了（force-push 或浅克隆截断），这页没法比对。",
@@ -1557,10 +1559,12 @@ window.__ModuleLoader__.load({
         "wiki.drift.shifted": "Insertions above moved it {n} lines",
         "wiki.drift.deleted": "File deleted",
         "wiki.drift.unverifiable": "No line number recorded — cannot locate",
+        "wiki.drift.uncommitted": "This file was uncommitted when the claim was recorded — commit-level diffs cannot see it",
         "wiki.drift.inconsistent": "This page has prose in the file but no claims on record (the last T1 run did not finish), so its evidence cannot be checked.",
         // Claim provenance: each page's claims were read from one specific commit. Without
         // saying which, "evidence check" compares against an unknown point in time.
         "wiki.drift.verified": "Verified at {sha}",
+        "wiki.drift.verifiedDirty": "Verified at {sha} (working tree had uncommitted changes)",
         "wiki.drift.verifiedUnknown": "This page did not record which commit its claims were verified against (earlier enrichment did not store one), so staleness cannot be decided. Re-running T1 will record it.",
         "wiki.drift.verifiedApprox": "This page was enriched before provenance was recorded; the comparison below starts from the repository baseline {sha} (earlier than the real one, so it can over-report but never miss).",
         "wiki.drift.anchorStalePage": "The commit this page was verified against no longer exists in git (force-push or a shallow clone cut it off), so this page cannot be compared.",
@@ -13782,13 +13786,15 @@ window.__ModuleLoader__.load({
           : 0;
         // 提交号显示前 7 位就够认，长 sha 会把这一行挤爆（完整值仍在 title 里）。
         const shortSha = (sha) => String(sha ?? "").slice(0, 7);
-        // 四种命中原因各自一句：混成「失效」会让只是行号挪了的结论也被喊去重写，
-        // 喊几次就没人信这个标记了。
+        // 五种命中原因各自一句：混成「失效」会让只是行号挪了的结论也被喊去重写，
+        // 喊几次就没人信这个标记了。uncommitted 与「改动人」不是一回事：见 #648，
+        // 它说的是验证那天文件还没进提交，任何提交层面的 diff 都看不到这段。
         const driftReasonText = (c) => {
           if (c.reason === "touched") return t("wiki.drift.touched");
           if (c.reason === "shifted") return t("wiki.drift.shifted").replace("{n}", String(c.shift ?? 0));
           if (c.reason === "deleted") return t("wiki.drift.deleted");
           if (c.reason === "unverifiable") return t("wiki.drift.unverifiable");
+          if (c.reason === "uncommitted") return t("wiki.drift.uncommitted");
           return String(c.reason ?? "");
         };
         // 树的层级看 parent_id 真父子（#582），不看 slug 里的连字符数——
@@ -13858,7 +13864,11 @@ window.__ModuleLoader__.load({
         const pageProvenance = driftDone && selectedDrift
           ? (selectedDrift.verifiedBaseline
             ? h("div", { className: "mneme-wikidriftverified", title: selectedDrift.verifiedBaseline },
-              t("wiki.drift.verified").replace("{sha}", shortSha(selectedDrift.verifiedBaseline)))
+              // 脏工作区验证的页不能长成「对着 xxxx 验证」——那会让读者以为锚点来自一次
+              // 干净提交。多一句说明，比让人事后自己发现判定不到的窗口强（#648）。
+              ((Array.isArray(selectedDrift.verifiedDirtyFiles) && selectedDrift.verifiedDirtyFiles.length > 0)
+                ? t("wiki.drift.verifiedDirty")
+                : t("wiki.drift.verified")).replace("{sha}", shortSha(selectedDrift.verifiedBaseline)))
             // 老数据：没有逐页验证点，退到全仓基线比对。必须说清这是**保底起点**，
             // 不能长成「对着 xxxx 验证」——那是把近似值冒充成真值。
             : (selectedDrift.baselineApprox && selectedDrift.diffBaseline

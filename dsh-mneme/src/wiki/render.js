@@ -29,6 +29,10 @@ export const T1_SECTION_END = "<!-- CHORO:T1:END -->";
 // 同一件事，不新增语义。放在这里而不是 t1.js：frontmatter 的形状属于页面格式。
 export const FM_VERIFIED_BASELINE = "verifiedBaseline";
 export const FM_VERIFIED_AT = "verifiedAt";
+// ③ 工作区脏标记（#648）：验证那一刻工作区有没有未提交改动。只写布尔值，具体清单
+// 落库（choro_pages.verified_dirty_files）与 evidence 旁证——页面文件是给人读的，
+// 几十行路径会把 frontmatter 淹掉，而「这一页不是对着干净 HEAD 验的」一句话就够。
+export const FM_VERIFIED_DIRTY = "verifiedDirty";
 
 // 页面生命周期档（#582）：status 也是 frontmatter 键，但它 T0 / T1 都写——T0
 // 起骨架时写 skeleton，T1 成功时随 verified 两键一起推进 enriched。定义在这

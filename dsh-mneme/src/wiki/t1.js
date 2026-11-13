@@ -25,9 +25,9 @@ import { tmpdir } from "node:os";
 import { realpathSync } from "node:fs";
 import {
   extractHumanBlocks, injectHumanBlocks, T1_SECTION_START, T1_SECTION_END,
-  FM_VERIFIED_AT, FM_VERIFIED_BASELINE, FM_STATUS, setFrontmatterKeys,
+  FM_VERIFIED_AT, FM_VERIFIED_BASELINE, FM_VERIFIED_DIRTY, FM_STATUS, setFrontmatterKeys,
 } from "./render.js";
-import { gitHead } from "./t0.js";
+import { gitHead, gitDirtyFiles } from "./t0.js";
 import { portableKeyFor, hostId } from "./portable.js";
 // issue #607：拒绝文案里的 CLI 命令要给绝对路径入口（profile 装的插件没有全局
 // shim，光写 `dsh-mneme-choro` 用户照抄只会 command not found）。
@@ -456,13 +456,30 @@ export function createT1({ store, runSession = null, limits = DEFAULT_LIMITS, no
       // 的，之后判失效只能从它起算。拿不到 HEAD（不是 git 仓库 / git 不在）就记 null，
       // 面板据此说「这一页哪次验证的，不知道」——不退回全仓 git_baseline，那会把
       // 「T1 之前就发生、claim 早已算进去」的改动误报成 touched。
+      // claims 的行号取自磁盘内容；HEAD 只描述上一次提交。工作区脏时这两者不是同一棵树，
+      // 必须把「当时哪些文件还没进提交」一起记下（#648）——否则改动被提交后，diff 从改动
+      // 之后起算，这段判定不到的窗口永远不会自愈。
       const generatedAt = now();
       const verifiedBaseline = gitHead(rootPath);
-      enrichPageFile(pageFile, parsed.sections, { verifiedBaseline, verifiedAt: generatedAt });
-      writeEvidenceFile(rootPath, slug, parsed.claims, generatedAt, verifiedBaseline);
+      // .chorography/** 是工具自己的产地：这一轮写盘本身就会让它变脏，把它算进清单
+      // 只会让每一页都「脏」，而 claims 永远不会指向这里。滤掉才是真的「源码那棵树脏
+      // 不脏」。
+      const dirty = gitDirtyFiles(rootPath);
+      const verifiedDirtyFiles = Array.isArray(dirty)
+        ? dirty.filter((p) => !String(p).startsWith(".chorography/"))
+        : null;
+      enrichPageFile(pageFile, parsed.sections, { verifiedBaseline, verifiedAt: generatedAt, verifiedDirtyFiles });
+      writeEvidenceFile(rootPath, slug, parsed.claims, generatedAt, verifiedBaseline, verifiedDirtyFiles);
       store.saveChoroPageClaims(pageRow.id, parsed.claims.map((c) => ({ ...c, createdAt: generatedAt })));
-      store.markChoroPageEnriched(pageRow.id, generatedAt, verifiedBaseline);
-      receipt.enriched.push({ slug, sections: Object.keys(parsed.sections), claims: parsed.claims.length, verifiedBaseline });
+      store.markChoroPageEnriched(pageRow.id, generatedAt, verifiedBaseline, verifiedDirtyFiles);
+      receipt.enriched.push({
+        slug,
+        sections: Object.keys(parsed.sections),
+        claims: parsed.claims.length,
+        verifiedBaseline,
+        // 回执里给条数就够：人要知道的是「这一页不是对着干净 HEAD 验的」，不是逐条路径。
+        ...(Array.isArray(verifiedDirtyFiles) ? { verifiedDirtyFiles: verifiedDirtyFiles.length } : {}),
+      });
     }
     return receipt;
   }
@@ -546,7 +563,7 @@ function parseT1Output(text) {
 // 顺带把「对着哪个提交验证的」写进 frontmatter（① provenance）：这两个键**只有 T1
 // 写**，T0 渲染一个字节都不产出。因此 T0 重跑整页重建时它们随语义段一起消失，
 // 与「T0 丢弃 T1 正文」是同一件事，不新增语义，也不碰 T0 的逐字节确定性。
-function enrichPageFile(pageFile, sections, { verifiedBaseline = null, verifiedAt = null } = {}) {
+function enrichPageFile(pageFile, sections, { verifiedBaseline = null, verifiedAt = null, verifiedDirtyFiles = null } = {}) {
   let content = readFileSync(pageFile, "utf8");
   // 剥旧 T1 段（含标记本身）
   const wrap = new RegExp(`${escapeRe(T1_SECTION_START)}[\\s\\S]*?${escapeRe(T1_SECTION_END)}\\n?`, "g");
@@ -584,6 +601,9 @@ function enrichPageFile(pageFile, sections, { verifiedBaseline = null, verifiedA
   const finalContent = setFrontmatterKeys(withHuman, [
     [FM_VERIFIED_BASELINE, verifiedBaseline],
     [FM_VERIFIED_AT, verifiedAt],
+    // 布尔标记而不是清单：页面文件给人读，清单在库里与 evidence 里。「读不出工作区
+    // 状态」（null）不写这个键——不知道就不写，别留一个 false 冒充「当时很干净」。
+    [FM_VERIFIED_DIRTY, Array.isArray(verifiedDirtyFiles) ? verifiedDirtyFiles.length > 0 : null],
     // 文件里的 status 与库里的 choro_pages.status 同步推进（#582）：此前 T1
     // 成功只改库（markChoroPageEnriched），文件那行永远停在 T0 写的 skeleton
     // ——页面文件自身与数据库状态不一致，看文件的人会以为这页从没富化过。
@@ -601,13 +621,20 @@ function stripHumanBlocks(text) {
   return text.replace(re, "");
 }
 
-function writeEvidenceFile(repoRoot, slug, claims, generatedAt, verifiedBaseline = null) {
+function writeEvidenceFile(repoRoot, slug, claims, generatedAt, verifiedBaseline = null, verifiedDirtyFiles = null) {
   const rel = `${".chorography"}/evidence/${slug}.json`;
   const abs = insideChoro(repoRoot, rel);
   mkdirp(dirname(abs));
   // verifiedBaseline 与页面 frontmatter 同源同写：evidence 是给人核的旁证，光有 claims
   // 没有「对着哪个提交」的，事后同样无从复核。
-  const body = { slug, generatedAt, verifiedBaseline, claims };
+  const body = {
+    slug,
+    generatedAt,
+    verifiedBaseline,
+    // evidence 是给人核的旁证：脏文件清单放在这里，复核的人才知道当时锚点是从哪棵树读的。
+    ...(Array.isArray(verifiedDirtyFiles) ? { verifiedDirtyFiles } : {}),
+    claims,
+  };
   writeFileSync(abs, `${JSON.stringify(body, null, 2)}\n`, "utf8");
 }
 

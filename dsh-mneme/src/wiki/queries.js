@@ -470,7 +470,7 @@ export function createChoroQueries({ store, hostId: hostIdFn = defaultHostId }) 
     ).all(repoId);
     // 页面清单单算：hasT1 只能读盘（标记写在正文里，库里没有这一列）；验证基线在库里。
     const pageRows = db.prepare(
-      `SELECT m.slug, m.title, p.rel_path, p.verified_baseline, p.verified_at
+      `SELECT m.slug, m.title, p.rel_path, p.verified_baseline, p.verified_at, p.verified_dirty_files
          FROM choro_pages p
          JOIN choro_modules m ON p.module_id = m.id WHERE m.repo_id = ? ORDER BY m.slug`
     ).all(repoId);
@@ -500,6 +500,9 @@ export function createChoroQueries({ store, hostId: hostIdFn = defaultHostId }) 
       } catch { hasT1 = false; }
       const verifiedBaseline = String(p.verified_baseline ?? "").trim() || null;
       const verifiedAt = p.verified_at ?? null;
+      // 验证那一刻工作区里还没进提交的文件（#648）。NULL / 读不出 = 不知道当时状态，
+      // 不是「当时干净」；只有 [] 才是明确的干净。调用方据此把「不知道」与「没动」分开。
+      const verifiedDirtyFiles = parseDirtyFiles(p.verified_dirty_files);
       // 老数据（本功能之前富化的页）只有全仓基线可依。退到它是**保守**方向：它早于
       // 那页被富化的时刻，diff 会把「T1 之前就发生」的改动也算进来，只会多报不会漏报。
       // 记 baselineApprox 是为了面板能说清「这是退而求其次的起点」，不是当真的验证点。
@@ -517,6 +520,7 @@ export function createChoroQueries({ store, hostId: hostIdFn = defaultHostId }) 
         hasT1,
         verifiedBaseline,
         verifiedAt,
+        verifiedDirtyFiles,
         diffBaseline: effective,
         baselineApprox: !verifyWithoutBaseline && verifiedBaseline === null && effective !== null,
         baselineUnknown: effective === null,
@@ -581,6 +585,19 @@ export function createChoroQueries({ store, hostId: hostIdFn = defaultHostId }) 
       reason: repoStale ? repoStaleReason : null,
       ...summary,
     };
+  }
+
+  // 脏文件清单的读法：列里存 JSON 数组；NULL（老数据，不知道当时状态）与解析失败
+  // 一律回 null——宁可说「不知道」，也不能回一个空数组冒充「当时很干净」（#648）。
+  function parseDirtyFiles(raw) {
+    const text = String(raw ?? "").trim();
+    if (text === "") return null;
+    try {
+      const parsed = JSON.parse(text);
+      return Array.isArray(parsed) ? parsed.map((v) => String(v)) : null;
+    } catch {
+      return null;
+    }
   }
 
   // --- chorography 向量（收尾档 P37–P39）---------------------------------
