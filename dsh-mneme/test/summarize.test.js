@@ -8,7 +8,7 @@ import { Context } from "@deepseek-ai/cordis";
 import * as mneme from "../src/index.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
-import { createSummarizer, parseSummaryJson, parsePeakSpec, isInPeakWindow, nextOffPeakAt } from "../src/summarize.js";
+import { createSummarizer, parseSummaryJson, parsePeakSpec, isInPeakWindow, nextOffPeakAt, planBatchCrossTypeDedupe } from "../src/summarize.js";
 import { createSettings } from "../src/settings.js";
 
 // Issue #239 第 4 项：可注入的假时钟 + 定时器——错峰队列的测试必须能「推进时间」，
@@ -2246,6 +2246,128 @@ test("#493 补充：停了很久的会话，旧 streak 失效，不会被几周�
   await handler(session, { seq: 2, type: "turn/end" });
   assert.equal(calls.length, 2);
   assert.equal(store.getDistillParseFailureStreak("s493-stale-streak"), 0, "成功即清零（DELETE，不是写 0）");
+  summarizer.dispose();
+  store.close();
+});
+
+// --- #687 批内跨类型去重（opt-in，默认关） ----------------------------------
+// 模型会把一个结论写成两条不同类型（pitfall 与 constraint 同义 / history 与
+// project 同义），类型不同正好让 summarizeDedupeMode 的 type+title 去重看不见。
+// 处置固定为 supersede：正文零改写、不 merge——判错时原文仍在库里，只是默认注入
+// 不再取它；merge 会真的抹掉一条的措辞，没有回头路。
+
+const BATCH_DUP_PITFALL = "迁移实体表时忘了先确认 SQLite 版本，DROP COLUMN 在旧版本上会直接报错，只能重建整张表再逐条重指外键，恢复花了两小时。";
+const BATCH_DUP_CONSTRAINT = "迁移实体表前先确认 SQLite 版本：DROP COLUMN 在旧版本上会直接报错，只能重建整张表再逐条重指外键。";
+
+test("#687 planBatchCrossTypeDedupe only pairs the two allowed type groups", () => {
+  const entries = [
+    { type: "pitfall", title: "迁移实体表", content: BATCH_DUP_PITFALL },
+    { type: "constraint", title: "迁移实体表", content: BATCH_DUP_CONSTRAINT },
+    // 同类型对（decision↔decision）与未登记的跨类型对（decision↔pitfall）都不许合并：
+    // 45 对全跨类型里有 20% 合并会丢信息，类型闸只在两组上常开是刻意的。
+    { type: "decision", title: "迁移实体表", content: BATCH_DUP_PITFALL },
+    { type: "decision", title: "迁移实体表", content: BATCH_DUP_CONSTRAINT }
+  ];
+  const plans = planBatchCrossTypeDedupe(entries);
+  assert.equal(plans.length, 1, "only the pitfall↔constraint pair is eligible");
+  assert.equal(plans[0].pair, "pitfall<->constraint");
+  assert.equal(plans[0].winnerIndex, 0, "the fuller text wins");
+  assert.equal(plans[0].loserIndex, 1);
+  assert.ok(plans[0].sim >= 0.85, `near-identical twins must clear the bar (got ${plans[0].sim})`);
+});
+
+test("#687 planBatchCrossTypeDedupe skips too-short and lopsided entries", () => {
+  // textSimilarity 以较小一侧为分母：一句短话几乎被任何长段落包含 → 相似度接近 1。
+  // 那是「被提到」而不是「重复」，所以短于 24 字的一侧不参与。
+  assert.deepEqual(planBatchCrossTypeDedupe([
+    { type: "pitfall", title: "报错", content: "报错了" },
+    { type: "constraint", title: "报错", content: "报错了" }
+  ]), [], "a 3-char twin must not be treated as a duplicate conclusion");
+
+  // 长度悬殊（短边不到长边一半）是包含关系，不是重复。
+  const lopsided = "迁移实体表时先确认 SQLite 版本，DROP COLUMN 需要 3.35 以上。" + "这条记录里还顺手写了一大段与本结论无关的现场环境、会话编号与复现步骤，长度远超一半。".repeat(3);
+  assert.deepEqual(planBatchCrossTypeDedupe([
+    { type: "pitfall", title: "迁移", content: lopsided },
+    { type: "constraint", title: "迁移", content: "迁移实体表时先确认 SQLite 版本，DROP COLUMN 需要 3.35 以上。" }
+  ]), [], "a short note inside a long record is containment, not duplication");
+});
+
+test("#687 planBatchCrossTypeDedupe retires an entry at most once", () => {
+  // 一条短的 constraint 同时与两条 pitfall 高度相似：只能被取代一次，且不能
+  // 先把 A 藏到 B 后面、再把 B 藏到 C 后面（那会造出两层看不见的链）。
+  const plans = planBatchCrossTypeDedupe([
+    { type: "pitfall", title: "一", content: BATCH_DUP_PITFALL },
+    { type: "constraint", title: "二", content: BATCH_DUP_CONSTRAINT },
+    { type: "pitfall", title: "三", content: BATCH_DUP_PITFALL + "复查时补了一条同样的教训。" }
+  ]);
+  assert.equal(plans.length, 1, "the shared short entry may only be retired once");
+  assert.equal(plans[0].loserIndex, 1);
+  assert.ok(!plans.some((p) => p.winnerIndex === 1), "a retired entry may never host another retire");
+});
+
+test("#687 batch dedupe can be switched off: twins are written untouched", async () => {
+  const stream = () => (async function* () {
+    yield { type: "block-start", block: { type: "text" } };
+    yield { type: "text-delta", delta: JSON.stringify([
+      { type: "pitfall", title: "迁移实体表", content: BATCH_DUP_PITFALL, importance: 4 },
+      { type: "constraint", title: "迁移实体表", content: BATCH_DUP_CONSTRAINT, importance: 4 }
+    ]) };
+    yield { type: "block-end", block: { type: "text" } };
+    yield { type: "finish", kind: "ok" };
+  })();
+  const { events, store, service, summarizer } = setup({ summarizeBatchCrossTypeDedupe: false }, { stream });
+  const handler = events.find((e) => e.name === "session/event").fn;
+  const session = {
+    id: "s687-off",
+    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    events: [userMessage("帮我迁移实体表", 1), { seq: 2, type: "turn/end" }]
+  };
+  await handler(session, { seq: 2, type: "turn/end" });
+
+  assert.equal(store.count(), 2, "kill switch stays byte-identical: nothing is chained");
+  for (const m of store.all()) assert.equal(m.superseded_by, undefined, `${m.type} must stay live`);
+  const ok = service.listLlmAudits().find((r) => r.operation_type === "summarize_compress" && r.status === "success");
+  assert.ok(ok, "the summarize audit line exists");
+  assert.equal(ok.metadata?.batchDeduped, undefined, "no audit noise when the gate is off");
+  summarizer.dispose();
+  store.close();
+});
+
+test("#687 batch dedupe supersedes the weaker twin without rewriting its text", async () => {
+  const stream = () => (async function* () {
+    yield { type: "block-start", block: { type: "text" } };
+    yield { type: "text-delta", delta: JSON.stringify([
+      { type: "pitfall", title: "迁移实体表", content: BATCH_DUP_PITFALL, importance: 4 },
+      { type: "constraint", title: "迁移实体表", content: BATCH_DUP_CONSTRAINT, importance: 4 }
+    ]) };
+    yield { type: "block-end", block: { type: "text" } };
+    yield { type: "finish", kind: "ok" };
+  })();
+  // 不带开关 = 走默认值。2026-11-13 起默认开（#687 的拍板），所以这条同时是默认路径的证明。
+  const { events, store, service, summarizer } = setup({}, { stream });
+  const handler = events.find((e) => e.name === "session/event").fn;
+  const session = {
+    id: "s687-on",
+    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    events: [userMessage("帮我迁移实体表", 1), { seq: 2, type: "turn/end" }]
+  };
+  await handler(session, { seq: 2, type: "turn/end" });
+
+  const all = store.all();
+  assert.equal(all.length, 2, "supersede never deletes: both rows stay in the library");
+  const winner = all.find((m) => m.type === "pitfall");
+  const loser = all.find((m) => m.type === "constraint");
+  assert.ok(winner && loser);
+  assert.equal(loser.superseded_by, winner.id, "the shorter twin points at the fuller one");
+  assert.ok(loser.superseded_at, "the chain is timestamped");
+  assert.equal(loser.content, BATCH_DUP_CONSTRAINT, "loser text must be byte-identical — zero rewrite");
+  assert.equal(winner.content, BATCH_DUP_PITFALL);
+  assert.equal(winner.superseded_by, undefined, "the winner stays live");
+
+  const ok = service.listLlmAudits().find((r) => r.operation_type === "summarize_compress" && r.status === "success");
+  assert.ok(ok, "the summarize audit line exists");
+  assert.equal(ok.metadata?.batchDeduped, 1, "the audit line records the disposition");
+  assert.deepEqual(ok.metadata?.batchPairs, ["pitfall<->constraint"]);
   summarizer.dispose();
   store.close();
 });

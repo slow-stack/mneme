@@ -875,7 +875,10 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // = +1，故 134 + 1 = 135。
   // 图像溯源（v2）新增 imageMemoryEnabled（顶层布尔键、imageDescribeEnabled 的子
   // 开关，走 BOOLEANS 表）= +1，故 135 + 1 = 136。
-  assert.equal(Object.keys(data.effective).length, 136);
+  // #687 批内跨类型去重新增两个键：summarizeBatchCrossTypeDedupe（顶层布尔键，
+  // 走 BOOLEANS 表）与 summarizeBatchCrossTypeMinSim（相似度阈，走
+  // NUMBER_RANGES 表）= +2，故 136 + 2 = 138。
+  assert.equal(Object.keys(data.effective).length, 138);
   // 描述档三条的默认值单独钉：开关默认关（不配路由就一个调用都不发），
   // 路由默认空串——空串在这里的语义是「整档不跑」，不是「跟随当前模型」，
   // 所以它不能像 summarizeProvider 那样被回填成会话模型。
