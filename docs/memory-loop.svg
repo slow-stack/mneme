@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980" role="img" aria-label="Mneme 记忆闭环：写入、存储与空闲巩固、召回、出口">
+<defs>
+<marker id="aw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#B03A2E"/></marker>
+<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2F5A86"/></marker>
+<marker id="an" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#6B6152"/></marker>
+<marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9A5B18"/></marker>
+</defs>
+<rect width="1600" height="980" rx="20" fill="#FBF7EF"/>
+<rect x="40" y="128" width="1520" height="768" rx="18" fill="none" stroke="#8C8371" stroke-width="1.2" stroke-dasharray="7 6" opacity="0.6"/>
+<text x="1512" y="158" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="12" font-weight="400" fill="#8C8371" text-anchor="end">全部在这台机器上 · no server</text>
+<text x="64" y="70" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="33" font-weight="700" fill="#17150F" text-anchor="start">Mneme · 记忆闭环</text>
+<text x="64" y="102" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="17" font-weight="400" fill="#6E6555" text-anchor="start">写进来，空闲时整理，下次开口自己浮上来。</text>
+<rect x="64" y="186" width="420" height="136" rx="14" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<rect x="64" y="186" width="6" height="136" rx="3" fill="#B03A2E"/>
+<text x="92" y="218" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="20" font-weight="600" fill="#17150F" text-anchor="start">写入入口</text>
+<rect x="92" y="234" width="200" height="24" rx="12" fill="#B03A2E" opacity="0.10"/><circle cx="108" cy="246" r="3.5" fill="#B03A2E"/>
+<text x="114" y="251" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="13.5" font-weight="400" fill="#17150F" text-anchor="start">模型工具调用</text>
+<rect x="92" y="262" width="200" height="24" rx="12" fill="#B03A2E" opacity="0.10"/><circle cx="108" cy="274" r="3.5" fill="#B03A2E"/>
+<text x="114" y="279" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="13.5" font-weight="400" fill="#17150F" text-anchor="start">MCP 客户端</text>
+<rect x="92" y="290" width="200" height="24" rx="12" fill="#B03A2E" opacity="0.10"/><circle cx="108" cy="302" r="3.5" fill="#B03A2E"/>
+<text x="114" y="307" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="13.5" font-weight="400" fill="#17150F" text-anchor="start">独立 daemon</text>
+<line x1="484" y1="254" x2="548" y2="254" stroke="#B03A2E" stroke-width="2" marker-end="url(#aw)"/>
+<rect x="552" y="186" width="250" height="136" rx="14" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<text x="572" y="220" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="20" font-weight="600" fill="#17150F" text-anchor="start">质量闸</text>
+<text x="572" y="250" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="14" font-weight="400" fill="#6E6555" text-anchor="start">拦噪声与重复</text>
+<text x="572" y="274" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="14" font-weight="400" fill="#6E6555" text-anchor="start">敏感信息</text>
+<text x="572" y="298" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="14" font-weight="400" fill="#6E6555" text-anchor="start">写保护 Token</text>
+<line x1="802" y1="254" x2="866" y2="254" stroke="#B03A2E" stroke-width="2" marker-end="url(#aw)"/>
+<rect x="870" y="186" width="330" height="136" rx="14" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<text x="890" y="220" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="20" font-weight="600" fill="#17150F" text-anchor="start">原子记忆</text>
+<text x="890" y="250" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="14" font-weight="400" fill="#6E6555" text-anchor="start">一条一事实</text>
+<text x="890" y="274" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="14" font-weight="400" fill="#6E6555" text-anchor="start">带类型与权重</text>
+<text x="890" y="298" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="14" font-weight="400" fill="#6E6555" text-anchor="start">记下发生时间</text>
+<line x1="1035" y1="322" x2="1035" y2="366" stroke="#6B6152" stroke-width="2" marker-end="url(#an)"/>
+<rect x="64" y="370" width="236" height="150" rx="14" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<rect x="64" y="370" width="6" height="150" rx="3" fill="#9A5B18"/>
+<text x="92" y="402" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="20" font-weight="600" fill="#17150F" text-anchor="start">空闲巩固</text>
+<text x="92" y="432" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="13" font-weight="600" fill="#9A5B18" text-anchor="start">autoDream</text>
+<text x="180" y="432" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="12" font-weight="400" fill="#6E6555" text-anchor="start">合并·压缩·归档</text>
+<text x="92" y="458" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="13" font-weight="600" fill="#9A5B18" text-anchor="start">Sleep</text>
+<text x="144" y="458" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="12" font-weight="400" fill="#6E6555" text-anchor="start">分层压缩·模式发现</text>
+<text x="92" y="484" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="12" font-weight="400" fill="#6E6555" text-anchor="start">关系补全</text>
+<text x="92" y="508" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="11.5" font-weight="400" fill="#8C8371" text-anchor="start">只在空闲时跑，可关</text>
+<line x1="300" y1="445" x2="380" y2="445" stroke="#9A5B18" stroke-width="2" marker-end="url(#ad)" marker-start="url(#ad)"/>
+<text x="64" y="552" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="12.5" font-weight="400" fill="#8C8371" text-anchor="start">取代而非覆盖：旧条留在链上，判错能回退</text>
+<rect x="380" y="370" width="1156" height="150" rx="14" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<text x="404" y="402" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="20" font-weight="600" fill="#17150F" text-anchor="start">记忆库（本机）</text>
+<rect x="408" y="418" width="530" height="86" rx="12" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<text x="428" y="448" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="16" font-weight="600" fill="#17150F">正本<tspan font-family="'JetBrains Mono','SF Mono',Consolas,monospace" dx="6">SQLite</tspan></text>
+<text x="428" y="476" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="13" font-weight="400" fill="#6E6555" text-anchor="start">向量行 + 索引，单一真相源</text>
+<rect x="1010" y="418" width="498" height="86" rx="12" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<text x="1030" y="448" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="16" font-weight="600" fill="#17150F">镜像<tspan font-family="'JetBrains Mono','SF Mono',Consolas,monospace" dx="6">Markdown</tspan></text>
+<text x="1030" y="476" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="13" font-weight="400" fill="#6E6555" text-anchor="start">可读 · 可改 · 能 diff · 可导出</text>
+<line x1="938" y1="461" x2="1010" y2="461" stroke="#6B6152" stroke-width="2" marker-end="url(#an)" marker-start="url(#an)"/>
+<text x="974" y="447" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="11.5" font-weight="600" fill="#6B6152" text-anchor="middle">手改优先</text>
+<line x1="958" y1="520" x2="958" y2="548" stroke="#2F5A86" stroke-width="2"/>
+<line x1="464" y1="548" x2="1076" y2="548" stroke="#2F5A86" stroke-width="2"/>
+<line x1="464" y1="548" x2="464" y2="564" stroke="#2F5A86" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="374" y="568" width="180" height="62" rx="12" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<rect x="374" y="568" width="4" height="62" rx="2" fill="#2F5A86"/>
+<text x="466" y="606" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="16" font-weight="600" fill="#17150F" text-anchor="middle">关键词搜索</text>
+<line x1="464" y1="630" x2="464" y2="650" stroke="#2F5A86" stroke-width="2" marker-end="url(#ar)"/>
+<line x1="668" y1="548" x2="668" y2="564" stroke="#2F5A86" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="578" y="568" width="180" height="62" rx="12" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<rect x="578" y="568" width="4" height="62" rx="2" fill="#2F5A86"/>
+<text x="670" y="606" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="16" font-weight="600" fill="#17150F" text-anchor="middle">向量检索</text>
+<line x1="668" y1="630" x2="668" y2="650" stroke="#2F5A86" stroke-width="2" marker-end="url(#ar)"/>
+<line x1="872" y1="548" x2="872" y2="564" stroke="#2F5A86" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="782" y="568" width="180" height="62" rx="12" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<rect x="782" y="568" width="4" height="62" rx="2" fill="#2F5A86"/>
+<text x="874" y="606" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="16" font-weight="600" fill="#17150F" text-anchor="middle">BM25</text>
+<line x1="872" y1="630" x2="872" y2="650" stroke="#2F5A86" stroke-width="2" marker-end="url(#ar)"/>
+<line x1="1076" y1="548" x2="1076" y2="564" stroke="#2F5A86" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="986" y="568" width="180" height="62" rx="12" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<rect x="986" y="568" width="4" height="62" rx="2" fill="#2F5A86"/>
+<text x="1078" y="606" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="16" font-weight="600" fill="#17150F" text-anchor="middle">实体图谱</text>
+<line x1="1076" y1="630" x2="1076" y2="650" stroke="#2F5A86" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="464" y="652" width="612" height="68" rx="12" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<text x="488" y="682" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="17" font-weight="600" fill="#17150F" text-anchor="start">融合</text>
+<text x="548" y="682" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="12.5" font-weight="400" fill="#6E6555" text-anchor="start">四路并成一条排序</text>
+<text x="488" y="706" font-family="'JetBrains Mono','SF Mono',Consolas,monospace" font-size="11" font-weight="400" fill="#8C8371" text-anchor="start">blend · rrf · minmax</text>
+<line x1="1076" y1="686" x2="1108" y2="686" stroke="#2F5A86" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="1112" y="652" width="424" height="68" rx="12" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<text x="1136" y="676" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="17" font-weight="600" fill="#17150F" text-anchor="start">注入配额</text>
+<text x="1136" y="702" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="12" font-weight="400" fill="#6E6555" text-anchor="start">pin 排块头不占额，其余按相关度取前几条</text>
+<path d="M 1324 720 L 1324 758" fill="none" stroke="#2F5A86" stroke-width="2"/>
+<line x1="560" y1="758" x2="1324" y2="758" stroke="#2F5A86" stroke-width="2"/>
+<line x1="560" y1="758" x2="560" y2="780" stroke="#2F5A86" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="380" y="784" width="360" height="84" rx="12" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<text x="402" y="818" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="17" font-weight="600" fill="#17150F" text-anchor="start">会话上下文</text>
+<text x="402" y="846" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="12.5" font-weight="400" fill="#6E6555" text-anchor="start">下次开口，相关的自己浮上来</text>
+<line x1="926" y1="758" x2="926" y2="780" stroke="#2F5A86" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="776" y="784" width="300" height="84" rx="12" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<text x="798" y="818" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="17" font-weight="600" fill="#17150F" text-anchor="start">面板</text>
+<text x="798" y="846" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="12.5" font-weight="400" fill="#6E6555" text-anchor="start">浏览 · 筛选 · 改 · 删</text>
+<line x1="1324" y1="758" x2="1324" y2="780" stroke="#2F5A86" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="1112" y="784" width="424" height="84" rx="12" fill="#FFFFFF" stroke="#DCD2BE" stroke-width="1.5"/>
+<text x="1134" y="818" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="17" font-weight="600" fill="#17150F" text-anchor="start">其他插件</text>
+<text x="1134" y="846" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="12.5" font-weight="400" fill="#6E6555" text-anchor="start">对外 API · MCP · 独立 daemon</text>
+<text x="64" y="934" font-family="'Noto Sans SC','PingFang SC','Microsoft YaHei','Source Han Sans SC',system-ui,sans-serif" font-size="13.5" font-weight="400" fill="#6E6555" text-anchor="start">写进来的每一条都落在你自己的磁盘上；整理在空闲时做，取用在你开口时做。</text>
+</svg>
