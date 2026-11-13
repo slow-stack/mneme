@@ -7,10 +7,11 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { HOP_QUOTA } from "../src/graph/anchoring.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function makeService(config = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   return { store, service };
 }
 

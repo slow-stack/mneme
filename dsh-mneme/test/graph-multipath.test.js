@@ -7,6 +7,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { HOP_QUOTA } from "../src/graph/anchoring.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function mockEmbedder(vec = [1, 0, 0, 0]) {
   return {
@@ -20,7 +21,7 @@ function mockEmbedder(vec = [1, 0, 0, 0]) {
 
 function makeService(config = {}, { withEmbedder = false } = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   if (withEmbedder) {
     const vectorIndex = createVectorIndex({ store });
     service.setEmbedder(mockEmbedder());

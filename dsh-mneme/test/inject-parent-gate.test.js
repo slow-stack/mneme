@@ -7,6 +7,7 @@ import { createInjector } from "../src/inject.js";
 import { createSettings, FEATURE_FLAG_SPEC } from "../src/settings.js";
 import { createTools } from "../src/tools.js";
 import { Config, INJECT_CHILD_FLAGS, applyLightModePreset, injectChildEnabled } from "../src/config.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归（issue #249 第二批）：注入形态的父／子开关。
 // 父 = autoInject（既有挂载总闸，默认开）；子项按 #249 §10 的判据分档——是否
@@ -37,7 +38,7 @@ function injectorSections(config) {
 
 function toolDescriptions(config) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const registered = [];
   const ctx = { tools: { register(def) { registered.push(def); return () => {}; } } };
   createTools(ctx, service, config, null);

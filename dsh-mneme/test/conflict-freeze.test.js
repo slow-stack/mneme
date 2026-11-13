@@ -4,6 +4,7 @@ import { Config } from "../src/config.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createDreamScheduler } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // ---------------------------------------------------------------------------
 // conflict freeze (冲突冻结) — 测试用例由 Kimi K2.7 设计，覆盖 config/store/
@@ -181,7 +182,7 @@ test("store: 已解决的同一对在内容变化后才可再次 pending（issue
 
 function openService() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return { store, service };
 }
 
@@ -210,7 +211,7 @@ test("service: passthrough 透传 store 异常", () => {
 
 function dreamSetup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return { store, service };
 }
 

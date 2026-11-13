@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // #217 记忆复用统计：只读聚合口径的回归锚。
 // 数据面事实（锚 5bd2dab）：recall_runs.candidates 存最终返回集（service.js
@@ -10,7 +11,7 @@ import { createService } from "../src/service.js";
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return { store, service };
 }
 

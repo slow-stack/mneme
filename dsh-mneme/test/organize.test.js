@@ -8,6 +8,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createOrganizer } from "../src/organize.js";
 import { parseReceipt } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const preference = (title, content = "内容", extra = {}) =>
   ({ type: "preference", title, content, importance: 5, ...extra });
@@ -15,7 +16,7 @@ const preference = (title, content = "内容", extra = {}) =>
 /** 单元级 organizer：假 embedQuery 隔离向量档，写路径复用真 service。 */
 function makeOrganizer(embedQuery = async () => null, config = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   const finalizeCalls = [];
   const { organize } = createOrganizer({
     store,

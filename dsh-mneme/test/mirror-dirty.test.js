@@ -9,6 +9,7 @@ import { createMirror, TYPE_FILE } from "../src/mirror.js";
 import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
+import { testConfig } from "./helpers/test-config.js";
 
 /**
  * F-NEW-03 回归测试（audit peer 发现的：syncMirror 失败无持久 dirty 状态）。
@@ -33,7 +34,7 @@ function setup({ dbPath } = {}) {
   const mirror = createMirror(mirrorDir);
   const warns = [];
   const logger = { warn: (...a) => warns.push(a.join(" ")) };
-  const service = createService({ store, mirror, config: {}, logger });
+  const service = createService({ store, mirror, config: testConfig({}), logger });
   return { dir, mirrorDir, store, mirror, service, warns };
 }
 
@@ -268,7 +269,7 @@ test("F-NEW-03: 重开后 recoverMirror 从持久 dirty 恢复 → clean 且再�
     // 第一次"启动"：写失败 → dirty 持久化
     let store = createStore(dbPath);
     let mirror = createMirror(mirrorDir);
-    let service = createService({ store, mirror, config: {} });
+    let service = createService({ store, mirror, config: testConfig({}) });
     const { original } = throwingMirrorSync(mirror);
     service.saveWithDedupe({ type: "summary", title: "总览", content: "Dirty 内容", importance: 3 });
     assert.equal(service.getMirrorState().dirty, true);
@@ -277,7 +278,7 @@ test("F-NEW-03: 重开后 recoverMirror 从持久 dirty 恢复 → clean 且再�
     // 第二次"启动"：index.js 同款 recoverMirror() → 恢复成功
     store = createStore(dbPath);
     mirror = createMirror(mirrorDir);
-    service = createService({ store, mirror, config: {} });
+    service = createService({ store, mirror, config: testConfig({}) });
     assert.equal(service.getMirrorState().dirty, true, "重开必须先看到 dirty");
     service.recoverMirror();
     assert.equal(service.getMirrorState().dirty, false, "recover 后必须清 dirty");

@@ -5,6 +5,7 @@ import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { createInjector } from "../src/inject.js";
 import { Config, injectChildEnabled } from "../src/config.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Issue #619 补链（注入侧）：情感记忆要能被模型看见。
 //
@@ -33,7 +34,7 @@ const embedder = {
 function setup(configOverrides = {}) {
   const config = { maxInjectedItems: 5, importanceThreshold: 3, ...configOverrides };
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   service.setEmbedder(embedder);
   return { store, service, config };
 }

@@ -13,6 +13,7 @@ import { createService } from "../src/service.js";
 import { createTools } from "../src/tools.js";
 import { createInjector } from "../src/inject.js";
 import { createSettings } from "../src/settings.js";
+import { testConfig } from "./helpers/test-config.js";
 
 test("hintDate 只认 YYYY-MM-DD 前缀的形状，坏值返回空串而不是占位符", () => {
   assert.equal(hintDate("2026-11-11T10:29:45.703Z"), "2026-11-11");
@@ -54,7 +55,7 @@ test("两个行模板：传日期时日期落在类型括号之后、标题之�
 
 function setupTools() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const registered = [];
   const ctx = { tools: { register(def) { registered.push(def); return () => {}; } } };
   createTools(ctx, service, {}, null);
@@ -91,7 +92,7 @@ test("memory_search / memory_list / memory_get 三个回执都带 created 与 up
 // 注入行是消费方唯一无条件可见的文本：不带日期，模型只能拿 updated_at 猜年龄。
 test("注入行带条目日期，occurred_at 优先于 created_at", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const contexts = [];
   const ctx = { systemPrompt: { context(def) { contexts.push(def); } } };
   try {
@@ -112,7 +113,7 @@ test("注入行带条目日期，occurred_at 优先于 created_at", () => {
 
 test("注入行：无 occurred_at 时回落到 created_at，且降级标题行同样带日期", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const contexts = [];
   const ctx = { systemPrompt: { context(def) { contexts.push(def); } } };
   try {
@@ -130,7 +131,7 @@ test("注入行：无 occurred_at 时回落到 created_at，且降级标题行�
 // 与「无日期」两种行，模型会以为后者是特殊条目。
 test("预算不足的降级标题行也带日期", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const contexts = [];
   const ctx = { systemPrompt: { context(def) { contexts.push(def); } } };
   try {
