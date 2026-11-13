@@ -345,7 +345,7 @@ test("色槽各有其主：只被自己的图引用，且每格都由令牌供�
   const FAMILIES = [
     { name: "chart", re: /var\(\s*--mneme-chart-/, owns: /^\.mneme-(seg|dot)--[1-6]$/ },
     { name: "heat", re: /var\(\s*--mneme-heat-/, owns: /^\.mneme-heatcell\.l[1-4]$/ },
-    { name: "sink", re: /var\(\s*--mneme-sink-/, owns: /^\.mneme-sinkbar--(added|merged)$/ }
+    { name: "sink", re: /var\(\s*--mneme-sink-/, owns: /^\.mneme-sink(bar|dot)--(added|merged)$/ }
   ];
   const problems = [];
   // 语义层自己的声明也要查：`--mneme-sink-added:var(--mneme-chart-3)` 这种「继承式解耦」
@@ -372,7 +372,11 @@ test("色槽各有其主：只被自己的图引用，且每格都由令牌供�
   for (const [sel, tok] of [
     ...Array.from({ length: 4 }, (_, i) => [`.mneme-heatcell.l${i + 1}`, null]),
     [".mneme-sinkbar--added", "--mneme-sink-added"],
-    [".mneme-sinkbar--merged", "--mneme-sink-merged"]
+    [".mneme-sinkbar--merged", "--mneme-sink-merged"],
+    // 图例色标与柱子必须同源：柱子换了语义色而点没跟上，图例就会指着错的颜色
+    // 解释图——比没有图例更糟。
+    [".mneme-sinkdot--added", "--mneme-sink-added"],
+    [".mneme-sinkdot--merged", "--mneme-sink-merged"]
   ]) {
     const r = bySel.get(sel);
     if (!r) { problems.push(`${sel} 规则没了`); continue; }
