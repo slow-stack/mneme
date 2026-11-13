@@ -1810,8 +1810,15 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       // summary unboundedly). `_overwrite` still archives the old overview into
       // content_history before replacing it. Content carries the snapshot-scope
       // footer computed above — the resident bar states its own 口径.
-      service.saveWithDedupe({ type: "summary", title: STR.summaryTitle[language], content: `${summaryText.trim()}${summaryScope}`, importance: 5, source: "dream", _overwrite: true });
-      summaryStored = true;
+      // #663: the dream overview passes the same admission gate as any other write.
+      // It has no session, so only the level-1 judgment applies. A denial must not be
+      // reported as a stored summary — the run outcome and the resident bar read this.
+      const summaryOutcome = service.saveWithDedupe({ type: "summary", title: STR.summaryTitle[language], content: `${summaryText.trim()}${summaryScope}`, importance: 5, source: "dream", _overwrite: true });
+      if (summaryOutcome?.action === "denied") {
+        logger?.warn?.(`dsh-mneme dream: summary write denied by admission (${summaryOutcome.reason ?? "unknown"})`);
+      } else {
+        summaryStored = true;
+      }
       // Re-embed the fresh summary so the index stays in sync with the store.
       if (semantic?.embedder && semantic?.vectorIndex) {
         try {

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createStore } from "../src/store.js";
@@ -23,6 +23,9 @@ import { POSITIVE_SAMPLES, NEGATIVE_SAMPLES, SAMPLE_VALUES, referenceScan } from
 // 写错时照样过，真 config 才会红。
 import { Config } from "../src/config.js";
 import { createSensitiveScan } from "../src/sensitive-scan.js";
+import { bootstrapFromDirectory } from "../src/bootstrap.js";
+import { createDreamScheduler } from "../src/dream.js";
+import { mockCtx } from "./helpers/dream-mock.js";
 import { testConfig } from "./helpers/test-config.js";
 
 // #254 写入准入（第一阶段：只计量，不拦截）。
@@ -665,5 +668,108 @@ test("A2 负样本在真装配下一条都不误杀（含敏感词但没有值�
       assert.equal(row.metadata.deny, undefined, `${sample.id} 不该带任何拒绝面`);
     }
   }
+});
+
+// --- #663 A2 覆盖面：系统写入（无 sessionKey）也过第 1 级判据 ---------------------
+// 第 1 级判据管的是「这条文本能不能落库」，与会话身份无关。autoSummarize /
+// dream 总览 / bootstrap 冷启动 / share 导入都没有会话，但落库的是同样的文本；
+// #663 之前 evaluate 在判据之前就 return，等于这几条出口整片没判。
+// 预算/话题冷却/内容哈希仍不进：它们要一条会话时间线做基准，没有会话就没有基准。
+
+/** 无会话身份（session_key IS NULL）的准入行。 */
+function systemAdmissionRows(store) {
+  return store.listLlmAudits({ limit: 200 })
+    .filter((r) => r.operation_type === ADMISSION_OPERATION_TYPE && r.session_key == null);
+}
+
+test("#663 系统写入默认档：判据关时不判、不落行，写入与 #332 逐字节一致", () => {
+  const { store, service } = a2Store();
+  const result = service.saveWithDedupe({ ...SECRET_ROW, source: "dream" });
+  assert.equal(result.action, "created");
+  assert.equal(rowCount(store), 1);
+  assert.deepEqual(systemAdmissionRows(store), [], "判据关时系统写入一行审计都不该多");
+});
+
+test("#663 系统写入观察档：判据跑、拒绝面留行（session_key 为 NULL）、写入照常", () => {
+  const { store, service } = a2Store({ sensitiveScanEnabled: true, writeAdmission: { enabled: true } });
+  const result = service.saveWithDedupe({ ...SECRET_ROW, source: "dream" });
+  assert.equal(result.action, "created", "仅告警档不拦");
+  const rows = systemAdmissionRows(store);
+  assert.equal(rows.length, 1, "系统写入的告警不能是静默的");
+  const row = rows[0];
+  assert.equal(row.session_key, undefined, "落库是 NULL，读回是 undefined——不编一个假 key");
+  assert.equal(row.metadata.gate, null, "不进预算就没有 g1 行");
+  assert.equal(row.metadata.decision, "allow");
+  assert.equal(row.metadata.deny.reason, "sensitive");
+  assert.equal(row.metadata.deny.kind, "github_token");
+  assert.equal(row.metadata.deny.enforced, false);
+});
+
+test("#663 系统写入拦截档：拒了、没落库、审计行标 enforced", () => {
+  const { store, service } = a2Store({
+    sensitiveScanEnabled: true,
+    writeAdmission: { enabled: true, enforce: true }
+  });
+  const result = service.saveWithDedupe({ ...SECRET_ROW, source: "dream" });
+  assert.equal(result.action, "denied");
+  assert.equal(result.reason, "sensitive");
+  assert.equal(result.memory, null);
+  assert.equal(rowCount(store), 0, "被拒的系统写入一条都不该落库");
+  const rows = systemAdmissionRows(store);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].session_key, undefined, "落库是 NULL");
+  assert.equal(rows[0].metadata.deny.enforced, true);
+});
+
+test("#663 系统写入同样吃空白/噪声判据（不只是密钥）", () => {
+  const { store, service } = a2Store({ writeAdmission: { enabled: true, enforce: true } });
+  const blank = service.saveWithDedupe({ type: "project", title: "", content: "", source: "bootstrap" });
+  assert.equal(blank.action, "denied");
+  assert.equal(blank.reason, "blank");
+  assert.equal(rowCount(store), 0);
+  assert.equal(systemAdmissionRows(store).length, 1);
+});
+
+test("#663 bootstrap 冷启动：被拒条目报 denied 而不是混进 merged，也不解引用 null", async () => {
+  const { store, service } = a2Store({
+    sensitiveScanEnabled: true,
+    writeAdmission: { enabled: true, enforce: true }
+  });
+  const root = mkdtempSync(join(tmpdir(), "mneme-663-bootstrap-"));
+  try {
+    writeFileSync(join(root, "README.md"), `# Demo\n\n临时贴了 ${SAMPLE_VALUES.githubPat}，回头删掉。`);
+    const report = await bootstrapFromDirectory({ service, dir: root, logger: null });
+    assert.equal(report.created, 0);
+    assert.equal(report.merged, 0, "被拒不该记成并入");
+    assert.equal(report.denied, 1);
+    assert.equal(report.items[0].action, "denied");
+    assert.equal(report.items[0].id, null);
+    assert.equal(report.items[0].reason, "sensitive");
+    assert.equal(rowCount(store), 0);
+    assert.equal(systemAdmissionRows(store).length, 1, "系统出口的拒绝也要留审计");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("#663 dream 总览落盘：被拒时 outcome.summary 为 false，库里没有 summary 行", async () => {
+  const { store, service } = a2Store({
+    sensitiveScanEnabled: true,
+    writeAdmission: { enabled: true, enforce: true }
+  });
+  const ctx = mockCtx({ summaryText: `记忆库总览：临时密钥 ${SAMPLE_VALUES.githubPat} 待清理。` });
+  // 空库时 dream 直接 skip（skipped: true），走不到 summary 阶段——先种两行让它真跑。
+  // 正文要够长：质量闸会把过短的行直接归档，归档行不进 dream 快照。
+  service.saveWithDedupe({ type: "project", title: "插件", content: "第一条正文，长度足够的一段内容，用于 dream 快照。".repeat(3), importance: 3 });
+  service.saveWithDedupe({ type: "project", title: "插件2", content: "第二条正文，另一段足够长的内容，用于区分两条记录。".repeat(3), importance: 4 });
+  const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
+  const outcome = await dream.runDream(ctx, service, {});
+  assert.notEqual(outcome.skipped, true, "库里有候选时不该再 skip");
+  assert.equal(outcome.summary, false, "被拒的总览不能报成已落盘");
+  assert.equal(store.list({ type: "summary", limit: 10 }).length, 0);
+  assert.ok(
+    systemAdmissionRows(store).some((r) => r.metadata.deny?.kind === "github_token"),
+    "dream 出口的拒绝要留一行可查"
+  );
 });
 

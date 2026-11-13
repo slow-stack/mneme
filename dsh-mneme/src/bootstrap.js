@@ -194,15 +194,25 @@ export async function bootstrapFromDirectory({ service, dir, logger } = {}) {
   const items = [];
   let created = 0;
   let merged = 0;
+  let denied = 0;
   for (const item of candidates) {
     try {
-      const { action, memory } = service.saveWithDedupe({
+      const { action, memory, reason } = service.saveWithDedupe({
         ...item,
         importance: 3,
         tags: ["bootstrap"],
         source: "bootstrap",
         _overwrite: true
       });
+      // #663: bootstrap has no session, so only the level-1 admission judgment applies
+      // here. Report the denial instead of letting a null `memory` fall into the outer
+      // catch — that shape lost both the reason and the count.
+      if (action === "denied") {
+        denied++;
+        items.push({ action, id: null, title: item.title, reason: reason ?? null });
+        logger?.warn?.(`[dsh-mneme] bootstrap item "${item.title}" denied by admission (${reason ?? "unknown"})`);
+        continue;
+      }
       if (action === "created") created++;
       else merged++;
       items.push({ action, id: memory.id, title: memory.title });
@@ -211,5 +221,5 @@ export async function bootstrapFromDirectory({ service, dir, logger } = {}) {
       logger?.warn?.(`[dsh-mneme] bootstrap item "${item.title}" failed: ${String(error)}`);
     }
   }
-  return { dir: root, created, merged, items };
+  return { dir: root, created, merged, denied, items };
 }
