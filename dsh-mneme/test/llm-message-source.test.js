@@ -10,6 +10,7 @@ import { createSummarizer } from "../src/summarize.js";
 import { runSleep } from "../src/dream/sleep.js";
 import { extractEntities } from "../src/entities/extractor.js";
 import { createVectorIndex } from "../src/vector-index.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归：dsh-llm 的消息契约要求每条消息带 source。provider 适配器会直接读
 // message.source.kind 来区分用户内容与工具结果（例如
@@ -34,7 +35,7 @@ const logger = { warn: () => {}, info: () => {} };
 
 function makeService() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return { store, service };
 }
 
@@ -100,7 +101,7 @@ test("summarize: distilled transcript and prompt messages carry source", async (
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-source",
-    requestHeader: () => ({ config: { provider: "mock", model: "source-model" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "mock", model: "source-model" }) }),
     events: [
       { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "帮我选型" }] } },
       { seq: 2, type: "turn/end" }
@@ -176,7 +177,7 @@ test("entity extraction: messages handed to the llm adapter carry source", async
     return "[]";
   };
 
-  await extractEntities(memory, { store, config: {}, callLLM, logger });
+  await extractEntities(memory, { store, config: testConfig({}), callLLM, logger });
 
   assert.equal(calls.length, 1, "extraction called the LLM adapter");
   store.close();

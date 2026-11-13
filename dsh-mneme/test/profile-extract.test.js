@@ -14,6 +14,7 @@ import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { createApi } from "../src/api.js";
 import { createProfileExtractor, ProfileExtractError } from "../src/profile-extract.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 假的 ctx.llm：按真实协议发 text-delta / usage / finish 三类 chunk（用量嵌在
 // chunk.usage，与 dream.js 的 streamText 注释一致——把整个 chunk 当用量会在
@@ -198,7 +199,7 @@ test("policy 是 token：配了 token 又不带 token 的 POST 被挡在提取�
   let called = 0;
   const { store, route } = setupApi({
     apiToken: "sekret",
-    config: { profileExtractEnabled: true },
+    config: testConfig({ profileExtractEnabled: true }),
     extractor: async () => { called++; return { draft: "x" }; }
   });
   const res = new FakeRes();
@@ -211,7 +212,7 @@ test("policy 是 token：配了 token 又不带 token 的 POST 被挡在提取�
 test("开关关着：409 disabled，一次模型调用都不发生", async () => {
   let called = 0;
   const { store, route } = setupApi({
-    config: { profileExtractEnabled: false },
+    config: testConfig({ profileExtractEnabled: false }),
     extractor: async () => { called++; return { draft: "不该出现" }; }
   });
   const res = new FakeRes();
@@ -225,7 +226,7 @@ test("开关关着：409 disabled，一次模型调用都不发生", async () =>
 test("非 POST 方法：405 + Allow，不触发任何副作用", async () => {
   let called = 0;
   const { store, route } = setupApi({
-    config: { profileExtractEnabled: true },
+    config: testConfig({ profileExtractEnabled: true }),
     extractor: async () => { called++; return { draft: "x" }; }
   });
   for (const method of ["GET", "HEAD", "DELETE", "PATCH"]) {
@@ -240,7 +241,7 @@ test("非 POST 方法：405 + Allow，不触发任何副作用", async () => {
 
 test("开关开着：200 回草稿，且库里的画像一个字节都没变", async () => {
   const { store, settings, route } = setupApi({
-    config: { profileExtractEnabled: true },
+    config: testConfig({ profileExtractEnabled: true }),
     extractor: async () => ({ draft: "我知道她跨考公共管理。", rowsUsed: 7, truncated: false, provider: "p", model: "m" })
   });
   settings.setProfile("手写原文");
@@ -257,7 +258,7 @@ test("开关开着：200 回草稿，且库里的画像一个字节都没变", a
 test("提取器报的 code 映射成可区分的状态码（「没东西可提」≠「模型没配合」）", async () => {
   for (const [code, status] of [["no-input", 409], ["no-route", 503], ["unparseable", 502], ["stream-failed", 502]]) {
     const { store, route } = setupApi({
-      config: { profileExtractEnabled: true },
+      config: testConfig({ profileExtractEnabled: true }),
       extractor: async () => { throw new ProfileExtractError(code, code); }
     });
     const res = new FakeRes();

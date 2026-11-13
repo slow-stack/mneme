@@ -19,6 +19,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { createEntityStreamAdapter } from "../src/index.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const embedder = {
   embedSingle: async () => [1, 0, 0],
@@ -85,7 +86,7 @@ function dreamCtx({ onConsolidation, summaryText = "记忆库总览：用户偏�
 
 test("issue#135: dream omits reasoningEffort when unset without a capability API and still consolidates (applied>0)", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const { memory: a } = service.saveWithDedupe({ type: "project", title: "插件", content: "旧", importance: 3 });
   const { memory: b } = service.saveWithDedupe({ type: "project", title: "插件2", content: "新细节", importance: 4 });
@@ -108,7 +109,7 @@ test("issue#135: dream omits reasoningEffort when unset without a capability API
 
 test("issue#135: unset effort resolves to the LOWEST supported effort, never the poison default", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const { memory: a } = service.saveWithDedupe({ type: "project", title: "插件", content: "旧", importance: 3 });
   const { memory: b } = service.saveWithDedupe({ type: "project", title: "插件2", content: "新细节", importance: 4 });
@@ -139,7 +140,7 @@ test("issue#135: unset effort resolves to the LOWEST supported effort, never the
 
 test("issue#135: explicit 'none' still omits the field even when the capability API is available", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const { memory: a } = service.saveWithDedupe({ type: "project", title: "插件", content: "旧", importance: 3 });
   const { memory: b } = service.saveWithDedupe({ type: "project", title: "插件2", content: "新细节", importance: 4 });
@@ -165,7 +166,7 @@ test("issue#135: explicit 'none' still omits the field even when the capability 
 
 test("issue#9: dream forwards dreamReasoningEffort on both LLM calls", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const { memory: a } = service.saveWithDedupe({ type: "project", title: "插件", content: "旧", importance: 3 });
   const { memory: b } = service.saveWithDedupe({ type: "project", title: "插件2", content: "新细节", importance: 4 });
@@ -187,7 +188,7 @@ test("issue#9: dream forwards dreamReasoningEffort on both LLM calls", async () 
 
 test("issue#9: dreamMaxTokens is forwarded as maxTokens on consolidation and summary calls", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const { memory: a } = service.saveWithDedupe({ type: "project", title: "插件", content: "旧", importance: 3 });
   const { memory: b } = service.saveWithDedupe({ type: "project", title: "插件2", content: "新细节", importance: 4 });
@@ -209,7 +210,7 @@ test("issue#9: dreamMaxTokens is forwarded as maxTokens on consolidation and sum
 
 test("issue#9: thinking-model empty body (no text emitted, budget burnt on reasoning) fails as no json array", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   service.saveWithDedupe({ type: "preference", title: "语言", content: "中文" });
   const dream = createDreamScheduler({ thresholdCount: 1, thresholdChars: 0, delayMs: 0 });
   const ctx = dreamCtx({ onConsolidation: () => "" }); // 思考型模型把预算烧光 → 无正文
@@ -228,7 +229,7 @@ test("legal empty decision list [] is a no-op success, not a failure", async () 
   // 此前被 validateDecisions 判 failed → 审计表反复失败。现在应 ok:true、applied 0、
   // 审计记 ok，且 summary 照常产出。
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   service.saveWithDedupe({ type: "project", title: "插件", content: "内容", importance: 3 });
   const dream = createDreamScheduler({ thresholdCount: 1, thresholdChars: 0, delayMs: 0 });
   const ctx = dreamCtx({ onConsolidation: () => "[]" }); // 模型：无需合并
@@ -244,7 +245,7 @@ test("legal empty decision list [] is a no-op success, not a failure", async () 
 
 test("issue#25: dreamProvider/dreamModel config wins over the agentDefaultModel route", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const { memory: a } = service.saveWithDedupe({ type: "project", title: "插件", content: "旧", importance: 3 });
   const { memory: b } = service.saveWithDedupe({ type: "project", title: "插件2", content: "新细节", importance: 4 });
@@ -270,7 +271,7 @@ test("issue#25: dreamProvider/dreamModel config wins over the agentDefaultModel 
 
 test("issue#9: rejected reasoningEffort retries once without it and still consolidates", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const { memory: a } = service.saveWithDedupe({ type: "project", title: "插件", content: "旧", importance: 3 });
   const { memory: b } = service.saveWithDedupe({ type: "project", title: "插件2", content: "新细节", importance: 4 });
@@ -310,7 +311,7 @@ test("issue#9: rejected reasoningEffort retries once without it and still consol
 
 function sleepSetup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const vectorIndex = createVectorIndex({ store });
   service.setEmbedder(embedder);
   service.setVectorIndex(vectorIndex);
@@ -407,7 +408,7 @@ test("issue#135: sleep unset effort also resolves to the lowest supported", asyn
 
 test("rc.1 stream-level effort rejection (error finish chunk) also triggers the no-effort retry", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const { memory: a } = service.saveWithDedupe({ type: "project", title: "插件", content: "旧", importance: 3 });
   const { memory: b } = service.saveWithDedupe({ type: "project", title: "插件2", content: "新细节", importance: 4 });
@@ -455,7 +456,7 @@ test("rc.1 stream-level effort rejection (error finish chunk) also triggers the 
 
 test("non-effort stream failures are not retried and the finish-chunk cause reaches the audit row", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   service.saveWithDedupe({ type: "project", title: "主题", content: "内容" });
   const calls = [];
   const ctx = {
@@ -522,7 +523,7 @@ test("sleep passes the stream failure accessor so a stream-level effort rejectio
 
 test("defaultEffort trap: configured 'low' remapped to the first supported effort when default is poison", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const { memory: a } = service.saveWithDedupe({ type: "project", title: "插件", content: "旧", importance: 3 });
   const { memory: b } = service.saveWithDedupe({ type: "project", title: "插件2", content: "新细节", importance: 4 });
@@ -558,7 +559,7 @@ test("defaultEffort trap: configured 'low' remapped to the first supported effor
 
 test("defaultEffort trap: model with no reasoning capability omits the field entirely", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const { memory: a } = service.saveWithDedupe({ type: "project", title: "插件", content: "旧", importance: 3 });
   const { memory: b } = service.saveWithDedupe({ type: "project", title: "插件2", content: "新细节", importance: 4 });
@@ -583,7 +584,7 @@ test("defaultEffort trap: model with no reasoning capability omits the field ent
 
 test("defaultEffort trap: configured effort supported is forwarded verbatim", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const { memory: a } = service.saveWithDedupe({ type: "project", title: "插件", content: "旧", importance: 3 });
   const { memory: b } = service.saveWithDedupe({ type: "project", title: "插件2", content: "新细节", importance: 4 });
@@ -609,7 +610,7 @@ test("defaultEffort trap: configured effort supported is forwarded verbatim", as
 
 test("defaultEffort trap: capability query failure falls back to configured effort (retry still guards)", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const { memory: a } = service.saveWithDedupe({ type: "project", title: "插件", content: "旧", importance: 3 });
   const { memory: b } = service.saveWithDedupe({ type: "project", title: "插件2", content: "新细节", importance: 4 });

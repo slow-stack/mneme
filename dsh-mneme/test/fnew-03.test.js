@@ -9,6 +9,7 @@ import { createMirror, TYPE_FILE } from "../src/mirror.js";
 import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
+import { testConfig } from "./helpers/test-config.js";
 
 /**
  * F-NEW-03 回归测试（mirror sync 持久 dirty 状态）。
@@ -52,7 +53,7 @@ function setup({ dbPath, mirrorDir } = {}) {
   const mDir = mirrorDir ?? join(dir, "mirror");
   const store = createStore(dbPath ?? ":memory:");
   const mirror = createMirror(mDir);
-  const service = createService({ store, mirror, config: {} });
+  const service = createService({ store, mirror, config: testConfig({}) });
   return { dir, mirrorDir: mDir, store, mirror, service };
 }
 
@@ -252,7 +253,7 @@ test("F-NEW-03 h: 本来干净时 recoverMirror 直接视为成功且不触发�
   try {
     const store = createStore(dbPath);
     const mirror = createMirror(join(dir, "mirror"));
-    const service = createService({ store, mirror, config: {} });
+    const service = createService({ store, mirror, config: testConfig({}) });
     const mock = makeSyncMock();
     mirror.sync = mock.sync;
     const result = service.recoverMirror();
@@ -361,7 +362,7 @@ test("F-NEW-03 k: 端到端——持续失败→关闭重开→恢复写能力�
     // 第一"运行周期"：写业务数据 + mirror 持续失败（ENOSPC），dirty 落库
     let store = createStore(dbPath);
     let mirror = createMirror(mirrorDir);
-    let service = createService({ store, mirror, config: {} });
+    let service = createService({ store, mirror, config: testConfig({}) });
     const mock = makeSyncMock();
     mirror.sync = mock.sync;
     mock.mode = "fail";
@@ -374,7 +375,7 @@ test("F-NEW-03 k: 端到端——持续失败→关闭重开→恢复写能力�
     // 不触发任何业务写，只走 index.js 启动路径的 recoverMirror()。
     store = createStore(dbPath);
     mirror = createMirror(mirrorDir);
-    service = createService({ store, mirror, config: {} });
+    service = createService({ store, mirror, config: testConfig({}) });
     assert.equal(store.getMirrorState().dirty, true, "重开后 dirty 必须仍在（持久化）");
     const result = service.recoverMirror();
     assert.equal(result.recovered, true, "写能力恢复后无需业务写即可收敛");
@@ -396,7 +397,7 @@ test("F-NEW-03 l: fail-safe——markMirrorDirty 本身写入失败不抛（stor
     const mirror = createMirror(mirrorDir);
     const warns = [];
     const logger = { warn: (...a) => warns.push(a) };
-    const service = createService({ store, mirror, config: {}, logger });
+    const service = createService({ store, mirror, config: testConfig({}), logger });
     const mock = makeSyncMock();
     mirror.sync = mock.sync;
     mock.mode = "fail";

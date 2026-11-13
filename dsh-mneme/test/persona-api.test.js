@@ -12,6 +12,7 @@ import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { createStandaloneApi } from "../src/api-standalone.js";
+import { testConfig } from "./helpers/test-config.js";
 
 class FakeRes extends EventEmitter {
   constructor() { super(); this.statusCode = 200; this.body = ""; }
@@ -35,7 +36,7 @@ function req(path, method = "GET", body = null, headers = {}) {
 
 function setupInternal(apiToken = "") {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const commands = {
     add: (def) => settings.addCommand(def),
@@ -119,9 +120,9 @@ test("internal PUT /persona multi-card form replaces fully; legacy form merges d
 
 async function setupStandalone() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
-  const api = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: 0 });
+  const api = createStandaloneApi({ service, store, config: testConfig({}), settings, logger: null, port: 0 });
   await api.ready;
   const base = `http://127.0.0.1:${api.port}`;
   const auth = { authorization: `Bearer ${api.token}` };
