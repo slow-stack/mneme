@@ -35,6 +35,7 @@ $ cat ~/.dsh/memory/preferences.md
 | 对话中模型主动记录（`memory_save`，可带敏感度与事件时间）；会话结束自动提炼（`autoSummarize`） | SQLite 主库 + 人类可编辑 Markdown 镜像；实体 / 属性 / 时间轴三层结构化；记忆带 agent / workspace / 敏感度 / 发生时间标注 | 新会话自动注入相关记忆（按当前作用域加权，strictScope 开启后显式收窄的归属硬隔离）；autoDream 后台去重 / 合并 / 归档，冲突冻结待人工裁决 |
 
 <p align="center"><img src="https://raw.githubusercontent.com/slow-stack/mneme/main/docs/memory-loop.svg" alt="记忆闭环：写入 → 本机 SQLite 与 Markdown 镜像 → 空闲巩固 → 四路召回融合注入 → 会话 / 面板 / 其他插件" width="100%" /></p>
+<p align="center"><sub>English version: <a href="https://github.com/slow-stack/mneme/blob/main/docs/memory-loop.en.svg">docs/memory-loop.en.svg</a></sub></p>
 
 ```bash
 # 30 秒上手
