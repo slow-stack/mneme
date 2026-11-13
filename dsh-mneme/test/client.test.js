@@ -355,12 +355,12 @@ test("knowledge base page exposes the §3.6 routes and explains every empty stat
 
   // 文案本身锁一次：说清这是 mneme 的功能、开关在哪儿。
   assert.ok(
-    clientSource.includes("设置 → 记忆(mneme) → 功能 → 知识库"),
+    clientSource.includes("设置 → 记忆(mneme) → 功能 → 扩展功能"),
     "the Chinese disabled copy must name the exact toggle path"
   );
   assert.ok(
-    clientSource.includes("Settings → Memory (mneme) → Features → Knowledge base"),
-    "the English disabled copy must name the same path"
+    clientSource.includes("Settings → Memory (mneme) → Features → Extensions, turn on the knowledge base switch"),
+    "the English disabled copy must name the same path (group label is Extensions since v0.13)"
   );
 });
 
