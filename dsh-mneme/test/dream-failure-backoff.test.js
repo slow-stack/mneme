@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createDreamScheduler } from "../src/dream.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Issue #292：autoDream 同会话内连续失败退避（autoDreamFailureBackoff，opt-in）。
 //
@@ -22,7 +23,7 @@ import { createService } from "../src/service.js";
 // 的是同一道闸，不新增状态面。
 function dreamSetup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return { store, service };
 }
 

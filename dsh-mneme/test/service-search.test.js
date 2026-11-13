@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Mock embedder from the pipeline spec: every query maps to the fixed vector
 // [1,0,0], so vector recall surfaces any row embedded at [1,0,0] (cosine 1)
@@ -31,7 +32,7 @@ const reranker = {
 // which semantic dedup would legitimately collapse.
 function setup({ withEmbedder = true, config = {} } = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   const vectorIndex = createVectorIndex({ store });
   if (withEmbedder) {
     service.setEmbedder(embedder);
@@ -74,7 +75,7 @@ test("hybrid blend honors configured vector/keyword weights", async () => {
 
   // Even 0.5/0.5 -> 0.5 + 0.4 = 0.9.
   const store = createStore(":memory:");
-  const tuned = createService({ store, mirror: null, config: { hybridSearchVectorWeight: 0.5, hybridSearchKeywordWeight: 0.5 } });
+  const tuned = createService({ store, mirror: null, config: testConfig({ hybridSearchVectorWeight: 0.5, hybridSearchKeywordWeight: 0.5 }) });
   const vi = createVectorIndex({ store });
   tuned.setEmbedder(embedder);
   tuned.setVectorIndex(vi);

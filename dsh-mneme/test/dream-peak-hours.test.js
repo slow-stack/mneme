@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createDreamScheduler } from "../src/dream.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Issue #239（第 4 项，错峰队列）镜像到巩固：dreamPeakHours / dreamPeakMaxDeferMinutes。
 //
@@ -17,7 +18,7 @@ import { createService } from "../src/service.js";
 // 「高峰顺延 → 非高峰补跑」才能被确定性覆盖，也不会在 CI 上留下真实等待。
 function dreamSetup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return { store, service };
 }
 

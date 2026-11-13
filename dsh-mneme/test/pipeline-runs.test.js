@@ -20,6 +20,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { createApi } from "../src/api.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 这组测试守的是 M.O. 执行链的**第一步**：把「跑过一次」真的写下来，并让读侧读得回来。
 //
@@ -134,7 +135,7 @@ class FakeRes {
 
 function buildApi() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const routes = [];
   const ctx = { webServer: { register(route) { routes.push(route); return () => {}; } } };

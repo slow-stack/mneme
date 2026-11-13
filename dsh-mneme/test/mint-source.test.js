@@ -5,6 +5,7 @@ import { createService } from "../src/service.js";
 import { applyDecisions, validateDecisions } from "../src/dream/decisions.js";
 import { runSleep } from "../src/dream/sleep.js";
 import { createDreamScheduler } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 机器 mint 的记忆必须带真 source。
 //
@@ -20,7 +21,7 @@ import { createDreamScheduler } from "../src/dream.js";
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return { store, service };
 }
 

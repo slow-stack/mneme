@@ -15,6 +15,7 @@ import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { createChoroQueries } from "../src/wiki/queries.js";
 import { runChoroT0 } from "../src/wiki/t0.js";
+import { testConfig } from "./helpers/test-config.js";
 
 class FakeRes extends EventEmitter {
   constructor() { super(); this.statusCode = 200; this.body = ""; }
@@ -32,7 +33,7 @@ function req(path, method = "GET") {
 
 function setup({ config = null, choro = null } = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const routes = [];
   const ctx = { webServer: { register(route) { routes.push(route); return () => {}; } } };
@@ -102,7 +103,7 @@ test("queries 缺装配 → 503；开关关 → 409 disabled（语义分叉）",
   assert.equal(a.status, 503);
   assert.equal(a.body.error, "unavailable");
 
-  const off = setup({ config: { chorographyEnabled: false }, choro: createChoroQueries({ store: createStore(":memory:") }) });
+  const off = setup({ config: testConfig({ chorographyEnabled: false }), choro: createChoroQueries({ store: createStore(":memory:") }) });
   const b = await invoke(handler(off.routes, "/api/dsh-mneme/choro/repos"), "/api/dsh-mneme/choro/repos");
   assert.equal(b.status, 409);
   assert.equal(b.body.error, "disabled");
@@ -112,7 +113,7 @@ test("快乐路径：repos / modules / page / search 全通", async () => {
   const store = createStore(":memory:");
   const root = makeRepo(store);
   try {
-    const { routes } = setup({ config: { chorographyEnabled: true }, choro: createChoroQueries({ store }) });
+    const { routes } = setup({ config: testConfig({ chorographyEnabled: true }), choro: createChoroQueries({ store }) });
     const repos = await invoke(handler(routes, "/api/dsh-mneme/choro/repos"), "/api/dsh-mneme/choro/repos");
     assert.equal(repos.status, 200);
     assert.equal(repos.body.repos.length, 1);
@@ -144,7 +145,7 @@ test("repo 解析失败各归各位：未知 → 404；歧义 → 400 带清单�
   const store = createStore(":memory:");
   const root = makeRepo(store);
   try {
-    const { routes } = setup({ config: { chorographyEnabled: true }, choro: createChoroQueries({ store }) });
+    const { routes } = setup({ config: testConfig({ chorographyEnabled: true }), choro: createChoroQueries({ store }) });
     const notFound = await invoke(handler(routes, "/api/dsh-mneme/choro/modules"), "/api/dsh-mneme/choro/modules?repo=nope");
     assert.equal(notFound.status, 404);
     assert.equal(notFound.body.error, "repo-not-found");
@@ -175,7 +176,7 @@ test("地志页路由区分缺失文件和不可读文件", async () => {
   const store = createStore(":memory:");
   const root = makeRepo(store);
   try {
-    const { routes } = setup({ config: { chorographyEnabled: true }, choro: createChoroQueries({ store }) });
+    const { routes } = setup({ config: testConfig({ chorographyEnabled: true }), choro: createChoroQueries({ store }) });
     const pageRoute = handler(routes, "/api/dsh-mneme/choro/page");
     const url = "/api/dsh-mneme/choro/page?slug=src";
     const file = join(root, ".chorography", "modules", "src.md");
@@ -203,7 +204,7 @@ test("/choro/run：policy token-write，GET 405，POST 快乐路径重跑 T0", a
   const root = makeRepo(store);
   try {
     const { routes } = setup({
-      config: { chorographyEnabled: true },
+      config: testConfig({ chorographyEnabled: true }),
       choro: {
         ...createChoroQueries({ store }),
         // 与 index.js 的装配同形：runT0Apply 闭包住 store（P35：写路径与读侧分开装配）
@@ -233,14 +234,14 @@ test("/choro/run：开关关 409；repo 未知 404（与读路由同一道闸）
   const root = makeRepo(store);
   try {
     const off = setup({
-      config: { chorographyEnabled: false },
+      config: testConfig({ chorographyEnabled: false }),
       choro: { ...createChoroQueries({ store }), runT0Apply: () => { throw new Error("不该被调到"); } },
     });
     const a = await invokePost(handler(off.routes, "/api/dsh-mneme/choro/run"), "/api/dsh-mneme/choro/run", { repo: 1 });
     assert.equal(a.status, 409);
 
     const on = setup({
-      config: { chorographyEnabled: true },
+      config: testConfig({ chorographyEnabled: true }),
       choro: { ...createChoroQueries({ store }), runT0Apply: () => { throw new Error("不该被调到") } },
     });
     const b = await invokePost(handler(on.routes, "/api/dsh-mneme/choro/run"), "/api/dsh-mneme/choro/run", { repo: 99 });
@@ -256,7 +257,7 @@ test("/choro/run：本机不可达时 409，绝不拿宿主 cwd 顶替（PR #679
   try {
     let called = 0;
     const { routes } = setup({
-      config: { chorographyEnabled: true },
+      config: testConfig({ chorographyEnabled: true }),
       choro: {
         ...createChoroQueries({ store }),
         // 契约：本机没登记位置、回退目录身份核验不过 → 空串
@@ -279,7 +280,7 @@ test("/choro/run：旧装配缺 localRootForRepo 时退回 root_path，不变 50
   try {
     const { localRootForRepo, ...oldAssembly } = createChoroQueries({ store });
     const { routes } = setup({
-      config: { chorographyEnabled: true },
+      config: testConfig({ chorographyEnabled: true }),
       choro: {
         ...oldAssembly,
         runT0Apply: ({ repoRoot }) => runChoroT0({ repoRoot, store, apply: true }),
@@ -304,7 +305,7 @@ test("/choro/search：embedder 在场 → 惰性物化 + semantic 数组；缺�
       embed: async (text) => (/src|b\.js/.test(text) ? [1, 0] : [0, 1]),
     };
     const { routes } = setup({
-      config: { chorographyEnabled: true },
+      config: testConfig({ chorographyEnabled: true }),
       choro: { ...createChoroQueries({ store }), embedder },
     });
     const s = await invoke(handler(routes, "/api/dsh-mneme/choro/search"), "/api/dsh-mneme/choro/search?repo=1&q=b.js");
@@ -314,7 +315,7 @@ test("/choro/search：embedder 在场 → 惰性物化 + semantic 数组；缺�
     assert.equal(s.body.semantic[0].slug, "src", "与查询同向的页排前");
     assert.equal(typeof s.body.semantic[0].score, "number");
 
-    const noEmbedder = setup({ config: { chorographyEnabled: true }, choro: createChoroQueries({ store }) });
+    const noEmbedder = setup({ config: testConfig({ chorographyEnabled: true }), choro: createChoroQueries({ store }) });
     const t = await invoke(handler(noEmbedder.routes, "/api/dsh-mneme/choro/search"), "/api/dsh-mneme/choro/search?repo=1&q=b.js");
     assert.equal(t.body.semantic, null, "embedder 缺席 → null（调用方退纯关键词）");
   } finally {
@@ -330,7 +331,7 @@ test("/choro/repos：契约字段齐备，git 漂移 → stale/git，plan 漂移
   const store = createStore(":memory:");
   const root = makeRepo(store);
   try {
-    const { routes } = setup({ config: { chorographyEnabled: true }, choro: createChoroQueries({ store }) });
+    const { routes } = setup({ config: testConfig({ chorographyEnabled: true }), choro: createChoroQueries({ store }) });
     const url = "/api/dsh-mneme/choro/repos";
 
     // 刚重建完：不该有任何过期信号——否则面板会对着一个刚生成的地志喊「代码已变」，
@@ -382,7 +383,7 @@ test("/choro/run：空态按绝对路径登记新仓库，重复路径复用同�
   execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init", "--no-gpg-sign"], { cwd: root, stdio: "pipe" });
   try {
     const { routes } = setup({
-      config: { chorographyEnabled: true },
+      config: testConfig({ chorographyEnabled: true }),
       choro: { ...createChoroQueries({ store }), runT0Apply: ({ repoRoot }) => runChoroT0({ repoRoot, store, apply: true }) }
     });
     const route = handler(routes, "/api/dsh-mneme/choro/run");
@@ -412,7 +413,7 @@ test("/choro/run：路径给错时结构化报错，不落 500 一锅烩", async
   const notGit = mkdtempSync(join(tmpdir(), "choro-notgit-"));
   try {
     const { routes } = setup({
-      config: { chorographyEnabled: true },
+      config: testConfig({ chorographyEnabled: true }),
       choro: { ...createChoroQueries({ store }), runT0Apply: ({ repoRoot }) => runChoroT0({ repoRoot, store, apply: true }) }
     });
     const route = handler(routes, "/api/dsh-mneme/choro/run");
@@ -447,7 +448,7 @@ function withT1({ startT1Job, t1JobStatus } = {}) {
 test("/choro/t1：缺装配 503 / 面板闸关 409 / 同仓并发 409 job-running / 缺省 404", async () => {
   const a = withT1({});
   try {
-    const noJobs = setup({ config: { chorographyEnabled: true, chorographyT1FromPanel: true }, choro: a.choro });
+    const noJobs = setup({ config: testConfig({ chorographyEnabled: true, chorographyT1FromPanel: true }), choro: a.choro });
     const missing = await invokePost(handler(noJobs.routes, "/api/dsh-mneme/choro/t1"), "/api/dsh-mneme/choro/t1", { repo: 1 });
     assert.equal(missing.status, 503, "没装配任务账 → 503 环境缺件");
     assert.equal(missing.body.error, "unavailable");
@@ -458,14 +459,14 @@ test("/choro/t1：缺装配 503 / 面板闸关 409 / 同仓并发 409 job-runnin
   const b = withT1({ startT1Job: () => ({ started: true, jobId: "j-1" }) });
   try {
     const off = setup({
-      config: { chorographyEnabled: true, chorographyT1FromPanel: false },
+      config: testConfig({ chorographyEnabled: true, chorographyT1FromPanel: false }),
       choro: b.choro
     });
     const disabled = await invokePost(handler(off.routes, "/api/dsh-mneme/choro/t1"), "/api/dsh-mneme/choro/t1", { repo: 1 });
     assert.equal(disabled.status, 409, "T1 花模型额度，面板闸关着就不许起");
     assert.equal(disabled.body.error, "disabled");
 
-    const on = setup({ config: { chorographyEnabled: true, chorographyT1FromPanel: true }, choro: b.choro });
+    const on = setup({ config: testConfig({ chorographyEnabled: true, chorographyT1FromPanel: true }), choro: b.choro });
     const t1Route = handler(on.routes, "/api/dsh-mneme/choro/t1");
     assert.equal(t1Route.policy, "token-write", "起一个会写页面/claims 的后台任务属数据面写");
 
@@ -478,7 +479,7 @@ test("/choro/t1：缺装配 503 / 面板闸关 409 / 同仓并发 409 job-runnin
 
     const busy = withT1({ startT1Job: () => ({ started: false, code: "job-running", jobId: "j-2" }) });
     try {
-      const busySetup = setup({ config: { chorographyEnabled: true, chorographyT1FromPanel: true }, choro: busy.choro });
+      const busySetup = setup({ config: testConfig({ chorographyEnabled: true, chorographyT1FromPanel: true }), choro: busy.choro });
       const running = await invokePost(handler(busySetup.routes, "/api/dsh-mneme/choro/t1"), "/api/dsh-mneme/choro/t1", { repo: 1 });
       assert.equal(running.status, 409);
       assert.equal(running.body.error, "job-running");
@@ -502,7 +503,7 @@ test("/choro/t1/status：jobId 缺 400、未知 404、已知 200 带契约字段
   };
   const f = withT1({ startT1Job: () => ({ started: true, jobId: "j-9" }), t1JobStatus: (id) => (id === "j-9" ? job : null) });
   try {
-    const { routes } = setup({ config: { chorographyEnabled: true }, choro: f.choro });
+    const { routes } = setup({ config: testConfig({ chorographyEnabled: true }), choro: f.choro });
     const route = handler(routes, "/api/dsh-mneme/choro/t1/status");
 
     const noId = await invoke(route, "/api/dsh-mneme/choro/t1/status");
@@ -563,7 +564,7 @@ test("/choro/repos 自动重跑：开关关着时即使过期也一次都不刷�
   const root = driftRepo(store);
   try {
     const { calls, choro } = countingChoro(store);
-    const { routes } = setup({ config: { chorographyEnabled: true }, choro });
+    const { routes } = setup({ config: testConfig({ chorographyEnabled: true }), choro });
     const url = "/api/dsh-mneme/choro/repos?repo=1";
     const REPOS_PATH = "/api/dsh-mneme/choro/repos";
     const res = await invoke(handler(routes, REPOS_PATH), url);
@@ -581,7 +582,7 @@ test("/choro/repos 自动重跑：开关开 + ?repo= 点名且 git 过期 → �
   const root = driftRepo(store);
   try {
     const { calls, choro } = countingChoro(store);
-    const { routes } = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
+    const { routes } = setup({ config: testConfig({ chorographyEnabled: true, chorographyAutoRefresh: true }), choro });
     const url = "/api/dsh-mneme/choro/repos?repo=1";
     const REPOS_PATH = "/api/dsh-mneme/choro/repos";
     const res = await invoke(handler(routes, REPOS_PATH), url);
@@ -601,7 +602,7 @@ test("/choro/repos 自动重跑：不 stale 或没点名 ?repo= 时都不刷（�
   const cleanRoot = makeRepo(store, "clean");
   try {
     const { calls, choro } = countingChoro(store);
-    const { routes } = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
+    const { routes } = setup({ config: testConfig({ chorographyEnabled: true, chorographyAutoRefresh: true }), choro });
     const plain = "/api/dsh-mneme/choro/repos";
     const clean = await invoke(handler(routes, plain), plain);
     assert.equal(clean.status, 200);
@@ -628,7 +629,7 @@ test("/choro/repos 自动重跑失败：读照常 200、数据在、错误进 au
   const root = driftRepo(store);
   try {
     const { calls, choro } = countingChoro(store, { throwOnRun: true });
-    const { routes } = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
+    const { routes } = setup({ config: testConfig({ chorographyEnabled: true, chorographyAutoRefresh: true }), choro });
     const url = "/api/dsh-mneme/choro/repos?repo=1";
     const REPOS_PATH = "/api/dsh-mneme/choro/repos";
     const res = await invoke(handler(routes, REPOS_PATH), url);
@@ -659,7 +660,7 @@ test("/choro/repos 自动重跑：仓库里有富化页时主动跳过，不动�
     const before = readFileSync(pagePath, "utf8");
 
     const { calls, choro } = countingChoro(store);
-    const { routes } = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
+    const { routes } = setup({ config: testConfig({ chorographyEnabled: true, chorographyAutoRefresh: true }), choro });
     const REPOS_PATH = "/api/dsh-mneme/choro/repos";
     const res = await invoke(handler(routes, REPOS_PATH), `${REPOS_PATH}?repo=1`);
 
@@ -692,7 +693,7 @@ test("/choro/page 自动重跑：T0 拒绝（would-drop-t1）时回 skipped 而�
     const before = readFileSync(pagePath, "utf8");
 
     const { choro } = countingChoro(store);
-    const { routes } = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
+    const { routes } = setup({ config: testConfig({ chorographyEnabled: true, chorographyAutoRefresh: true }), choro });
     const PAGE_PATH = "/api/dsh-mneme/choro/page";
     const res = await invoke(handler(routes, PAGE_PATH), `${PAGE_PATH}?repo=1&slug=src`);
 
@@ -719,7 +720,7 @@ test("/choro/page 回执带 repo.stale/staleReason，并在这条读路径上自
     const url = "/api/dsh-mneme/choro/page?repo=1&slug=src";
     const PAGE_PATH = "/api/dsh-mneme/choro/page";
 
-    const offSetup = setup({ config: { chorographyEnabled: true }, choro });
+    const offSetup = setup({ config: testConfig({ chorographyEnabled: true }), choro });
     const off = await invoke(handler(offSetup.routes, PAGE_PATH), url);
     assert.equal(off.status, 200);
     assert.equal(off.body.repo.stale, true, "徽章的数据源：开关关着也要照实报过期");
@@ -727,7 +728,7 @@ test("/choro/page 回执带 repo.stale/staleReason，并在这条读路径上自
     assert.equal(off.body.autoRefreshed, false);
     assert.equal(calls.length, 0);
 
-    const onSetup = setup({ config: { chorographyEnabled: true, chorographyAutoRefresh: true }, choro });
+    const onSetup = setup({ config: testConfig({ chorographyEnabled: true, chorographyAutoRefresh: true }), choro });
     const on = await invoke(handler(onSetup.routes, PAGE_PATH), url);
     assert.equal(on.status, 200);
     assert.equal(calls.length, 1, "页读路径点名的就是这一个仓库");
@@ -750,7 +751,7 @@ test("/choro/claims 在册且 policy open，四层闸与其余读路由一致", 
   const a = await invoke(route, "/api/dsh-mneme/choro/claims");
   assert.equal(a.status, 503, "queries 缺装配 → 503");
 
-  const disabled = setup({ config: { chorographyEnabled: false }, choro: createChoroQueries({ store: createStore(":memory:") }) });
+  const disabled = setup({ config: testConfig({ chorographyEnabled: false }), choro: createChoroQueries({ store: createStore(":memory:") }) });
   const b = await invoke(handler(disabled.routes, "/api/dsh-mneme/choro/claims"), "/api/dsh-mneme/choro/claims");
   assert.equal(b.status, 409, "开关关 → 409");
   assert.equal(b.body.error, "disabled");
@@ -760,7 +761,7 @@ test("/choro/claims：快乐路径带页清单与 totals；未知 repo 404", asy
   const store = createStore(":memory:");
   const root = makeRepo(store);
   try {
-    const { routes } = setup({ config: { chorographyEnabled: true }, choro: createChoroQueries({ store }) });
+    const { routes } = setup({ config: testConfig({ chorographyEnabled: true }), choro: createChoroQueries({ store }) });
     const route = handler(routes, "/api/dsh-mneme/choro/claims");
     const repoId = store.db.prepare("SELECT id FROM choro_repos LIMIT 1").get().id;
     const r = await invoke(route, `/api/dsh-mneme/choro/claims?repo=${repoId}`);

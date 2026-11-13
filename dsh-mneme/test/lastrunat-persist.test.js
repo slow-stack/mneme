@@ -27,7 +27,7 @@ test("issue#89: store.lastDreamRunAt recovers the last run timestamp (with run_t
 
 test("issue#89: dream scheduler seeded from the audit trail — restart no longer bypasses the min interval", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   // 模拟上一进程刚跑过一轮（10ms 前开跑）并留下审计行，然后「重启」：
   // minIntervalMs 取 1min——断言窗口远宽于用例执行时间，真实时钟抖动（调度、
   // 慢盘）不会把 10ms 偏移推出闸门外造成间歇性假失败。
@@ -55,7 +55,7 @@ test("issue#89: sleep scheduler seeded — cooldown survives a restart", async (
   const lastRunAt = nowMs - 10 * 60_000; // 上一进程 10 分钟前跑过，CD 1h 还剩 50min
   const sched = createSleepScheduler({
     service: { enqueue: (fn) => fn() },
-    config: { sleepModeEnabled: true, sleepIdleMinutes: 5, sleepMinIntervalHours: 1 },
+    config: testConfig({ sleepModeEnabled: true, sleepIdleMinutes: 5, sleepMinIntervalHours: 1 }),
     logger: { warn: () => {} },
     onRun: async () => { runs++; return { ok: true }; },
     now: () => nowMs,
@@ -82,6 +82,7 @@ test("issue#89: sleep scheduler seeded — cooldown survives a restart", async (
 // 不依赖测试进程 CWD。
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { testConfig } from "./helpers/test-config.js";
 const indexSrc = readFileSync(fileURLToPath(new URL("../src/index.js", import.meta.url)), "utf8");
 
 test("issue#89: index.js wires the dream scheduler seed from the audit trail", () => {

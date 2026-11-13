@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 这条锁防的是一类「上限形同不存在」的回归：上限判断如果排在会抛错的那次读取
 // 后面，轮询就永远不会停手。
@@ -57,7 +58,7 @@ test("the embedder ready poll stops at its ceiling even when reading ready throw
   const service = createService({
     store,
     mirror: null,
-    config: {},
+    config: testConfig({}),
     logger: { warn: (...args) => warns.push(args) }
   });
 

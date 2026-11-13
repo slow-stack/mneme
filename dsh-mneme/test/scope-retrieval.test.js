@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createTools } from "../src/tools.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // v0.8.0 A2（issue #17）：检索加权 + occurred_at 时间过滤。
 // 当前 scope 加成、他 scope 降权但保留可见；occurred 窗在 store.list/count 与
@@ -33,7 +34,7 @@ test("store.list/count filter by occurred_at with created_at fallback", () => {
 
 test("service.list/count pass the occurred window through", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   store.save({ type: "decision", title: "old", content: "x", occurred_at: "2026-01-10T00:00:00Z" });
   store.save({ type: "decision", title: "new", content: "x", occurred_at: "2026-06-10T00:00:00Z" });
   const rows = service.list({ occurredFrom: "2026-06-01" });
@@ -43,7 +44,7 @@ test("service.list/count pass the occurred window through", () => {
 
 test("searchMemories applies the occurred window to the fused pool", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   store.save({ type: "project", title: "needle aug", content: "hit", occurred_at: "2026-08-15T00:00:00Z" });
   store.save({ type: "project", title: "needle legacy", content: "hit" });
 
@@ -60,7 +61,7 @@ test("searchMemories applies the occurred window to the fused pool", async () =>
 
 test("searchMemories scope weighting: current scope boosted, foreign demoted but visible", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { scopeEnabled: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ scopeEnabled: true }) });
   // 打分构造（scoreKeyword：标题命中 1 × 0.8，正文命中 0.6 × 0.8）：
   // 无加权时 alpha (0.8) 排在 beta (0.48) 前。
   store.save({ type: "project", title: "alpha needle", content: "x", agent_scope: "coder" });
@@ -88,7 +89,7 @@ test("searchMemories scope weighting: current scope boosted, foreign demoted but
 
 test("searchMemories weighting is off entirely when the flag is off", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   store.save({ type: "project", title: "alpha needle", content: "x", agent_scope: "coder" });
   store.save({ type: "project", title: "beta", content: "needle", agent_scope: "novelist" });
   const rows = await service.searchMemories("needle", {
@@ -100,7 +101,7 @@ test("searchMemories weighting is off entirely when the flag is off", async () =
 
 test("unscoped rows rank with matched rows under weighting (never suppressed)", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { scopeEnabled: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ scopeEnabled: true }) });
   store.save({ type: "project", title: "global needle", content: "x" });
   store.save({ type: "project", title: "foreign", content: "needle", agent_scope: "someone-else" });
   const rows = await service.searchMemories("needle", {
@@ -131,7 +132,7 @@ async function runHandler(def, args, exec) {
 
 test("toApiList surfaces scope annotation and occurred_at", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   store.save({
     type: "pitfall",
     title: "stamped",

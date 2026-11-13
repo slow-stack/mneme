@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { applyDecisions, hashDecisionInput, createDreamScheduler } from "../src/dream.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // --- helpers -------------------------------------------------------------
 
@@ -28,7 +29,7 @@ function fullReceipt(over = {}) {
 
 function serviceSetup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return { store, service };
 }
 

@@ -8,6 +8,7 @@ import { Config } from "../src/config.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createDreamScheduler, parseReceipt } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // ---------------------------------------------------------------- helpers
 
@@ -178,7 +179,7 @@ test("getLatestPolicyEpoch returns 0 on an empty store", () => {
 
 function dreamSetup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   return { store, service, dream };
 }

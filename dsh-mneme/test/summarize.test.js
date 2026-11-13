@@ -10,6 +10,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSummarizer, parseSummaryJson, parsePeakSpec, isInPeakWindow, nextOffPeakAt, planBatchCrossTypeDedupe } from "../src/summarize.js";
 import { createSettings } from "../src/settings.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Issue #239 第 4 项：可注入的假时钟 + 定时器——错峰队列的测试必须能「推进时间」，
 // 真实 setTimeout 会让补跑路径要么测不到、要么拖慢测试。
@@ -52,7 +53,7 @@ function fakeClock(start) {
 
 function setup(over = {}, opts = {}) {
   const store = opts.store ?? createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const events = [];
   const calls = [];
   const ctx = {
@@ -206,7 +207,7 @@ test("turn/end event triggers summarization and stores entries", async () => {
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s1",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("帮我选型"), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -219,7 +220,7 @@ test("turn/end event triggers summarization and stores entries", async () => {
 test("skips summarization for events other than turn/end", async () => {
   const { events, store, calls } = setup();
   const handler = events.find((e) => e.name === "session/event").fn;
-  const session = { id: "s1", requestHeader: () => ({ config: {} }), events: [] };
+  const session = { id: "s1", requestHeader: () => ({ config: testConfig({}) }), events: [] };
   await handler(session, { seq: 1, type: "user/message" });
   assert.equal(store.count(), 0);
   assert.equal(calls.length, 0);
@@ -233,7 +234,7 @@ test("reads events from snapshotEvents() when Session.events is absent", async (
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s1",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     snapshotEvents: () => [userMessage("帮我选型"), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -249,7 +250,7 @@ test("#239 预判默认关：阈值为 0 时不改变现状，照常发起调用
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s239-default",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("短", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -262,7 +263,7 @@ test("#239 窗口过短：零 LLM 预判拦下调用，留 skip 审计并消费�
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s239-small",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("好", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -285,7 +286,7 @@ test("#239 计量：window-too-small 的 skip 行带 distillChars 与阈值", as
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s239-metric-skip",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("好", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -304,7 +305,7 @@ test("#239 计量：预判开关关闭时成功行仍记录 distillChars", async
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s239-metric-success",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("今天决定把窗口字符数记进审计", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -319,7 +320,7 @@ test("#239 窗口达到阈值时预判放行（不误杀）", async () => {
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s239-pass",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("这是一段足够长的用户输入", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -331,7 +332,7 @@ test("#239 每会话 run 预算：额度用尽后不再调用，审计写明原�
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s239-cap",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("第一轮", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -350,7 +351,7 @@ test("#239 预算只计真实调用：被预判拦下的窗口不消耗额度", 
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s239-budget",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("短", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -455,7 +456,7 @@ test("#239-4 默认关：未配置高峰时行为与现状一致", async () => {
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s239-peak-off",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("普通一轮", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -472,7 +473,7 @@ test("#239-4 高峰内不调模型：skip 审计 + 不消费游标，非高峰�
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s239-peak",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("高峰里的第一段", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -507,7 +508,7 @@ test("#239-4 顺延上限：长高峰到点照跑，不饿死蒸馏", async () =
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s239-peak-cap",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("长高峰里的一轮", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -523,7 +524,7 @@ test("does not call the LLM when no event was added after the last successful se
   const ranges = [];
   const session = {
     id: "s-noop",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     snapshotEvents(fromSeq, toSeq) {
       ranges.push([fromSeq, toSeq]);
       return transcript;
@@ -550,7 +551,7 @@ test("resumes a persisted seq cursor after the summarizer is restarted", async (
     firstSummarizer = first.summarizer;
     const session = {
       id: "s-restart",
-      requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+      requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
       events: [userMessage("重启前的窗口", 1), { seq: 2, type: "turn/end" }]
     };
     const firstHandler = first.events.find((e) => e.name === "session/event").fn;
@@ -589,7 +590,7 @@ test("treats a valid empty summary as a successful cursor commit", async () => {
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-empty-summary",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("这一轮没有可保存的长期记忆", 1), { seq: 2, type: "turn/end" }]
   };
 
@@ -611,7 +612,7 @@ test("advances the cursor to the window end for mixed valid and invalid entries"
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-mixed-summary",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("混合摘要窗口", 1), { seq: 2, type: "assistant/message" }, { seq: 3, type: "turn/end" }]
   };
 
@@ -638,7 +639,7 @@ test("distills only new seq events and keeps the recent tail when a window excee
   ];
   const session = {
     id: "s-incremental",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     snapshotEvents: () => transcript
   };
 
@@ -667,7 +668,7 @@ test("dispose unsubscribes and stops later turn/end events from summarizing", as
   assert.ok(!events.some((e) => e.name === "session/event"));
   const session = {
     id: "s1",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("你好"), { seq: 2, type: "turn/end" }]
   };
   // Even a stale handler reference must not start a new LLM call.
@@ -680,7 +681,7 @@ test("excludes plugin-injected user/message events from summarization input", as
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s2",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       {
         seq: 1,
@@ -719,7 +720,7 @@ test("aborted finish does not store entries and leaves the seq window retryable"
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s3",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("继续", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -746,7 +747,7 @@ test("a stream failure leaves the seq window retryable", async () => {
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-stream-failure",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("保留失败窗口", 1), { seq: 2, type: "turn/end" }]
   };
 
@@ -774,7 +775,7 @@ test("invalid summary JSON leaves the seq window retryable", async () => {
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-parse-failure",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("保留解析窗口", 1), { seq: 2, type: "turn/end" }]
   };
 
@@ -803,7 +804,7 @@ test("a JSON-crashed window with salvageable objects is recovered, consumed once
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-salvage",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("带语法错误的蒸馏窗口", 1), { seq: 2, type: "turn/end" }]
   };
 
@@ -842,7 +843,7 @@ test("a JSON-crashed window with nothing salvageable stays retryable (issue #339
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-salvage-none",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("救不回的窗口", 1), { seq: 2, type: "turn/end" }]
   };
 
@@ -874,7 +875,7 @@ test("an all-invalid summary leaves the same window retryable until valid memori
       const handler = events.find((e) => e.name === "session/event").fn;
       const session = {
         id: "s-all-invalid",
-        requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+        requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
         events: [userMessage("保留原窗口", 1), { seq: 2, type: "turn/end" }]
       };
 
@@ -934,7 +935,7 @@ test("rolls back partial memory writes so retrying a failed window does not dupl
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-partial-write",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("不要丢失这个窗口", 1), { seq: 2, type: "turn/end" }]
   };
 
@@ -971,7 +972,7 @@ test("rolls back memory writes when persisting the cursor fails", async () => {
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-cursor-write-failure",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("游标写入失败也不能丢窗口", 1), { seq: 2, type: "turn/end" }]
   };
 
@@ -1001,7 +1002,7 @@ test("falls back to the in-memory cursor when service lacks setDistillCursor", a
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-no-cursor-api",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("旧宿主没有游标接口", 1), { seq: 2, type: "turn/end" }]
   };
 
@@ -1023,7 +1024,7 @@ test("uses summarizeProvider/summarizeModel config override when set", async () 
   const session = {
     id: "s4",
     // Session header has a different model — config override should win.
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-v4-pro" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-v4-pro" }) }),
     events: [userMessage("测试覆盖"), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -1040,7 +1041,7 @@ test("falls back to session header when summarize config is empty", async () => 
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s5",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("回退测试"), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -1068,7 +1069,7 @@ test("serializes distill LLM calls across sessions (global queue, no concurrency
   const handler = events.find((e) => e.name === "session/event").fn;
   const mkSession = (id) => ({
     id,
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage(`问题${id}`), { seq: 2, type: "turn/end" }]
   });
   // 两个会话几乎同时 turn/end → 必须排队，第二个请求不能与第一个并发。
@@ -1101,7 +1102,7 @@ test("retries with exponential backoff on 429 and still stores entries", async (
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s9",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("限流测试"), { seq: 2, type: "turn/end" }]
   };
   const startedAt = Date.now();
@@ -1118,7 +1119,7 @@ test("distills full transcript (tool calls, results, code output) with atomic-me
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s10",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       userMessage("帮我修这个 bug"),
       { seq: 2, type: "tool/call", data: { name: "Bash", arguments: "node test.js" } },
@@ -1141,7 +1142,7 @@ test("collects real tool result and code dispatch payloads with failure status",
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-real-payloads",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       userMessage("检查真实事件形状", 1),
       toolResultEvent("TypeError: tool failed", true, 2),
@@ -1161,7 +1162,7 @@ test("collects tool results delivered as role:tool messages, keeping the legacy 
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-tool-role-shape",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       userMessage("检查工具结果两种形状", 1),
       toolResultEvent("旧形状载荷", false, 2),
@@ -1183,7 +1184,7 @@ test("keeps prefix trimming for tool results delivered as role:tool messages", a
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-tool-role-trim",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       userMessage("检查新形状截断", 1),
       toolRoleResultEvent(`OUT_START ${"c".repeat(550)} OUT_END`, false, 2),
@@ -1205,7 +1206,7 @@ test("collects subagent delivery once across inbox and user-message views", asyn
   const injectedInstruction = inboxMessage("instruction-1", "agent-instructions", "不要把这条注入指令沉淀为记忆");
   const session = {
     id: "s-agent-delivery",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       userMessage("检查子会话交付", 1),
       { seq: 2, type: "agent/inbox/spliced", data: { inserted: [delivery, agentMessage, injectedInstruction] } },
@@ -1226,7 +1227,7 @@ test("keeps prefix trimming for tool arguments and tool results", async () => {
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s-trim",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       userMessage("检查截断", 1),
       { seq: 2, type: "tool/call", data: { name: "Bash", arguments: `ARG_START ${"a".repeat(350)} ARG_END` } },
@@ -1247,7 +1248,7 @@ test("distill excludes private assistant reasoning blocks from the transcript", 
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s12",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       userMessage("解释一下这段代码"),
       {
@@ -1285,7 +1286,7 @@ test("codingRetrospect stores coding memory types in the coding memory type set"
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s11",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("编码任务"), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -1313,7 +1314,7 @@ function streamOf(entries) {
 function sessionFor(id) {
   return {
     id,
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("继续"), { seq: 2, type: "turn/end" }]
   };
 }
@@ -1559,7 +1560,7 @@ function countRows(store, sql) {
 function recordsSession(id, events) {
   return {
     id,
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events
   };
 }
@@ -1881,7 +1882,7 @@ test("the same assembly writes nothing when the flag was never set", async () =>
 function scopedSession(id, header) {
   const session = {
     id,
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("继续"), { seq: 2, type: "turn/end" }]
   };
   if (header !== undefined) session.header = header;
@@ -1939,7 +1940,7 @@ test("#493 提示构造：转录包进围栏，user 侧重申「第三方提炼�
   await eventHandler(events)(
     {
       id: "s493-prompt",
-      requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+      requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
       events: [userMessage("把这段对话蒸馏一下", 1), { seq: 2, type: "turn/end" }]
     },
     { seq: 2, type: "turn/end" }
@@ -1976,7 +1977,7 @@ test("#493 提示构造：围栏是确定性的，重试收到的转录与首次
   const handler = eventHandler(events);
   const session = {
     id: "s493-deterministic",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("同一窗口重试", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -1997,7 +1998,7 @@ test("#493 计量口径：distillChars 只数转录正文，不被围栏与角�
   await eventHandler(events)(
     {
       id: "s493-metric",
-      requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+      requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
       events: [userMessage("短", 1), { seq: 2, type: "turn/end" }]
     },
     { seq: 2, type: "turn/end" }
@@ -2020,7 +2021,7 @@ test("#493 失败行可诊断：metadata 带 raw_head / raw_has_bracket / streak
   await eventHandler(events)(
     {
       id: "s493-diag",
-      requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+      requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
       events: [userMessage("帮我改一下值班轮上限", 1), { seq: 2, type: "turn/end" }]
     },
     { seq: 2, type: "turn/end" }
@@ -2053,7 +2054,7 @@ test("#493 失败护栏默认关：连续失败也不放弃窗口（历史行为
   const handler = eventHandler(events);
   const session = {
     id: "s493-guard-off",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("窗口", 1), { seq: 2, type: "turn/end" }]
   };
   for (let i = 0; i < 5; i++) await handler(session, { seq: 2, type: "turn/end" });
@@ -2081,7 +2082,7 @@ test("#493 失败护栏：连续 N 次失败后强制消费游标跳过该窗口
   const handler = eventHandler(events);
   const session = {
     id: "s493-guard-on",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("会被放弃的窗口", 1), { seq: 2, type: "turn/end" }]
   };
 
@@ -2133,7 +2134,7 @@ test("#493 失败护栏：一次成功即清零计数，不会隔窗累计", asy
   const handler = eventHandler(events);
   const session = {
     id: "s493-streak-reset",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("第一窗", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });   // 失败 #1
@@ -2173,7 +2174,7 @@ test("#493 补充：失败计数落库——换一个 summarizer 实例（模拟
   const config = { summarizeParseFailureMaxRetries: 3, distillRateLimitIntervalMs: 0 };
   const sessionOf = () => ({
     id: "s493-persisted-streak",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("会被放弃的窗口", 1), { seq: 2, type: "turn/end" }]
   });
 
@@ -2224,7 +2225,7 @@ test("#493 补充：停了很久的会话，旧 streak 失效，不会被几周�
   const handler = eventHandler(events);
   const session = {
     id: "s493-stale-streak",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("隔了很久才回来的窗口", 1), { seq: 2, type: "turn/end" }]
   };
 
@@ -2319,7 +2320,7 @@ test("#687 batch dedupe can be switched off: twins are written untouched", async
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s687-off",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("帮我迁移实体表", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -2348,7 +2349,7 @@ test("#687 batch dedupe supersedes the weaker twin without rewriting its text", 
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s687-on",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [userMessage("帮我迁移实体表", 1), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });

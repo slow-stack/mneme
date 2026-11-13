@@ -5,6 +5,7 @@ import { createDreamScheduler } from "../src/dream.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // v0.8.1（issue #170 第 2 步）：sleep 冲突阶段的跨 scope 分流。
 // 同一内容落在两个归属下（任一维标注键不等，含「一侧未标注=全局」）时，
@@ -24,7 +25,7 @@ const embedder = {
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const vectorIndex = createVectorIndex({ store });
   service.setEmbedder(embedder);
   service.setVectorIndex(vectorIndex);

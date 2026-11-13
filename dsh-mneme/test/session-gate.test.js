@@ -9,6 +9,7 @@ import { createInjector } from "../src/inject.js";
 import { MEMORY_GUIDE_SECTION } from "../src/guide.js";
 import { createTools } from "../src/tools.js";
 import { createSummarizer } from "../src/summarize.js";
+import { testConfig } from "./helpers/test-config.js";
 
 test("session gate defaults off and gates subagents by the host's delegation marks", () => {
   const defaults = Config({});
@@ -21,7 +22,7 @@ test("session gate defaults off and gates subagents by the host's delegation mar
     { id: "header-origin", header: { origin: "subagent" } },
     { id: "header-depth", header: { delegationDepth: 2 } },
     { id: "header-both", header: { parentSession: "captain", origin: "subagent", delegationDepth: 1 } },
-    { id: "request-origin", requestHeader: () => ({ config: { origin: "subagent", delegationDepth: 1 } }) }
+    { id: "request-origin", requestHeader: () => ({ config: testConfig({ origin: "subagent", delegationDepth: 1 }) }) }
   ];
   for (const session of sessions) {
     assert.equal(gate.isOff(session), true, session.id);
@@ -45,7 +46,7 @@ test("parentSession alone never gates: forked captain sessions stay fully enable
   assert.equal(gate.isOff(forked), false, "a fork of a captain session is still a captain session");
   assert.equal(gate.isOff({ id: "flat-parent", parentSession: "captain" }), false);
   assert.equal(gate.isOff({ id: "alias-parent", parentSessionId: "captain" }), false);
-  assert.equal(gate.isOff({ id: "request-parent", requestHeader: () => ({ config: { parentSession: "captain" } }) }), false);
+  assert.equal(gate.isOff({ id: "request-parent", requestHeader: () => ({ config: testConfig({ parentSession: "captain" }) }) }), false);
   gate.observe(forked);
   assert.equal(gate.isOff("forked-captain"), false, "observing a non-child must not record it as one");
 });
@@ -107,7 +108,7 @@ test("tracked child ids stay bounded and eviction only costs the log-scan fallba
 
 function injectionSetup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   service.saveWithDedupe({ type: "preference", title: "语言", content: "中文", importance: 5 });
   settings.setProfile("用户画像正文");
@@ -154,7 +155,7 @@ test("all system-prompt surfaces are empty for incognito and remain available to
 
 test("every registered memory tool rejects before side effects for an incognito session", async () => {
   const store = createStore(":memory:");
-  const baseService = createService({ store, mirror: null, config: {} });
+  const baseService = createService({ store, mirror: null, config: testConfig({}) });
   let serviceCalls = 0;
   const service = new Proxy(baseService, {
     get(target, key, receiver) {
@@ -192,7 +193,7 @@ test("every registered memory tool rejects before side effects for an incognito 
 
 test("retained tool executors use the latest gate after live registry reapply", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const registered = [];
   const registry = { register(tool) { registered.push(tool); return () => {}; } };
   const initialGate = createSessionGate({ sessionGateEnabled: true, sessionGateSessions: ["private"] });
@@ -221,7 +222,7 @@ function summarySession(id, header = {}) {
   return {
     id,
     header,
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "选型" }] } },
       { type: "turn/end", seq: 2 }
@@ -231,7 +232,7 @@ function summarySession(id, header = {}) {
 
 test("distillation skips incognito sessions before model or storage work", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const listeners = [];
   const calls = [];
   const ctx = {

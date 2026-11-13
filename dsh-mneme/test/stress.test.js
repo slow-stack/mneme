@@ -12,10 +12,11 @@ import {
   arbitrationDecisions,
   mockCtx
 } from "./helpers/dream-mock.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   return { store, service, dream };
 }
@@ -113,7 +114,7 @@ function bump(content) {
 test("concurrent agents: no duplicate merge, lost-update reproduced then fixed, crash recovery", () => {
   const path = tmpPath("dsh-mneme-stress-test-");
   const sA = createStore(path);
-  const svA = createService({ store: sA, mirror: null, config: {} });
+  const svA = createService({ store: sA, mirror: null, config: testConfig({}) });
 
   // duplicate merge: 20 agents save the same title → exactly one active row
   for (let i = 0; i < 20; i++) {
@@ -127,7 +128,7 @@ test("concurrent agents: no duplicate merge, lost-update reproduced then fixed, 
 
   // lost update: two connections read the same baseline, then both write
   const sB = createStore(path);
-  const svB = createService({ store: sB, mirror: null, config: {} });
+  const svB = createService({ store: sB, mirror: null, config: testConfig({}) });
   svA.saveWithDedupe({ type: "history", title: "计数器", content: "count=0", importance: 3 });
   const id = svA.list({ type: "history" })[0].id;
 
@@ -161,9 +162,9 @@ test("concurrent agents: no duplicate merge, lost-update reproduced then fixed, 
 test("CAS concurrent increments: stale version rejected, retry lands both increments", () => {
   const path = tmpPath("dsh-mneme-stress-cas-");
   const sA = createStore(path);
-  const svA = createService({ store: sA, mirror: null, config: {} });
+  const svA = createService({ store: sA, mirror: null, config: testConfig({}) });
   const sB = createStore(path);
-  const svB = createService({ store: sB, mirror: null, config: {} });
+  const svB = createService({ store: sB, mirror: null, config: testConfig({}) });
 
   svA.saveWithDedupe({ type: "history", title: "计数器", content: "count=0", importance: 3 });
   const id = svA.list({ type: "history" })[0].id;
@@ -185,7 +186,7 @@ test("CAS concurrent increments: stale version rejected, retry lands both increm
 test("multi-step transaction is atomic: a mid-way throw rolls back every step", () => {
   const path = tmpPath("dsh-mneme-stress-atomic-");
   const s = createStore(path);
-  const sv = createService({ store: s, mirror: null, config: {} });
+  const sv = createService({ store: s, mirror: null, config: testConfig({}) });
 
   assert.throws(
     () => sv.transaction(() => {

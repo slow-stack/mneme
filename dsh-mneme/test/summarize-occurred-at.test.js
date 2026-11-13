@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSummarizer, parseSummaryJson } from "../src/summarize.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 蒸馏的时间锚定（SimpleMem，arXiv 2601.02553：抽取与时间锚定在同一次生成里完成，
 // 消融去掉后时间类问题 F1 掉 56.7%）。这组用例防的是三类回归：
@@ -22,7 +23,7 @@ function isoWithOffset(ms) {
 
 function setup(entries, deps = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const events = [];
   const calls = [];
   const ctx = {
@@ -53,7 +54,7 @@ function setup(entries, deps = {}) {
 function turnEndSession(text = "上周把 occurred_at 接进蒸馏链路") {
   return {
     id: "s-time",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       { type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text }] } },
       { seq: 2, type: "turn/end" }

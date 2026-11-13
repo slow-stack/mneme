@@ -5,6 +5,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { parseEntries } from "./helpers/dream-mock.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Issue #125：候选集构造从"纯时间窗口"扩成"窗口 ∪ 向量翻出的高相似组"。
 // 实测背景：45 对「双方活跃且 sim≥0.85」里 0 对能同时进窗口（窗口覆盖率 11.7%）,
@@ -17,7 +18,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const vectorIndex = createVectorIndex({ store });
   const embedder = {
     embedSingle: async () => [1, 0, 0],

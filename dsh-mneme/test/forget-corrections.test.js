@@ -18,10 +18,11 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createTools } from "../src/tools.js";
+import { testConfig } from "./helpers/test-config.js";
 
 test("#532 合成轨迹：更正落新行、遗忘新行、旧行原样幸存（机制修复落地时 ⑤ 翻转）", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   try {
     // ① 原始陈述（对话 A 的蒸馏产物：颜色 + 时间合流一行）
     const r1 = service.saveWithDedupe({

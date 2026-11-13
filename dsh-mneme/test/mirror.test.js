@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createMirror } from "../src/mirror.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const TYPE_FILE = { preference: "preferences.md", project: "projects.md", decision: "decisions.md", history: "history.md" };
 
@@ -166,7 +167,7 @@ test("startup merge keeps human edits across multiple type files (read-all-then-
   try {
     const store = createStore(join(dir, "memory.db"));
     const mirror = createMirror(dir);
-    const service = createService({ store, mirror, config: {} });
+    const service = createService({ store, mirror, config: testConfig({}) });
     service.saveWithDedupe({ type: "preference", title: "语言", content: "机器内容" });
     service.saveWithDedupe({ type: "project", title: "项目", content: "机器内容" });
     // human edits BOTH mirror files before the startup merge
@@ -197,7 +198,7 @@ test("runtime human edit survives the next sync (human wins, no silent overwrite
   try {
     const store = createStore(join(dir, "memory.db"));
     const mirror = createMirror(dir);
-    const service = createService({ store, mirror, config: {} });
+    const service = createService({ store, mirror, config: testConfig({}) });
     service.saveWithDedupe({ type: "preference", title: "语言", content: "机器内容" });
     // human edits the mirror file AFTER the initial sync
     const file = join(dir, "preferences.md");
@@ -218,7 +219,7 @@ test("concurrent human edit + store update produces a three-way conflict marker,
   try {
     const store = createStore(join(dir, "memory.db"));
     const mirror = createMirror(dir);
-    const service = createService({ store, mirror, config: {} });
+    const service = createService({ store, mirror, config: testConfig({}) });
     const { memory: m } = service.saveWithDedupe({ type: "preference", title: "语言", content: "机器内容" });
     // human edits the file…
     const file = join(dir, "preferences.md");

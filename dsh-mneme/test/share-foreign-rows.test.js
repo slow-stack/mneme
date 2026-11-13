@@ -24,6 +24,7 @@ import { createApi } from "../src/api.js";
 import { IMPORTED_SOURCE } from "../src/memory-source.js";
 import { deriveExternalId } from "../src/share.js";
 import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const PACK_ID = "0123456789abcdef";
 
@@ -47,7 +48,7 @@ class FakeRes {
 function foreignSetup() {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-foreign-rows-"));
   const store = createStore(join(dir, "memory.db"));
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const commands = { add: () => {}, remove: () => {}, list: () => [] };
   const routes = [];

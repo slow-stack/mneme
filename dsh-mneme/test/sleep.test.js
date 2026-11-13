@@ -6,6 +6,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { parseReceipt } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Mock embedder: every query maps to [1,0,0] so vectors are identical unless a
 // test pre-seeds a custom vector via vectorIndex.saveEmbedding.
@@ -57,7 +58,7 @@ function demotionConfig(overrides = {}) {
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const vectorIndex = createVectorIndex({ store });
   service.setEmbedder(embedder);
   service.setVectorIndex(vectorIndex);

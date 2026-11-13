@@ -10,6 +10,7 @@ import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // /api/dsh-mneme/nudge 的接线锁。三件事分开守，因为它们混在一起时各自的失败长得一样：
 //   1. policy 是 token-write —— GET 免 token（面板每刷一次就 GET 一次），POST 要 token（会写盘）；
@@ -76,7 +77,7 @@ function req(path, method = "GET", body = null, headers = {}) {
 
 function setup({ apiToken = "", memoryDir = null } = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const commands = { add: () => {}, remove: () => {}, list: () => [] };
   const routes = [];

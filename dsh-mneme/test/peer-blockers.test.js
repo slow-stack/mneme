@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { createStore } from "../src/store.js";
 import { createMirror } from "../src/mirror.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const execFileP = promisify(execFile);
 
@@ -31,7 +32,7 @@ function setup(dbPath) {
   const mirror = createMirror(mirrorDir);
   const warns = [];
   const logger = { warn: (...a) => warns.push(a.join(" ")) };
-  const service = createService({ store, mirror, config: {}, logger });
+  const service = createService({ store, mirror, config: testConfig({}), logger });
   return { dir, mirrorDir, store, mirror, service, warns };
 }
 
@@ -42,7 +43,7 @@ test("peer-A: 崩溃窗口——save 后（generation 已递增）不 sync 直�
   try {
     const store = createStore(dbPath);
     const mirror = createMirror(mirrorDir);
-    const service = createService({ store, mirror, config: {}, logger: { warn() {} } });
+    const service = createService({ store, mirror, config: testConfig({}), logger: { warn() {} } });
     try {
       // 业务写：store.save 在事务内递增 desired generation，但不触发 mirror 渲染
       store.save({ type: "project", title: "P", content: "x", importance: 3 });
@@ -57,7 +58,7 @@ test("peer-A: 崩溃窗口——save 后（generation 已递增）不 sync 直�
     // 重启：重新打开同一 DB，recoverMirror 必须捕获债务并收敛
     const store2 = createStore(dbPath);
     const mirror2 = createMirror(mirrorDir);
-    const service2 = createService({ store: store2, mirror: mirror2, config: {}, logger: { warn() {} } });
+    const service2 = createService({ store: store2, mirror: mirror2, config: testConfig({}), logger: { warn() {} } });
     try {
       const result = service2.recoverMirror();
       assert.equal(result.recovered, true, "崩溃窗口必须被 recover 捕获");

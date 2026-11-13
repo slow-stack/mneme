@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createTools } from "../src/tools.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // v0.9.0：failure_memories.query 的起点是 2,367 行里只有 69 行非空（2.9%）。
 // 但那个分母误导——按「expected 逐字落在某次 dream_runs.decisions 里」归属后
@@ -24,7 +25,7 @@ function setup(config = {}) {
   const service = createService({
     store,
     mirror: null,
-    config: { reflectionFailureTracking: true, ...config }
+    config: testConfig({ reflectionFailureTracking: true, ...config })
   });
   const registered = [];
   const ctx = { tools: { register(def) { registered.push(def); return () => {}; } } };

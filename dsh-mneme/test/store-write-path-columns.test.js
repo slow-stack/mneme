@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createMirror } from "../src/mirror.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归（issue #430）：写路径上的全表物化。此前每一次业务写都要走两处
 // all() + 逐行 toRow（27 字段 + 三次 JSON.parse）：
@@ -19,7 +20,7 @@ import { createMirror } from "../src/mirror.js";
 
 function make(over = {}) {
   const store = createStore(":memory:");
-  return { store, config: { memoryQualityFilter: { enabled: true }, ...over } };
+  return { store, config: testConfig({ memoryQualityFilter: { enabled: true }, ...over }) };
 }
 
 test("#430: recentContents mirrors the all() prefix it replaced", () => {

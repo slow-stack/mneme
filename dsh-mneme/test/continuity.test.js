@@ -16,6 +16,7 @@ import {
   renderContinuityNotice,
   createContinuityRescue
 } from "../src/continuity.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归（issue #249 N3）：压缩边缘双落点。
 //
@@ -63,7 +64,7 @@ function mockCtx() {
 
 function toolDescriptions(config) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const registered = [];
   const ctx = { tools: { register(def) { registered.push(def); return () => {}; } } };
   createTools(ctx, service, config, null);

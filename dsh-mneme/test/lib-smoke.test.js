@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { testConfig } from "./helpers/test-config.js";
 
 // lib/ 运行冒烟（v0.7.16 回归补测，重建被 PR#73 删除的 lib-smoke.test.js）。
 // npm 包实际加载的是 lib/（package main → lib/index.js），历史教训 v0.7.8
@@ -68,7 +69,7 @@ test("lib store+service runs a save/get/count cycle", async () => {
   const { createService } = await import("../lib/service.js");
 
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const { memory } = service.saveWithDedupe({ type: "preference", title: "语言", content: "中文" });
   assert.ok(memory.id);
   assert.ok(service.getById(memory.id));

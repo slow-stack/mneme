@@ -7,6 +7,7 @@ import { createVectorIndex } from "../src/vector-index.js";
 import { runSleep } from "../src/dream/sleep.js";
 import { buildOutcome } from "../src/dream.js";
 import { STR } from "../src/lang.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Issue #126：sleep 冲突阶段的动作集扩展。默认档（sleepActionSet="conflict"）保持
 // 只有 conflict/keep 的窄语义；"full" 开放六分支，让演进型（supersede）与互补型
@@ -22,7 +23,7 @@ const embedder = {
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const vectorIndex = createVectorIndex({ store });
   service.setEmbedder(embedder);
   service.setVectorIndex(vectorIndex);
