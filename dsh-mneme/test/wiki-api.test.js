@@ -250,6 +250,49 @@ test("/choro/run：开关关 409；repo 未知 404（与读路由同一道闸）
   }
 });
 
+test("/choro/run：本机不可达时 409，绝不拿宿主 cwd 顶替（PR #679 评审）", async () => {
+  const store = createStore(":memory:");
+  const root = makeRepo(store);
+  try {
+    let called = 0;
+    const { routes } = setup({
+      config: { chorographyEnabled: true },
+      choro: {
+        ...createChoroQueries({ store }),
+        // 契约：本机没登记位置、回退目录身份核验不过 → 空串
+        localRootForRepo: () => "",
+        runT0Apply: () => { called += 1; throw new Error("不该被调到"); },
+      },
+    });
+    const res = await invokePost(handler(routes, "/api/dsh-mneme/choro/run"), "/api/dsh-mneme/choro/run", { repo: 1 });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error, "repo-not-reachable-here");
+    assert.equal(called, 0, "空串必须挡在 T0 之前：resolve(\"\") 会落到宿主进程的 cwd");
+  } finally {
+    rmTempBestEffort(root);
+  }
+});
+
+test("/choro/run：旧装配缺 localRootForRepo 时退回 root_path，不变 500", async () => {
+  const store = createStore(":memory:");
+  const root = makeRepo(store);
+  try {
+    const { localRootForRepo, ...oldAssembly } = createChoroQueries({ store });
+    const { routes } = setup({
+      config: { chorographyEnabled: true },
+      choro: {
+        ...oldAssembly,
+        runT0Apply: ({ repoRoot }) => runChoroT0({ repoRoot, store, apply: true }),
+      },
+    });
+    const res = await invokePost(handler(routes, "/api/dsh-mneme/choro/run"), "/api/dsh-mneme/choro/run", { repo: 1 });
+    assert.equal(res.status, 200, "缺一个方法不能让重建变 500");
+    assert.equal(res.body.ok, true);
+  } finally {
+    rmTempBestEffort(root);
+  }
+});
+
 test("/choro/search：embedder 在场 → 惰性物化 + semantic 数组；缺席 → semantic null", async () => {
   const store = createStore(":memory:");
   const root = makeRepo(store);

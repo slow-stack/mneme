@@ -1397,8 +1397,15 @@ export function createStore(path) {
   // 时生效，退化的库上并发仍可能重复，这是启动可用性与约束强度之间的取舍。
   try {
     db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_choro_repos_portable ON choro_repos(portable_key) WHERE portable_key IS NOT NULL;");
-  } catch {
+  } catch (err) {
+    // 静默降级会让「约束没建成」这件事永远没人知道（PR #679 评审）：留一行 warn，
+    // 说明退到哪一档、后果是什么，然后照常启动。
     db.exec("CREATE INDEX IF NOT EXISTS idx_choro_repos_portable ON choro_repos(portable_key);");
+    console.warn(
+      "[mneme] choro_repos.portable_key 唯一索引未能建立（存量重复键？），已退化为普通索引：" +
+      "跨端并发登记可能产生重复行，建议先合并重复的 portable_key。" +
+      ` 原因：${String(err?.message ?? err)}`
+    );
   }
 
   // v0.8.0 A1（issue #17）scope 隔离存储层：四列全部可空、不带 DEFAULT——存量行

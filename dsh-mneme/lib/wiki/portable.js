@@ -50,12 +50,21 @@ export function normalizeGitUrl(rawUrl) {
     return out || null;
   }
   // scp 形态：`[user@]host:path`；没有协议头，冒号是路径分隔符。
+  // userinfo 只在**主机段内**剥（PR #679 评审）：`github.com:team/repo@stable` 的
+  // `@` 落在路径里，不是凭据。拿全串的 indexOf 去切会把主机与路径一起吞掉，
+  // 键退化成 `stable`——两个毫不相干的仓库算出同一个身份，比缺键更糟。
   let s = raw.replace(/\/+$/, "").replace(/\.git$/i, "");
-  const at = s.indexOf("@");
-  if (at !== -1) s = s.slice(at + 1);
   const colon = s.indexOf(":");
-  if (colon === -1) return s.toLowerCase() || null;
-  const host = s.slice(0, colon);
+  if (colon === -1) {
+    // 无冒号（`host/path` 或 `user@host/path`）：只有第一个 `/` 之前的 `@` 才是 userinfo。
+    const slash = s.indexOf("/");
+    const at = s.indexOf("@");
+    if (at !== -1 && (slash === -1 || at < slash)) s = s.slice(at + 1);
+    return s.toLowerCase() || null;
+  }
+  const hostSegment = s.slice(0, colon);
+  const at = hostSegment.indexOf("@");
+  const host = at === -1 ? hostSegment : hostSegment.slice(at + 1);
   const path = s.slice(colon + 1);
   const out = `${host}/${path}`.toLowerCase();
   return out || null;

@@ -36,6 +36,18 @@ test("normalizeGitUrl：URL 端口与 scp 路径分隔符分开处理，路径�
   // 路径里的 @ 不是 userinfo：仓库名带 @stable 时不能把主机与路径一起切掉。
   assert.equal(normalizeGitUrl("ssh://git@host-a/team/repo@stable.git"), "host-a/team/repo@stable");
   assert.equal(normalizeGitUrl("git@host-b:team/repo@stable.git"), "host-b/team/repo@stable");
+
+  // scp 形态下**路径里**的 @ 同样不是 userinfo（PR #679 评审）：拿全串的
+  // indexOf("@") 去切，会把主机与路径一起吞掉，键退化成 "stable"——两个毫不
+  // 相干的仓库会算出同一个身份。
+  assert.equal(normalizeGitUrl("github.com:team/repo@stable"), "github.com/team/repo@stable");
+  assert.equal(normalizeGitUrl("github.com:team/repo@stable.git"), "github.com/team/repo@stable");
+  assert.notEqual(
+    normalizeGitUrl("github.com:team/repo@stable"),
+    normalizeGitUrl("mirror.example.org:team/repo@stable"));
+  // 无冒号的形态只在第一个 / 之前剥 userinfo，路径里的 @ 原样保留。
+  assert.equal(normalizeGitUrl("user@host/path/x"), "host/path/x");
+  assert.equal(normalizeGitUrl("host/team/repo@stable"), "host/team/repo@stable");
 });
 
 test("portableKeyFor：有 remote 用归一化 URL，无 remote 退化根提交哈希（同名仓库不撞键）", () => {
