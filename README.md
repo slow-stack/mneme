@@ -80,20 +80,7 @@ dsh plugin --profile web remove @modusensus/dsh-mneme
 
 ## 面板
 
-<p align="center">
-  <img src="images/screenshot-memories.png" alt="记忆库浏览" width="760"/><br/>
-  <i>记录、浏览与筛选你的记忆。</i>
-</p>
-
-<p align="center">
-  <img src="images/screenshot-entities.png" alt="实体与关系图谱" width="760"/><br/>
-  <i>从记忆里提炼实体，构建带属性的关系图谱。</i>
-</p>
-
-<p align="center">
-  <img src="images/screenshot-status.png" alt="状态与审计" width="760"/><br/>
-  <i>向量索引、LLM 消耗、自动巩固记录，一眼看完。</i>
-</p>
+一块面板装在设置页里：记录、浏览、筛选、搜索、改、删，外加实体关系图谱与状态审计。界面截图单独放在 [docs/PANEL.md](docs/PANEL.md) —— 面板一改，只有那一页需要跟着更新。
 
 ## 接到别处
 
@@ -206,20 +193,7 @@ How does it compare with Zep / Mem0 / Letta / Hindsight? An 11-row table — sto
 
 ## The panel
 
-<p align="center">
-  <img src="images/screenshot-memories-en.png" alt="Memory browse" width="760"/><br/>
-  <i>Record, browse and filter your memories.</i>
-</p>
-
-<p align="center">
-  <img src="images/screenshot-entities-en.png" alt="Entities & relations" width="760"/><br/>
-  <i>Entities are distilled from your memories into a relation graph with attributes.</i>
-</p>
-
-<p align="center">
-  <img src="images/screenshot-status-en.png" alt="Status & audit" width="760"/><br/>
-  <i>Vector index, LLM spend and consolidation activity at a glance.</i>
-</p>
+One panel in the settings page: record, browse, filter, search, edit, delete — plus an entity graph and an audit view. Screenshots live in [docs/PANEL.md](docs/PANEL.md): when the panel changes, only that page needs updating.
 
 ## Elsewhere
 
