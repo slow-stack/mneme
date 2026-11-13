@@ -99,7 +99,8 @@ test("memory_forget 回执报取代链连带面：抑制时说明有几条旧行
     const rendered = typeof text === "string" ? text : JSON.stringify(text);
     assert.match(rendered, /supersedes 2 older entries/,
       "回执必须说清连带面，否则模型会以为旧值会回来或把它当成当前答案");
-    assert.match(rendered, /must not be treated as the current value/);
+    assert.match(rendered, /are not treated as the current value/);
+    assert.match(rendered, /Explicit search can still reach them/, "两行前序都活跃时，可查承诺成立");
 
     // 恢复时不报连带面：那句话只在「抑制」语义下成立
     const restored = await forget.execute({ id: fresh.id, forgotten: false });
@@ -122,8 +123,10 @@ test("supersedeContext：不存在的行返回 null，计数只认指向本行�
   const { store, oldColor, fresh } = chainFixture();
   try {
     assert.equal(store.supersedeContext("no-such-id"), null);
-    assert.deepEqual(store.supersedeContext(fresh.id), { supersededBy: null, predecessors: 2 });
-    assert.deepEqual(store.supersedeContext(oldColor.id), { supersededBy: fresh.id, predecessors: 0 });
+    assert.deepEqual(store.supersedeContext(fresh.id),
+      { supersededBy: null, predecessors: 2, activePredecessors: 2, chainActive: true });
+    assert.deepEqual(store.supersedeContext(oldColor.id),
+      { supersededBy: fresh.id, predecessors: 0, activePredecessors: 0, chainActive: true });
   } finally {
     store.close();
   }
@@ -150,4 +153,47 @@ test("memory_forget：service 缺 supersedeContext 时降级为无链信息，�
   assert.equal(out.chain, undefined, "缺链信息时不编造 chain 对象");
   const text = forget.output.render({ id: "m1" }, out);
   assert.doesNotMatch(typeof text === "string" ? text : JSON.stringify(text), /supersedes/);
+});
+
+// ---- PR #681 评审：回执只承诺「现在真的成立」的事 ----
+
+test("继任者已归档时不再声称旧行被隐藏（先归档、再遗忘的序列）", async () => {
+  const { store, service, fresh } = chainFixture();
+  try {
+    // 归档继任者 → supersededIds 不再压住旧行（#650 语义），它们已回到注入面
+    service.setArchived(fresh.id, true);
+    const registered = [];
+    const ctx = { tools: { register(def) { registered.push(def); return () => {}; } } };
+    createTools(ctx, service, {}, undefined);
+    const forget = registered.find((d) => d.name === "memory_forget");
+    const out = await forget.execute({ id: fresh.id, forgotten: true });
+    assert.equal(out.chain.chainActive, false, "归档后链不再生效");
+    const rendered = forget.output.render({ id: fresh.id }, out);
+    assert.doesNotMatch(typeof rendered === "string" ? rendered : JSON.stringify(rendered), /stay hidden|It supersedes/,
+      "旧行已经恢复可见，不能再说它们被压住");
+  } finally {
+    store.close();
+  }
+});
+
+test("只对仍活跃的前序承诺「显式搜索可达」", async () => {
+  const { store, service, oldColor, oldTime, fresh } = chainFixture();
+  try {
+    // 一条前序已被遗忘：显式搜索（store.search 要求 forgotten=0）找不到它
+    service.setForget(oldTime.id, true);
+    const registered = [];
+    const ctx = { tools: { register(def) { registered.push(def); return () => {}; } } };
+    createTools(ctx, service, {}, undefined);
+    const forget = registered.find((d) => d.name === "memory_forget");
+    const out = await forget.execute({ id: fresh.id, forgotten: true });
+    assert.equal(out.chain.predecessors, 2);
+    assert.equal(out.chain.activePredecessors, 1, "只有 oldColor 还活跃");
+    const rendered = forget.output.render({ id: fresh.id }, out);
+    const text = typeof rendered === "string" ? rendered : JSON.stringify(rendered);
+    assert.match(text, /the 1 that remain active/, "可查承诺必须限定到活跃那部分");
+    assert.doesNotMatch(text, /can still reach them/, "不能对全部前序作可查承诺");
+    assert.equal(store.supersededIds().includes(oldTime.id), true, "被遗忘的前序仍在 suppressed 集合（注入面照样不选）");
+  } finally {
+    store.close();
+  }
 });

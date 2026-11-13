@@ -4293,10 +4293,25 @@ export function createStore(path) {
    * supersededIds 同源（链是否仍然生效由检索侧决定），这里不重复判断。
    */
   function supersedeContext(id) {
-    const row = db.prepare("SELECT id, superseded_by FROM memories WHERE id = ?").get(id);
+    const row = db.prepare("SELECT id, superseded_by, archived FROM memories WHERE id = ?").get(id);
     if (!row) return null;
-    const preds = db.prepare("SELECT count(*) AS n FROM memories WHERE superseded_by = ?").get(id).n;
-    return { supersededBy: row.superseded_by ?? null, predecessors: preds };
+    // 回执要说的是「哪些前序**现在**真的被压住、且仍能被找到」，不是「历史上指向
+    // 过几行」（PR #681 评审）：
+    //   chainActive    与 supersededIds 同一判据——继任者被归档 ⇒ 旧行已恢复可见，
+    //                  此时再说「它们保持隐藏」就是假话（先归档再遗忘的序列）。
+    //   activePredecessors 前序里仍活跃（未归档、未遗忘）的条数。`store.search` 与
+    //                  `store.searchVector` 都要求 forgotten=0、默认排除归档行，
+    //                  所以「显式搜索仍可达」只对这部分成立。
+    const predecessors = db.prepare("SELECT count(*) AS n FROM memories WHERE superseded_by = ?").get(id).n;
+    const activePredecessors = db.prepare(
+      "SELECT count(*) AS n FROM memories WHERE superseded_by = ? AND archived = 0 AND forgotten = 0"
+    ).get(id).n;
+    return {
+      supersededBy: row.superseded_by ?? null,
+      predecessors,
+      activePredecessors,
+      chainActive: row.archived === 0,
+    };
   }
 
   /**

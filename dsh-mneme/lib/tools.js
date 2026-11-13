@@ -498,15 +498,17 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
                 forgotten: { type: "boolean", required: true }
               }
             },
-            // 取代链连带面（#532）：predecessors = 这行取代了几条更早的记忆。
-            // 抑制这行之后它们**仍然**不进注入面（supersededIds 只看继任者的
-            // archived，不看 forgotten）——回执必须说出来，否则模型会以为
-            // 「被取代的旧值会回来」，或者反过来把它当成仍在生效的当前答案。
+            // 取代链连带面（#532）：predecessors = 这行取代了几条更早的记忆；
+            // chainActive = 这条链**现在**是否仍压着它们（继任者被归档后不再压）；
+            // activePredecessors = 前序里仍活跃（未归档未遗忘）的条数——只有这部分
+            // 才是「显式搜索仍可达」（PR #681 评审：别对已退场的前序承诺可查）。
             chain: {
               type: "object",
               additionalProperties: false,
               properties: {
                 predecessors: { type: "integer", required: true },
+                activePredecessors: { type: "integer" },
+                chainActive: { type: "boolean" },
                 supersededBy: { type: "string" }
               }
             }
@@ -515,10 +517,17 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
         render: (_args, value) => {
           const base = `Memory ${value.memory.id} injection ${value.memory.forgotten ? "suppressed" : "restored"}.`;
           const preds = value.chain?.predecessors ?? 0;
-          if (!value.memory.forgotten || preds === 0) return TEXT_OUTPUT(base);
+          const chainActive = value.chain?.chainActive === true;
+          if (!value.memory.forgotten || preds === 0 || !chainActive) return TEXT_OUTPUT(base);
+          const active = value.chain?.activePredecessors ?? 0;
+          const reachable = active > 0
+            ? (active === preds
+              ? " Explicit search can still reach them."
+              : ` Explicit search can still reach the ${active} that remain active.`)
+            : "";
           return TEXT_OUTPUT(
             `${base} It supersedes ${preds} older ${preds === 1 ? "entry" : "entries"}; ` +
-            "they stay hidden (explicit search can still reach them) and must not be treated as the current value."
+            `they are not treated as the current value.${reachable}`
           );
         }
       },
@@ -536,7 +545,14 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
         return {
           memory: { id: memory.id, forgotten: memory.forgotten },
           ...(chain
-            ? { chain: { predecessors: chain.predecessors, ...(chain.supersededBy ? { supersededBy: chain.supersededBy } : {}) } }
+            ? {
+                chain: {
+                  predecessors: chain.predecessors,
+                  activePredecessors: chain.activePredecessors,
+                  chainActive: chain.chainActive,
+                  ...(chain.supersededBy ? { supersededBy: chain.supersededBy } : {})
+                }
+              }
             : {})
         };
       }
