@@ -11748,6 +11748,11 @@ window.__ModuleLoader__.load({
       };
       let listItems = [];
       let inCode = false;
+      // 围栏要记「开启用的字符与长度」（PR #678 评审）：只认三反引号会把
+      // `~~~html` 整块当正文，于是一条 `<!-- -->` 注释行会被下面的隐藏规则
+      // 删掉；四反引号块内部出现三反引号时旧写法也会提前退出代码态。
+      // CommonMark：结束围栏必须与开启同字符、长度不小于开启、其后只有空白。
+      let fence = null;
       let codeLines = [];
       // --- 表格（v0.11.1 美化）：连续 `|` 行解析成真 table，不再按等宽行画竖线 ---
       const splitRow = (line) => String(line).trim().replace(/^\|/, "").replace(/\|$/, "")
@@ -11789,14 +11794,31 @@ window.__ModuleLoader__.load({
       };
       for (; i < lines.length; i++) {
         const line = lines[i];
-        if (line.trim().startsWith("```")) {
-          if (inCode) {
-            out.push(h("pre", { key: out.length, className: "mneme-wikipre" }, codeLines.join("\n")));
-            codeLines = []; inCode = false;
-          } else { flushList(); flushTable(); inCode = true; }
+        const fenceOpen = /^(`{3,}|~{3,})(.*)$/.exec(line.trim());
+        if (!inCode && fenceOpen) {
+          flushList(); flushTable();
+          inCode = true;
+          fence = { ch: fenceOpen[1][0], len: fenceOpen[1].length };
+          codeLines = [];
           continue;
         }
-        if (inCode) { codeLines.push(line); continue; }
+        if (inCode) {
+          if (fenceOpen && fenceOpen[1][0] === fence.ch && fenceOpen[1].length >= fence.len
+            && fenceOpen[2].trim() === "") {
+            out.push(h("pre", { key: out.length, className: "mneme-wikipre" }, codeLines.join("\n")));
+            codeLines = []; inCode = false; fence = null;
+          } else {
+            codeLines.push(line);
+          }
+          continue;
+        }
+        // 机器标记行不进正文（#582）：`<!-- CHORO:T1:START/END -->` 与
+        // `<!-- CHORO:HUMAN:START/END -->` 是 t0/t1 剥段与回填用的段落边界，
+        // 给程序看的；排版里它们是一行裸文本噪音。只隐藏「整行以 <!-- 开头」
+        // 的情况；代码围栏里的注释原样保留（上面 inCode 分支已经 continue），
+        // choro_read_page 的工具回执与磁盘文件同样原样——真源纪律只约束数据
+        // 面，渲染层另有一层口径。
+        if (/^\s*<!--/.test(line)) continue;
         const heading = line.match(/^(#{1,6})\s+(.*)$/);
         if (heading) {
           flushList(); flushTable();
@@ -13738,9 +13760,40 @@ window.__ModuleLoader__.load({
           if (c.reason === "unverifiable") return t("wiki.drift.unverifiable");
           return String(c.reason ?? "");
         };
+        // 树的层级看 parent_id 真父子（#582），不看 slug 里的连字符数——
+        // slugify 把路径分隔与一切非字母数字都变成 `-`，目录名自带的连字符与
+        // 去重序号（-2）都会冒充层级，`packages-computer-use-src` 会被画成
+        // 三层深。moduleMap 本来就回了 id/parent_id，拿它建序：根（无父或父
+        // 不在表里）按 slug 序先出、孩子紧跟父后；环成员防御性归入兜底。
+        const depthById = new Map();
+        const order = [];
+        {
+          const ids = new Set(state.modules.map((m) => m.id));
+          const byParent = new Map();
+          for (const mod of state.modules) {
+            const pid = mod.parent_id != null && ids.has(mod.parent_id) ? mod.parent_id : null;
+            if (!byParent.has(pid)) byParent.set(pid, []);
+            byParent.get(pid).push(mod);
+          }
+          const bySlug = (a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
+          for (const list of byParent.values()) list.sort(bySlug);
+          const walk = (pid, depth) => {
+            for (const mod of byParent.get(pid) || []) {
+              if (depthById.has(mod.id)) continue; // 环防御：同一模块只进一次
+              depthById.set(mod.id, depth);
+              order.push(mod);
+              walk(mod.id, depth + 1);
+            }
+          };
+          walk(null, 0);
+          // 兜底：上面走不到的（不该存在的环）按 slug 序补在根层，不静默丢行。
+          for (const mod of state.modules.slice().sort(bySlug)) {
+            if (!depthById.has(mod.id)) { depthById.set(mod.id, 0); order.push(mod); }
+          }
+        }
         const tree = [];
-        for (const mod of state.modules) {
-          const depth = (mod.slug.match(/-/g) || []).length;
+        for (const mod of order) {
+          const depth = depthById.get(mod.id) ?? 0;
           // 树里直接挂「这页有几条要复核」：用户不用先点开才知道哪页被改动碰到。
           const dp = driftBySlug.get(mod.slug);
           const riskN = dp && dp.atRisk ? dp.atRisk.length : 0;

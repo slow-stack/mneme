@@ -523,6 +523,7 @@ dsh web
 | `sleepReasoningEffort` | 未配置=最低档 | sleep 各阶段 LLM 推理档位（同 dreamReasoningEffort 语义，v0.7.26） |
 | `recallRecordDefault` | `true` | recall_runs 记录默认开（显式传 `recordRecall:false` 的调用方不受影响）；注入同样落账（`mode='inject'`，随本开关，#217） |
 | `recallRetentionDays` | `90` | recall_runs 滚动清理保留天数 |
+| `dreamRunsTrimDays` | `0` | dream_runs 重载列（input/decisions/outcome）的启动期裁剪窗口（天）；0 = 不裁。裁列不删行（#557），organize 行豁免，窗口外回放降级为骨架级 |
 | `hotMemoryRounds` | `5` | 会话级短期热记忆轮次（v0.5.0）：最近 N 轮对话滚动注入，从会话事件日志无状态重建、不落库 |
 | `hotMemoryMaxTokens` | `2000` | 热记忆 token 预算（v0.5.0，200-32000），超出滚动截断 |
 | `selectiveInjectEnabled` | `true` | 选择性注入（v0.5.0）：query 向量可用时注入候选按主题相似度重排，替代固定规则序 |
