@@ -116,6 +116,9 @@ test("快乐路径：富化 + claims 双落 + 保留区照旧页尾回填", asyn
     ).get();
     assert.equal(status.status, "enriched");
     assert.equal(status.generated_at, FIXED_NOW());
+    // #582：文件 frontmatter 的 status 与库同步推进——T1 成功后文件不再停在
+    // T0 写的 skeleton，看文件的人不会再把已富化的页当成骨架。
+    assert.ok(/^status: enriched$/m.test(page), "T1 成功要把文件 frontmatter 的 status 推进到 enriched");
 
     // 富化后的页再跑一次 T1：人写入保留区块后必须照旧存活（复用 M0 语义）
     const withHuman = page + "\n<!-- CHORO:HUMAN:START -->\n人写的批注\n<!-- CHORO:HUMAN:END -->\n";
@@ -125,6 +128,9 @@ test("快乐路径：富化 + claims 双落 + 保留区照旧页尾回填", asyn
     assert.ok(rePage.includes("人写的批注"), "重富化不抹保留区");
     assert.ok(rePage.trimEnd().endsWith("<!-- CHORO:HUMAN:END -->"), "保留区照旧页尾回填");
     assert.equal(rePage.match(new RegExp(T1_SECTION_START.replace(/[/*]/g, (c) => "\\" + c), "g")).length, 1, "旧 T1 段被剥掉、只有一份新段");
+    // #582：重富化走同一写入口，status 幂等覆写——不能重复插行，也不能退回。
+    assert.ok(/^status: enriched$/m.test(rePage), "重富化后 status 仍是 enriched");
+    assert.equal((rePage.match(/^status: /gm) || []).length, 1, "frontmatter 里 status 只有一行");
   } finally {
     store.close();
     rmTempBestEffort(root);
@@ -143,6 +149,10 @@ test("输出契约：坏 JSON → 失败计数；连续两次 → status=failed�
     assert.equal(r2.failed[0].marked, true, "连续两次到阈值");
     const st = store.db.prepare("SELECT p.status FROM choro_pages p JOIN choro_modules m ON p.module_id=m.id WHERE m.slug='src'").get();
     assert.equal(st.status, "failed");
+    // #582 的另一面：失败路径不动文件——status 停在 T0 写的 skeleton，与
+    // 「首次失败不标 failed（骨架仍是有效产物）」的库侧口径一致。
+    assert.ok(!/^status: enriched/m.test(readFileSync(join(root, ".chorography", "modules", "src.md"), "utf8")),
+      "失败路径不能把文件 frontmatter 的 status 推到 enriched");
 
     respond = GOOD_OUTPUT;
     const r3 = await t1.runT1({ repoRoot: root, moduleSlug: "src", retryFailed: true });

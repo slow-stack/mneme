@@ -497,17 +497,64 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
                 id: { type: "string", required: true },
                 forgotten: { type: "boolean", required: true }
               }
+            },
+            // 取代链连带面（#532）：predecessors = 这行取代了几条更早的记忆；
+            // chainActive = 这条链**现在**是否仍压着它们（继任者被归档后不再压）；
+            // activePredecessors = 前序里仍活跃（未归档未遗忘）的条数——只有这部分
+            // 才是「显式搜索仍可达」（PR #681 评审：别对已退场的前序承诺可查）。
+            chain: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                predecessors: { type: "integer", required: true },
+                activePredecessors: { type: "integer" },
+                chainActive: { type: "boolean" },
+                supersededBy: { type: "string" }
+              }
             }
           }
         },
-        render: (_args, value) => TEXT_OUTPUT(`Memory ${value.memory.id} injection ${value.memory.forgotten ? "suppressed" : "restored"}.`)
+        render: (_args, value) => {
+          const base = `Memory ${value.memory.id} injection ${value.memory.forgotten ? "suppressed" : "restored"}.`;
+          const preds = value.chain?.predecessors ?? 0;
+          const chainActive = value.chain?.chainActive === true;
+          if (!value.memory.forgotten || preds === 0 || !chainActive) return TEXT_OUTPUT(base);
+          const active = value.chain?.activePredecessors ?? 0;
+          const reachable = active > 0
+            ? (active === preds
+              ? " Explicit search can still reach them."
+              : ` Explicit search can still reach the ${active} that remain active.`)
+            : "";
+          return TEXT_OUTPUT(
+            `${base} It supersedes ${preds} older ${preds === 1 ? "entry" : "entries"}; ` +
+            `they are not treated as the current value.${reachable}`
+          );
+        }
       },
       async execute(args) {
         if (service.getById(args.id) === undefined) {
           throw new Error("memory not found");
         }
+        // 先读链（setForget 不改 superseded_by，两侧等价；放在前面是为了让「找不到
+        // 链」与「行不存在」共用一个前置检查，不产生第二次 getById）。
+        // typeof 守卫与 service.js 的 store 层守卫对称：生产 createService 一定有这个
+        // 方法，但旧装配/手写测试替身没有时，裸调用会抛 TypeError 把整条遗忘操作打掉
+        // ——回执增强不该有否决权。缺方法按「无链信息」降级。
+        const chain = typeof service.supersedeContext === "function" ? service.supersedeContext(args.id) : null;
         const memory = service.setForget(args.id, args.forgotten ?? true);
-        return { memory: { id: memory.id, forgotten: memory.forgotten } };
+        return {
+          memory: { id: memory.id, forgotten: memory.forgotten },
+          ...(chain
+            ? {
+                chain: {
+                  predecessors: chain.predecessors,
+                  activePredecessors: chain.activePredecessors,
+                  chainActive: chain.chainActive,
+                  ...(chain.supersededBy ? { supersededBy: chain.supersededBy } : {})
+                }
+              }
+            : {})
+        };
       }
     }),
 
