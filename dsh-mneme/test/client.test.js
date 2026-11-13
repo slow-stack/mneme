@@ -1792,8 +1792,8 @@ test("every settings group is reachable and every flag key owns exactly one seat
   // 是另一头——表里有这个 key、渲染代码却没人消费它，同样是静默消失。
   assert.ok(/^\s+FEATURE_ENUMS\.map\(\(k\) => enumRow\(k\)\)/m.test(codeSource),
     "FEATURE_ENUMS must be consumed by map() so every registered enum key renders a row");
-  assert.ok(/^\s+const enumRow = \(k\) =>/m.test(codeSource),
-    "enumRow must stay the single shared renderer for enum keys (one row shape, not a second hand-written select)");
+  assert.ok(/^\s+const enumRow = \(k, valuesOverride\) =>/m.test(codeSource),
+    "enumRow must stay the single shared renderer for enum keys (one row shape, not a second hand-written select); #653 added the valuesOverride param so the search branch reuses this renderer instead of cloning it");
   // 取值表与登记表必须一一对应：表里多一个孤儿 setback 就没人渲染，
   // 少一个取值表则下拉点开是空的。配上「至少两档」防止把枚举写成假开关。
   const enumValueKeys = [...enumValuesBody.matchAll(/([A-Za-z][A-Za-z0-9_]*):\s*\[/g)].map((m) => m[1]);
@@ -2644,8 +2644,10 @@ test("a rejected feature write is visible and reverts the draft", () => {
     "save failures need their own state slot"
   );
   // 渲染座位必须在主卡片里（描述行之后、运行时块之前），而不是被 !state 挡住。
+  // 从描述行之后找：搜索结果分支里也有一处同款渲染（PR #677 评审回归），按首个
+  // 命中会把它误当座位——那正是本条要锁的位置语义。
   const descAt = clientSource.indexOf('h("div", { className: "mneme-set-desc" }, t("memory.features.desc"))');
-  const seatAt = clientSource.indexOf('saveError && h("div", { className: "mneme-mainterr" }, saveError)');
+  const seatAt = clientSource.indexOf('saveError && h("div", { className: "mneme-mainterr" }, saveError)', descAt);
   const provAt = clientSource.indexOf("h(RuntimeProvisionBlock, { t })");
   assert.ok(descAt > 0 && seatAt > descAt, "the save-error seat must live in the main card body");
   assert.ok(provAt > seatAt, "the seat must sit in the card header area, before the runtime block");
@@ -4661,7 +4663,9 @@ test("conflict ledger mode warns when freeze overrides the chosen tier (#661)", 
     "enforce must not be listed as overridden by this notice");
 
   // ② 接线：判定必须真的消费在 enumRow 里（写了不调用 = 永远不显示）
-  const enumRowStart = clientSource.indexOf("const enumRow = (k) =>");
+  // 锚点只认前缀不认完整签名：#653 给 enumRow 加了 valuesOverride 形参（搜索
+  // 分支复用同一渲染器画定制枚举键），这条测试锁的是提示接线，不是签名形状。
+  const enumRowStart = clientSource.indexOf("const enumRow = (k");
   assert.ok(enumRowStart > 0, "enumRow must exist");
   const enumRowEnd = clientSource.indexOf("const flagRow = (k) =>", enumRowStart);
   assert.ok(enumRowEnd > enumRowStart, "enumRow must end before flagRow");
@@ -4682,6 +4686,198 @@ test("conflict ledger mode warns when freeze overrides the chosen tier (#661)", 
     "the notice must name the freeze switch so the user knows what to turn off");
 });
 
+// ---- #653 设置页搜索 ------------------------------------------------------
+// 折叠层（「全部设置」/「高级」）里的行不在 DOM 里，浏览器的页内查找永远够
+// 不到它们——这正是 #653 的原始抱怨（搜不到「知识库」的入口）。搜索索引因此
+// 必须从六张常量表拼出来（组项/子项/折叠布尔/枚举/字符串/整数），任何一张表
+// 被绕开，那一层的行就从搜索里消失了。
+
+function sliceClientFn(name, next) {
+  const start = clientSource.indexOf(`function ${name}(`);
+  assert.ok(start > 0, `${name} must exist`);
+  const end = clientSource.indexOf(`function ${next}(`, start);
+  assert.ok(end > start, `${name} must end before ${next}`);
+  return clientSource.slice(start, end);
+}
+
+test("settings search: index is built from the canonical row tables, including both folds (#653)", () => {
+  const body = sliceClientFn("buildSettingsSearchIndex", "filterSettingsIndex");
+  // 六张表一张都不能少：FEATURE_GROUPS（组项+子项）是正常视图的主体，
+  // FEATURE_ADVANCED_BOOLS / FEATURE_ENUMS 是「高级」折叠，FEATURE_STRINGS /
+  // FEATURE_NUMBERS 是子块行——漏一张，那一层的行就搜不到。
+  for (const table of ["FEATURE_GROUPS", "FEATURE_CHILDREN", "FEATURE_ADVANCED_BOOLS", "FEATURE_ENUMS", "FEATURE_STRINGS", "FEATURE_NUMBERS"]) {
+    assert.ok(body.includes(table), `the search index must walk ${table}`);
+  }
+  // 四个定制枚举键经 SEARCH_ENUM_SOURCES 补登记（各自手写下拉、无通用渲染器），
+  // 取值必须引用各自已有的常量（EMBED_PROVIDERS / ENTITY_REASONING /
+  // SUMMARIZE_REASONING / CHORO_TIERS），不得在索引里抄第二份取值表。
+  const sources = clientSource.match(/const SEARCH_ENUM_SOURCES = \{([\s\S]*?)\n    \};/);
+  assert.ok(sources, "SEARCH_ENUM_SOURCES must exist");
+  for (const [k, constant] of [
+    ["embedProvider", "EMBED_PROVIDERS"],
+    ["entityExtractionReasoning", "ENTITY_REASONING"],
+    ["summarizeReasoningEffort", "SUMMARIZE_REASONING"],
+    ["chorographyInject", "CHORO_TIERS"]
+  ]) {
+    assert.ok(sources[1].includes(`${k}: ${constant}`),
+      `SEARCH_ENUM_SOURCES must register ${k} with values from ${constant}`);
+  }
+});
+
+test("settings search: every searchable key has a label in both dictionaries (#653)", () => {
+  // 搜索命中靠 label/hint/key 三路；label 若缺，双语界面会有一侧把键名当
+  // 标签渲染。锁定「索引里的每个键在两份词典各有一条 memory.features.<k>」。
+  const grab = (re) => { const m = clientSource.match(re); return m ? m[1] : ""; };
+  const tables = [
+    grab(/const FEATURE_GROUPS = \[([\s\S]*?)\n    \];/),
+    grab(/const FEATURE_CHILDREN = \{([\s\S]*?)\n    \};/),
+    grab(/const FEATURE_ADVANCED_BOOLS = \[([^\]]*)\]/),
+    grab(/const FEATURE_ENUMS = \[([^\]]*)\]/),
+    grab(/const FEATURE_STRINGS = \[([\s\S]*?)\];/),
+    grab(/const FEATURE_NUMBERS = \[([^\]]*)\]/),
+    grab(/const SEARCH_ENUM_SOURCES = \{([\s\S]*?)\n    \};/)
+  ];
+  const keys = new Set();
+  for (const t of tables) {
+    // 带引号的键（组项、子项、折叠行、字符串/整数键）。数组可能内嵌注释行
+    // （group.pipeline 的 items 就有一行），所以只认引号包裹的串，不做逗号
+    // 切分——切分会把「注释 + 换行 + 键」并成同一个假键。
+    for (const m of t.matchAll(/"([a-zA-Z][a-zA-Z0-9.]*)"/g)) keys.add(m[1]);
+    // 不带引号的键（SEARCH_ENUM_SOURCES 的 `key: 常量` 形状）。
+    for (const m of t.matchAll(/^\s*([a-zA-Z][a-zA-Z0-9.]*):/gm)) keys.add(m[1]);
+  }
+  assert.ok(keys.size >= 60, `the index should cover the full row surface (got ${keys.size})`);
+  const missing = [...keys].filter((k) => {
+    const n = clientSource.split(`"memory.features.${k}"`).length - 1;
+    return n < 2;
+  });
+  assert.deepEqual(missing, [],
+    `every searchable key needs a label in BOTH dictionaries (missing: ${missing.join(", ")})`);
+});
+
+test("settings search: box replaces the toc while searching, rows render through the same renderers (#653)", () => {
+  // 输入框常驻、目录让位、清除钮与空态在场。
+  assert.match(clientSource, /memory\.settings\.search\.placeholder/, "search input placeholder key");
+  assert.match(clientSource, /!searching && h\("nav", \{ className: "mneme-set-toc"/,
+    "the toc must yield while a search is active (its jump targets are filtered away)");
+  assert.match(clientSource, /"aria-label": t\("memory\.settings\.search\.clear"\)/,
+    "the clear button must be reachable by assistive tech");
+  assert.match(clientSource, /searching && !anySectionVisible && h\("section"/,
+    "a global empty state must render when every section is filtered out");
+  // 功能开关卡只走一次调用点：搜索分支经 searchEntries 进去，正常视图零改动。
+  assert.equal(clientSource.match(/h\(FeaturesCard, \{/g)?.length, 1,
+    "FeaturesCard must have exactly one call site");
+  assert.match(clientSource, /h\(FeaturesCard, \{ t, searchEntries: featuresSearchEntries \}\)/,
+    "the call site must forward the filtered entries");
+  // 搜索分支必须复用四类行渲染器（保证搜索路径改的行与正常路径行为一致），
+  // 且组标题命中时整节原样展示、不切平铺（featuresSearchEntries 判据里有
+  // !secMatch("engine")）。
+  const branch = clientSource.slice(
+    clientSource.indexOf("if (state && Array.isArray(searchEntries)"),
+    clientSource.indexOf("if (error && !state)")
+  );
+  assert.ok(branch.length > 0, "the search branch must sit before the error path in FeaturesCard");
+  for (const r of ["enumRow(e.k, e.values)", "strRow(e.k)", "numRow(e.k)", "boolRow(e.k)"]) {
+    assert.ok(branch.includes(r), `the search branch must render rows via ${r}`);
+  }
+  assert.match(clientSource, /featuresSearchEntries = searching && !secMatch\("engine"\)/,
+    "a group-title hit must show the whole section, not a flattened subset");
+});
+
+test("settings search: the four i18n keys exist exactly once per language (#653)", () => {
+  // 只数词典定义行（键后跟 `":` 的那两行）：search.aria 还被空态卡标题在 JSX
+  // 里复用一次，整文件字符串计数会把「复用」误判成第三份词典。
+  for (const key of ["memory.settings.search.placeholder", "memory.settings.search.aria", "memory.settings.search.clear", "memory.settings.search.noResults"]) {
+    const defLines = clientSource.match(new RegExp('^\\s*"' + key + '":', "gm")) ?? [];
+    assert.equal(defLines.length, 2, `${key} must exist as exactly one dictionary line per language (got ${defLines.length})`);
+  }
+  // 空态要点名搜索范围（名称/说明/键名），否则「搜不到」读起来像坏了。
+  const texts = clientSource.match(/"memory\.settings\.search\.noResults":\s*"([^"]+)"/g) ?? [];
+  assert.equal(texts.length, 2, "noResults must be bilingual");
+  assert.ok(texts.every((line) => /\{q\}/.test(line)), "noResults must interpolate the query");
+});
+
+// ---- #653 评审回归（CodeRabbit 在 PR #677 上提的四条）--------------------
+
+test("settings search: every literal-rendered row key is registered in a searchable table (#653)", () => {
+  // 这一条锁的是「渲染了却没登记」整类：搜索索引只扫六张常量表，而某些行是在
+  // 子块里用字面量渲染的（#637 的 injectRotationTurns 就挂在自己的总闸下、不在
+  // 任何组项数组里）。只断言「索引引用了六张表」抓不到这种漏，必须反过来从
+  // 渲染点收键、再要求它出现在某张表里。
+  const grabTables = () => {
+    const grab = (re) => { const m = clientSource.match(re); return m ? m[1] : ""; };
+    return [
+      grab(/const FEATURE_GROUPS = \[([\s\S]*?)\n    \];/),
+      grab(/const FEATURE_CHILDREN = \{([\s\S]*?)\n    \};/),
+      grab(/const FEATURE_ADVANCED_BOOLS = \[([^\]]*)\]/),
+      grab(/const FEATURE_ENUMS = \[([^\]]*)\]/),
+      grab(/const FEATURE_STRINGS = \[([\s\S]*?)\];/),
+      grab(/const FEATURE_NUMBERS = \[([^\]]*)\]/),
+      grab(/const SEARCH_ENUM_SOURCES = \{([\s\S]*?)\n    \};/)
+    ];
+  };
+  const registered = new Set();
+  for (const t of grabTables()) {
+    for (const m of t.matchAll(/"([a-zA-Z][a-zA-Z0-9.]*)"/g)) registered.add(m[1]);
+    for (const m of t.matchAll(/^\s*([a-zA-Z][a-zA-Z0-9.]*):/gm)) registered.add(m[1]);
+  }
+  const literals = new Set();
+  for (const re of [/numRow\("([^"]+)"\)/g, /strRow\("([^"]+)"\)/g, /boolRow\("([^"]+)"/g]) {
+    for (const m of clientSource.matchAll(re)) literals.add(m[1]);
+  }
+  const missing = [...literals].filter((k) => !registered.has(k));
+  assert.deepEqual(missing, [],
+    `every row rendered with a literal key must be searchable; not registered: ${missing.join(", ")}`);
+});
+
+test("settings search: the result view keeps the save-failure notice (#653)", () => {
+  // 搜索结果分支会提前 return；put() 失败时控件回滚到生效值，若这条分支不渲染
+  // saveError，用户只会看到「改了没反应」（CodeRabbit PR #677 的 Major）。
+  const branch = clientSource.slice(
+    clientSource.indexOf("if (state && Array.isArray(searchEntries)"),
+    clientSource.indexOf("if (error && !state)")
+  );
+  assert.ok(branch.includes("saveError && h(\"div\", { className: \"mneme-mainterr\" }, saveError)"),
+    "the search branch must render saveError, otherwise a failed PUT looks like a no-op");
+});
+
+test("settings search: every card title in a section is reachable by title (#653)", () => {
+  // configKeys 卡在 connect 组里，但它的标题此前不在 SECTION_TITLE_KEYS.connect——
+  // 搜「配置键覆盖面」会落到空态。锁「connect 组渲染的每一张卡标题都登记过」是
+  // 这个类的最小形状（手工比对 JSX 与映射表，加卡时能看见）。
+  const map = clientSource.match(/const SECTION_TITLE_KEYS = \{([\s\S]*?)\n      \};/);
+  assert.ok(map, "SECTION_TITLE_KEYS must exist");
+  for (const key of ["memory.settings.rules", "memory.settings.commands", "memory.settings.mode.title", "memory.features.title",
+    "memory.settings.vectorTitle", "memory.settings.extapi.title", "memory.settings.serve.title", "memory.settings.mcp.title",
+    "memory.settings.apiTokenTitle", "memory.settings.configKeys.title", "memory.settings.feedback.title"]) {
+    assert.ok(map[1].includes(`"${key}"`), `${key} must be listed in SECTION_TITLE_KEYS so its section is reachable`);
+  }
+});
+
+test("settings search: the placeholder and empty state describe the real match scope (#653)", () => {
+  // 索引只覆盖功能开关行；非功能卡片只按组标题/卡片标题匹配。文案说「搜索设置」
+  // 会让人以为「端口」「API Key」这类也能搜到（CodeRabbit PR #677）。
+  const zh = clientSource.match(/"memory\.settings\.search\.placeholder": "([^"]+)"/)?.[1] ?? "";
+  const en = clientSource.match(/"memory\.settings\.search\.placeholder": "([^"]+)"/g) ?? [];
+  assert.match(zh, /功能开关/);
+  assert.ok(en.some((line) => /switches/i.test(line)), "the English placeholder must name the switch scope too");
+  const zhNo = clientSource.match(/"memory\.settings\.search\.noResults": "([^"]+)"/g) ?? [];
+  assert.ok(zhNo.some((line) => /功能开关/.test(line) && /分组与卡片/.test(line)),
+    "no-results copy must separate switch matching from title matching");
+  assert.ok(zhNo.some((line) => /Feature switches/.test(line) && /groups and cards/.test(line)),
+    "English no-results copy must separate the two match scopes");
+});
+
+test("settings search: an unparsed peak-hours string stays visible in results (#653)", () => {
+  // 正常视图在 peakHours 输入框下方用 peakInvalidHint 标红「这串没生效」；
+  // 搜索结果若只渲染 strRow，用户在搜索态改完时段就看不到失败提示（PR #677 评审）。
+  const branch = clientSource.slice(
+    clientSource.indexOf("if (state && Array.isArray(searchEntries)"),
+    clientSource.indexOf("if (error && !state)")
+  );
+  assert.ok(branch.includes("peakInvalidHint(e.k)"),
+    "the str branch must keep peakInvalidHint so an unparsed peak-hours spec is still reported");
+});
 // ---- #582 wiki 渲染三处 ----
 
 // 机器标记行（CHORO:T1 / CHORO:HUMAN 的 HTML 注释包装）是 t0/t1 剥段与回填用

@@ -465,6 +465,13 @@ window.__ModuleLoader__.load({
         "memory.settings.group.help": "帮助",
         "memory.settings.toc.label": "目录",
         "memory.settings.toc.aria": "设置分组目录",
+        // #653 设置页搜索：一张框扫全部组，含两层折叠里的行——不用先展开
+        // 「全部设置」再找。浏览器 Ctrl+F 搜不到「知识库」，正是因为收起的
+        // 组根本不在 DOM 里；这里的搜索对象是行目录（见 buildSettingsSearchIndex）。
+        "memory.settings.search.placeholder": "搜索功能开关（名称、说明或键名），或分组/卡片标题…",
+        "memory.settings.search.aria": "搜索设置",
+        "memory.settings.search.clear": "清除搜索",
+        "memory.settings.search.noResults": "没有匹配「{q}」的设置项。功能开关按名称、说明与键名匹配；分组与卡片按标题匹配。",
         "memory.settings.toc.jump": "跳到「{name}」",
         "memory.settings.profile": "用户画像",
         "memory.settings.profileHint": "写一段自我介绍（角色、背景、偏好），Agent 每轮对话都会自动带上。",
@@ -1632,6 +1639,13 @@ window.__ModuleLoader__.load({
         "memory.settings.group.help": "Help",
         "memory.settings.toc.label": "Contents",
         "memory.settings.toc.aria": "Settings section index",
+        // #653 settings search: one box over every group, including rows that
+        // live behind the two folds — browser find can't reach those because
+        // folded groups are not in the DOM at all (the original complaint).
+        "memory.settings.search.placeholder": "Search switches (name, hint, or key), or a group/card title…",
+        "memory.settings.search.aria": "Search settings",
+        "memory.settings.search.clear": "Clear search",
+        "memory.settings.search.noResults": "No settings match “{q}”. Feature switches match by name, hint, or key; groups and cards match by title.",
         "memory.settings.toc.jump": "Jump to {name}",
         "memory.settings.profile": "User Profile",
         "memory.settings.profileHint": "Describe yourself once — the agent reads it every turn.",
@@ -4756,7 +4770,11 @@ window.__ModuleLoader__.load({
     // 后端白名单、面板够不着——而 CONFIGURATION.md 明写「面板可启停」。
     // 其余整数键（429 调速器参数、distillMaxChars、codingBoostFactor）是有意
     // 不上 UI 的调优噪音，见上方注释，别顺手搬进来。
-    const FEATURE_NUMBERS = ["distillRecords.retentionDays", "dreamMaxTokens", "sleepMaxTokens", "diaryWriteEveryMinutes"];
+    // injectRotationTurns 也在这张表里：#637 的轮换窗口由 rotationSub 用 numRow
+    // 渲染，但它挂在自己的总闸 autoInject 下、不在任何组项数组里——只扫常量表会
+    // 把它漏出搜索（CodeRabbit #677 评审指出的那一类：渲染了却没登记）。判断
+    // 「某行该不该在表里」看的是「它是否由通用渲染器渲染」，不是「它在哪个组」。
+    const FEATURE_NUMBERS = ["distillRecords.retentionDays", "dreamMaxTokens", "sleepMaxTokens", "diaryWriteEveryMinutes", "injectRotationTurns"];
     const EMBED_PROVIDERS = ["openai", "local", "ollama"];
     // 实体抽取思考强度（issue #109）：与后端 FEATURE_FLAG_ENUMS 枚举对齐。
     const ENTITY_REASONING = ["none", "low", "medium", "high"];
@@ -4766,6 +4784,62 @@ window.__ModuleLoader__.load({
     // 地志注入档位（M3）：与后端 settings.js 的 FEATURE_FLAG_ENUMS.chorographyInject
     // 同一份取值。light 是默认档，off 才是不注入。
     const CHORO_TIERS = ["off", "light", "full"];
+
+    // —— 设置页搜索索引（#653）——
+    // 行目录从上面几张常量表拼出来，刻意不立第二份清单：组项与子项走
+    // FEATURE_GROUPS / FEATURE_CHILDREN，折叠层走 FEATURE_ADVANCED_BOOLS 与
+    // FEATURE_ENUMS，字符串与整数行走 FEATURE_STRINGS / FEATURE_NUMBERS。
+    // 「折叠层也必须进索引」是这条功能的存在理由：收起的组根本不在 DOM 里，
+    // 浏览器的页内查找因此永远搜不到它们（#653 的原始抱怨）。
+    // 四个没有通用渲染器的枚举键（各自手写下拉的那批）在这里补登记，取值
+    // 直接引用各自的既有常量；kind 决定搜索结果里用哪个渲染器画出来。
+    const SEARCH_ENUM_SOURCES = {
+      embedProvider: EMBED_PROVIDERS,
+      entityExtractionReasoning: ENTITY_REASONING,
+      summarizeReasoningEffort: SUMMARIZE_REASONING,
+      chorographyInject: CHORO_TIERS
+    };
+    function buildSettingsSearchIndex(t) {
+      // 宿主 locale 对缺失键的回退没有约定：回显键名时按「没有标签」处理，
+      // 否则键名字符串会在 label 与 haystack 的 k 两处重复，还污染提示文本。
+      const label = (k) => {
+        const key = `memory.features.${k}`;
+        const v = t(key);
+        return v === key ? "" : String(v ?? "");
+      };
+      const hintOf = (k) => {
+        const key = `memory.features.${k}.hint`;
+        const v = t(key);
+        return v === key ? "" : String(v ?? "");
+      };
+      const seen = new Set();
+      const entries = [];
+      const push = (k, kind, values) => {
+        if (!k || seen.has(k)) return;
+        seen.add(k);
+        entries.push({ k, kind, values: values || null, label: label(k), hint: hintOf(k) });
+      };
+      for (const g of FEATURE_GROUPS) {
+        for (const k of g.items) {
+          push(k, "flag");
+          for (const c of FEATURE_CHILDREN[k] || []) push(c, "flag");
+        }
+      }
+      for (const k of FEATURE_ADVANCED_BOOLS) push(k, "flag");
+      for (const k of FEATURE_ENUMS) push(k, "enum");
+      for (const [k, values] of Object.entries(SEARCH_ENUM_SOURCES)) push(k, "enum", values);
+      for (const k of FEATURE_STRINGS) push(k, "str");
+      for (const k of FEATURE_NUMBERS) push(k, "num");
+      return entries;
+    }
+    function filterSettingsIndex(entries, query) {
+      const needle = String(query || "").trim().toLowerCase();
+      if (!needle) return [];
+      return entries.filter((e) =>
+        e.label.toLowerCase().includes(needle)
+        || e.hint.toLowerCase().includes(needle)
+        || e.k.toLowerCase().includes(needle));
+    }
 
     function FeatureRow({ name, hint, on, disabled, onToggle, sub, tag }) {
       return h("div", { className: "mneme-featrow", style: sub ? { paddingLeft: 18, opacity: 0.86 } : undefined },
@@ -4789,7 +4863,7 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function FeaturesCard({ t }) {
+    function FeaturesCard({ t, searchEntries }) {
       const [state, setState] = useState(null); // { overrides, effective }
       const [error, setError] = useState("");
       // 保存失败的提示要单独的座位：上面那个 error 只在首屏加载失败（state 还是
@@ -4965,8 +5039,10 @@ window.__ModuleLoader__.load({
       const enumOverridden = (k) => k === "conflictLedgerMode"
         && eff.conflictFreezeEnabled === true
         && (eff[k] === "off" || eff[k] === "shadow");
-      const enumRow = (k) => {
-        const values = FEATURE_ENUM_VALUES[k] ?? [];
+      const enumRow = (k, valuesOverride) => {
+        // valuesOverride：搜索结果分支（#653）复用同一渲染器画四个定制枚举键
+        // （SEARCH_ENUM_SOURCES），正常路径不传、仍走 FEATURE_ENUM_VALUES。
+        const values = valuesOverride ?? FEATURE_ENUM_VALUES[k] ?? [];
         return h("div", { className: "mneme-featsub", key: k },
           h("div", { className: "mneme-featnum" },
             h("span", { className: "mneme-featnumlabel" }, t(`memory.features.${k}`)),
@@ -5286,6 +5362,35 @@ window.__ModuleLoader__.load({
         // 统一渲染还顺带补上 gate：父关时子行标注「不生效」，而值留着、仍可预置。
       );
 
+      // —— 搜索结果分支（#653）——
+      // searchEntries 非空时整卡切成命中行平铺：不走组与两层折叠——那些结构
+      // 服务的是「浏览」语义，搜索要的是「直接到那一行」，包括收在「全部设置」
+      // 与「高级」里的行。渲染器与正常视图同一份（boolRow/enumRow/strRow/
+      // numRow），保证搜索路径改的行与正常路径逐字一致；子行不缩进、不带
+      // gate 标注——搜索结果是「这个键存在、可在这里改」，父子关系留给
+      // 正常视图讲。命中行为空时不进这个分支（调用方按节过滤决定显不显示）。
+      if (state && Array.isArray(searchEntries) && searchEntries.length > 0) {
+        return h("section", { className: "mneme-set-card" },
+          h("div", { className: "mneme-set-title" },
+            t("memory.features.title"),
+            h("span", { className: "mneme-saved", style: { marginLeft: 8, fontWeight: 400 } },
+              String(searchEntries.length))
+          ),
+          searchEntries.map((e) => {
+            if (e.kind === "enum") return enumRow(e.k, e.values);
+            // 错峰时段串解析失败时，正常视图会在输入框下方标红说明该值没生效；
+            // 搜索结果同样要带上，否则用户在搜索态改完时段看不到「这串没生效」。
+            if (e.kind === "str") return h(react.Fragment, { key: e.k }, strRow(e.k), peakInvalidHint(e.k));
+            if (e.kind === "num") return numRow(e.k);
+            return boolRow(e.k);
+          }),
+          // 保存失败原因必须跟着搜索结果一起显示：put() 失败时控件会回滚到
+          // 生效值（布尔/枚举保持旧值、字符串与数字输入退回去），若这条分支
+          // 提前返回而不渲染 saveError，用户只会看到「改了没反应」。
+          saveError && h("div", { className: "mneme-mainterr" }, saveError)
+        );
+      }
+
       if (error && !state) return h("section", { className: "mneme-set-card" },
         h("div", { className: "mneme-set-title" }, t("memory.features.title")),
         h("div", { className: "mneme-set-hint" }, error));
@@ -5435,6 +5540,9 @@ window.__ModuleLoader__.load({
       const [newRule, setNewRule] = react.useState("");
       const [newCmd, setNewCmd] = react.useState({ name: "", description: "", instruction: "" });
       const [cmdError, setCmdError] = react.useState("");
+      // #653 设置页搜索：词挂在设置页这一层（搜索框在目录上方、五组卡片都归
+      // 它过滤），FeaturesCard 只收筛选好的命中行。
+      const [settingsQuery, setSettingsQuery] = react.useState("");
       const [vector, setVector] = react.useState({ enabled: false, baseUrl: "", apiKey: "", model: "" });
       const [vectorSaved, setVectorSaved] = react.useState(false);
       const [reindexing, setReindexing] = react.useState(false);
@@ -5776,6 +5884,34 @@ window.__ModuleLoader__.load({
       // 目录（#518）：五项分组标题是设置页唯一的骨架，所以索引直接由这张表
       // 生成，而不是再手写一遍标题——两份清单迟早会漂，而漂了的目录会把人
       // 领到空处。tocRefs 是滚动目标，与渲染顺序一一对应（同一个 map 里产出）。
+      // —— 设置页搜索（#653）——
+      // 节级匹配：组标题或该组任一卡标题命中 → 整节原样显示（titleKeys 与
+      // 下方 JSX 的卡片一一对应，加卡时同步补这一行）。功能开关卡额外吃
+      // 行级命中：行命中时该节只显示命中行（FeaturesCard 的搜索分支），
+      // 两层折叠（全部设置/高级）被绕开——折叠里的行正是搜索最该够到的地方。
+      const SECTION_TITLE_KEYS = {
+        personal: ["memory.settings.rules", "memory.settings.commands"],
+        engine: ["memory.settings.mode.title", "memory.features.title"],
+        search: ["memory.settings.vectorTitle"],
+        connect: ["memory.settings.extapi.title", "memory.settings.serve.title", "memory.settings.mcp.title", "memory.settings.apiTokenTitle", "memory.settings.configKeys.title"],
+        help: ["memory.settings.feedback.title"]
+      };
+      const qTrim = settingsQuery.trim();
+      const searching = qTrim.length > 0;
+      const textHit = (s) => String(s || "").toLowerCase().includes(qTrim.toLowerCase());
+      const secMatch = (key) => searching
+        && (textHit(t(`memory.settings.group.${key}`))
+          || SECTION_TITLE_KEYS[key].some((tk) => textHit(t(tk))));
+      const searchHits = searching ? filterSettingsIndex(buildSettingsSearchIndex(t), qTrim) : null;
+      const vPersonal = !searching || secMatch("personal");
+      const vEngine = !searching || secMatch("engine") || (searchHits !== null && searchHits.length > 0);
+      const vVector = !searching || secMatch("search");
+      const vConnect = !searching || secMatch("connect");
+      const vHelp = !searching || secMatch("help");
+      const anySectionVisible = vPersonal || vEngine || vVector || vConnect || vHelp;
+      // 行命中且组标题没命中 → 功能开关卡切搜索分支；组标题命中时整节原样
+      // 展示（用户搜的是这一节的名字，应该看到全节而不是几行）。
+      const featuresSearchEntries = searching && !secMatch("engine") && searchHits && searchHits.length > 0 ? searchHits : null;
       const tocGroups = [
         { key: "personal", label: t("memory.settings.group.personal") },
         { key: "engine", label: t("memory.settings.group.engine") },
@@ -5802,7 +5938,26 @@ window.__ModuleLoader__.load({
       const minimalWarn = !injectStatus.loading && injectStatus.suppressed;
 
       return h("div", null,
-        h("nav", { className: "mneme-set-toc", "aria-label": t("memory.settings.toc.aria") },
+        // 搜索框（#653）：常驻在目录上方。有词时目录让位——跳转目标多半已被
+        // 过滤掉，留着只会点到没反应；清除后目录与全部卡片原样回来。
+        h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+          h("input", {
+            className: "mneme-set-input",
+            style: { flex: 1, marginBottom: 0, minWidth: 0 },
+            value: settingsQuery,
+            placeholder: t("memory.settings.search.placeholder"),
+            "aria-label": t("memory.settings.search.aria"),
+            onChange: (e) => setSettingsQuery(e.target.value)
+          }),
+          searching && h("button", {
+            type: "button",
+            className: "mneme-footbtn",
+            "aria-label": t("memory.settings.search.clear"),
+            title: t("memory.settings.search.clear"),
+            onClick: () => setSettingsQuery("")
+          }, "✕")
+        ),
+        !searching && h("nav", { className: "mneme-set-toc", "aria-label": t("memory.settings.toc.aria") },
           h("div", { className: "mneme-set-toclabel" }, t("memory.settings.toc.label")),
           h("div", { className: "mneme-set-toclist" },
             ...tocGroups.map((group) => h("button", {
@@ -5817,9 +5972,9 @@ window.__ModuleLoader__.load({
         // —— 个性化：规则 / 自定义指令（Agent 怎么对你） ——
         // 画像与自动事实已搬进记忆面板的「人格」页：它们说的是「你是谁、Agent 眼里
         // 你是谁」，跟人设卡必须待在同一页，否则一处改一半、两页各显示一半。
-        groupHead("personal"),
+        vPersonal && groupHead("personal"),
         // 规则 — numbered rows, hover reveals the delete affordance
-        h("section", { className: "mneme-set-card" },
+        vPersonal && h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.rules")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.rulesHint")),
           rules.length === 0 && h("div", { className: "mneme-xempty" }, t("memory.settings.empty")),
@@ -5848,7 +6003,7 @@ window.__ModuleLoader__.load({
           )
         ),
         // 自定义指令 — slash commands as titled rows
-        h("section", { className: "mneme-set-card" },
+        vPersonal && h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.commands")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.commandsHint")),
           commands.length === 0 && h("div", { className: "mneme-xempty" }, t("memory.settings.empty")),
@@ -5879,10 +6034,10 @@ window.__ModuleLoader__.load({
           )
         ),
         // —— 记忆引擎：运行模式（粗粒度）在前，功能开关（细粒度）紧随 ——
-        groupHead("engine"),
+        vEngine && groupHead("engine"),
         // 运行模式 — light vs standard chip radios; each click PUTs and the
         // change only lands after a DSH restart (green saved hint says so).
-        h("section", { className: "mneme-set-card" },
+        vEngine && h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.mode.title")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.mode.desc")),
           modeError && h("div", { style: { fontSize: 12, color: "var(--mneme-danger)", marginBottom: 8 } }, modeError),
@@ -5919,11 +6074,12 @@ window.__ModuleLoader__.load({
           )
         ),
         // 功能开关 — 后端能力的细粒度闸门；改动即时保存，重启 DSH 后生效。
-        h(FeaturesCard, { t }),
+        // 搜索（#653）：行命中时把筛选好的命中行递进去，卡片切成平铺结果。
+        vEngine && h(FeaturesCard, { t, searchEntries: featuresSearchEntries }),
         // —— 搜索：语义召回 ——
-        groupHead("search"),
+        vVector && groupHead("search"),
         // 向量搜索 — semantic recall over an embeddings API
-        h("section", { className: "mneme-set-card" },
+        vVector && h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.vectorTitle")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.vectorHint")),
           h("label", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 13, color: "var(--dsw-alias-label-primary)" } },
@@ -5941,11 +6097,11 @@ window.__ModuleLoader__.load({
           )
         ),
         // —— 连接与安全：外部访问 API / 面板令牌 ——
-        groupHead("connect"),
+        vConnect && groupHead("connect"),
         // 外部访问 API — standalone HTTP service for plugins/CLI/desktop tools;
         // the token is generated and kept by the backend, so it is read-only
         // here with a copy affordance. Changes need a DSH restart.
-        h("section", { className: "mneme-set-card" },
+        vConnect && h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.extapi.title")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.extapi.desc")),
           extapiError && h("div", { style: { fontSize: 12, color: "var(--mneme-danger)", marginBottom: 8 } }, extapiError),
@@ -6008,7 +6164,7 @@ window.__ModuleLoader__.load({
         // 独立服务卡片（issue #386 第 1 条）：纯只读展示 + 复制，不做进程
         // 启停/守护/端口探测。同源措辞用「应/通常」——令牌同源未全部实测，
         // 不写成已保证（见该 issue 讨论口径）。
-        h("section", { className: "mneme-set-card" },
+        vConnect && h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.serve.title")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.serve.desc")),
           h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
@@ -6024,7 +6180,7 @@ window.__ModuleLoader__.load({
         ),
         // MCP 接入卡（issue #386 第 2 条）：与独立服务同款只读模式——片段 +
         // 复制，不做连通性探测（token 有效性与端点可达由 MCP 客户端侧报错）。
-        h("section", { className: "mneme-set-card" },
+        vConnect && h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.mcp.title")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.mcp.desc")),
           h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
@@ -6041,7 +6197,7 @@ window.__ModuleLoader__.load({
         // 向量搜索卡片已上移到「搜索」分组（与功能开关里的语义检索路线相邻），
         // 这里不再重复渲染。
         // API Token — advanced, last
-        h("section", { className: "mneme-set-card" },
+        vConnect && h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.apiTokenTitle")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.apiTokenHint")),
           h("div", { style: { display: "flex", gap: 8 } },
@@ -6060,13 +6216,13 @@ window.__ModuleLoader__.load({
         // 配置键覆盖面（issue #386 第 7 条）：只读核对表，放在 connect 组尾——
         // 它与上面的 API Token / 独立服务同属「我在这台机器上能调什么」那一类，
         // 而不是功能开关（那些在 personal/core/enhance 各组里改）。
-        h(ConfigKeysCard, { t }),
+        vConnect && h(ConfigKeysCard, { t }),
         // —— 帮助：支持与鼓励（图标行 + 检测更新 + star，兼当「关于」收尾） ——
-        groupHead("help"),
+        vHelp && groupHead("help"),
         // 反馈三入口：新建 issue 预填（版本+平台）/ 邮件 / 浏览已知问题。
         // 纯前端链接零后端成本；插件版本来自 /info，平台取 userAgent。GitHub
         // 仓库当前没有 issue 模板，故用 issues/new?title=&body= 直接预填。
-        h("section", { className: "mneme-set-card" },
+        vHelp && h("section", { className: "mneme-set-card" },
           h("div", { className: "mneme-set-title" }, t("memory.settings.feedback.title")),
           h("div", { className: "mneme-set-desc" }, t("memory.settings.feedback.desc")),
           h("div", { className: "mneme-feedlist" },
@@ -6095,6 +6251,12 @@ window.__ModuleLoader__.load({
           h("div", { className: "mneme-set-foot" },
             h("span", null, `dsh-mneme v${pkgVersion}`)
           )
+        ),
+        // 搜索空态（#653）：五个节全被过滤掉时明确说「没有匹配」——把「这页
+        // 没有你搜的东西」与「这页坏了」分开，与别处空态同一纪律。
+        searching && !anySectionVisible && h("section", { className: "mneme-set-card" },
+          h("div", { className: "mneme-set-title" }, t("memory.settings.search.aria")),
+          h("div", { className: "mneme-xempty" }, t("memory.settings.search.noResults").replace("{q}", qTrim))
         )
       );
     }
