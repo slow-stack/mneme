@@ -702,6 +702,8 @@ Claude Code 挂载示例（项目根 `.mcp.json`；token 在面板「设置 → 
 
 以下项目由社区维护，把 mneme 接入第三方平台或宿主。它们不是本仓库的一部分，兼容性由各自维护者跟进——升级 mneme 后如遇接口变更，请优先查看对应项目的 release note。
 
+slow-stack 自家的集成不在此表：[Melete](https://github.com/slow-stack/melete)（DeepSeek 官方 chat-demo 的 fork）走同一套 standalone API——本地伴随服务回合前注入 `/context`、回合后蒸馏写回 `/memories`，聊天源码零改动，上游可随时合并。
+
 | 项目 | 平台 | 说明 |
 |------|------|------|
 | [Mneme-Bridge](https://github.com/SternChiri/Mneme-Bridge) | DeepSeek 网页端 | 浏览器扩展（MV3）+ 本地 Node 服务：网页端会话蒸馏进 mneme 记忆库，DSH 侧记忆按话题回注网页对话，两侧共享同一份记忆。embedded（直接挂载 mneme lib）与 remote（standalone API，推荐配合 [`dsh-mneme-serve`](docs/DAEMON.md)）双模式 |

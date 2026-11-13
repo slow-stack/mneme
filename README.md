@@ -93,6 +93,7 @@ dsh plugin --profile web remove @modusensus/dsh-mneme
 | **MCP** | 一个零依赖 stdio server（独立包 `mneme-memory`）；Claude Code / Cursor / Codex / OpenCode 等任何 MCP 客户端都能挂上六个记忆工具 |
 | **独立 daemon** | `dsh-mneme-serve` 让记忆库常驻：DSH 关着时，脚本、网页端、你自己的面板读写同一份记忆 |
 | **外部 API** | HTTP 接口，别的插件想把记忆写进来，走 API 就行 |
+| **Melete** | [slow-stack/melete](https://github.com/slow-stack/melete)：DeepSeek 官方 chat-demo 的 fork，接进同一个库——本地伴随服务回合前注入 `/context`、回合后蒸馏写回，聊天源码零改动 |
 | **社区适配器** | 如 [Mneme-Bridge](https://github.com/SternChiri/Mneme-Bridge)，把 DeepSeek 网页版接进同一个库 |
 
 ## 隐私承诺
@@ -208,6 +209,7 @@ One panel in the settings page: record, browse, filter, search, edit, delete —
 | **MCP** | A zero-dependency stdio server (standalone package `mneme-memory`); Claude Code / Cursor / Codex / OpenCode and any other MCP client can mount the six memory tools |
 | **Standalone daemon** | `dsh-mneme-serve` keeps the store running: with DSH closed, scripts, web bridges and your own panels read and write the same memories |
 | **External API** | An HTTP surface, so another plugin can write memories in through the API |
+| **Melete** | [slow-stack/melete](https://github.com/slow-stack/melete): a fork of DeepSeek's official chat-demo wired to the same store — a local companion service injects `/context` before each turn and distills and writes back after it; chat source stays untouched |
 | **Community adapters** | Such as [Mneme-Bridge](https://github.com/SternChiri/Mneme-Bridge), which brings the DeepSeek web chat into the same store |
 
 ## Privacy
