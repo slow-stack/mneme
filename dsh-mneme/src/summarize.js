@@ -1367,7 +1367,7 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       // 已被并进既有行的条目（dup 有值）不参与：它的正文已经进了那条老记忆，把老记忆
       // 盖到下一条新条目下面，等于用一次蒸馏顺手隐藏一条累积了很久的旧行。
       const batchPlans = [];
-      if (config?.summarizeBatchCrossTypeDedupe === true && writes.length > 1) {
+      if (config?.summarizeBatchCrossTypeDedupe !== false && writes.length > 1) {
         const plannable = writes
           .map((write, index) => ({ entry: write.entry, index }))
           .filter((slot) => !writes[slot.index].dup);

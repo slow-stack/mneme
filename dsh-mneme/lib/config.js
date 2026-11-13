@@ -96,12 +96,14 @@ export const Config = z.object({
   summarizeDedupeMode: z.union([z.const("off"), z.const("title"), z.const("vector")]).default("off"),
   summarizeDedupeMinSim: z.number().min(0.5).max(0.99).default(0.92),
   summarizeDedupeWindowHours: z.natural().min(0).max(168).default(24),
-  // #687 批内跨类型去重（默认关 = 现状，一步行为都不改）。同一窗蒸馏里，模型偶尔把
-  // 一个结论同时写成 pitfall 与 constraint（或 history 与 project）——类型不同，
-  // summarizeDedupeMode 的 type+title 去重看不见它们。开这个闸后只认这两组类型对，
-  // 命中走 supersede（被取代方正文零改写、不 merge），判错时原文仍在库里只是不再
-  // 默认注入。不开常开类型闸的理由：2026-11-13 实测 45 对里 9 对（20%）合并会丢信息。
-  summarizeBatchCrossTypeDedupe: z.boolean().default(false),
+  // #687 批内跨类型去重（默认开；2026-11-13 桉桉拍板，明知这是行为变化）。同一窗蒸馏
+  // 里，模型偶尔把一个结论同时写成 pitfall 与 constraint（或 history 与 project）——
+  // 类型不同，summarizeDedupeMode 的 type+title 去重看不见它们。这个闸只认这两组类型对，
+  // 命中走 supersede（被取代方正文零改写、不 merge）：判错时原文仍在库里，只是不再默认
+  // 注入，显式搜索照常可达，继任者被归档时旧行还会自动恢复可见——所以风险不对称，
+  // 关掉它才是让 #687 报的双录继续产出。不想用时把这一项设 false 即可（面板同一格）。
+  // 不开常开类型闸的理由：2026-11-13 实测 45 对里 9 对（20%）合并会丢信息。
+  summarizeBatchCrossTypeDedupe: z.boolean().default(true),
   // 批内比较的相似度阈（与 quality-filter 的 duplicate 信号同档 0.85：同一条
   // 「是不是在说同一件事」不该有第二个数）。
   summarizeBatchCrossTypeMinSim: z.number().min(0.5).max(0.99).default(0.85),

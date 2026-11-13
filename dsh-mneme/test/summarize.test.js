@@ -2305,7 +2305,7 @@ test("#687 planBatchCrossTypeDedupe retires an entry at most once", () => {
   assert.ok(!plans.some((p) => p.winnerIndex === 1), "a retired entry may never host another retire");
 });
 
-test("#687 batch dedupe is off by default: twins are written untouched", async () => {
+test("#687 batch dedupe can be switched off: twins are written untouched", async () => {
   const stream = () => (async function* () {
     yield { type: "block-start", block: { type: "text" } };
     yield { type: "text-delta", delta: JSON.stringify([
@@ -2315,7 +2315,7 @@ test("#687 batch dedupe is off by default: twins are written untouched", async (
     yield { type: "block-end", block: { type: "text" } };
     yield { type: "finish", kind: "ok" };
   })();
-  const { events, store, service, summarizer } = setup({}, { stream });
+  const { events, store, service, summarizer } = setup({ summarizeBatchCrossTypeDedupe: false }, { stream });
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s687-off",
@@ -2324,7 +2324,7 @@ test("#687 batch dedupe is off by default: twins are written untouched", async (
   };
   await handler(session, { seq: 2, type: "turn/end" });
 
-  assert.equal(store.count(), 2, "default path stays byte-identical: nothing is chained");
+  assert.equal(store.count(), 2, "kill switch stays byte-identical: nothing is chained");
   for (const m of store.all()) assert.equal(m.superseded_by, undefined, `${m.type} must stay live`);
   const ok = service.listLlmAudits().find((r) => r.operation_type === "summarize_compress" && r.status === "success");
   assert.ok(ok, "the summarize audit line exists");
@@ -2343,7 +2343,8 @@ test("#687 batch dedupe supersedes the weaker twin without rewriting its text", 
     yield { type: "block-end", block: { type: "text" } };
     yield { type: "finish", kind: "ok" };
   })();
-  const { events, store, service, summarizer } = setup({ summarizeBatchCrossTypeDedupe: true }, { stream });
+  // 不带开关 = 走默认值。2026-11-13 起默认开（#687 的拍板），所以这条同时是默认路径的证明。
+  const { events, store, service, summarizer } = setup({}, { stream });
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s687-on",

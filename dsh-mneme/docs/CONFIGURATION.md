@@ -136,7 +136,7 @@
 | `summarizeDedupeMode` | `off` | 落库前去重档位：`off` / `title`（拦完全同名）/ `vector`（同会话语义近邻） | `vector` 复用已有 embedding 列，无 LLM 调用 |
 | `summarizeDedupeMinSim` | `0.92` | `vector` 档并入阈值（0.5–0.99） | 仅 `vector` 档生效 |
 | `summarizeDedupeWindowHours` | `24` | `vector` 档回看窗口（小时，≤168） | 仅 `vector` 档生效 |
-| `summarizeBatchCrossTypeDedupe` | `false` | 批内跨类型去重（#687）：同一窗蒸馏产出里，把重复的 `pitfall`/`constraint` 或 `history`/`project` 两组类型对合成一条 | 默认关；只认这两组类型对（其余类型对实测有 20% 会丢信息）。处置是 `supersede`：被取代的一条**正文零改写**、不归档，只是不再默认注入——判错也不丢内容 |
+| `summarizeBatchCrossTypeDedupe` | `true` | 批内跨类型去重（#687）：同一窗蒸馏产出里，把重复的 `pitfall`/`constraint` 或 `history`/`project` 两组类型对合成一条 | **默认开**（2026-11-13 拍板；设 `false` 即关，行为与加这个开关之前逐字节一致）；只认这两组类型对（其余类型对实测有 20% 会丢信息）。处置是 `supersede`：被取代的一条**正文零改写**、不归档，只是不再默认注入——判错也不丢内容 |
 | `summarizeBatchCrossTypeMinSim` | `0.85` | 批内跨类型去重的相似度阈（0.5–0.99） | 仅上一项开启时生效；与质量过滤的 duplicate 信号同档，避免同一条「是不是同一件事」出现第二个数 |
 | `distillRateLimitIntervalMs` | `1000` | 蒸馏请求全局串行排队的相邻间隔（毫秒） | 0 = 关闭排队（默认开的 429 保护随之失效） |
 | `distillRateLimitRetries` | `3` | 命中 429 的指数退避重试次数（≤10） | 重试全程对用户透明 |
