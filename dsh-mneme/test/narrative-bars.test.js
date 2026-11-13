@@ -9,10 +9,11 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createDreamScheduler } from "../src/dream.js";
 import { clusterByTag, intersectEvidence } from "../src/dream/narratives.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function setup(config = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   return { store, service };
 }
 

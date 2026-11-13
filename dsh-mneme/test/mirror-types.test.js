@@ -7,6 +7,7 @@ import { MIRROR_EXCLUDED_TYPES, MIRROR_READONLY_TYPES, TYPE_FILE, createMirror, 
 import { createStore, TYPES } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { PACKAGE_VERSION } from "../src/version-check.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // #278 第一批：落盘盲区。TYPE_FILE 原先只有 5 个键，pitfall / constraint /
 // rejected_solution / pattern 这些后加的 type 从不进镜像与导出——落点存在，但对
@@ -117,7 +118,7 @@ test("#278: mirror covers every active row — no silent 500-row truncation", ()
   let store;
   try {
     store = createStore(join(dir, "memory.db"));
-    const service = createService({ store, mirror: createMirror(dir), config: {} });
+    const service = createService({ store, mirror: createMirror(dir), config: testConfig({}) });
     for (let i = 0; i < 501; i++) store.save({ type: "pitfall", title: `t${i}`, content: `c${i}` });
     // 任意一次业务写触发一次镜像同步（不是逐条 save，避免 501 次渲染）
     service.saveWithDedupe({ type: "pattern", title: "trigger", content: "x" });
@@ -159,7 +160,7 @@ test("#278: mirror keeps its active-only claim — archived and forgotten rows s
   let store;
   try {
     store = createStore(join(dir, "memory.db"));
-    const service = createService({ store, mirror: createMirror(dir), config: {} });
+    const service = createService({ store, mirror: createMirror(dir), config: testConfig({}) });
     // forgotten 在 INSERT 里硬编码为 0（store.js insertMemoryRow），只能经 setForget
     // 设置；archived 可以在载荷里给，这里统一走 setter 保持同一个路径。
     for (const [id, title] of [["keep-c", "留"], ["arch-c", "归档"], ["gone-c", "遗忘"]]) {

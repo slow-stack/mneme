@@ -8,6 +8,7 @@ import { createVectorIndex } from "../src/vector-index.js";
 import { runSleep } from "../src/dream/sleep.js";
 import { supersedeInfoFirstPair } from "../src/dream/decisions.js";
 import { createDreamScheduler, parseReceipt } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Issue #641（beta 第二阶段，enforce 档）：确定性处置接线。锁五件事，防的回归是：
 //   ① enforce 假成功——枚举里加了档位但没人消费（#616 的教训），所以每条用例都
@@ -31,7 +32,7 @@ const embedder = {
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const vectorIndex = createVectorIndex({ store });
   service.setEmbedder(embedder);
   service.setVectorIndex(vectorIndex);
@@ -186,7 +187,7 @@ test("issue#641 enforce：T3 演进走取代链——旧行 superseded_by 指向
 
 test("issue#641 supersedeChain：幽灵行不落链，换指向以最后一次为准", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const a = makeMemory(service, "A", "甲");
   const b = makeMemory(service, "B", "乙");
   const c = makeMemory(service, "C", "丙");
@@ -212,7 +213,7 @@ test("issue#641 注入侧：被取代的行不进注入候选（继任者携带�
 
 test("issue#641 注入侧：矛盾对同批时 enforce 下互相标注、可信度优先排位（#537 教训落地）", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { conflictLedgerMode: "enforce" } });
+  const service = createService({ store, mirror: null, config: testConfig({ conflictLedgerMode: "enforce" }) });
   const a = makeMemory(service, "矛盾注入甲", "矛盾注入甲的内容");
   const b = makeMemory(service, "矛盾注入乙", "矛盾注入乙的内容");
   service.saveConflictLedgerEntry({ memory_a: a.id, memory_b: b.id, tier: "conflict" });
@@ -227,7 +228,7 @@ test("issue#641 注入侧：矛盾对同批时 enforce 下互相标注、可信�
 
 test("issue#641 注入侧：shadow 档只记账零处置——矛盾对不标注（负例）", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { conflictLedgerMode: "shadow" } });
+  const service = createService({ store, mirror: null, config: testConfig({ conflictLedgerMode: "shadow" }) });
   const a = makeMemory(service, "影子甲", "影子甲的内容");
   const b = makeMemory(service, "影子乙", "影子乙的内容");
   service.saveConflictLedgerEntry({ memory_a: a.id, memory_b: b.id, tier: "conflict" });
@@ -240,7 +241,7 @@ test("issue#641 注入侧：shadow 档只记账零处置——矛盾对不标注
 
 test("issue#641 GET /conflicts/ledger：token 门 + 只读面（分诊分布 + 行）", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const routes = [];
   const ctx = { webServer: { register(route) { routes.push(route); return () => {}; } } };
@@ -280,7 +281,7 @@ test("issue#641 检索降权：被取代的行排在其继任者之后（fuseRec
 
 test("issue#641 supersedeInfoFirstPair：长度优先（与 mint 顺序无关）", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const a = rowOf(store, makeMemory(service, "A", "短"));
   const b = rowOf(store, makeMemory(service, "B", "长得多的内容——信息量优先胜者"));
   const res = supersedeInfoFirstPair({ a, b }, service, null, {});
@@ -293,7 +294,7 @@ test("issue#641 supersedeInfoFirstPair：长度优先（与 mint 顺序无关）
 
 test("issue#641 supersedeInfoFirstPair：等长退 updated_at，再退 id（三级兜底，重放不翻面）", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const a = rowOf(store, makeMemory(service, "A", "等长内容"));
   const b = rowOf(store, makeMemory(service, "B", "等长内容"));
   // 单调时钟：B 晚于 A → 等长时 B 赢
@@ -311,7 +312,7 @@ test("issue#641 supersedeInfoFirstPair：等长退 updated_at，再退 id（三�
 
 test("issue#641 supersedeInfoFirstPair：trustEpistemicWeighting 开着也不换位（自动处置承诺必须确定）", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const a = makeMemory(service, "主观长条", "主观但更完整的长内容");
   const b = makeMemory(service, "观察短条", "短");
   // 手工把 b 抬成 observation（可信度高）、a 留 subjective：若 helper 泄漏了
@@ -347,7 +348,7 @@ function dreamCtx({ conflicts, warnings = [] }) {
 
 test("issue#641 dream enforce：conflict 决策只落账本——败者不归档、不停车、正文不污染", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const { memory: w } = service.saveWithDedupe({ type: "decision", title: "截止新", content: "8月20日", importance: 4 });
   const { memory: l } = service.saveWithDedupe({ type: "decision", title: "截止旧", content: "8月15日", importance: 4 });
   // 无 semantic → pairSimilarity 空 → triagePair 无相似度 → 真矛盾档（同日）
@@ -368,7 +369,7 @@ test("issue#641 dream enforce：conflict 决策只落账本——败者不归档
 
 test("issue#641 dream enforce 与 freeze 同开：freeze 让位（conflict 照旧停车），不出现两套处置", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const { memory: w } = service.saveWithDedupe({ type: "decision", title: "截止新", content: "8月20日", importance: 4 });
   const { memory: l } = service.saveWithDedupe({ type: "decision", title: "截止旧", content: "8月15日", importance: 4 });
   const warnings = [];
@@ -430,7 +431,7 @@ test("issue#641 enforce：回执 applied 记真实处置数（相位与整轮同
 
 test("issue#641 dream enforce：T1 自动 supersede 也必须在账本留痕（dream 路径不跑分诊记账）", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const vectorIndex = createVectorIndex({ store });
   service.setEmbedder(embedder);
   service.setVectorIndex(vectorIndex);

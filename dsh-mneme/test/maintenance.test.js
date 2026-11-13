@@ -11,6 +11,7 @@ import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { createMaintenance } from "../src/maintenance.js";
 import { createStandaloneApi } from "../src/api-standalone.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // #275 存储生命周期第一批：无损回收的手动入口。
 // 这一批的验收就三条：dry-run 一个字节都不改（数字与执行出自同一处统计）；执行时只丢
@@ -232,7 +233,7 @@ test("VACUUM 失败不回吞：清理照做、报告与回执都带上失败原�
         saveLlmAudit: (e) => store.saveLlmAudit(e),
         vacuum: () => { throw new Error("SQLITE_BUSY: database is locked"); }
       },
-      config: {},
+      config: testConfig({}),
       logger: null,
       now: () => NOW
     });
@@ -307,7 +308,7 @@ test("执行落一行回执；llmAudit 关掉时不落回执但清理照做", ()
 test("取消归档重新排队嵌入：被回收的向量能拿回来", () => {
   const { store, close } = fileStore();
   try {
-    const service = createService({ store, mirror: null, config: {} });
+    const service = createService({ store, mirror: null, config: testConfig({}) });
     const scheduled = [];
     service.setEmbedder({ ready: true, schedule: (memory) => scheduled.push(memory.id) });
     const { archived } = seed(store);
@@ -328,9 +329,9 @@ test("取消归档重新排队嵌入：被回收的向量能拿回来", () => {
 test("HTTP 面：默认 dry-run；带 dryRun:false 但缺 confirm 只回报告不执行", async () => {
   const { store, close } = fileStore();
   const maintenance = maintenanceFor(store);
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
-  const api = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: 0, maintenance });
+  const api = createStandaloneApi({ service, store, config: testConfig({}), settings, logger: null, port: 0, maintenance });
   await api.ready;
   const url = `http://127.0.0.1:${api.port}/maintenance/reclaim`;
   const post = (body) =>
@@ -388,9 +389,9 @@ test("HTTP 面：默认 dry-run；带 dryRun:false 但缺 confirm 只回报告�
 test("CLI：reclaim 默认 dry-run 报数字，--apply --vacuum 才真收", async () => {
   const { store, close } = fileStore();
   const maintenance = maintenanceFor(store);
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
-  const api = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: 0, maintenance });
+  const api = createStandaloneApi({ service, store, config: testConfig({}), settings, logger: null, port: 0, maintenance });
   await api.ready;
   const auth = [`--url`, `http://127.0.0.1:${api.port}`, `--token`, api.token];
   const run = async (args) => {
@@ -434,9 +435,9 @@ test("HTTP 面（数据面）：窗口上界与确认门里的抛错都跟面板
   // **数据面自己的端口**打真 HTTP，证明它真的走的是同一份。
   const { store, close } = fileStore();
   const maintenance = maintenanceFor(store);
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
-  const api = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: 0, maintenance });
+  const api = createStandaloneApi({ service, store, config: testConfig({}), settings, logger: null, port: 0, maintenance });
   await api.ready;
   const url = `http://127.0.0.1:${api.port}/maintenance/reclaim`;
   const post = (body) =>
@@ -448,7 +449,7 @@ test("HTTP 面（数据面）：窗口上界与确认门里的抛错都跟面板
   // 第二个实例：不传 maintenance（「没接线」的那一档）。在 try 之外建、在 finally 里
   // 关——它要是漏关，node --test 会挂着一个开着的 server 句柄永不退出（变异检验里
   // 一旦断言先炸就正好踩这条）。
-  const unplugged = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: 0 });
+  const unplugged = createStandaloneApi({ service, store, config: testConfig({}), settings, logger: null, port: 0 });
   await unplugged.ready;
   try {
     const { archived } = seed(store);

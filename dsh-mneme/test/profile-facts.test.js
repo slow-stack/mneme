@@ -16,6 +16,7 @@ import { createSettings } from "../src/settings.js";
 import { createApi } from "../src/api.js";
 import { createProfileFacts, ProfileFactsError, parseFactOps, isValidFactOps } from "../src/profile-facts.js";
 import { renderUserSettingsBlock, resolveFactsCard } from "../src/user-settings.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 假的 ctx.llm：协议与 profile-extract.test.js 的 fakeLlm 同款（用量嵌在 chunk.usage）。
 function fakeLlm(chunks) {
@@ -50,7 +51,7 @@ function setup(chunks, opts = {}) {
     ctx: { ...fake, agentDefaultModel: { currentSelection: () => null } },
     service,
     store,
-    config: { dreamProvider: "fake", dreamModel: "m1", ...config },
+    config: testConfig({ dreamProvider: "fake", dreamModel: "m1", ...config }),
     logger
   });
   return { store, service, settings, facts, fake, logger };
@@ -85,10 +86,10 @@ test("解析器：围栏 JSON 可取；未知 op / 缺 content / 非 JSON 一律
 
 test("no-route：抛错、零模型调用，且 failed 回执已落库、游标未推进", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const facts = createProfileFacts({
     ctx: { agentDefaultModel: { currentSelection: () => null } },
-    service, store, config: {}, logger: { warn() {}, info() {}, error() {} }
+    service, store, config: testConfig({}), logger: { warn() {}, info() {}, error() {} }
   });
   seedRows(store, 2);
   await assert.rejects(() => facts.runFor("", { trigger: "manual" }),
@@ -283,7 +284,7 @@ test("strict 寻址：有身份没卡时不落 default 的事实（两 bot 的�
   assert.ok(!byAgent.text.includes("默认卡事实"));
   const strictNone = renderUserSettingsBlock({
     settings: settingsStub,
-    config: { ...configOn, personaStrictAddressing: true },
+    config: testConfig({ ...configOn, personaStrictAddressing: true }),
     agentId: "botB", factsProvider: provider
   });
   assert.ok(!strictNone.text.includes("默认卡事实"), "strict 下没卡的 bot 不吃 default 事实");
@@ -297,10 +298,10 @@ test("开关关着：注入文本与「从没装配过事实」逐字节一致�
   let reads = 0;
   const provider = () => { reads += 1; return { default: ["事实甲"], byAgent: {} }; };
   const off = renderUserSettingsBlock({
-    settings: settingsStub, config: { ...configOn, profileFactsEnabled: false },
+    settings: settingsStub, config: testConfig({ ...configOn, profileFactsEnabled: false }),
     agentId: null, factsProvider: provider
   });
-  const never = renderUserSettingsBlock({ settings: settingsStub, config: { ...configOn, profileFactsEnabled: false }, agentId: null });
+  const never = renderUserSettingsBlock({ settings: settingsStub, config: testConfig({ ...configOn, profileFactsEnabled: false }), agentId: null });
   assert.equal(off.text, never.text, "关着时输出必须与无 provider 时逐字节一致");
   assert.equal(reads, 0, "「关」是零读数：provider 一次都不该被调");
 });
@@ -373,7 +374,7 @@ test("GET：无装配回 503；有装配回 cards/facts/journal/runs 四件，fl
 
   const { store, facts } = realFacts();
   facts.applyManualOps("", [{ op: "add", content: "事实甲" }]);
-  const { getRoute } = setupApi({ facts, config: {} });
+  const { getRoute } = setupApi({ facts, config: testConfig({}) });
   const res = new FakeRes();
   await getRoute("/api/dsh-mneme/profile-facts").handler(httpReq("GET", null, "/api/dsh-mneme/profile-facts"), res);
   assert.equal(res.statusCode, 200);
@@ -420,12 +421,12 @@ test("apply：405 / 400（空 ops 与非法 op）/ 200（applied+failures+回读
 
 test("run：405 / 409（flag 关）/ noop 200；错误码映射 no-route→503、unparseable→502", async () => {
   const { store, facts } = realFacts();
-  const { getRoute } = setupApi({ facts, config: { profileFactsEnabled: false } });
+  const { getRoute } = setupApi({ facts, config: testConfig({ profileFactsEnabled: false }) });
   let res = new FakeRes();
   await getRoute("/api/dsh-mneme/profile-facts/run").handler(httpReq("POST", { agent: "" }, "/api/dsh-mneme/profile-facts/run"), res);
   assert.equal(res.statusCode, 409);
 
-  const { getRoute: getRoute2 } = setupApi({ facts, config: { profileFactsEnabled: true } });
+  const { getRoute: getRoute2 } = setupApi({ facts, config: testConfig({ profileFactsEnabled: true }) });
   const run = getRoute2("/api/dsh-mneme/profile-facts/run");
   res = new FakeRes();
   await run.handler(httpReq("GET", null, "/api/dsh-mneme/profile-facts/run"), res);
@@ -446,7 +447,7 @@ test("run：405 / 409（flag 关）/ noop 200；错误码映射 no-route→503�
   // 错误映射：把 facts.runFor 换成抛错的桩，逐 code 对状态码。
   for (const [code, status] of [["no-route", 503], ["unparseable", 502], ["stream-failed", 502]]) {
     const stub = { runFor: async () => { throw new ProfileFactsError(code, code); }, applyManualOps() {}, listFacts() { return []; }, listJournal() { return []; }, listRuns() { return []; }, cardKeys() { return [""]; }, factsProvider() { return { default: [], byAgent: {} }; } };
-    const { getRoute: getRoute3 } = setupApi({ facts: stub, config: { profileFactsEnabled: true } });
+    const { getRoute: getRoute3 } = setupApi({ facts: stub, config: testConfig({ profileFactsEnabled: true }) });
     const r = new FakeRes();
     await getRoute3("/api/dsh-mneme/profile-facts/run").handler(httpReq("POST", { agent: "" }, "/api/dsh-mneme/profile-facts/run"), r);
     assert.equal(r.statusCode, status, `${code} 的状态码`);
@@ -459,7 +460,7 @@ test("run 的 policy 是 token：配了 token 又不带 token 的 POST 被挡在
   const { store, facts } = realFacts();
   let called = 0;
   const stub = { ...facts, runFor: async () => { called += 1; return { status: "ok" }; } };
-  const { getRoute } = setupApi({ facts: stub, config: { profileFactsEnabled: true }, apiToken: "sekret" });
+  const { getRoute } = setupApi({ facts: stub, config: testConfig({ profileFactsEnabled: true }), apiToken: "sekret" });
   const res = new FakeRes();
   await getRoute("/api/dsh-mneme/profile-facts/run").handler(httpReq("POST", { agent: "" }, "/api/dsh-mneme/profile-facts/run"), res);
   assert.equal(res.statusCode, 401);
@@ -473,7 +474,7 @@ test("strict 寻址：事实一张身份卡都没建时仍落 default（#587 例
   const onlyDefault = () => ({ default: ["默认卡事实"], byAgent: {} });
   const strictEmpty = renderUserSettingsBlock({
     settings: settingsStub,
-    config: { ...configOn, personaStrictAddressing: true },
+    config: testConfig({ ...configOn, personaStrictAddressing: true }),
     agentId: "standard",
     factsProvider: onlyDefault
   });

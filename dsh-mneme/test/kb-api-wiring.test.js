@@ -16,6 +16,7 @@ import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { createKb } from "../src/kb/index.js";
 import { createTools } from "../src/tools.js";
+import { testConfig } from "./helpers/test-config.js";
 
 class FakeRes extends EventEmitter {
   constructor() { super(); this.statusCode = 200; this.body = ""; }
@@ -34,7 +35,7 @@ function req(path, method = "GET") {
 // 注意实参顺序：kb 是第 12 参，必须显式补到位置（facts 用 undefined 占位）。
 function setup({ config = null, kb = null } = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const routes = [];
   const ctx = { webServer: { register(route) { routes.push(route); return () => {}; } } };
@@ -50,8 +51,8 @@ async function invoke(route, path) {
 }
 
 test("kb 未装配 → 503 unavailable；装了但开关没开 → 409 disabled（两条闸不许混）", async () => {
-  const missing = setup({ config: { kbEnabled: true } });
-  const off = setup({ config: { kbEnabled: false }, kb: createKb({ store: missing.store }) });
+  const missing = setup({ config: testConfig({ kbEnabled: true }) });
+  const off = setup({ config: testConfig({ kbEnabled: false }), kb: createKb({ store: missing.store }) });
   try {
     const a = await invoke(missing.routes.find((r) => r.path === "/api/dsh-mneme/kb/collections"), "/api/dsh-mneme/kb/collections");
     assert.equal(a.status, 503);
@@ -68,7 +69,7 @@ test("kb 未装配 → 503 unavailable；装了但开关没开 → 409 disabled�
 });
 
 test("开关开 + 已装配 → kb 六条路由全在册且 200 通", async () => {
-  const s = setup({ config: { kbEnabled: true }, kb: createKb({ store: createStore(":memory:") }) });
+  const s = setup({ config: testConfig({ kbEnabled: true }), kb: createKb({ store: createStore(":memory:") }) });
   try {
     const paths = [
       "/api/dsh-mneme/kb/collections",
@@ -99,7 +100,7 @@ async function toolPresence(config, kb, names) {
   const prompt = await ctx.plugin(SystemPrompt);
   const runtime = await ctx.plugin(ToolRuntime);
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const registry = ctx.get("tools");
   createTools({ tools: registry }, service, config, null, null, null, kb);
   const present = Object.fromEntries(names.map((n) => [n, Boolean(registry.get(n))]));

@@ -8,6 +8,7 @@ import { createStore } from "../src/store.js";
 import { createMirror, TYPE_FILE } from "../src/mirror.js";
 import { createService } from "../src/service.js";
 import { applyDecisions } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 /**
  * F-NEW-01 / F-NEW-02 回归测试（audit peer 新阻断项）。
@@ -36,7 +37,7 @@ function setup({ dbPath } = {}) {
   const mirrorDir = join(dir, "mirror");
   const store = createStore(dbPath ?? ":memory:");
   const mirror = createMirror(mirrorDir);
-  const service = createService({ store, mirror, config: {} });
+  const service = createService({ store, mirror, config: testConfig({}) });
   return { dir, mirrorDir, store, mirror, service };
 }
 
@@ -123,7 +124,7 @@ test("F-NEW-01 d: 端到端启动回灌（index.js 同款读-merge 循环）→ 
     // 第二次"启动"：完整走 index.js 的回灌循环（先读全部类型再逐类 merge）
     store = createStore(dbPath);
     mirror = createMirror(mirrorDir);
-    service = createService({ store, mirror, config: {} });
+    service = createService({ store, mirror, config: testConfig({}) });
     for (const type of Object.keys(TYPE_FILE)) {
       const edits = mirror.readHumanEdits(type);
       if (edits.length) service.mergeHumanEdits(type, edits);
@@ -203,7 +204,7 @@ test("F-NEW-02 e: COMMIT 后 mirror.sync 抛 ENOSPC → transaction 正常返回
     const mirror = createMirror(mirrorDir);
     const warns = [];
     const logger = { warn: (...a) => warns.push(a) };
-    const service = createService({ store, mirror, config: {}, logger });
+    const service = createService({ store, mirror, config: testConfig({}), logger });
     const { original } = throwingMirrorSync(mirror);
 
     let committedId;
@@ -295,7 +296,7 @@ test("F-NEW-02: mirror 自身 fail-safe——底层 sync 抛错被吞并 console
   try {
     const store = createStore(dbPath);
     const mirror = createMirror(mirrorDir);
-    const service = createService({ store, mirror, config: {} });
+    const service = createService({ store, mirror, config: testConfig({}) });
     const { original } = throwingMirrorSync(mirror, "EACCES");
     try {
       assert.doesNotThrow(() => service.saveWithDedupe({ type: "history", title: "非事务路径", content: "x", importance: 3 }),

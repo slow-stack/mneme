@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // #218 v1：heat 作为注入排序的**同级内乘数**（issue #218 拍板口径）。
 // 规则路 comparator 的层内权重 importance×quality 乘 heat；priority 分层
@@ -18,7 +19,7 @@ const HOUR = 3600000;
 
 function setup(config = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   return { store, service };
 }
 

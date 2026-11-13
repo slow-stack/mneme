@@ -17,6 +17,7 @@ import { createStandaloneApi } from "../src/api-standalone.js";
 import { createTools } from "../src/tools.js";
 import { MCP_TOOLS, resolveMcpConfig } from "../bin/dsh-mneme-mcp.mjs";
 import { fakeToken } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const FILE_TOKEN = fakeToken("file");
 const ENV_TOKEN = fakeToken("env");
@@ -25,9 +26,9 @@ const MCP_BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..",
 
 async function setupApi() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
-  const api = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: 0 });
+  const api = createStandaloneApi({ service, store, config: testConfig({}), settings, logger: null, port: 0 });
   await api.ready;
   return {
     service,
@@ -326,7 +327,7 @@ test("MCP tool surface stays in lockstep with src/tools.js (name/description/par
   const ctx = { tools: { register: (tool) => registered.push(tool) }, logger: { warn() {} } };
   const store = createStore(":memory:");
   try {
-    const service = createService({ store, mirror: null, config: {} });
+    const service = createService({ store, mirror: null, config: testConfig({}) });
     createTools(ctx, service, {}, null);
   } finally {
     store.close();

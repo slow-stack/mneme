@@ -13,6 +13,7 @@ import { createVectorIndex } from "../src/vector-index.js";
 import { Config, applyLightModePreset } from "../src/config.js";
 import { parseHumanEdits } from "../src/mirror.js";
 import { FAKE_API_TOKEN, fakeOpenAiKey, fakeMaskedOpenAiKey } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 解析后的 schema 默认值，作为 /features effective 的 bundle 配置侧样本。
 const FLAGS_CFG = Config({});
@@ -39,7 +40,7 @@ function req(path, method = "GET", body = null) {
 
 function setup(embedder, apiToken = "", config = null, semantic = undefined) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const commands = {
     add: (def) => settings.addCommand(def),
@@ -737,7 +738,7 @@ test("GET /api/dsh-mneme/semantic/llm-audit/stats aggregates tokens by source an
 
 test("Bug10: vector-reindex with an embed-only OpenAI-compatible embedder returns the real count and records the model fingerprint", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const vectorIndex = createVectorIndex({ store });
   const embedder = {
@@ -1946,7 +1947,7 @@ test("GET /api/dsh-mneme/list projects per-memory heat only when heatEnabled=tru
 
 function setupLlm(llm, apiToken = "", extraCtx = {}, config = null) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const commands = { add: () => {}, remove: () => {}, list: () => [] };
   const routes = [];
@@ -2241,7 +2242,7 @@ test("POST /api/dsh-mneme/test-model is auth-gated like other expensive endpoint
 
 test("GET /api/dsh-mneme/inject-status: suppressed only when minimal preset observed (issue #182)", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const routes = [];
   let onEvent = null;
@@ -2301,7 +2302,7 @@ test("GET /api/dsh-mneme/inject-status: suppressed only when minimal preset obse
 
 test("inject-status: autoInject off is never suppressed (user's own choice, not a black box)", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const routes = [];
   let onEvent = null;
@@ -2336,7 +2337,7 @@ test("inject-status: autoInject off is never suppressed (user's own choice, not 
 
 test("GET /api/dsh-mneme/inject-preview: returns last assembly snapshot (issue #179)", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const routes = [];
   const ctx = {
@@ -2538,7 +2539,7 @@ test("GET /api/dsh-mneme/memory/provenance：无 token 401，装配没接线 503
   // 这与「这条记忆没有来源」是两件事，必须分开读数——后者是事实，前者是接线坏了。
   const store = createStore(":memory:");
   const settings = createSettings(store.db);
-  const bare = createService({ store, mirror: null, config: {} });
+  const bare = createService({ store, mirror: null, config: testConfig({}) });
   delete bare.provenanceFor;
   delete bare.distillRecordsFor;
   const bareRoutes = [];
@@ -2600,7 +2601,7 @@ test("GET /api/dsh-mneme/memory/provenance：读失败要留痕，500 不能把 
   // catch 吞掉，响应还是 500，但「为什么失败」一个字都不留。下面这条把接线本身锁住。
   const store = createStore(":memory:");
   const settings = createSettings(store.db);
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const realFor = service.provenanceFor;
   service.provenanceFor = (id) => { realFor(id); throw new Error("db locked"); };
 
@@ -2675,7 +2676,7 @@ test("GET /api/dsh-mneme/memory/provenance：409 赢 503——功能关比装配
   // 关着 + service 上连方法都没有：503 会让人去查一个没坏的部署。
   const store = createStore(":memory:");
   const settings = createSettings(store.db);
-  const bare = createService({ store, mirror: null, config: {} });
+  const bare = createService({ store, mirror: null, config: testConfig({}) });
   delete bare.provenanceFor;
   delete bare.distillRecordsFor;
   const bareRoutes = [];
@@ -2821,7 +2822,7 @@ function diaryPage(agent, body = "正文") {
 /** 只装配日记要的那一个位置参数（第 14 个），其余留空。 */
 function setupDiary(config, diary = { compose: async () => ({ ok: true }) }) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const routes = [];
   const handlers = {};

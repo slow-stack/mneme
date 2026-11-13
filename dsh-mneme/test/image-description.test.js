@@ -20,6 +20,7 @@ import {
   imageBlocks,
   DESCRIPTION_PREFIX
 } from "../src/image-describe.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const IMAGE = {
   type: "image",
@@ -70,7 +71,7 @@ function fakeLlm({ description = "一张表格截图，两列数据对比", moda
 
 function setup(over = {}, llm = fakeLlm()) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const events = [];
   const ctx = {
     on(name, fn) {
@@ -92,7 +93,7 @@ async function distill(setupResult, session) {
 function sessionOf(id, events) {
   return {
     id,
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events
   };
 }

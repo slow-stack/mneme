@@ -7,6 +7,7 @@ import { createSettings } from "../src/settings.js";
 import { createStandaloneApi, CONTEXT_DEGRADE_REASONS } from "../src/api-standalone.js";
 import { PACKAGE_VERSION } from "../src/version-check.js";
 import { Config, applyLightModePreset } from "../src/config.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Real HTTP server on an OS-assigned port (port: 0), driven with fetch.
 // `logger` 可传（默认 null）：#383 的降级原因只进 daemon stderr 那行 warn、不进响应体，
@@ -14,7 +15,7 @@ import { Config, applyLightModePreset } from "../src/config.js";
 // 也是它当初能溜进来的原因（没有任何测试看过那行日志）。
 async function setup({ config = {}, embedder = null, embedTimeoutMs, logger = null } = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   const settings = createSettings(store.db);
   const api = createStandaloneApi({ service, store, config, settings, logger, port: 0, embedder, embedTimeoutMs });
   await api.ready;
@@ -93,14 +94,14 @@ test("GET /profile and /rules return empty values when unset", async () => {
 
 test("token is persisted into settings kv and reused across restarts", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
-  const first = createStandaloneApi({ service, store, config: {}, settings, port: 0 });
+  const first = createStandaloneApi({ service, store, config: testConfig({}), settings, port: 0 });
   await first.ready;
   try {
     assert.equal(settings.getExternalApi().token, first.token, "generated token persisted");
     assert.ok(first.token.length >= 20, "token is a real random value");
-    const second = createStandaloneApi({ service, store, config: {}, settings, port: 0 });
+    const second = createStandaloneApi({ service, store, config: testConfig({}), settings, port: 0 });
     await second.ready;
     assert.equal(second.token, first.token, "restart reuses the persisted token");
     second.server.closeIdleConnections?.();
@@ -591,7 +592,7 @@ test("GET /search passes a declared scope through (strictScope hard wall on the 
   // issue #370：searchMemories 本就收 scope，8790 此前没有入口——透传后第三方
   // 声明身份，A2 软加权与 strictScope 硬过滤在检索面同样成立；不传参数行为
   // 与既往逐字节一致（scopeFromSearchParams 返回 undefined → 不进 options）。
-  const { base, auth, close } = await setup({ config: { strictScope: true } });
+  const { base, auth, close } = await setup({ config: testConfig({ strictScope: true }) });
   try {
     await saveMemory(base, auth, { type: "decision", title: "他域检索", content: "外部线索 abc", importance: 5, agent_scope: "other-agent" });
 
@@ -661,7 +662,7 @@ test("GET /context threshold is an importance gate (not /search's similarity thr
 test("GET /context pins preference rows ahead when pinnedInjectBudget is on", async () => {
   // #249 pin 池经 8790 透出。用 preference 而非 constraint：constraint 属编码
   // 记忆，非编码查询被 codingGate 排除在候选池外，pin 池也够不着它。
-  const { base, auth, close } = await setup({ config: { pinnedInjectBudget: 2 } });
+  const { base, auth, close } = await setup({ config: testConfig({ pinnedInjectBudget: 2 }) });
   try {
     await saveMemory(base, auth, { type: "preference", title: "pin-偏好", content: "永远先讲结论", importance: 5 });
     await saveMemory(base, auth, { type: "decision", title: "普通决策", content: "先做 A 再做 B", importance: 5 });
@@ -678,7 +679,7 @@ test("GET /context honors a declared scope under strictScope; undeclared stays u
   // scope 语义锁（issue #370）：声明身份 → strictScope 硬过滤按 isVisibleInScope
   // 生效；不声明 → scope=null，门不触发（与宿主「会话身份取不到时两维为 null」
   // 同构）。任一维声明而另一维缺省时，缺维按解析不到走 fail-closed。
-  const { base, auth, close } = await setup({ config: { strictScope: true } });
+  const { base, auth, close } = await setup({ config: testConfig({ strictScope: true }) });
   try {
     await saveMemory(base, auth, { type: "decision", title: "他域决策", content: "别的 agent 的事", importance: 5, agent_scope: "other-agent" });
     await saveMemory(base, auth, { type: "decision", title: "全域决策", content: "谁都可见", importance: 5 });
@@ -766,14 +767,14 @@ test("strictPort: busy port rejects instead of hopping; default path still hops"
   const busyPort = blocker.address().port;
 
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   try {
-    const strict = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: busyPort, strictPort: true });
+    const strict = createStandaloneApi({ service, store, config: testConfig({}), settings, logger: null, port: busyPort, strictPort: true });
     await assert.rejects(strict.ready, (err) => err?.code === "EADDRINUSE");
 
     // 默认路径(不传 strictPort)行为不变:顺延成功;具体端口不断言(避免抢号)。
-    const hopping = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: busyPort });
+    const hopping = createStandaloneApi({ service, store, config: testConfig({}), settings, logger: null, port: busyPort });
     await hopping.ready;
     assert.notEqual(hopping.port, busyPort, "default policy hops off a busy port");
     hopping.server.close();
@@ -1235,7 +1236,7 @@ test("GET /memory/provenance: distillRecords.enabled off answers 409, not 404 an
   // 503 装配没接线 / 200 空 windows = 「这条记忆不是蒸馏来的」。把「关了」报成 404，
   // 调用方会按本仓既有的「404 = 命名的东西不存在」（/memories/:id）读成「这条记忆
   // 不存在」——而这两种误读的后续动作完全不同（一个去开开关，一个去查这条记忆）。
-  const { base, auth, close } = await setup({ config: { distillRecords: { enabled: false } } });
+  const { base, auth, close } = await setup({ config: testConfig({ distillRecords: { enabled: false } }) });
   try {
     const saved = await saveMemory(base, auth, { type: "decision", title: "核心决策", content: "选定 SQLite 单文件库", importance: 5 });
     const memoryId = saved.memory?.id ?? saved.id;
@@ -1261,7 +1262,7 @@ test("GET /memory/provenance: no config at all is fail-closed (409)", async () =
 });
 
 test("GET /memory/provenance: 400 beats 409 and 409 is not an existence oracle", async () => {
-  const { base, auth, close } = await setup({ config: { distillRecords: { enabled: false } } });
+  const { base, auth, close } = await setup({ config: testConfig({ distillRecords: { enabled: false } }) });
   try {
     const missing = await fetch(`${base}/memory/provenance`, { headers: auth });
     assert.equal(missing.status, 400, "缺 id 是语法畸形，排在功能开关之前");
@@ -1282,7 +1283,7 @@ test("GET /memory/provenance: 400 beats 409 and 409 is not an existence oracle",
 test("GET /memory/provenance: 409 beats 503 — feature off is more specific than unwired", async () => {
   // 关着 + service 上连 distillRecordsFor 都没有（旧装配 / headless）：报 503 会让人
   // 去查一个没坏的部署。与 api.js:525-526 立的两段式同构。
-  const { base, auth, service, close } = await setup({ config: { distillRecords: { enabled: false } } });
+  const { base, auth, service, close } = await setup({ config: testConfig({ distillRecords: { enabled: false } }) });
   try {
     delete service.distillRecordsFor;
     const res = await fetch(`${base}/memory/provenance?id=x`, { headers: auth });

@@ -17,6 +17,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { runSleep } from "../src/dream/sleep.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const embedder = {
   // 批量接口要按输入条数返回（向量回填走这一条），返回单个向量会让 usable 判空。
@@ -29,7 +30,7 @@ const embedder = {
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const vectorIndex = createVectorIndex({ store });
   service.setEmbedder(embedder);
   service.setVectorIndex(vectorIndex);

@@ -4,6 +4,7 @@ import { STR } from "../src/lang.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createDreamScheduler } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 防谄媚的**提示词侧**回归锁。
 //
@@ -109,7 +110,7 @@ test("总览落库判据不因提示词改动而放宽", async () => {
   }
 
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   service.saveWithDedupe({ type: "preference", title: "语言", content: "中文", importance: 3 });
 

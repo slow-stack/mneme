@@ -17,6 +17,7 @@ import { createInjector } from "../src/inject.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { resolvePersonaCard, renderUserSettingsBlock } from "../src/user-settings.js";
+import { testConfig } from "./helpers/test-config.js";
 
 class FakeRes extends EventEmitter {
   constructor() { super(); this.statusCode = 200; this.body = ""; }
@@ -428,7 +429,7 @@ test("bySession 里的损坏卡（非对象）被丢弃，不抛错", () => {
 test("renderUserSettingsBlock 返回值带 session 字段（面板定位用）", () => {
   const { store, settings } = setup({ personaEnabled: true });
   settings.setPersona({ name: "Amarre", enabled: true });
-  const out = renderUserSettingsBlock({ settings, config: { personaEnabled: true }, agentId: "standard", sessionId: "s1" });
+  const out = renderUserSettingsBlock({ settings, config: testConfig({ personaEnabled: true }), agentId: "standard", sessionId: "s1" });
   assert.equal(out.session, "s1");
   assert.equal(out.agent, "standard");
   assert.equal(out.source, "default");
@@ -450,7 +451,7 @@ test("子 agent 没自己的卡时继承父会话卡（source 是 parentSession�
   assert.ok(!text.includes("兜底卡"), "不许回落到 default");
   const out = renderUserSettingsBlock({
     settings,
-    config: { personaEnabled: true },
+    config: testConfig({ personaEnabled: true }),
     agentId: "standard",
     sessionId: "session-child",
     parentSessionId: "session-parent"

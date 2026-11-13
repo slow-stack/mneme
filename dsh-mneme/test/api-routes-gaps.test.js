@@ -11,6 +11,7 @@ import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { createMaintenance } from "../src/maintenance.js";
 import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -42,7 +43,7 @@ function req(path, method = "GET", body = null) {
 
 function setup(apiToken = "") {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const commands = { add: () => {}, remove: () => {}, list: () => [] };
   const routes = [];
@@ -491,12 +492,12 @@ const RECLAIM_PATH = "/api/dsh-mneme/maintenance/reclaim";
 function reclaimSetup(apiToken = FAKE_API_TOKEN, { logger = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-reclaim-api-"));
   const store = createStore(join(dir, "memory.db"));
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const commands = { add: () => {}, remove: () => {}, list: () => [] };
   const routes = [];
   const ctx = { logger, webServer: { register(route) { routes.push(route); return () => {}; } } };
-  const maintenance = createMaintenance({ store, config: {}, logger });
+  const maintenance = createMaintenance({ store, config: testConfig({}), logger });
   createApi(ctx, service, settings, commands, null, undefined, apiToken, null, maintenance);
   return {
     store, service, routes, maintenance,
