@@ -33,9 +33,12 @@ function dateOnly(iso) {
  * 几十毫秒起步（P29）。这里是用户主动敲的，付得起一次 rev-parse。
  * 三种结局分开报：一致 / 不一致 / 读不到 git——不能把「读不到」说成「没过期」。
  */
-function staleness(repo) {
+function staleness(repo, localRoot) {
   const baseline = String(repo.git_baseline ?? "").trim();
-  const head = gitHead(repo.root_path);
+  // 本机根（#581）：repo 由 repoByCwd 解析（身份行），root_path 可能是别的机器
+  // 最近一次登记的位置；调用方经 queries.localRootForRepo 解析本机路径。旧装配
+  // 没有这个函数时退回行的 root_path（单机语义不变）。
+  const head = gitHead(localRoot ?? repo.root_path);
   if (!head) return { state: "no-git", baseline, head: null };
   if (baseline && baseline === head) return { state: "fresh", baseline, head };
   return { state: "stale", baseline, head };
@@ -81,7 +84,7 @@ export function createChoroHandler({ choro, config, language = () => "zh" } = {}
       const listed = block ? block.split("\n").filter((line) => line.startsWith("- ")).length : 0;
       const rest = Math.max(0, outline.modules.length - listed);
       if (rest > 0) lines.push(S.truncated(rest));
-      const head = staleness(repo);
+      const head = staleness(repo, typeof choro.localRootForRepo === "function" ? choro.localRootForRepo(repo) : null);
       if (head.state === "fresh") lines.push(S.fresh(shortSha(head.head)));
       else if (head.state === "stale") lines.push(S.stale(shortSha(head.baseline), shortSha(head.head), cli));
       else lines.push(S.noGit);

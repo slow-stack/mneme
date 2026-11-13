@@ -3458,7 +3458,22 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             });
             return;
           }
-          repoRoot = repo.root_path;
+          // 本机可用的根（#581）：身份行上的 root_path 可能是别的机器最近一次
+          // 登记的位置，直接拿去跑 T0 会 no-such-dir。
+          // 旧装配没有 localRootForRepo（#581 之前）：退回身份行的 root_path，
+          // 与 choro-command 的 typeof 守卫同形，不让装配差异变成 500。
+          const localRoot = typeof choro.localRootForRepo === "function"
+            ? choro.localRootForRepo(repo)
+            : repo.root_path;
+          // 空串 = 本机不可达（queries.localRootForRepo 的契约：本机没登记位置、
+          // 回退目录又核验不过身份时返回空串）。**绝不能**把它交给 T0——
+          // realpathSync(resolve("")) 会落到宿主进程的 cwd，把那里的模块与页写进
+          // 这条 repo 行，正是本 PR 想挡的「同路径不同仓库」事故（PR #679 评审）。
+          if (!localRoot) {
+            sendJson(res, 409, { error: "repo-not-reachable-here", repo: repoRef ?? null });
+            return;
+          }
+          repoRoot = localRoot;
         }
 
         try {
@@ -3534,6 +3549,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         }
         const started = choro.startT1Job({
           repo,
+          // 本机根（#581）：身份行的 root_path 可能是别的机器登记的位置。
+          rootPath: typeof choro.localRootForRepo === "function" ? choro.localRootForRepo(repo) : null,
           module: body && typeof body.module === "string" && body.module.trim() !== "" ? body.module.trim() : null,
           retryFailed: body && typeof body === "object" ? body.retryFailed === true : false
         });

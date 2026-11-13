@@ -138,9 +138,13 @@ test("读页错误区分未知 slug、缺失文件和不可读文件", async (t)
 test("共享库中本机不可达的仓库仍有模块图，读页和检索报告文件访问失败", async (t) => {
   const { call, store } = await setup(t, { chorographyEnabled: true }, true);
   const root = makeRepo(t, store);
-  const [{ id }] = createChoroQueries({ store }).listRepos();
+  const [{ id, portable_key: key }] = createChoroQueries({ store }).listRepos();
+  // 模拟「本机不可达」（#581 之后两处都要动）：身份行的 root_path 指向一个不
+  // 存在的检出，且删掉本机的位置行——位置行如果还在，读侧会正确地解析回本机
+  // 真路径（那正是修复要给的行为），「不可达」就造不出来了。
   store.db.prepare("UPDATE choro_repos SET root_path = ? WHERE id = ?")
     .run(join(root, "unavailable-checkout"), id);
+  store.db.prepare("DELETE FROM choro_repo_paths WHERE repo_key = ?").run(key);
   const repo = String(id);
 
   const map = await call("choro_module_map", { repo });

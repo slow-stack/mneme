@@ -188,3 +188,116 @@ test("claims 经 replaceChoroGraph 落库（M2 的路径，M0 只验形状）", 
   assert.equal(claim.start_line, 25);
   store.close();
 });
+
+// ---- #581 可移植身份：迁移、位置表、跨端收敛 ----
+
+test("旧库形态补 choro_repos.portable_key 列与 choro_repo_paths 表，重开幂等（#581）", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "choro-legacy-"));
+  const dbPath = join(dir, "memory.db");
+  try {
+    // 手工建 0.14.x 形态（无 portable_key、无位置表）+ 一行存量登记
+    const legacy = new DatabaseSync(dbPath);
+    legacy.exec(`CREATE TABLE choro_repos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, root_path TEXT NOT NULL, name TEXT NOT NULL,
+      plan_fingerprint TEXT, git_baseline TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+    legacy.exec("CREATE UNIQUE INDEX idx_choro_repos_root ON choro_repos(root_path)");
+    legacy.prepare("INSERT INTO choro_repos (root_path, name, created_at, updated_at) VALUES (?,?,?,?)")
+      .run("D:\legacy\repo", "legacy", "2026-11-01T00:00:00.000Z", "2026-11-01T00:00:00.000Z");
+    legacy.close();
+
+    const store = createStore(dbPath);
+    const cols = store.db.prepare("PRAGMA table_info(choro_repos)").all().map((c) => c.name);
+    assert.ok(cols.includes("portable_key"), "portable_key 列补齐");
+    assert.ok(store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='choro_repo_paths'").get(),
+      "位置表补建（CREATE IF NOT EXISTS 走 SCHEMA）");
+    // 存量行的键留 NULL：remote 拿不到就是拿不到，不猜（防「编一个看起来能匹配的键」）
+    assert.equal(store.db.prepare("SELECT portable_key FROM choro_repos").get().portable_key, null);
+    store.close();
+    // 幂等：重开不重复加列、不动已落盘的行
+    const again = createStore(dbPath);
+    assert.equal(again.db.prepare("PRAGMA table_info(choro_repos)").all().filter((c) => c.name === "portable_key").length, 1);
+    assert.equal(again.db.prepare("SELECT COUNT(*) AS n FROM choro_repos").get().n, 1);
+    again.close();
+  } finally {
+    await rmTempEventually(dir);
+  }
+});
+
+test("位置表 upsert：同身份同机一行覆写，跨机各一行；空键不查不抛（#581）", () => {
+  const store = openMemory();
+  store.upsertChoroRepoPath("github.com/x/y", "hostA", "D:\\repo", "2026-11-10T00:00:00.000Z");
+  store.upsertChoroRepoPath("github.com/x/y", "hostB", "/Volumes/repo", "2026-11-10T00:00:00.000Z");
+  store.upsertChoroRepoPath("github.com/x/y", "hostA", "E:\\repo2", "2026-11-11T00:00:00.000Z");
+  assert.equal(store.db.prepare("SELECT COUNT(*) AS n FROM choro_repo_paths").get().n, 2, "同键同机只一行");
+  assert.equal(store.choroRepoPathFor("github.com/x/y", "hostA").root_path, "E:\\repo2", "同机覆写取最近");
+  assert.equal(store.choroRepoPathFor("github.com/x/y", "hostA").last_seen_at, "2026-11-11T00:00:00.000Z");
+  assert.equal(store.choroRepoPathFor("github.com/x/y", "hostB").root_path, "/Volumes/repo");
+  assert.equal(store.choroRepoPathFor("github.com/x/y", "hostC"), null);
+  assert.equal(store.choroRepoPathFor(null, "hostA"), null, "空键返回 null 而不是抛");
+  store.close();
+});
+
+test("upsertChoroRepo：同一 portable_key 跨端登记收敛同一行（#581）", () => {
+  const store = openMemory();
+  const r1 = store.upsertChoroRepo("D:\\repo", "x", null, "aa11", "2026-11-10T00:00:00.000Z", "github.com/x/y");
+  store.upsertChoroRepoPath("github.com/x/y", "hostA", "D:\\repo", "2026-11-10T00:00:00.000Z");
+  // 另一台机器登记同一仓库（不同 root）：收敛到同一行（身份行），root_path 更新
+  // 为「最近一次登记的位置」——单机库永远只有一台机器在登记，看不到这个变化。
+  const r2 = store.upsertChoroRepo("/Volumes/repo", "x", null, "bb22", "2026-11-11T00:00:00.000Z", "github.com/x/y");
+  assert.equal(r2.id, r1.id, "同一身份一行");
+  assert.equal(r2.root_path, "/Volumes/repo");
+  assert.equal(store.db.prepare("SELECT COUNT(*) AS n FROM choro_repos").get().n, 1);
+  // created_at 不被跨端登记改写（首次插入时刻的语义保留）
+  assert.equal(store.db.prepare("SELECT created_at FROM choro_repos").get().created_at, "2026-11-10T00:00:00.000Z");
+  store.close();
+});
+
+test("upsertChoroRepo：升格期 root 被别的行占着时不强改 root（否则撞 UNIQUE 直接抛）（#581）", () => {
+  const store = openMemory();
+  // 升级前跨端登记出的重复行现场：Windows 行（占 D:\repo，键 NULL）+ Mac 行（占
+  // /Volumes/repo，键已补）。此时 Windows 机器带着键 X 来登记 D:\repo——
+  // byKey 命中 Mac 行，若强行把它的 root 改成 D:\repo 就撞 idx_choro_repos_root。
+  store.upsertChoroRepo("D:\\repo", "x", null, "aa11", "2026-11-09T00:00:00.000Z", null);
+  store.upsertChoroRepo("/Volumes/repo", "x", null, "bb22", "2026-11-10T00:00:00.000Z", "github.com/x/y");
+  const r = store.upsertChoroRepo("D:\\repo", "x", null, "cc33", "2026-11-11T00:00:00.000Z", "github.com/x/y");
+  assert.equal(r.root_path, "/Volumes/repo", "root 被占时保留本行原值，位置走位置表");
+  assert.equal(store.db.prepare("SELECT COUNT(*) AS n FROM choro_repos").get().n, 2, "重复行不合并（页面挂在 repo_id 上）");
+  // 位置行的写入是调用方（t0/t1）的职责——upsert 之后照契约落一行，读侧才解析得到。
+  store.upsertChoroRepoPath("github.com/x/y", "hostA", "D:\\repo", "2026-11-11T00:00:00.000Z");
+  assert.equal(store.choroRepoPathFor("github.com/x/y", "hostA")?.root_path, "D:\\repo", "本机位置照记");
+  store.close();
+});
+
+// ---- PR #679 评审：身份唯一 + 路径回退必须校验身份 ----
+
+test("同一路径被另一身份占用时拒绝复用该行（否则会把对方的名字/基线/页一起改掉）", () => {
+  const store = openMemory();
+  store.upsertChoroRepo("D:\work\repo", "a", null, "aa11", "2026-11-10T00:00:00.000Z", "github.com/a/a");
+  assert.throws(
+    () => store.upsertChoroRepo("D:\work\repo", "b", null, "bb22", "2026-11-11T00:00:00.000Z", "github.com/b/b"),
+    /choro repo path conflict/);
+  const rows = store.db.prepare("SELECT name, portable_key, git_baseline FROM choro_repos").all();
+  assert.equal(rows.length, 1, "不许把原行改成另一身份");
+  assert.equal(rows[0].portable_key, "github.com/a/a");
+  assert.equal(rows[0].name, "a");
+  assert.equal(rows[0].git_baseline, "aa11");
+  store.close();
+});
+
+test("无键的存量行仍允许按路径认领（升格语义不变）", () => {
+  const store = openMemory();
+  store.upsertChoroRepo("D:\legacy", "old", null, "aa", "2026-11-09T00:00:00.000Z", null);
+  const r = store.upsertChoroRepo("D:\legacy", "new", null, "bb", "2026-11-11T00:00:00.000Z", "github.com/x/y");
+  assert.equal(r.portable_key, "github.com/x/y", "存量行被补上身份键");
+  assert.equal(store.db.prepare("SELECT COUNT(*) AS n FROM choro_repos").get().n, 1);
+  store.close();
+});
+
+test("portable_key 有唯一约束（部分索引）", () => {
+  const store = openMemory();
+  const idx = store.db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_choro_repos_portable'").get();
+  assert.ok(idx, "索引必须存在");
+  assert.match(idx.sql, /UNIQUE/i, "同名身份不许两行");
+  assert.match(idx.sql, /WHERE portable_key IS NOT NULL/i, "存量 NULL 行不受约束");
+  store.close();
+});

@@ -6,7 +6,7 @@
 // claims 双落（表 + evidence/<slug>.json）、未登记仓库拒绝。
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync, cpSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -14,6 +14,7 @@ import { EventEmitter } from "node:events";
 import { runChoroT0 } from "../src/wiki/t0.js";
 import { createStore } from "../src/store.js";
 import { createT1, T1Refusal, T1_SECTION_START, T1_SECTION_END, makeHeadlessRunner, locateDshExe, resolveCliJs } from "../src/wiki/t1.js";
+import { hostId } from "../src/wiki/portable.js";
 
 const FIXED_NOW = () => "2026-11-05T12:00:00.000Z";
 
@@ -466,5 +467,68 @@ test("--dsh-exe 只影响这一轮：跑完 env 还原", async () => {
     if (saved !== undefined) process.env.DSH_EXE = saved;
     store.close();
     rmTempBestEffort(root);
+  }
+});
+
+// ---- #581 跨端认领 ----
+
+test("跨端认领：本机路径未登记但身份已登记（另一台机器跑过 T0）→ T1 直接富化那一行", async () => {
+  const root = makeFixture();
+  // 挂 remote：两台机器的同一仓库算出同一个身份键（fixture 无 remote 时键是根
+  // 提交哈希，克隆体与原件也同键——这里用 remote 走最常用的那条路）。
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/slow-stack/t1fix.git"], { cwd: root, stdio: "pipe" });
+  const store = createStore(":memory:");
+  let clone = null;
+  try {
+    runChoroT0({ repoRoot: root, store, apply: true, now: FIXED_NOW });
+    const row = store.db.prepare("SELECT id, root_path, portable_key FROM choro_repos").get();
+    assert.equal(row.portable_key, "github.com/slow-stack/t1fix");
+
+    // 模拟另一台机器：把整个检出（含 .chorography）搬到新路径——共享盘/换机场景
+    // 的等价物。新路径没登记过（byRoot 落空），身份却已在库上。
+    clone = mkdtempSync(join(tmpdir(), "choro-t1-hostb-"));
+    cpSync(root, clone, { recursive: true });
+
+    const t1 = createT1({ store, runSession: async () => ({ ok: true, text: GOOD_OUTPUT }), now: FIXED_NOW });
+    const receipt = await t1.runT1({ repoRoot: clone, moduleSlug: "src" });
+    assert.equal(receipt.enriched.length, 1, "跨端认领成功，pages 富化在身份行上");
+    assert.equal(receipt.failed.length, 0);
+    // 认领同时把本机路径落进位置表：读侧从此按 host 解析到它
+    assert.equal(store.choroRepoPathFor(row.portable_key, hostId())?.root_path, realpathSync(clone),
+      "认领必须登记本机位置");
+    // 页面文件写在克隆体自己的 .chorography 里（真源纪律：正文永远读本机磁盘）
+    assert.ok(readFileSync(join(clone, ".chorography", "modules", "src.md"), "utf8").includes(T1_SECTION_START));
+  } finally {
+    store.close();
+    rmTempBestEffort(root);
+    if (clone) rmTempBestEffort(clone);
+  }
+});
+
+// ---- PR #679 评审：路径被另一身份占用时不许认领 ----
+
+test("T1 身份优先：同一条路径登记的是另一个仓库时拒绝（否则读 B 的页、写 A 的 claims）", async () => {
+  const rootA = makeFixture();
+  execFileSync("git", ["remote", "add", "origin", "git@github.com:slow-stack/t1-a.git"], { cwd: rootA, stdio: "pipe" });
+  const store = createStore(":memory:");
+  let rootB = null;
+  try {
+    runChoroT0({ repoRoot: rootA, store, apply: true, now: FIXED_NOW });
+    rootB = makeFixture();
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:slow-stack/t1-b.git"], { cwd: rootB, stdio: "pipe" });
+    // 模拟共享库里的路径撞位：A 的身份行恰好写着 B 的本机路径
+    store.db.prepare("UPDATE choro_repos SET root_path = ?").run(realpathSync(rootB));
+    const t1 = createT1({ store, runSession: async () => ({ ok: true, text: GOOD_OUTPUT }), now: FIXED_NOW });
+    await assert.rejects(
+      () => t1.runT1({ repoRoot: rootB, moduleSlug: "src" }),
+      (err) => err instanceof T1Refusal && err.code === "not-registered",
+      "路径命中但身份不符：必须拒绝，不能把 claims 写进 A 的行");
+    // 拒绝发生在写库之前：A 的页状态没被 B 的富化推进
+    const st = store.db.prepare("SELECT status FROM choro_pages LIMIT 1").get();
+    assert.equal(st.status, "skeleton");
+  } finally {
+    store.close();
+    rmTempBestEffort(rootA);
+    if (rootB) rmTempBestEffort(rootB);
   }
 });

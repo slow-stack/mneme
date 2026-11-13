@@ -18,6 +18,7 @@ import {
   readRootPackage, workspacePrefixes, compileInclude,
 } from "./scan.js";
 import { partitionModules } from "./partition.js";
+import { portableKeyFor, hostId } from "./portable.js";
 import {
   renderSkeletonPage, renderIndex, extractHumanBlocks, injectHumanBlocks,
   TEMPLATE_VERSION, T1_SECTION_START,
@@ -258,7 +259,11 @@ export function runChoroT0({ repoRoot, store = null, apply = false, guardT1Loss 
   writeFileSync(indexAbs, indexContent, "utf8");
   bytes += Buffer.byteLength(indexContent, "utf8");
 
-  const repoRow = store.upsertChoroRepo(rootPath, repoName, loaded.fingerprint, gitBaseline, generatedAt);
+  // 身份与位置一起登记（#581）：身份键从 remote URL 归一化（无 remote 退化根提交
+  // 哈希），位置表按当前 host 落一行。T1 的登记校验与读侧的本机路径解析都吃这两样。
+  const portableKey = portableKeyFor(rootPath);
+  const repoRow = store.upsertChoroRepo(rootPath, repoName, loaded.fingerprint, gitBaseline, generatedAt, portableKey);
+  store.upsertChoroRepoPath(portableKey, hostId(), rootPath, generatedAt);
   store.replaceChoroGraph(repoRow.id, {
     edges: moduleEdges,
     modules: modules.map((m) => ({

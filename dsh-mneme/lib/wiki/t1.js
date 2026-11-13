@@ -28,6 +28,7 @@ import {
   FM_VERIFIED_AT, FM_VERIFIED_BASELINE, FM_STATUS, setFrontmatterKeys,
 } from "./render.js";
 import { gitHead } from "./t0.js";
+import { portableKeyFor, hostId } from "./portable.js";
 // issue #607：拒绝文案里的 CLI 命令要给绝对路径入口（profile 装的插件没有全局
 // shim，光写 `dsh-mneme-choro` 用户照抄只会 command not found）。
 import { choroCliCommandFrom } from "./cli-hint.js";
@@ -323,9 +324,26 @@ export function createT1({ store, runSession = null, limits = DEFAULT_LIMITS, no
   async function runT1({ repoRoot, model = DEFAULT_T1_MODEL, moduleSlug = null, retryFailed = false, dryRun = false, dshExe = null, limits: limitsOverride = null }) {
     const cap = { ...limits, ...limitsOverride };
     const rootPath = realpathSync(resolve(repoRoot));
-    const repo = store.db.prepare("SELECT * FROM choro_repos WHERE root_path = ?").get(rootPath);
+    // 登记校验（#581）：**身份优先**（PR #679 评审）——共享库里另一台主机可能把
+    // 同一条绝对路径登记成了别的仓库；按路径先查会命中那一行，随后 T1 读的是本机
+    // 仓库的文件，却把 claims 与页状态写进对方的 repo.id。所以先按身份认领，路径
+    // 回退只接受「无键的存量行」或「键一致的行」。认领成功的同时把本机路径落进
+    // 位置表，读侧从此能按 host 解析到它。
+    const portableKey = portableKeyFor(rootPath);
+    let repo = portableKey
+      ? (store.db.prepare("SELECT * FROM choro_repos WHERE portable_key = ?").get(portableKey) ?? undefined)
+      : undefined;
+    if (!repo) {
+      const byPath = store.db.prepare("SELECT * FROM choro_repos WHERE root_path = ?").get(rootPath);
+      if (byPath && (!portableKey || byPath.portable_key == null || byPath.portable_key === portableKey)) {
+        repo = byPath;
+      }
+    }
     if (!repo) {
       throw new T1Refusal("not-registered", `${rootPath} 还没有登记：先跑一次 T0（${T1_CLI ?? "dsh-mneme-choro <repo> --apply"}）`);
+    }
+    if (portableKey) {
+      store.upsertChoroRepoPath(portableKey, hostId(), rootPath, now());
     }
 
     // 选模块：skeleton 必跑；failed 只在 retryFailed 时；enriched 跳过（重富化留待显式 --module）。
