@@ -117,8 +117,12 @@ export function createT1Jobs({
    * 起一个后台 T1。返回 {started:true, jobId} 或 {started:false, code, jobId?}——
    * 路由据此分叉 200 / 409，本层不碰 HTTP。
    */
-  function start({ repo = null, module = null, retryFailed = false } = {}) {
-    const rootPath = typeof repo?.root_path === "string" ? repo.root_path : "";
+  function start({ repo = null, module = null, retryFailed = false, rootPath: rootPathOverride = null } = {}) {
+    // rootPath 覆写（#581）：repo 是身份行，root_path 可能是别的机器最近一次登
+    // 记的位置；调用方（/choro/t1）经 queries.localRootForRepo 传本机根。
+    const rootPath = typeof rootPathOverride === "string" && rootPathOverride !== ""
+      ? rootPathOverride
+      : (typeof repo?.root_path === "string" ? repo.root_path : "");
     if (rootPath === "") return { started: false, code: "repo-invalid" };
     const repoKey = String(repo.id ?? rootPath);
     const existing = runningByRepo.get(repoKey);
