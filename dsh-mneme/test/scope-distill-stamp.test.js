@@ -10,10 +10,11 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createScopeResolver } from "../src/scope.js";
 import { createSummarizer } from "../src/summarize.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function summarizerHarness() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const events = [];
   const ctx = {
     on(name, fn) { events.push({ name, fn }); return () => {}; },
@@ -49,7 +50,7 @@ function sessionOf(scope) {
   return {
     id: SID,
     header: { agentPreset: scope, cwd: "C:\\work\\probe" },
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       { seq: 1, type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "提问" }] } },
       { seq: 2, type: "turn/end" }
@@ -103,7 +104,7 @@ test("scope + dedupe: a same-scope candidate still merges and keeps its source",
 // 异常会穿出解析器：蒸馏路径上一个窗口的记忆与游标一起丢，工具路径上是一次
 // memory_save 直接失败。锁的是「字段级读取也必须各自护住」。
 test("scope resolver: a throwing header accessor never escapes the resolver", () => {
-  const resolve = createScopeResolver({ ctx: {}, config: { scopeEnabled: true }, logger: {} });
+  const resolve = createScopeResolver({ ctx: {}, config: testConfig({ scopeEnabled: true }), logger: {} });
   const session = {
     id: "s-throw",
     get header() {

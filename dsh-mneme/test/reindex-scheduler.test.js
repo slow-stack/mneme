@@ -4,6 +4,7 @@ import { scheduleBootBackfill } from "../src/semantic.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // #604：boot 回填的续排此前完全没有用例覆盖 —— createSemantic 只被 index.js /
 // serve.js 引用，闭包里的调度逻辑既测不到也看不见，于是「一次启动只跑一轮、撞
@@ -12,7 +13,7 @@ import { createVectorIndex } from "../src/vector-index.js";
 
 function setup({ count = 6, batchSize = 2, maxPerBoot = 2 } = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < count; i++) {
     service.saveWithDedupe({ type: "preference", title: `记忆${i}`, content: `内容${i}` });
   }
@@ -230,7 +231,7 @@ test("#604: a dead prefix deeper than the pick window stops the scheduler instea
   // capped、调度器继续续排。默认配置连跑 21 轮：每轮 indexed=0 / failed=500，
   // 累计 provider 调用 10500 次，好行 0/10 嵌入。
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 10; i++) {
     service.saveWithDedupe({ type: "preference", title: `好行${i}`, content: `good-${i}` });
   }

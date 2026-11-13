@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // Mock embedder: every query maps to the fixed vector [1,0,0], so vector recall
 // surfaces any row embedded at [1,0,0] (cosine 1) and excludes orthogonal ones
@@ -283,7 +284,7 @@ test("store: listRecallRuns honors limit/offset paging", async () => {
 
 test("e2e: index.js wiring — recordRecall search lands a row listRecallRuns can read back", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   // Simulate src/index.js: the recorder persists each receipt to recall_runs.
   service.setRecallRecorder((recall) => {
     store.saveRecallRun({
@@ -313,7 +314,7 @@ test("e2e: index.js wiring — recordRecall search lands a row listRecallRuns ca
 
 test("e2e: unset recordRecall records by default; explicit false adds no row", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   service.setRecallRecorder((recall) => store.saveRecallRun({
     query: recall.query, mode: recall.mode, topK: recall.topK, threshold: recall.threshold ?? null,
     candidates: recall.candidates ?? [], created_at: recall.createdAt

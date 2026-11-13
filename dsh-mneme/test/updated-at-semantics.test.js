@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { runSleep } from "../src/dream/sleep.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // v0.7.0 语义修正（待办④ updated_at 不算访问）：
 //  - merge/update 刷 updated_at 绝不当访问，last_accessed_at 与 updated_at 正交；
@@ -14,7 +15,7 @@ const DAY = 86400000;
 
 function setup(config = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   return { store, service };
 }
 

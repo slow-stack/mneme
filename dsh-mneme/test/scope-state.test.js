@@ -5,6 +5,7 @@ import { createService } from "../src/service.js";
 import { createTools } from "../src/tools.js";
 import { runSleep } from "../src/dream/sleep.js";
 import { createDreamScheduler } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // issue #471：作用域级可逆闸门（政策轴）。
 //
@@ -23,7 +24,7 @@ import { createDreamScheduler } from "../src/dream.js";
 
 function setup(config) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   return { store, service };
 }
 
@@ -243,7 +244,7 @@ test("一次现读：另一个实例改了状态，本实例下一次判定立�
 
 function makeTools(config) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   const ctx = {
     tools: { register() {} },
     logger: { warn() {}, info() {}, error() {} }
@@ -280,7 +281,7 @@ test("set_scope_state 对非法参数抛可行动的错，不是静默返回空"
 test("检视面刻意不过闸：按下之后 memory_list / memory_get 仍看得见那一行", async () => {
   const config = { ...PAUSED_CONFIG, strictScope: false };
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   const ctx = { tools: { register() {} }, logger: { warn() {}, info() {}, error() {} } };
   const tools = new Map(createTools(ctx, service, config, null).map((t) => [t.name, t]));
 

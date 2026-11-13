@@ -11,6 +11,7 @@ import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 class FakeRes extends EventEmitter {
   constructor() { super(); this.statusCode = 200; this.body = ""; }
@@ -93,7 +94,7 @@ test("boosted-relations reports an empty table honestly, with the gate that expl
 });
 
 test("boosted-relations surfaces passiveConfirmEnabled=true when the gate is on", async () => {
-  const { routes } = setup({ config: { graphPassiveConfirm: true, graphWeightEnabled: true } });
+  const { routes } = setup({ config: testConfig({ graphPassiveConfirm: true, graphWeightEnabled: true }) });
   const res = new FakeRes();
   await routes.find((r) => r.path === BOOSTED).handler(req(BOOSTED), res);
   assert.equal(JSON.parse(res.body).passiveConfirmEnabled, true);
@@ -103,7 +104,7 @@ test("boosted-relations surfaces passiveConfirmEnabled=true when the gate is on"
 // passive = graphPassiveConfirm && graphWeightEnabled，只看前者面板会说
 // 「会自动提升」而实际一条都不会抬（评审指出）。
 test("boosted-relations reports the gate as off when only graphPassiveConfirm is set", async () => {
-  const { routes } = setup({ config: { graphPassiveConfirm: true, graphWeightEnabled: false } });
+  const { routes } = setup({ config: testConfig({ graphPassiveConfirm: true, graphWeightEnabled: false }) });
   const res = new FakeRes();
   await routes.find((r) => r.path === BOOSTED).handler(req(BOOSTED), res);
   assert.equal(JSON.parse(res.body).passiveConfirmEnabled, false,
