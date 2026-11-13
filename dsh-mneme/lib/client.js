@@ -14505,16 +14505,13 @@ window.__ModuleLoader__.load({
           name: "main",
           key: "dsh-mneme-wiki"
         }, () => h(WikiMainPanel, { t }));
-        // 知识库第三个座位（契约 §3.6）。和上面两个同理：id 与 key 逐字相同，
-        // 否则宿主 selectPanel(id) 在 main 槽里找不到 entry 直接抛。
-        // 座位无条件注册，开关只管内容层——这样「未启用」能自己解释去哪儿开，
-        // 而不是让入口凭空消失（#607 的另一种写法）。
-        const disposeKbGlyph = ctx.slots.register({
-          name: "sidebar.panellist",
-          id: "dsh-mneme-kb",
-          order: 62,
-          label: () => t("kb.panel.open")
-        }, (props) => h(KbGlyph, { size: props && props.size }));
+        // 知识库第三个座位（契约 §3.6）。id 与 key 逐字相同，否则宿主
+        // selectPanel(id) 在 main 槽里找不到 entry 直接抛。
+        // 侧栏那一格不再无条件（#685，反转 #598 评论区 §四的另一半）：开关关着
+        // 时不该常驻一个点进去只有「未启用」的入口。glyph 的登记挪进下面的
+        // kb 座位闸，读 features 按 kbEnabled 决定；main 仍无条件——#562 那堵墙
+        // （布局里存着 activePanelId="dsh-mneme-kb" 时少注册 main，宿主
+        // selectPanel 直接抛），与 wiki 座位同一处理。
         const disposeKbMain = ctx.slots.register({
           name: "main",
           key: "dsh-mneme-kb"
@@ -14522,10 +14519,9 @@ window.__ModuleLoader__.load({
         return () => {
           disposeGlyph();
           disposeMain();
-          // wiki glyph 不在这把扫帚里了：它的登记随座位闸走（#598），
-          // 生命周期归 cordis 上下文，与本回调的成对座位不同源。
+          // wiki / kb 的 glyph 都不在这把扫帚里了：它们的登记随各自座位闸走
+          // （#598 / #685），生命周期归 cordis 上下文，与本回调的成对座位不同源。
           disposeWikiMain();
-          disposeKbGlyph();
           disposeKbMain();
           // 座位被撤（宿主折叠该槽 / 换宿主形态）时把回落装回去：两条路径都
           // 只靠各自的 inject 触发，谁不动谁就永远停在「没有入口」的状态。
@@ -14633,8 +14629,7 @@ window.__ModuleLoader__.load({
       // 同一形态——features 拉一次、fail-closed（读不到就不注册，不猜）、开关
       // 改动重启生效。glyph 延迟注册走 diary 右栏页签同一条 inject→register
       // 路径：宿主每次渲染枚举 entriesOfSlot，晚到的登记下一帧出现。
-      // main 不在这里——它无条件（#562）；kb 座位也不在这里——契约 §3.6
-      // 刻意选了「入口常驻 + 空态自解释」的另一半（见上面 panellist 块注释）。
+      // main 不在这里——它无条件（#562）。
       ctx.effect(() => {
         let dead = false;
         apiFetch("/api/dsh-mneme/features")
@@ -14654,6 +14649,31 @@ window.__ModuleLoader__.load({
           });
         return () => { dead = true; };
       }, "dsh-mneme: chorography seat gate");
+
+      // --- 知识库侧栏座位闸（#685）：与 choro 同一形态——同一个 features
+      // 端点、同样 fail-closed（读不到就不注册）、同样只门控侧栏那一格。
+      // main 留在上面无条件注册（#562 的墙），所以「关着就不注册座位」在
+      // 这里的含义是「侧栏没有入口、点不进去」，不是把 main 也摘掉：摘掉会
+      // 让布局里存着 activePanelId="dsh-mneme-kb" 的宿主在 selectPanel 时抛。
+      ctx.effect(() => {
+        let dead = false;
+        apiFetch("/api/dsh-mneme/features")
+          .then((res) => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
+          .then((j) => {
+            if (dead) return;
+            if (!((j && j.effective) || {}).kbEnabled) return;
+            ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({
+              name: "sidebar.panellist",
+              id: "dsh-mneme-kb",
+              order: 62,
+              label: () => t("kb.panel.open")
+            }, (props) => h(KbGlyph, { size: props && props.size })));
+          })
+          .catch((err) => {
+            console.warn("[dsh-mneme] features fetch failed, kb seat stays off:", err);
+          });
+        return () => { dead = true; };
+      }, "dsh-mneme: kb seat gate");
     }
 
     exports.apply = apply;

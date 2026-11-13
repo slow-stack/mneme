@@ -116,8 +116,8 @@ test("chorography wiki main stays unconditional; the sidebar glyph is feature-ga
     clientSource.includes('phase: "disabled"'),
     "the disabled empty state must survive for layouts that still point at the wiki panel (#562 keeps main alive for exactly this)"
   );
-  // wiki glyph 的清理随登记进了座位闸（cordis 上下文销毁时一并回收）；
-  // panellist 回调的扫帚只剩记忆对 + wiki 的 main + kb 对。
+  // wiki / kb 的 glyph 清理都随各自登记进了座位闸（cordis 上下文销毁时一并
+  // 回收）；panellist 回调的扫帚只剩记忆对 + 两个 main。
   assert.ok(
     /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);[\s\S]*?disposeWikiMain\(\);/.test(clientSource),
     "the panellist cleanup must dispose the memory pair and wiki main, in order"
@@ -393,8 +393,11 @@ test("knowledge base organises a whole repo from cards and never fakes a clean r
 
 // 知识库是第三个座位：id 与 main 的 key 必须逐字同名，否则宿主 selectPanel
 // 直接抛 "main panel ... is not registered"（#562 在记忆座位上踩过）。
-test("knowledge base entry registers its own seat pair in the same panellist block", () => {
-  assert.ok(clientSource.includes('id: "dsh-mneme-kb"'), "the kb sidebar seat must use its own id");
+// #685（反转 #598 评论区 §四的另一半）：kb 的侧栏位置改成跟 kbEnabled 走，
+// 与 choro 同一形态；main 仍无条件——#562 那堵墙（布局里存着
+// activePanelId="dsh-mneme-kb" 时少注册 main，宿主 selectPanel 直接抛）。
+test("knowledge base sidebar entry follows kbEnabled; its main seat stays unconditional (#685)", () => {
+  assert.ok(clientSource.includes('id: "dsh-mneme-kb"'), "the kb sidebar seat must keep its own id");
   assert.ok(clientSource.includes('key: "dsh-mneme-kb"'), "the kb main seat key must match the sidebar id verbatim");
   assert.ok(clientSource.includes("h(KbMainPanel, { t })"), "the kb main seat must render KbMainPanel");
   assert.ok(
@@ -402,9 +405,36 @@ test("knowledge base entry registers its own seat pair in the same panellist blo
     "the kb glyph takes its size from the host"
   );
   assert.ok(
-    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);[\s\S]*?disposeWikiMain\(\);\s*disposeKbGlyph\(\);\s*disposeKbMain\(\);/.test(clientSource),
-    "the panellist cleanup must dispose the remaining seat pairs (the wiki glyph moved to the feature gate)"
+    clientSource.includes('"dsh-mneme: kb seat gate"'),
+    "the kb glyph registration must live behind its own features gate"
   );
+  assert.ok(
+    /if \(!\(\(j && j\.effective\) \|\| \{\}\)\.kbEnabled\) return;/.test(clientSource),
+    "the gate must fail-closed on the kbEnabled flag"
+  );
+  assert.ok(
+    clientSource.includes("kb seat stays off"),
+    "a failed features fetch must leave the kb seat off, not guess"
+  );
+  // 侧栏图标不能留在 panellist 回调的无条件注册里——那正是 #685 报的形态。
+  const gateStart = clientSource.indexOf('ctx.slots.inject("sidebar.panellist"');
+  const gateEnd = clientSource.indexOf("mountFooterSeat();", gateStart);
+  const panellistBlock = gateStart === -1 || gateEnd === -1 ? "" : clientSource.slice(gateStart, gateEnd);
+  assert.ok(panellistBlock.length > 0, "the panellist injection block must still exist");
+  assert.ok(
+    panellistBlock.includes('key: "dsh-mneme-kb"'),
+    "the kb main seat must stay in the unconditional panellist block (#562)"
+  );
+  assert.ok(
+    !/id:\s*"dsh-mneme-kb"/.test(panellistBlock),
+    "the kb sidebar glyph must not be registered unconditionally anymore (#685)"
+  );
+  // kb glyph 的清理随登记进了座位闸；panellist 的扫帚只剩记忆对 + 两个 main。
+  assert.ok(
+    /return \(\) => \{\s*disposeGlyph\(\);\s*disposeMain\(\);[\s\S]*?disposeWikiMain\(\);\s*disposeKbMain\(\);/.test(clientSource),
+    "the panellist cleanup must dispose the memory pair and both main seats (the glyphs live in their gates)"
+  );
+  assert.ok(!clientSource.includes("disposeKbGlyph"), "the unconditional kb glyph dispose must be gone with the seat itself");
 });
 
 // v0.11.1 美化：文件清单的竖线等宽行换成真 table（用户实测反馈「文件名排列
@@ -461,8 +491,9 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
   // spec 存在时点火：一把全点会把新座位的注册塞进老宿主，测出来的就不是真行为。
   const fire = (ctx, key) => ctx.injected.filter((i) => i.key === key).map((i) => i.cb());
 
-  // 新宿主：panellist 已声明。panellist + main 各三份（记忆 + chorography +
-  // 知识库三个座位），每对各自 id/key 逐字同名；footer 回落不装。
+  // 新宿主：panellist 已声明。panellist 里只剩记忆一份图标（wiki 自 #598、
+  // 知识库自 #685 都改成各自 features 闸里的按需注册），main 三份（记忆 +
+  // chorography + 知识库）无条件——#562 的墙；footer 回落不装。
   // 日记本原有第四对座位，2026-11-09 按桉桉要求撤掉——它现在是记忆面板内的
   // 一个标签页，与人格页并列，不再占侧边栏；人格页同理（面板内标签页，不是座位）。
   {
@@ -473,8 +504,8 @@ test("panel seats: the fallback mounts and unmounts with the host's declaration"
     fire(ctx, "sidebar.footer.action");
     assert.equal(disposes.length, 1);
     const ids = (name) => regs.filter((r) => r.alive && r.opts.name === name).map((r) => r.opts.id ?? r.opts.key).sort();
-    assert.equal(alive(regs, "sidebar.panellist"), 2, "memory + kb glyphs — the wiki glyph is feature-gated (#598), not unconditional");
-    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme", "dsh-mneme-kb"], "每对座位各自 id 逐字唯一；wiki glyph 走座位闸，不在无条件集合里");
+    assert.equal(alive(regs, "sidebar.panellist"), 1, "memory glyph only — the wiki and kb glyphs are feature-gated (#598, #685)");
+    assert.deepEqual(ids("sidebar.panellist"), ["dsh-mneme"], "the only unconditional sidebar glyph is the memory entry");
     assert.equal(alive(regs, "main"), 3, "memory + wiki + kb pages — wiki main stays unconditional (#562)");
     assert.deepEqual(ids("main"), ["dsh-mneme", "dsh-mneme-kb", "dsh-mneme-wiki"], "main key 与侧栏 id 逐字同名（wiki 的 main 无条件保留，#562）");
     assert.equal(alive(regs, "sidebar.footer.action"), 0, "the footer fallback must not mount on a host that has the seat");
