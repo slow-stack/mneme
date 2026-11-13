@@ -4681,3 +4681,44 @@ test("conflict ledger mode warns when freeze overrides the chosen tier (#661)", 
   assert.match(joined, /\u77db\u76fe\u51bb\u7ed3|conflict freeze/i,
     "the notice must name the freeze switch so the user knows what to turn off");
 });
+
+// ---- #582 wiki 渲染三处 ----
+
+// 机器标记行（CHORO:T1 / CHORO:HUMAN 的 HTML 注释包装）是 t0/t1 剥段与回填用
+// 的段落边界，给人看的排版里是裸文本噪音。跳过判定必须挂在围栏分支**之后**：
+// 代码块里的 `<!--` 是内容不是标记，先剥了它 ``` 示例就缺行。
+test("wiki renderer hides machine marker lines but keeps them inside code fences (#582)", () => {
+  const start = clientSource.indexOf("function renderWikiMarkdown(");
+  const end = clientSource.indexOf("function renderDiaryBody(", start);
+  assert.ok(start > 0 && end > start, "renderWikiMarkdown must exist before renderDiaryBody");
+  const body = clientSource.slice(start, end);
+  // 围栏要记字符与长度（PR #678 评审）：只认三反引号时 `~~~html` 里的注释会被
+  // 当成正文删掉，四反引号块里的 ``` 也会提前结束代码态。锁三件事：识别两种
+  // 围栏字符、记录开启长度、结束必须同字符且不短于开启。
+  const fenceAt = body.indexOf("const fenceOpen = /^(`{3,}|~{3,})(.*)$/.exec(line.trim());");
+  assert.ok(fenceAt > 0, "the renderer must recognize both ``` and ~~~ fences");
+  assert.ok(body.includes("fence = { ch: fenceOpen[1][0], len: fenceOpen[1].length };"),
+    "the opening fence must record its character and length");
+  assert.ok(body.includes("fenceOpen[1][0] === fence.ch && fenceOpen[1].length >= fence.len"),
+    "a closing fence must use the same character and be at least as long as the opener");
+  // 注意 \\s 要写成双反斜杠：JS 字符串里的 \s 会塌成 s，indexOf 就永远找不到。
+  const skipAt = body.indexOf("if (/^\\s*<!--/.test(line)) continue;");
+  assert.ok(skipAt > fenceAt, "the marker-skip must come after the fence branch so fenced comments survive");
+  // 日记与 wiki 共用这个渲染器：日记正文没有 CHORO 标记，跳过规则对它是空转
+  // 的——但如果将来日记里出现「整行 HTML 注释」，同样按注释隐藏（预期行为）。
+});
+
+// 树缩进必须看 parent_id 真父子：slugify 把路径分隔与一切非字母数字都变成
+// `-`，连字符计数会把目录名自带的连字符与去重序号（-2）当成层级——
+// `packages-computer-use-src` 会被画成三层深（#582 的原始截图）。
+test("wiki tree indents by parent_id, not by hyphen count (#582)", () => {
+  const start = clientSource.indexOf("树的层级看 parent_id 真父子");
+  assert.ok(start > 0, "the parent_id tree builder must exist");
+  const region = clientSource.slice(start, start + 2400);
+  assert.ok(region.includes("mod.parent_id"), "tree depth must derive from parent_id");
+  assert.ok(!region.includes("slug.match(/-/g)"), "hyphen counting must be gone from the tree builder");
+  assert.ok(region.includes("walk(null, 0)"), "roots (no parent) must seed the walk");
+  assert.ok(region.includes("depthById.has(mod.id)"), "cycle defense must guard the walk");
+  // 兜底要接住走不到的模块：宁可用根层平铺也不能静默丢行（树少一页 = 入口没了）。
+  assert.ok(region.includes("!depthById.has(mod.id)"), "unreached modules must fall back instead of vanishing");
+});

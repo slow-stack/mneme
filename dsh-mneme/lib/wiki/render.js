@@ -30,6 +30,11 @@ export const T1_SECTION_END = "<!-- CHORO:T1:END -->";
 export const FM_VERIFIED_BASELINE = "verifiedBaseline";
 export const FM_VERIFIED_AT = "verifiedAt";
 
+// 页面生命周期档（#582）：status 也是 frontmatter 键，但它 T0 / T1 都写——T0
+// 起骨架时写 skeleton，T1 成功时随 verified 两键一起推进 enriched。定义在这
+// 与另两个键同住：frontmatter 的形状属于页面格式。
+export const FM_STATUS = "status";
+
 /** frontmatter 边界：首行 --- 与下一个 --- 的行号；不存在返回 null。 */
 function frontmatterBounds(lines) {
   if (String(lines[0] ?? "").trim() !== "---") return null;
