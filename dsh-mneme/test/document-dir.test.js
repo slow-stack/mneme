@@ -9,6 +9,7 @@ import { isManagedDocumentPath, resolveDocumentDir } from "../src/document.js";
 import { createMirror } from "../src/mirror.js";
 import { createService } from "../src/service.js";
 import { createStore } from "../src/store.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归（issue #296 第二批）：document 的落盘目录与归属。
 // ①`documentDir` 默认跟随 memoryDir 的 `<memoryDir>/documents/`，`~` 与相对路径
@@ -100,7 +101,7 @@ test("#296: index.md 删掉后从库里重建，逐字节一致", () => {
     store = createStore(join(dir, "memory.db"));
     const index = createDocumentIndex(documentDir);
     const service = createService({
-      store, mirror: createMirror(dir), config: { documentMemoryEnabled: true }, documentIndex: index
+      store, mirror: createMirror(dir), config: testConfig({ documentMemoryEnabled: true }), documentIndex: index
     });
     writeFileSync(join(dir, "report.md"), "x", "utf8");
     const doc = store.saveDocument({
@@ -133,7 +134,7 @@ test("#296: managed 文件走一次完整注册往返，字节哈希不变", asy
     const before = createHash("sha256").update(readFileSync(docFile)).digest("hex");
     store = createStore(join(dir, "memory.db"));
     const service = createService({
-      store, mirror: createMirror(dir), config: { documentMemoryEnabled: true },
+      store, mirror: createMirror(dir), config: testConfig({ documentMemoryEnabled: true }),
       documentIndex: createDocumentIndex(documentDir)
     });
     const result = await service.registerDocument({ path: docFile, title: "报告", summary: "第一句。第二句。" });
@@ -159,7 +160,7 @@ test("#296: 两个落点共用 documentMemoryEnabled 闸，闸关时视图与索
     store = createStore(join(dir, "memory.db"));
     const index = createDocumentIndex(documentDir);
     const on = createService({
-      store, mirror: createMirror(dir), config: { documentMemoryEnabled: true }, documentIndex: index
+      store, mirror: createMirror(dir), config: testConfig({ documentMemoryEnabled: true }), documentIndex: index
     });
     writeFileSync(join(dir, "outside.md"), "x", "utf8");
     const kept = store.saveDocument({
@@ -186,14 +187,14 @@ test("#296: 两个落点共用 documentMemoryEnabled 闸，闸关时视图与索
     // 闸关：document 行不再进渲染集 → documents.md 被既有「空 type 删文件」清掉；
     // index.md 归 syncDocumentIndex 清掉——留一份陈旧索引就是「看着还在、其实已关」
     // 的视图，正是 documents.md 在闸关时要避免的那一类。
-    const off = createService({ store, mirror: createMirror(dir), config: {}, documentIndex: index });
+    const off = createService({ store, mirror: createMirror(dir), config: testConfig({}), documentIndex: index });
     off.saveWithDedupe({ type: "pattern", title: "触发2", content: "y" });
     assert.ok(!existsSync(join(dir, "documents.md")), "闸关 → 镜像视图清掉");
     assert.ok(!existsSync(index.filePath), "闸关 → 索引也清掉");
 
     // 闸重开：下一次业务写从库重建索引（自愈，不需要手工删文件）
     const back = createService({
-      store, mirror: createMirror(dir), config: { documentMemoryEnabled: true }, documentIndex: index
+      store, mirror: createMirror(dir), config: testConfig({ documentMemoryEnabled: true }), documentIndex: index
     });
     back.saveWithDedupe({ type: "pattern", title: "触发3", content: "z" });
     assert.ok(readFileSync(index.filePath, "utf8").includes("外部"), "闸重开 → 索引从库重建");

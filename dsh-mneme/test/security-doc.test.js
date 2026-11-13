@@ -13,6 +13,7 @@ import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { createApi } from "../src/api.js";
 import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const pkgRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const repoRoot = path.dirname(pkgRoot);
@@ -90,7 +91,7 @@ test("SECURITY.md 不再把供应商写成已停用的那家", () => {
 // 以真实装配出来的路由为准，双向比对——文档少写、多写、写错边，都红。
 function declaredRoutes() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const mounted = [];
   createApi(

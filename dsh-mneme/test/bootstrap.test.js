@@ -13,6 +13,7 @@ import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { createStandaloneApi } from "../src/api-standalone.js";
 import { bootstrapFromDirectory, BootstrapError } from "../src/bootstrap.js";
+import { testConfig } from "./helpers/test-config.js";
 
 /** 造一个带五类来源的临时项目；node_modules 故意放上，断言会被跳过。 */
 function makeProject() {
@@ -49,7 +50,7 @@ function makeGitProject() {
 
 function makeService() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   return { store, service };
 }
 
@@ -60,9 +61,9 @@ function findByTitle(store, type, title) {
 /** standalone API 测试骨架（与 standalone-api.test.js 同款：真 HTTP + fetch）。 */
 async function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
-  const api = createStandaloneApi({ service, store, config: {}, settings, logger: null, port: 0 });
+  const api = createStandaloneApi({ service, store, config: testConfig({}), settings, logger: null, port: 0 });
   await api.ready;
   const base = `http://127.0.0.1:${api.port}`;
   const auth = { authorization: `Bearer ${api.token}` };

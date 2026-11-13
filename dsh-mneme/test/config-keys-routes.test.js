@@ -18,6 +18,7 @@ import { Config } from "../src/config.js";
 import { describeConfigKeys, schemaLeafKeys, defaultedLeafKeys, flagKeysFromSpec } from "../src/config-keys.js";
 import { bootstrapReply } from "../src/bootstrap-http.js";
 import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 class FakeRes extends EventEmitter {
   constructor() { super(); this.statusCode = 200; this.body = ""; }
@@ -173,7 +174,7 @@ test("config-keys rejects non-GET", async () => {
 });
 
 test("config-keys returns key names but never the apiToken value", async () => {
-  const { routes } = setup({ config: { apiToken: FAKE_API_TOKEN }, apiToken: FAKE_API_TOKEN });
+  const { routes } = setup({ config: testConfig({ apiToken: FAKE_API_TOKEN }), apiToken: FAKE_API_TOKEN });
   const { res } = await call(routes, CONFIG_KEYS, { method: "GET" });
   assert.equal(res.statusCode, 200);
   // 名字必须在：用户正是要靠这份清单知道「apiToken 只能改配置文件」。
@@ -185,7 +186,7 @@ test("config-keys returns key names but never the apiToken value", async () => {
 test("config-keys only reads the schema — it never echoes a configured value", async () => {
   // 上一条锁的是「没漏出去」，这条锁的是「不是靠脱敏才没漏」：即便装了一个
   // 非敏感键的值，响应里也不该出现它——这份清单只谈键名与计数。
-  const { routes } = setup({ config: { memoryDir: "/unique/marker/path/386" } });
+  const { routes } = setup({ config: testConfig({ memoryDir: "/unique/marker/path/386" }) });
   const { res } = await call(routes, CONFIG_KEYS, { method: "GET" });
   assert.ok(!res.body.includes("/unique/marker/path/386"), "no configured value may appear in this response");
 });

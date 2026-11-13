@@ -20,6 +20,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { createApi } from "../src/api.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 这组测试守的是 M.O.（可执行的项目工作流）的读侧。与其它测试不同的一点：它同时
 // 是**内容锁**——仓库里真实存在的那条发版工作流必须一直读得出来、且形状合法。
@@ -44,7 +45,7 @@ class FakeRes {
 
 function buildApi() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const routes = [];
   const ctx = { webServer: { register(route) { routes.push(route); return () => {}; } } };

@@ -13,6 +13,7 @@ import { createService } from "../src/service.js";
 import { createTools } from "../src/tools.js";
 import { createChoroQueries } from "../src/wiki/queries.js";
 import { runChoroT0 } from "../src/wiki/t0.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const choroArgs = {
   choro_module_map: {},
@@ -28,7 +29,7 @@ async function setup(t, config = {}, withChoro = false) {
   const runtime = await ctx.plugin(ToolRuntime);
   t.after(() => { runtime.dispose(); prompt.dispose(); });
   const tools = ctx.get("tools");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   createTools({ tools }, service, config, null, null, withChoro ? createChoroQueries({ store }) : null);
   const call = (name, args = {}) => tools.execute({
     name, callId: name, arguments: args, signal: new AbortController().signal
