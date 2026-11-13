@@ -9,6 +9,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { fakeToken } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // serve bin 冒烟 + 多进程共存锁(daemon 唯一的真新风险点):daemon 子进程与测试进程
 // 同时打开同一 memory.db(WAL + busy_timeout 本就为此设计),互写互读。spawn 必须
@@ -59,7 +60,7 @@ test("serve bin: spawn 冒烟;daemon 与宿主进程同库互写互读", { timeo
   const seedSettings = createSettings(seedStore.db);
   const TOKEN = fakeToken("serve-bin");
   seedSettings.setExternalApi({ token: TOKEN });
-  const peer = createService({ store: seedStore, mirror: null, config: {} });
+  const peer = createService({ store: seedStore, mirror: null, config: testConfig({}) });
   peer.saveWithDedupe({ type: "project", title: "peer 进程直写", content: "测试进程经 createStore 写入", importance: 3 });
 
   // --embed off:CI 无 runtime payload,绝不能触发取件;多进程共存与语义无关

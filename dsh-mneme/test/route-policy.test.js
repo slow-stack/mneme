@@ -14,6 +14,7 @@ import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
 import { createApi, createRouteRegistrar, ROUTE_POLICIES } from "../src/api.js";
 import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
+import { testConfig } from "./helpers/test-config.js";
 
 class FakeRes extends EventEmitter {
   constructor() { super(); this.statusCode = 200; this.body = ""; }
@@ -100,7 +101,7 @@ test("token-write：GET 开放、POST 要 Bearer", () => {
 
 test("装配后每条路由都带 policy，count() 与实际挂载数一致", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const mounted = [];
   const ctx = { webServer: fakeWebServer(mounted) };

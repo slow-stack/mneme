@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // ============================================================ distill-tx-embed-gap
 // 回归锁：此前 scheduleEmbed 在 txDepth>0 时首行直接 return（注释写 deferred，
@@ -14,7 +15,7 @@ import { createService } from "../src/service.js";
 
 function makeService(config = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   return { store, service };
 }
 

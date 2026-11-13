@@ -6,6 +6,7 @@ import { createInjector } from "../src/inject.js";
 import { createSettings } from "../src/settings.js";
 import { createTools } from "../src/tools.js";
 import { MEMORY_GUIDE_SECTION } from "../src/guide.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归（issue #249 第一批）：注入形态的两件事——
 // ①能力说明（injectGuidanceEnabled）：工具描述补判断指引 + order 150 一次性
@@ -160,7 +161,7 @@ test("#249: capability guide registers exactly once, and stays off when the key 
 test("#249: capability guide extends only the judgement-heavy tool descriptions", () => {
   const toolsFor = (flags) => {
     const store = createStore(":memory:");
-    const service = createService({ store, mirror: null, config: {} });
+    const service = createService({ store, mirror: null, config: testConfig({}) });
     const registered = [];
     const ctx = { tools: { register(def) { registered.push(def); return () => {}; } } };
     createTools(ctx, service, { ...flags }, null);
@@ -181,7 +182,7 @@ test("#249: memory_save guidance states the scope default in the safe direction"
   // 过滤（A3 strictScope，默认关）。所以这一句必须同时给出「什么时候标注」与「不确定
   // 就都别填」，只写前半句会把模型推向「能填就填」，正好制造那个单向损失。
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const registered = [];
   createTools({ tools: { register(def) { registered.push(def); return () => {}; } } }, service, { injectGuidanceEnabled: true }, null);
   const text = registered.find((t) => t.name === "memory_save").description;

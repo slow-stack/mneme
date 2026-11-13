@@ -22,6 +22,7 @@ import {
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { mockCtx } from "./helpers/dream-mock.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function snapshot(ids) {
   return new Map(ids.map((id) => [id, {
@@ -31,7 +32,7 @@ function snapshot(ids) {
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   return { store, service, dream };
 }

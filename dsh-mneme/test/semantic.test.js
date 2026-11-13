@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createVectorIndex } from "../src/vector-index.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const DIM = 4;
 
@@ -22,7 +23,7 @@ function mockEmbedder(overrides = {}) {
 
 function setup(embedder = mockEmbedder()) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const vectorIndex = createVectorIndex({ store });
   service.setEmbedder(embedder);
   service.setVectorIndex(vectorIndex);
@@ -113,7 +114,7 @@ test("searchMemories survives a throwing embedder (degrades to keyword)", async 
 
 test("legacy embedder (embed-only) is adapted by searchMemories", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const legacy = { embed: async (q) => [1, 0, 0, 0] };
   service.setEmbedder(legacy); // no embedSingle, no vectorIndex
   service.saveWithDedupe({ type: "preference", title: "猫", content: "喜欢猫" });

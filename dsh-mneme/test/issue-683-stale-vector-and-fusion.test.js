@@ -5,6 +5,7 @@ import { createService } from "../src/service.js";
 import { createInjector } from "../src/inject.js";
 import { createSettings } from "../src/settings.js";
 import { createVectorIndex } from "../src/vector-index.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // #683 回归。两处都来自 #620 评论区承诺过、但没合进 0.14.0 的后续：
 //
@@ -26,7 +27,7 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 // 让这里同步返回、断言直接挂掉。
 function setupAssembly(embedImpl, over = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const contexts = [];
   const handlers = new Map();
@@ -149,7 +150,7 @@ const vecOnlyEmbedding = () => [VEC_ONLY_SIM, Math.sqrt(1 - VEC_ONLY_SIM ** 2), 
 
 test("#683-2: 余弦缺失按中性基线算，词法精确命中不再被判 0 分", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const { vecOnly, lexHit } = seedFusionPair(service);
   const vectorIndex = createVectorIndex({ store });
   service.setVectorIndex(vectorIndex);
@@ -165,7 +166,7 @@ test("#683-2: 余弦缺失按中性基线算，词法精确命中不再被判 0 
 
 test("#683-2: 两路都缺的候选仍沉底（中性基线不得复活无信号行）", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const { vecOnly, lexHit } = seedFusionPair(service);
   const noise = service.saveWithDedupe({
     type: "project", title: "无关存档", content: "与这次查询既不同词也不同义的一段记录", importance: 5

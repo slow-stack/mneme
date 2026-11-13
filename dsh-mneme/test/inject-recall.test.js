@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // #217 增量（2026-09-19 拍板）：注入是曝光型访问事件，注入终选集落
 // mode='inject' 审计行（跟随 recallRecordDefault；空选不记）。留痕与消费
@@ -9,7 +10,7 @@ import { createService } from "../src/service.js";
 
 function setup(config = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   // 与 index.js 相同的接线：审计记账 → recall_runs（best effort）
   service.setRecallRecorder((recall) => {
     store.saveRecallRun({

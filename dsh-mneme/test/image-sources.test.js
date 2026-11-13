@@ -15,6 +15,7 @@ import { createService } from "../src/service.js";
 import { createSummarizer } from "../src/summarize.js";
 import { Config, injectChildEnabled } from "../src/config.js";
 import { attachmentKey, imageRefOf } from "../src/image-describe.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const IMAGE = {
   type: "image",
@@ -66,7 +67,7 @@ function fakeLlm({ description = "一张表格截图，两列数据对比", thro
 
 function setup(over = {}, llm = fakeLlm()) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const events = [];
   const ctx = {
     on(name, fn) {
@@ -88,7 +89,7 @@ async function distill(r, session) {
 function sessionOf(id, events) {
   return {
     id,
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events
   };
 }

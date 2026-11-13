@@ -14,6 +14,7 @@ import {
 import { applyDecisions } from "../src/dream/decisions.js";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // ---------------------------------------------------------------- helpers
 
@@ -50,7 +51,7 @@ function mockCtx({ onConsolidation, summaryText = "记忆库总览：用户偏�
 
 function setup() {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   return { store, service, dream };
 }

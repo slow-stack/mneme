@@ -9,10 +9,11 @@ import { join } from "node:path";
 import { createTools } from "../src/tools.js";
 import { TRANSFORMERS_ENTRY, defaultModelCacheDir, payloadDir, payloadId } from "../src/runtime/layout.js";
 import { hostModulesDir } from "../src/runtime/provision.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function setup(embedder, config = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const registered = [];
   const ctx = {
     tools: {
@@ -423,7 +424,7 @@ test("execution results validate against their declared output schemas", async (
 
 test("memory_search semantic mode merges vector recalls", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const registered = [];
   const ctx = { tools: { register(def) { registered.push(def); return () => {}; } } };
   const embedder = { embed: async () => [1, 0, 0] };
@@ -453,7 +454,7 @@ test("memory_search falls back to keyword when embedder unavailable or returns n
 
   // Embedder that resolves null (provider disabled) → keyword fallback.
   const store = createStore(":memory:");
-  const service2 = createService({ store, mirror: null, config: {} });
+  const service2 = createService({ store, mirror: null, config: testConfig({}) });
   const registered2 = [];
   const ctx = { tools: { register(def) { registered2.push(def); return () => {}; } } };
   createTools(ctx, service2, {}, { embed: async () => null });

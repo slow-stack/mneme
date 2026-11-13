@@ -8,6 +8,7 @@ import { createStore } from "../src/store.js";
 import { createMirror } from "../src/mirror.js";
 import { createService } from "../src/service.js";
 import { applyDecisions } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const CONFLICT_MARKER = "并发冲突";
 
@@ -22,7 +23,7 @@ function setup() {
   const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-digest-"));
   const store = createStore(":memory:");
   const mirror = createMirror(dir);
-  const service = createService({ store, mirror, config: {} });
+  const service = createService({ store, mirror, config: testConfig({}) });
   return { dir, store, mirror, service };
 }
 

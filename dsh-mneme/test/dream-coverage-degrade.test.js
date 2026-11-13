@@ -4,6 +4,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createDreamScheduler, validateDecisions } from "../src/dream.js";
 import { mockCtx } from "./helpers/dream-mock.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归（issue #104 方向 1）：dreamMinExplicitCoverage 覆盖率护栏误伤「挑重点」
 // 型输出。提示词明文要求「无问题的条目无需输出」（lang.js 硬性规则），模型
@@ -57,7 +58,7 @@ test("#104-1: strict mode (implicitKeep=false) unchanged — missing ids still r
 
 test("#104-1: runDream records degraded (not failed) with the coverage reason in the run row", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   for (let i = 0; i < 20; i++) {
     service.saveWithDedupe({ type: "project", title: `主题${i}`, content: `内容${i}`, importance: 3 });
   }

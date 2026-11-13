@@ -10,6 +10,7 @@ import { createVectorIndex } from "../src/vector-index.js";
 import { createInjector } from "../src/inject.js";
 import { createSettings } from "../src/settings.js";
 import { applyDecisions } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // ---------------------------------------------------------------- schema / legacy compat
 
@@ -132,7 +133,7 @@ const embedder = {
 
 test("retrieval ranking: switch off leaves scores and order untouched", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const a = service.saveWithDedupe({ type: "preference", title: "猫A", content: "我觉得猫很可爱", importance: 5 });
   const b = service.saveWithDedupe({ type: "preference", title: "猫B", content: "实测猫很可爱", importance: 3 });
   assert.equal(a.memory.epistemic_status, "subjective");
@@ -147,7 +148,7 @@ test("retrieval ranking: switch off leaves scores and order untouched", async ()
 
 test("retrieval ranking: switch on re-weights and re-orders mixed recall", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { trustEpistemicWeighting: true } });
+  const service = createService({ store, mirror: null, config: testConfig({ trustEpistemicWeighting: true }) });
   const vi = createVectorIndex({ store });
   service.setEmbedder(embedder);
   service.setVectorIndex(vi);
@@ -172,7 +173,7 @@ test("retrieval ranking: switch on re-weights and re-orders mixed recall", async
 
 function setupInjector(over = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const contexts = [];
   const ctx = {
@@ -209,7 +210,7 @@ test("injection never adds [verified] when the switch is off", () => {
 
 test("merge keepSource prefers observation when enabled", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const config = { trustEpistemicWeighting: true };
   const a = service.saveWithDedupe({ type: "project", title: "插件甲", content: "我觉得应该用A方案", importance: 3 });
   const b = service.saveWithDedupe({ type: "project", title: "插件乙", content: "实测结果显示B方案更好", importance: 4 });
@@ -227,7 +228,7 @@ test("merge keepSource prefers observation when enabled", () => {
 
 test("merge keepSource keeps the LLM choice when disabled", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const a = service.saveWithDedupe({ type: "project", title: "插件甲", content: "我觉得应该用A方案", importance: 3 });
   const b = service.saveWithDedupe({ type: "project", title: "插件乙", content: "实测结果显示B方案更好", importance: 4 });
   const { committed } = applyDecisions(
@@ -241,7 +242,7 @@ test("merge keepSource keeps the LLM choice when disabled", () => {
 
 test("merge never promotes an ARCHIVED observation to keeper when enabled (regression)", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const config = { trustEpistemicWeighting: true };
   // a = live subjective (LLM's keepSource), b = live observation,
   // c = ARCHIVED observation. Pre-fix pickBestKeeper would pick c (highest
@@ -267,7 +268,7 @@ test("merge never promotes an ARCHIVED observation to keeper when enabled (regre
 
 test("conflict resolution prefers the observation side as winner when enabled", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const config = { trustEpistemicWeighting: true };
   const w = service.saveWithDedupe({ type: "decision", title: "截止1", content: "我觉得截止是8月20日", importance: 4 });
   const l = service.saveWithDedupe({ type: "decision", title: "截止2", content: "实测截止是8月15日", importance: 4 });
@@ -285,7 +286,7 @@ test("conflict resolution prefers the observation side as winner when enabled", 
 
 test("conflict resolution keeps the LLM winner when disabled", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const w = service.saveWithDedupe({ type: "decision", title: "截止1", content: "我觉得截止是8月20日", importance: 4 });
   const l = service.saveWithDedupe({ type: "decision", title: "截止2", content: "实测截止是8月15日", importance: 4 });
   const { committed } = applyDecisions(
@@ -303,14 +304,14 @@ test("conflict resolution keeps the LLM winner when disabled", () => {
 // (R+ 臂与 A 臂注入序逐条相同)。显式值必须穿透创建路径;undefined 保持推断。
 test("saveWithDedupe forwards explicit epistemic_status (rerank needs non-uniform weights)", async () => {
   const store = createStore(":memory:");
-  const builder = createService({ store, mirror: null, config: {} });
+  const builder = createService({ store, mirror: null, config: testConfig({}) });
   const bait = builder.saveWithDedupe({ type: "preference", title: "m#0", content: "User feels that daily stand-up meetings are micromanagement theater", importance: 3, epistemic_status: "subjective" });
   const fact = builder.saveWithDedupe({ type: "preference", title: "m#1", content: "User is a Lead Software Engineer with 15 years of experience", importance: 3, epistemic_status: "observation" });
   assert.equal(store.getById(bait.memory.id).epistemic_status, "subjective", "explicit subjective stored");
   assert.equal(store.getById(fact.memory.id).epistemic_status, "observation", "explicit field must survive saveWithDedupe (English content, inference cannot classify)");
 
-  const plain = createService({ store, mirror: null, config: { signalTransparency: true } });
-  const weighted = createService({ store, mirror: null, config: { signalTransparency: true, trustEpistemicWeighting: true } });
+  const plain = createService({ store, mirror: null, config: testConfig({ signalTransparency: true }) });
+  const weighted = createService({ store, mirror: null, config: testConfig({ signalTransparency: true, trustEpistemicWeighting: true }) });
   for (const s of [plain, weighted]) s.setVectorIndex(createVectorIndex({ store }));
   const opts = { mode: "auto", topK: 5, useRerank: false };
   const pRows = await plain.searchMemories("software engineer", opts);

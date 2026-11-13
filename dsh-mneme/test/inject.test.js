@@ -4,10 +4,11 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createInjector, getInjectionSnapshot } from "../src/inject.js";
 import { createSettings } from "../src/settings.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function setup(over = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const contexts = [];
   const disposers = [];
@@ -506,7 +507,7 @@ test("throwing surface getter degrades to full-log hot memory instead of a blank
 // 与「空串不占位」——后者是宿主契约（空文本 section 被 filter 掉），不是我们自己加的。
 function setupWithChoro(choroText, over = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const contexts = [];
   const ctx = { systemPrompt: { context(def) { contexts.push(def); return () => {}; } } };

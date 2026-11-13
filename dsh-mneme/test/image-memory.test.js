@@ -9,10 +9,11 @@ import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSummarizer } from "../src/summarize.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function setup(over = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const events = [];
   const calls = [];
   const ctx = {
@@ -62,7 +63,7 @@ test("#611 图+文消息：蒸馏转录里同时有文字与图片占位", async
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s611-mixed",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       imageMessage(1, "能有那种数据对比吗"),
       { seq: 2, type: "turn/end" }
@@ -83,7 +84,7 @@ test("#611 图-only 消息不再被整条丢弃（改动前窗口里一行都没
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s611-image-only",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [imageMessage(1, null), { seq: 2, type: "turn/end" }]
   };
   await handler(session, { seq: 2, type: "turn/end" });
@@ -98,7 +99,7 @@ test("#611 图片张数落进审计 metadata，off 档与静默丢弃可区分",
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s611-audit",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       imageMessage(1, "第一张"),
       imageMessage(2, "第二张"),
@@ -117,7 +118,7 @@ test("#611 没有图时不写 imageCount（零行为变化）", async () => {
   const handler = events.find((e) => e.name === "session/event").fn;
   const session = {
     id: "s611-no-image",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       { seq: 1, type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "只有文字" }] } },
       { seq: 2, type: "turn/end" }
@@ -152,7 +153,7 @@ test("#611 被挡掉的注入消息里的图不计入（CodeRabbit 2026-11-08 �
   };
   const session = {
     id: "s611-injected",
-    requestHeader: () => ({ config: { provider: "deepseek", model: "deepseek-chat" } }),
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
     events: [
       injected,
       { seq: 2, type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "真人的一句" }] } },

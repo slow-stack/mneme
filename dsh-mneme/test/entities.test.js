@@ -13,6 +13,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { extractEntities } from "../src/entities/extractor.js";
 import { applyDecisions } from "../src/dream/decisions.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function openStore() {
   return createStore(":memory:");
@@ -20,7 +21,7 @@ function openStore() {
 
 function makeService(config = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config });
+  const service = createService({ store, mirror: null, config: testConfig(config) });
   return { store, service };
 }
 
@@ -274,7 +275,7 @@ test("extractor writes entities, attrs and relations from mock LLM output", asyn
     ],
     relations: [{ from: "React", to: "Node", type: "depends_on" }]
   });
-  const result = await extractEntities(memory, { store, config: {}, callLLM });
+  const result = await extractEntities(memory, { store, config: testConfig({}), callLLM });
   assert.equal(result.ok, true);
   assert.equal(result.entities.length, 2);
   assert.equal(result.attrs.length, 2);
@@ -312,7 +313,7 @@ test("extractor refuses to write affective_context, which belongs to the sleep p
     ],
     relations: [{ from: "他", to: "答辩", type: "affective_context" }]
   });
-  const result = await extractEntities(memory, { store, config: {}, callLLM, logger });
+  const result = await extractEntities(memory, { store, config: testConfig({}), callLLM, logger });
   assert.equal(result.ok, true);
   assert.equal(result.relations.length, 0);
   assert.deepEqual(result.rejectedRelationTypes, ["affective_context"]);
@@ -339,7 +340,7 @@ test("extractor rejects unknown relation types instead of silently downgrading t
       { from: "A", to: "B", type: "related_to" }
     ]
   });
-  const result = await extractEntities(memory, { store, config: {}, callLLM, logger });
+  const result = await extractEntities(memory, { store, config: testConfig({}), callLLM, logger });
   assert.equal(result.ok, true);
   assert.deepEqual(result.rejectedRelationTypes, ["feels_weird_about"]);
   assert.equal(warnings.length, 1);
@@ -360,7 +361,7 @@ test("extractor drops a relation whose type is not even a string", async () => {
     ],
     relations: [{ from: "A", to: "B" }]
   });
-  const result = await extractEntities(memory, { store, config: {}, callLLM });
+  const result = await extractEntities(memory, { store, config: testConfig({}), callLLM });
   assert.equal(result.ok, true);
   assert.equal(result.relations.length, 0);
   assert.deepEqual(result.rejectedRelationTypes, ["undefined"]);
@@ -373,10 +374,10 @@ test("resolveEntity dedups: re-extracting the same name bumps mention_count", as
   const store = openStore();
   const memory = store.save({ type: "preference", title: "工具", content: "用 Vite", importance: 3 });
   const callLLM = jsonLLM({ entities: [{ name: "Vite", type: "technology", attrs: [] }], relations: [] });
-  await extractEntities(memory, { store, config: {}, callLLM });
+  await extractEntities(memory, { store, config: testConfig({}), callLLM });
   const first = store.findEntityByName("Vite");
   assert.equal(first.mention_count, 1);
-  const second = await extractEntities(memory, { store, config: {}, callLLM });
+  const second = await extractEntities(memory, { store, config: testConfig({}), callLLM });
   assert.equal(second.ok, true);
   assert.equal(second.entities[0].entity_id, first.id, "reuses the same entity id");
   assert.equal(store.findEntityByName("Vite").mention_count, 2, "mention_count incremented, no duplicate row");
@@ -389,7 +390,7 @@ test("extractor fails safe on garbage JSON → {ok:false} without throwing", asy
   const memory = store.save({ type: "preference", title: "坏输出", content: "x" });
   const result = await extractEntities(memory, {
     store,
-    config: {},
+    config: testConfig({}),
     callLLM: async () => "这不是 JSON，完全是乱写。"
   });
   assert.equal(result.ok, false);
@@ -575,7 +576,7 @@ test("throwing / rejecting entityExtractor never breaks the memory write", () =>
 
 test("extractor fails safe on missing content → {ok:false}", async () => {
   const store = openStore();
-  const result = await extractEntities({ id: "ghost", content: "" }, { store, config: {}, callLLM: async () => "{}" });
+  const result = await extractEntities({ id: "ghost", content: "" }, { store, config: testConfig({}), callLLM: async () => "{}" });
   assert.equal(result.ok, false);
   assert.ok(result.error);
   store.close();
@@ -586,7 +587,7 @@ test("extractor fails safe when callLLM rejects → {ok:false}", async () => {
   const memory = store.save({ type: "preference", title: "LLM 故障", content: "x" });
   const result = await extractEntities(memory, {
     store,
-    config: {},
+    config: testConfig({}),
     callLLM: async () => { throw new Error("llm down"); }
   });
   assert.equal(result.ok, false);
@@ -616,7 +617,7 @@ test("extractor omits empty provider/model and 'none' reasoning from options", a
   const store = openStore();
   let captured = "unset";
   const callLLM = async (_m, options) => { captured = options; return JSON.stringify({ entities: [], relations: [] }); };
-  await extractEntities({ id: "m2", content: "空文本" }, { store, config: {}, callLLM });
+  await extractEntities({ id: "m2", content: "空文本" }, { store, config: testConfig({}), callLLM });
   assert.deepEqual(captured, { memoryId: "m2" }, "no provider/model/reasoning keys when unset");
   store.close();
 });
@@ -625,7 +626,7 @@ test("#405: extractor omits memoryId when the memory has no id (no fabricated at
   const store = openStore();
   let captured = "unset";
   const callLLM = async (_m, options) => { captured = options; return JSON.stringify({ entities: [], relations: [] }); };
-  await extractEntities({ content: "无 id 的记忆" }, { store, config: {}, callLLM });
+  await extractEntities({ content: "无 id 的记忆" }, { store, config: testConfig({}), callLLM });
   assert.deepEqual(captured, {}, "an id-less memory leaves the attribution channel empty");
   store.close();
 });

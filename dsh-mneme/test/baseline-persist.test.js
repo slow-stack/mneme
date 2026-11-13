@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createDreamScheduler } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归（issue #89 基线半边）：阈值基线 baseline{count,chars} 只活在调度器闭包里，
 // 进程重启归零。库里记忆远多于阈值时，重启后第一条写入（更新类写入同样计入
@@ -57,7 +58,7 @@ test("issue#89: store.lastDreamBaseline reads the last baseline-advancing run on
 
 test("issue#89: a seeded baseline survives a restart — the first write no longer bypasses the threshold", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   seedMemories(service, 12); // 条数与字符数都远超阈值（12 ≥ 10 条）
   // 上一进程的成功轮把「当时的库规模」落进审计表，然后进程重启：
   const size = activeSize(store);
@@ -79,7 +80,7 @@ test("issue#89: a seeded baseline survives a restart — the first write no long
 
 test("issue#89: a seeded baseline still lets the threshold accumulate", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   seedMemories(service, 12);
   const dream = createDreamScheduler({
     onRun: async () => ({ ok: false }), thresholdCount: 10, thresholdChars: 5000, delayMs: 0,
@@ -95,7 +96,7 @@ test("issue#89: a seeded baseline still lets the threshold accumulate", async ()
 
 test("issue#89: the run-reported baseline is what the scheduler keeps (single source of truth)", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   seedMemories(service, 12);
   const reported = { count: 50, chars: 50000 };
   const dream = createDreamScheduler({
@@ -114,7 +115,7 @@ test("issue#89: the run-reported baseline is what the scheduler keeps (single so
 
 test("issue#89: an ok run persists its post-run store size; a failed run persists none", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const a = service.saveWithDedupe({ type: "project", title: "旧1", content: "第一段内容" });
   const b = service.saveWithDedupe({ type: "project", title: "旧2", content: "第二段内容" });
   const dream = createDreamScheduler({ thresholdCount: 1, thresholdChars: 0, delayMs: 0, logger: { warn: () => {} } });
@@ -183,7 +184,7 @@ test("issue#89: legacy dream_runs gains the baseline columns on open (idempotent
 
 test("issue#89: an unusable seed is treated as no baseline at all", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   seedMemories(service, 12);
   const opts = { onRun: async () => ({ ok: false }), thresholdCount: 10, thresholdChars: 5000, delayMs: 0, logger: { warn: () => {} } };
   // 库里的持久化值可能是老库的 NULL、或手工改坏的库：半个基线（只有条数）若被当成
@@ -198,7 +199,7 @@ test("issue#89: an unusable seed is treated as no baseline at all", () => {
 
 test("issue#89: a failing baseline read never breaks the run nor fakes a baseline", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const a = service.saveWithDedupe({ type: "project", title: "旧1", content: "第一段内容" });
   // finish 阶段读库失败（关库 / IO 故障）：必须不反噬巩固本身（审计行照写），也不
   // 写一个猜出来的基线（落 NULL → 下次重启退回零基线，而不是拿假基线抬高阈值）。

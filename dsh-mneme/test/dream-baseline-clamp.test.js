@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createDreamScheduler } from "../src/dream.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 回归（issue #634）：阈值基线只在成功轮前进（dream_runs 落库 + 调度器闭包），而
 // 归档/删除/合并把活跃量压下去——活跃量一旦跌破基线，overBase 恒为假，从此再
@@ -63,7 +64,7 @@ function archiveRows(service, store, n, excludeTag = null) {
 
 test("issue#634: a live scheduler survives an archive below the baseline (the freeze, unlocked)", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   seedMemories(service, 12);
   const baseline = persistBaseline(store);
   const dream = createDreamScheduler(makeOpts(store));
@@ -84,7 +85,7 @@ test("issue#634: a live scheduler survives an archive below the baseline (the fr
 
 test("issue#634: a stale peak seed from dream_runs is clamped on the first judgement after restart", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   seedMemories(service, 12);
   persistBaseline(store);
   // 收缩发生在上一进程末轮之后、重启之前（归档不 notifyWrite，调度器无从得知）：
@@ -104,7 +105,7 @@ test("issue#634: a stale peak seed from dream_runs is clamped on the first judge
 
 test("issue#634: the clamp is audited exactly once per shrink episode, and never without one", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const clamps = [];
   seedMemories(service, 12);
   const baseline = persistBaseline(store);
@@ -133,7 +134,7 @@ test("issue#634: the clamp is audited exactly once per shrink episode, and never
 
 test("issue#634: the clamp is per-axis — a chars-only shrink leaves the count baseline alone", async () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   seedMemories(service, 12);
   const baseline = persistBaseline(store);
   const clamps = [];

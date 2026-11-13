@@ -7,6 +7,7 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createInjector } from "../src/inject.js";
 import { createSettings } from "../src/settings.js";
+import { testConfig } from "./helpers/test-config.js";
 
 test("langOf resolves the per-instance config language", () => {
   assert.equal(langOf({}), "zh");
@@ -52,7 +53,7 @@ test("prompt table resolves by explicit language key", () => {
 test("two injectors with different language configs render independently", () => {
   function setup(language) {
     const store = createStore(":memory:");
-    const service = createService({ store, mirror: null, config: {} });
+    const service = createService({ store, mirror: null, config: testConfig({}) });
     const settings = createSettings(store.db);
     const contexts = [];
     const ctx = { systemPrompt: { context(def) { contexts.push(def); } } };
@@ -87,7 +88,7 @@ test("mirror render follows the instance language; parser accepts both", () => {
 
 test("dream summary keeps one row across a language switch (stable source identity)", () => {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   service.saveWithDedupe({ type: "summary", title: "记忆库总览", content: "zh overview", importance: 5, source: "dream", _overwrite: true });
   service.saveWithDedupe({ type: "summary", title: "Memory library overview", content: "en overview", importance: 5, source: "dream", _overwrite: true });
   const summaries = store.all().filter((m) => m.type === "summary" && !m.archived);

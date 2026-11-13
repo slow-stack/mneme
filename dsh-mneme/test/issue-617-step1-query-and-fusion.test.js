@@ -6,6 +6,7 @@ import { createInjector } from "../src/inject.js";
 import { createSettings } from "../src/settings.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { createSessionGate } from "../src/session-gate.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // #617 回归。三条缺陷各自独立成组，组内都用「一正一反」两把尺子：正向锁
 // 「改对了」，反向（关掉对应开关 / 换成对照配方）锁「这条断言真的是在测那条
@@ -19,7 +20,7 @@ import { createSessionGate } from "../src/session-gate.js";
 // 票据（agent/inbox/claimed）在 claim 那一刻记原文，渲染时事件流还没长就用它。
 function setupInjector(over = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const contexts = [];
   const handlers = new Map();
@@ -118,7 +119,7 @@ test("#617-A: 卸载后摘掉 claimed 监听，不再写票据", () => {
 // 失败（模型没下好、超时）之后永不重试，而那恰好是最需要重试的一次。
 function setupPrefetch(embedImpl) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const contexts = [];
   const ctx = { systemPrompt: { context(def) { contexts.push(def); return () => {}; } } };
@@ -244,7 +245,7 @@ test("#617-C: 关掉 BM25 后同一条词法命中确实消失（反向对照）
 // 白选。auto 的「关键词领位」语义只属于 blend。
 function setupFusion(recipe) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: { recallFusion: recipe } });
+  const service = createService({ store, mirror: null, config: testConfig({ recallFusion: recipe }) });
   // 标题命中（keyword 第一），但没有向量
   const kwTitle = service.saveWithDedupe({
     type: "preference", title: "令牌桶限流笔记", content: "随手记的限流笔记", importance: 2
@@ -288,7 +289,7 @@ test("#617-C: blend 的 auto 关键词领位契约保持不变（反向对照）
 // 恰好没跑」。
 function setupGated(over = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const contexts = [];
   const handlers = new Map();

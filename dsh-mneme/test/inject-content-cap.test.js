@@ -9,10 +9,11 @@ import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createInjector } from "../src/inject.js";
 import { createSettings } from "../src/settings.js";
+import { testConfig } from "./helpers/test-config.js";
 
 function setup(over = {}) {
   const store = createStore(":memory:");
-  const service = createService({ store, mirror: null, config: {} });
+  const service = createService({ store, mirror: null, config: testConfig({}) });
   const settings = createSettings(store.db);
   const contexts = [];
   const ctx = {
