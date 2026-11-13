@@ -195,6 +195,10 @@ const FEATURE_FLAG_BOOLEANS = [
   "reflectionUpdateEnabled",
   "reflectionFailureTracking",
   "bm25SearchEnabled",
+  // #687：批内跨类型去重（默认关 = 现状）。同一窗蒸馏里模型偶尔把一条结论同时写成
+  // pitfall 与 constraint（或 history 与 project），类型不同，summarizeDedupeMode 的
+  // type+title 去重看不见它们。开后可回面板调阈值；判错时被取代方正文仍在库里。
+  "summarizeBatchCrossTypeDedupe",
   "conflictFreezeEnabled",
   // Issue #603 第 4 层：自动裁决档（默认关）。相似度极高的同 scope 重复对直接
   // 保留新条、归档旧条，不进人工队列；模糊地带照旧留给人。会归档记忆，所以必须
@@ -392,6 +396,8 @@ const FEATURE_FLAG_INT_RANGES = {
 const FEATURE_FLAG_NUMBER_RANGES = {
   // Issue #127：vector 去重档的并入阈值。
   summarizeDedupeMinSim: [0.5, 0.99],
+  // #687：批内跨类型去重的相似度阈（与 config.js 的 min/max 成对）。
+  summarizeBatchCrossTypeMinSim: [0.5, 0.99],
   // Issue #125：hybrid 判"高相似"的阈值。
   dreamCandidateMinSim: [0.5, 0.99],
   // Issue #24 块2：单次有效触达的边权抬升幅度（与 config.js 的闭区间对齐）。

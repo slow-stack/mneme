@@ -709,3 +709,78 @@ test("#372: no unbounded cap — large transaction drains every entry", () => {
   });
   assert.equal(calls, 150, "no silent drop at any queue cap");
 });
+
+// ============================================================ #688 写入侧归一
+
+// 归一的口径只有一条：查找键 = lower(trim(name)) + type。折叠不能预做在 JS 里
+// 再绑参——JS 的 toLowerCase 与 SQLite 的 lower() 只在 ASCII 上一致，混用会在
+// 特殊字符上造出「一行查不到自己」的孤儿（见 store.js 的索引注释）。
+test("#688 findEntityByName folds case/whitespace and keeps the type dimension", () => {
+  const store = openStore();
+  const tech = store.createEntity({ name: "DeepSeek", type: "technology" });
+  const org = store.createEntity({ name: "deepseek", type: "organization" });
+
+  // 不带 type：仍能命中（面板/名字检索走这条），名字折叠生效。
+  assert.ok(store.findEntityByName("  deepseek  "), "case + surrounding whitespace folded");
+
+  // 带 type：类型必须一起进键。这 95 组跨类型同名正是 #688 不能裸折叠的理由——
+  // 只按名字归一会把技术 DeepSeek 与组织 deepseek 并成一个。
+  assert.equal(store.findEntityByName("deepseek", "technology").id, tech.id);
+  assert.equal(store.findEntityByName("  DEEPSEEK ", "organization").id, org.id);
+  assert.equal(store.findEntityByName("deepseek", "person"), undefined, "type still filters");
+
+  // 版本号后缀不参与归一：DeepSeek-V3 与 V4 是两个模型，剥后缀就并错了。
+  const v3 = store.createEntity({ name: "DeepSeek-V3", type: "technology" });
+  assert.equal(store.findEntityByName("deepseek-v4", "technology"), undefined, "no version-suffix stripping");
+  assert.equal(store.findEntityByName("deepseek-v3", "technology").id, v3.id);
+  store.close();
+});
+
+test("#688 createEntity trims the stored name but preserves its case", () => {
+  const store = openStore();
+  const ent = store.createEntity({ name: "  Vite  ", type: "technology" });
+  assert.equal(ent.name, "Vite", "surrounding whitespace is not stored");
+  assert.equal(store.findEntityByName("vite", "technology").id, ent.id);
+  store.close();
+});
+
+// 迁移：老库的 entities 带 canonical_memory_id（v0.7.1 的预留列，全仓无读取方）。
+// 打开即删列；数据与其余列原样保留；二次打开不抛（判定条件是「列还在不在」）。
+test("#688 legacy entities.canonical_memory_id is dropped on open, idempotently", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dsh-mneme-entity-drop-"));
+  const path = join(dir, "legacy-drop.db");
+  try {
+    const legacy = new DatabaseSync(path);
+    legacy.exec(`CREATE TABLE memories (
+      id TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,
+      tags TEXT NOT NULL DEFAULT '[]', importance INTEGER NOT NULL DEFAULT 3,
+      forgotten INTEGER NOT NULL DEFAULT 0, source TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );`);
+    legacy.exec(`CREATE TABLE entities (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT,
+      first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
+      mention_count INTEGER DEFAULT 1, canonical_memory_id TEXT
+    );`);
+    legacy.prepare("INSERT INTO entities (id,name,type,first_seen,last_seen,mention_count,canonical_memory_id) VALUES (?,?,?,?,?,?,?)")
+      .run("e1", "遗留实体", "concept", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", 3, "mem-1");
+    legacy.close();
+
+    const store = createStore(path);
+    const cols = store.db.prepare("PRAGMA table_info(entities)").all().map((c) => c.name);
+    assert.ok(!cols.includes("canonical_memory_id"), "the orphan column is gone after open");
+    const row = store.findEntityById("e1");
+    assert.equal(row.name, "遗留实体", "existing row survives the drop");
+    assert.equal(row.mention_count, 3, "other columns keep their values");
+    assert.equal(row.canonical_memory_id, undefined, "row mapping no longer exposes it");
+    store.close();
+
+    // 幂等：第二次打开列已不在，不能让 PRAGMA 检查之外的路径抛错。
+    const again = createStore(path);
+    assert.ok(!again.db.prepare("PRAGMA table_info(entities)").all().map((c) => c.name).includes("canonical_memory_id"));
+    again.createEntity({ name: "新实体", type: "concept" });
+    assert.ok(again.findEntityByName("新实体", "concept"), "reopen stays writable");
+    again.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

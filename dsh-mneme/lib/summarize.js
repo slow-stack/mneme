@@ -17,6 +17,10 @@ import { contentToText, countImages, IMAGE_PLACEHOLDER_PREFIX } from "./attachme
 // 图像描述档（docs/DISTILL.md:346）：占位之外再补一段「图里是什么」。本文件只
 // 负责把描述并进转录行；出描述的调用、准入判断都在 image-describe.js。
 import { appendDescriptions, describeImages, imageBlocks, canSeeImages, DESCRIPTION_PREFIX, imageRefOf } from "./image-describe.js";
+// #687：批内跨类型去重沿用写入侧质量过滤那把相似度（同一份归一化 bigram 重叠、
+// 同一族阈值），不另造第二套度量——两套度量会给出两套「像不像」的答案，而这一条
+// 判据只该有一个。
+import { textSimilarity } from "./quality-filter.js";
 // #512：每轮蒸馏一个 run id（归因主体）。store 侧也能铸造，但这里必须知道它——
 // 写记忆时要把它一路带到 saveMemoryProvenance / 落 run 行，拿回来再写就是两次往返。
 import { randomUUID } from "node:crypto";
@@ -38,6 +42,87 @@ const OCCURRED_AT_FUTURE_TOLERANCE_MS = 24 * 60 * 60 * 1000;
 // 刻意不做成配置键：护栏本身默认关（summarizeParseFailureMaxRetries=0），一个只为
 // 护栏服务的失效窗口不该再占一档用户可见配置（AGENTS.md 旗标计数锁也要跟着动）。
 const PARSE_FAILURE_STREAK_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+
+// --- #687 批内跨类型去重 ---------------------------------------------------------
+// 一次蒸馏里，同一个结论常被写成两条不同类型的记忆（"踩坑" 与 "约束" 其实是同一句
+// 话；一次事件与它所属的项目状态写了两遍）。2026-11-13 在真实库上量过：跨类型余弦
+// >= 0.90 的 45 对里 36 对（80%）同义，集中在这两组类型对上（constraint<->pitfall 9、
+// history<->project 8）。但同一批数据里还有 9 对（20%）合并会丢信息：5 对是时间序列
+// /状态快照、2 对是「症状」与「修法」、1 对结论相反、1 对版本号不同 —— 所以不开
+// 常开的类型闸，只在**同一批**（同一窗蒸馏、同一件事）上认这两组。
+export const BATCH_CROSS_TYPE_PAIRS = Object.freeze([
+  Object.freeze(["pitfall", "constraint"]),
+  Object.freeze(["history", "project"])
+]);
+// 与 quality-filter 的 duplicate 信号同一档（0.85）：同一条判据「这两段是不是在说
+// 同一件事」在写入侧已经用这个数，这里再拍一个相近的数只会让两处阈值互相漂移。
+export const BATCH_CROSS_TYPE_MIN_SIM = 0.85;
+// 下面两条不是阈值旋钮，是「相似」与「同一结论」之间的分隔线：
+// - 太短的条目不参与：textSimilarity 以较小一侧为分母，一句 15 字的话几乎完全被任何
+//   长段落包含 → 相似度接近 1，但那是「被提到」而不是「重复」；
+// - 长度悬殊的条目也不参与（短边不到长边一半）：那是包含关系（一段长记录里顺手提了
+//   另一个结论），合并它正是在丢信息。
+const BATCH_CROSS_TYPE_MIN_CHARS = 24;
+const BATCH_CROSS_TYPE_MIN_LEN_RATIO = 0.5;
+
+function batchPairKey(a, b) {
+  for (const [left, right] of BATCH_CROSS_TYPE_PAIRS) {
+    if ((a === left && b === right) || (a === right && b === left)) return `${left}<->${right}`;
+  }
+  return null;
+}
+
+/**
+ * Plan the in-batch cross-type supersede pass over one distillation window's
+ * entries. Pure: no I/O, no ids — it returns indices, because the rows do not
+ * exist yet (the caller chains them after writing).
+ *
+ * Pairs are visited by descending similarity so the strongest evidence wins the
+ * right to retire an entry; an entry is retired at most once and may not retire
+ * another entry that is itself retired (no chains that would hide a row behind a
+ * row that is already hidden).
+ *
+ * Winner = the entry carrying more content; equal length falls back to the entry
+ * written earlier in the batch (lower index). "More content" rather than "newer"
+ * because both were produced by the same call — there is no recency to speak of,
+ * and the fuller text is what a supersede should preserve.
+ *
+ * @param {Array<{type?:string,title?:string,content?:string}>} entries
+ * @param {{minSim?:number}} [options]
+ * @returns {Array<{winnerIndex:number, loserIndex:number, sim:number, pair:string}>}
+ */
+export function planBatchCrossTypeDedupe(entries, { minSim = BATCH_CROSS_TYPE_MIN_SIM } = {}) {
+  const plans = [];
+  if (!Array.isArray(entries) || entries.length < 2) return plans;
+  const candidates = [];
+  for (let i = 0; i < entries.length; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      const a = entries[i] ?? {};
+      const b = entries[j] ?? {};
+      const pair = batchPairKey(a.type, b.type);
+      if (!pair) continue;
+      const la = String(a.content ?? "").length;
+      const lb = String(b.content ?? "").length;
+      const shortSide = Math.min(la, lb);
+      const longSide = Math.max(la, lb);
+      if (shortSide < BATCH_CROSS_TYPE_MIN_CHARS) continue;
+      if (shortSide / longSide < BATCH_CROSS_TYPE_MIN_LEN_RATIO) continue;
+      const sim = textSimilarity(`${a.title ?? ""}\n${a.content ?? ""}`, `${b.title ?? ""}\n${b.content ?? ""}`);
+      if (sim < minSim) continue;
+      const winnerIndex = la >= lb ? i : j;
+      const loserIndex = winnerIndex === i ? j : i;
+      candidates.push({ winnerIndex, loserIndex, sim, pair });
+    }
+  }
+  candidates.sort((x, y) => y.sim - x.sim || x.loserIndex - y.loserIndex);
+  const retired = new Set();
+  for (const c of candidates) {
+    if (retired.has(c.loserIndex) || retired.has(c.winnerIndex)) continue;
+    retired.add(c.loserIndex);
+    plans.push({ winnerIndex: c.winnerIndex, loserIndex: c.loserIndex, sim: Number(c.sim.toFixed(4)), pair: c.pair });
+  }
+  return plans;
+}
 function normalizeDistilledOccurredAt(raw, nowMs = Date.now()) {
   if (typeof raw !== "string") return undefined;
   const text = raw.trim();
@@ -1233,6 +1318,10 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       const dedupeMode = config.summarizeDedupeMode ?? "off";
       let deduped = 0;
       let dedupeMaxSim = 0;
+      // #687：批内跨类型去重的落账计数（链成功几对）。默认关着一律为 0，
+      // 审计行与加它之前逐字节一致。
+      let batchDeduped = 0;
+      const batchChainedPairs = [];
       // v0.9.0（M.O. 项目记忆）：一次窗口解析一次——同一蒸馏窗口里所有条目同属一个
       // 工作区、一个 agent 身份，逐条解析是白花钱。解析不到就落 NULL（NULL = 未标注 =
       // 全局可见），且解析器绝不抛错（scope.js 的硬约束：记忆写入不该被作用域拖挂）。
@@ -1269,6 +1358,31 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         }
         writes.push({ entry, source, dup });
       }
+      // #687：批内跨类型去重（opt-in，默认关 = 现状）。同一窗蒸馏里模型常把一个结论
+      // 写成两条不同类型（pitfall 与 constraint 同义、history 与 project 同义），
+      // 而"类型不同"恰好让写入侧的 type+title 去重看不见它们。合并方向固定为
+      // supersede：正文零改写、不 merge —— 判错时原文仍在库里，只是默认注入不再取它，
+      // 而 merge 会真的抹掉一条的措辞，没有回头路。
+      //
+      // 已被并进既有行的条目（dup 有值）不参与：它的正文已经进了那条老记忆，把老记忆
+      // 盖到下一条新条目下面，等于用一次蒸馏顺手隐藏一条累积了很久的旧行。
+      const batchPlans = [];
+      if (config?.summarizeBatchCrossTypeDedupe === true && writes.length > 1) {
+        const plannable = writes
+          .map((write, index) => ({ entry: write.entry, index }))
+          .filter((slot) => !writes[slot.index].dup);
+        const planned = planBatchCrossTypeDedupe(plannable.map((slot) => slot.entry), {
+          minSim: config?.summarizeBatchCrossTypeMinSim ?? BATCH_CROSS_TYPE_MIN_SIM
+        });
+        for (const plan of planned) {
+          batchPlans.push({
+            winnerIndex: plannable[plan.winnerIndex].index,
+            loserIndex: plannable[plan.loserIndex].index,
+            sim: plan.sim,
+            pair: plan.pair
+          });
+        }
+      }
       // #399：蒸馏窗口的原始公开记录 + 记忆级溯源链接，与记忆写入同事务落盘。
       // 凭证与它的派生记忆必须同生共死：记忆写了而记录没写，溯源就断在「不知道
       // 出自哪段原文」；记录写了而记忆没写，盘上留一份没有索引的原文。默认关
@@ -1280,7 +1394,9 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         : null;
       const writeWindow = () => {
         const savedIds = [];
-        for (const { entry, source, dup } of writes) {
+        // #687：批内 supersede 需要「写之后」才有的 id，按 writes 的下标记住它们。
+        const idByWriteIndex = new Map();
+        for (const [writeIndex, { entry, source, dup }] of writes.entries()) {
           const outcome = service.saveWithDedupe({
             ...entry,
             source,
@@ -1301,6 +1417,19 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           // created 与 merged 两条成功分支都返回 memory（含 id）；merged 时 id 是
           // 被并入的既有记忆——本次窗口的原文确实贡献了它，链接它是诚实的。
           if (outcome?.memory?.id) savedIds.push(outcome.memory.id);
+          if (outcome?.memory?.id) idByWriteIndex.set(writeIndex, outcome.memory.id);
+        }
+        // #687：两条都落库之后才链——supersedeChain 写的是行间指针，先链后写会指向
+        // 一个还不存在的 id。链失败（行被并发归档/物理删除）就跳过：这一对的正文都
+        // 已经写进去了，宁可留着重复，也不能为了「看起来干净」去伪造一次链。
+        for (const plan of batchPlans) {
+          const loserId = idByWriteIndex.get(plan.loserIndex);
+          const winnerId = idByWriteIndex.get(plan.winnerIndex);
+          if (!loserId || !winnerId || loserId === winnerId) continue;
+          if (service.supersedeChain?.(loserId, winnerId)) {
+            batchDeduped++;
+            batchChainedPairs.push(plan.pair);
+          }
         }
         // #512：run 的条数口径是「本次写成功的记忆行数」，与 savedIds 同源——
         // 另起一个计数器会在 merged 分支上与它对不上（那一路也 push 了 id）。
@@ -1401,7 +1530,11 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           parsed: parsed.length,
           ...(parsedResult.salvaged ? { json_salvaged: true } : {}),
           ...(capped > 0 ? { capped } : {}),
-          ...(deduped > 0 ? { deduped, mode: dedupeMode, maxSim: Number(dedupeMaxSim.toFixed(4)) } : {})
+          ...(deduped > 0 ? { deduped, mode: dedupeMode, maxSim: Number(dedupeMaxSim.toFixed(4)) } : {}),
+          // #687：批内跨类型 supersede 的落账（几对、为什么链）。默认关时这个键根本不出现。
+          ...(batchDeduped > 0
+            ? { batchDeduped, batchPairs: batchChainedPairs }
+            : {})
         };
       }
       // 记忆写入和解析都成功后才提交窗口；流失败、中止、解析失败或写入异常

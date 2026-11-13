@@ -1045,6 +1045,10 @@ window.__ModuleLoader__.load({
         "memory.features.codingBoostFactor": "编码记忆加权",
         "memory.features.memoryQualityFilter.enabled": "质量过滤",
         "memory.features.memoryQualityFilter.enabled.hint": "低价值记忆自动归档、注入时降权。",
+        // #687：写侧去重，与质量过滤相邻——两条都在问「这一条该不该成为一条记忆」。
+        // 文案必须说清「原文不删」：被取代方只是不再默认注入，用户不会丢内容。
+        "memory.features.summarizeBatchCrossTypeDedupe": "批内跨类型去重",
+        "memory.features.summarizeBatchCrossTypeDedupe.hint": "同一轮蒸馏里把重复的「踩坑/约束」或「历史/项目」只留信息更全的一条；被取代的一条原文保留、不再默认注入。",
         "memory.features.llmAudit.enabled": "调用审计",
         "memory.features.llmAudit.enabled.hint": "后台模型调用与 token 消耗都有账可查。",
         // #254：写入准入两层。检测关时整条路径不碰；检测开、拦截关 = 仅告警 +
@@ -2192,6 +2196,10 @@ window.__ModuleLoader__.load({
         "memory.features.codingBoostFactor": "Coding boost factor",
         "memory.features.memoryQualityFilter.enabled": "Quality filter",
         "memory.features.memoryQualityFilter.enabled.hint": "Low-value memories get archived and down-ranked.",
+        // #687 — write-side dedupe. The hint must say the loser keeps its text:
+        // supersede only stops default injection, it does not delete content.
+        "memory.features.summarizeBatchCrossTypeDedupe": "Batch cross-type dedupe",
+        "memory.features.summarizeBatchCrossTypeDedupe.hint": "Within one distillation run, keeps only the fuller of a duplicated pitfall/constraint or history/project pair; the superseded row keeps its text but stops being injected by default.",
         "memory.features.llmAudit.enabled": "Call audit",
         "memory.features.llmAudit.enabled.hint": "Background model calls and token spend are on record.",
         // #254 — two layers: enabled runs the check (audit only), enforce actually
@@ -4719,6 +4727,9 @@ window.__ModuleLoader__.load({
       // 蒸馏与写入：写进去的东西长什么样——实体抽取（子块：路由与思考强度）、
       // 编码回溯、文档摘要卡、质量过滤、原文留存（子块：天数）。
       { key: "group.pipeline", items: ["entityExtractionEnabled", "codingRetrospect", "documentMemoryEnabled", "memoryQualityFilter.enabled",
+        // #687 批内跨类型去重：写侧行为，紧贴质量过滤（同一件事的两道闸——
+        // 质量过滤判「值不值得记」，这条判「同一轮里有没有记两遍」）。
+        "summarizeBatchCrossTypeDedupe",
         // #399 的留存总闸放组末：distillSub（天数行）经 subAfter 紧贴它渲染。
         "distillRecords.enabled", "imageDescribeEnabled"] },
       // 检索与注入：捞什么、排什么序——热记忆、时间前缀、重排、BM25、语义去重、

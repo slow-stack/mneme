@@ -157,7 +157,12 @@ function sanitizeExtractedData(data, config, logger = null) {
 }
 
 async function resolveEntity(entity, store) {
-  const existing = store.findEntityByName(entity.name);
+  // #688: the type rides the lookup. Name-only folding merges genuinely distinct
+  // objects — the measured library had 95 such groups ("DeepSeek" the technology
+  // next to "deepseek" the organization). Case/whitespace folding itself happens
+  // in store.findEntityByName; the extractor must not pre-normalize, or the two
+  // sides would fold with different rules (JS toLowerCase vs SQLite lower()).
+  const existing = store.findEntityByName(entity.name, entity.type);
   if (existing) {
     store.updateEntity(existing.id, {});
     return existing.id;
