@@ -831,6 +831,27 @@ export function createSettings(db) {
       for (const [key, value] of Object.entries(patch)) {
         merged[key] = validateFlag(key, value);
       }
+      // 互斥归一（#641 收尾）：conflictLedgerMode 与 conflictFreezeEnabled 是两个
+      // 互不感知的键——前者在 FEATURE_FLAG_ENUMS、后者在 FEATURE_FLAG_BOOLEANS，
+      // 各自的校验只管自己，任意组合都合法。同开时运行期的语义是「freeze 胜出、
+      // 档位降 shadow」（见 src/conflict-mode.js），面板却把这一层藏在提示语里，
+      // 用户选了 enforce 却发现处置没跑。
+      //
+      // 因此在这里把它们收成互斥单选：**刚点的那个赢**。两笔顺序都要罩住——
+      // 面板 put() 一次只发一个键，选 enforce 与开 freeze 是两次独立写入。
+      //
+      // 必须落在写入 kv 这一刻、不能等运行时：面板改开关本来就下次启动才生效
+      // （src/index.js 启动时读 kv 合并进 cfg），运行时再归一，用户看到的快照
+      // 与真正生效的配置会有一个启动时差。
+      //
+      // 只在 patch 真的碰了这两个键时才归一：其它键的写入不该顺手改动冲突配置。
+      const touchedMode = Object.prototype.hasOwnProperty.call(patch, "conflictLedgerMode");
+      const touchedFreeze = Object.prototype.hasOwnProperty.call(patch, "conflictFreezeEnabled");
+      if (touchedMode && merged.conflictLedgerMode === "enforce") {
+        merged.conflictFreezeEnabled = false;
+      } else if (touchedFreeze && merged.conflictFreezeEnabled === true && merged.conflictLedgerMode === "enforce") {
+        merged.conflictLedgerMode = "shadow";
+      }
       setSetting("feature_flags", JSON.stringify(merged));
       return merged;
     }

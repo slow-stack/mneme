@@ -119,7 +119,13 @@ export function seedService(overrides = {}) {
 
 export async function runBenchmark({ topK = 5, mode = "auto" } = {}) {
   const configs = [
-    { name: "legacy", overrides: { bm25SearchEnabled: false, adaptiveThresholdEnabled: false, searchSemanticDedup: false } },
+    // #713: with adaptive thresholds off and no explicit threshold, the vector
+    // path now applies the configured fixed cutoff (0.65) instead of an
+    // unconditional no-cutoff. This arm exists to isolate *ranking recipe*
+    // differences on a toy hash embedder whose cosines are much lower than a
+    // real model's, so it must ask for "no cutoff" explicitly rather than
+    // inherit a fixed one it never intended.
+    { name: "legacy", overrides: { bm25SearchEnabled: false, adaptiveThresholdEnabled: false, searchSemanticDedup: false, vectorSearchThreshold: 0 } },
     { name: "fused", overrides: {} }
   ];
   const runs = [];

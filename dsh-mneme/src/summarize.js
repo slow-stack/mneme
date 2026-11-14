@@ -145,12 +145,20 @@ function normalizeDistilledOccurredAt(raw, nowMs = Date.now()) {
  * - filtered-empty：JSON 合法、`arr` 非空，条目却被 VALID 全数滤掉。**这一种最贵**：
  *   读起来像「没按格式写」，实际是分类词不在枚举内，而游标不推进会让整窗反复重放。
  */
-function describeParseFailure(arr, entries, salvaged, hasBracket) {
+function describeParseFailure(arr, entries, salvaged, hasBracket, rejects = null) {
   if (!Array.isArray(arr) || salvaged) return { kind: hasBracket ? "syntax" : "no-array", arrCount: 0, sampleTypes: [] };
   if (arr.length === 0) return { kind: "no-array", arrCount: 0, sampleTypes: [] };
   if (entries.length > 0) return null;
   const sampleTypes = [...new Set(arr.map((item) => (typeof item?.type === "string" ? item.type.trim() : "")).filter(Boolean))].slice(0, 5);
-  return { kind: "filtered-empty", arrCount: arr.length, sampleTypes };
+  // #712：只有 sample_types 时，「分类全都自造」和「分类合法、title/content 被
+  // name/url/notes 顶掉」在读数上长得一模一样，而两者该修的地方完全不同（前者改
+  // prompt，后者是键名归一）。逐条计数是纯审计，不改变任何判定。
+  return {
+    kind: "filtered-empty",
+    arrCount: arr.length,
+    sampleTypes,
+    ...(rejects ? { rejectReasons: rejects.reasons, sampleKeys: rejects.sampleKeys } : {})
+  };
 }
 
 /**
@@ -173,7 +181,15 @@ export function summarizeParseFailureAudit(raw, failure) {
       raw_head: text.slice(0, 300),
       ...(tail ? { raw_tail: tail } : {}),
       raw_has_bracket: text.includes("["),
-      ...(filtered ? { arr_count: filtered.arrCount, invalid_entries: filtered.arrCount, sample_types: filtered.sampleTypes } : {})
+      ...(filtered
+        ? {
+            arr_count: filtered.arrCount,
+            invalid_entries: filtered.arrCount,
+            sample_types: filtered.sampleTypes,
+            ...(filtered.rejectReasons ? { reject_reasons: filtered.rejectReasons } : {}),
+            ...(filtered.sampleKeys?.length ? { sample_keys: filtered.sampleKeys } : {})
+          }
+        : {})
     }
   };
 }
@@ -203,6 +219,28 @@ export function parseSummaryJsonResult(raw) {
   }
   if (!Array.isArray(arr)) return { ok: false, entries: [] };
   const VALID = new Set(["preference", "project", "decision", "history", "rejected_solution", "pitfall", "constraint"]);
+  // #712：逐条记下**为什么**被拒。社区报告里 845 次 filtered-empty 中有 76 次
+  // type 其实合法、只是 title/content 被 name/url/notes/topic/summary 顶掉——
+  // 只看 sample_types 永远分不出这一型，于是每次都在猜「模型乱造分类」。纯审计。
+  const rejectReasons = { not_object: 0, bad_type: 0, bad_title: 0, bad_content: 0 };
+  const rejectedKeys = new Set();
+  for (const item of arr) {
+    if (!item || typeof item !== "object") {
+      rejectReasons.not_object += 1;
+      continue;
+    }
+    const reason = !VALID.has(item.type)
+      ? "bad_type"
+      : typeof item.title !== "string" || !item.title.trim()
+        ? "bad_title"
+        : typeof item.content !== "string" || !item.content.trim()
+          ? "bad_content"
+          : null;
+    if (!reason) continue;
+    rejectReasons[reason] += 1;
+    if (rejectedKeys.size < 5) rejectedKeys.add(Object.keys(item).sort().join(","));
+  }
+  const rejects = { reasons: rejectReasons, sampleKeys: [...rejectedKeys] };
   const entries = arr.filter(
     (item) =>
       item &&
@@ -236,7 +274,7 @@ export function parseSummaryJsonResult(raw) {
     // type 全不在枚举里」过去共用一句 invalid summary JSON，而两者要修的地方完全不同
     // ——后者是菜单与闸门不一致（summary prompt 只列 4 个类型、VALID 吃 7 个），且失败
     // 路径游标不推进，同一窗口会被一遍遍重放（社区报告 #493 追加的实测形态）。
-    ...(!ok ? { failure: describeParseFailure(arr, entries, salvaged, text.includes("[")) } : {})
+    ...(!ok ? { failure: describeParseFailure(arr, entries, salvaged, text.includes("["), rejects) } : {})
   };
 }
 

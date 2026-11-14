@@ -9,6 +9,7 @@ import { runSleep } from "../src/dream/sleep.js";
 import { supersedeInfoFirstPair } from "../src/dream/decisions.js";
 import { createDreamScheduler, parseReceipt } from "../src/dream.js";
 import { testConfig } from "./helpers/test-config.js";
+import { resetConflictModeWarnings } from "../src/conflict-mode.js";
 
 // Issue #641（beta 第二阶段，enforce 档）：确定性处置接线。锁五件事，防的回归是：
 //   ① enforce 假成功——枚举里加了档位但没人消费（#616 的教训），所以每条用例都
@@ -133,6 +134,9 @@ test("issue#641 enforce：T4 真矛盾只记账——两条都活着、零处置
 });
 
 test("issue#641 enforce 与 freeze 同开：freeze 让位降级 shadow + warn，冻结语义完整保留", async () => {
+  // 降级告警按进程去重（同一件事不该每轮打一行），同文件里有两处共存用例，
+  // 第二个必须从干净起点开始，否则会读到「已经打过」的假阴性。
+  resetConflictModeWarnings();
   const { service, store, vectorIndex } = setup();
   const a = makeMemory(service, "共存甲", "共存甲的内容");
   const b = makeMemory(service, "共存乙", "共存乙的内容");
@@ -368,6 +372,7 @@ test("issue#641 dream enforce：conflict 决策只落账本——败者不归档
 });
 
 test("issue#641 dream enforce 与 freeze 同开：freeze 让位（conflict 照旧停车），不出现两套处置", async () => {
+  resetConflictModeWarnings();
   const store = createStore(":memory:");
   const service = createService({ store, mirror: null, config: testConfig({}) });
   const { memory: w } = service.saveWithDedupe({ type: "decision", title: "截止新", content: "8月20日", importance: 4 });
@@ -377,7 +382,10 @@ test("issue#641 dream enforce 与 freeze 同开：freeze 让位（conflict 照�
   const dream = createDreamScheduler({ thresholdCount: 1, thresholdChars: 0, delayMs: 0 });
   const result = await dream.runDream(ctx, service, { ...BASE_DREAM_CONFIG, conflictLedgerMode: "enforce", conflictFreezeEnabled: true });
   assert.equal(result.ok, true);
-  assert.ok(warnings.some((m) => m.includes("degrading to freeze")), "共存必须 warn");
+  // #641 收尾：两侧原本各说各话（dream 说「degrading to freeze」、sleep 说「degrading
+  // to shadow」，方向相反）。现在统一由 resolveConflictMode 解析、只有一种说法：
+  // freeze 胜出、档位降 shadow。这条断言跟着改措辞，但它守卫的东西没变——共存必须响。
+  assert.ok(warnings.some((m) => m.includes("degrading to shadow")), "共存必须 warn");
   assert.equal(result.frozen, 1, "freeze 语义保留");
   assert.equal(store.listConflictLedger().length, 0, "降级轮不写账本处置");
   store.close();

@@ -22,6 +22,9 @@ import { createSleepScheduler, runSleep } from "./dream/sleep.js";
 import { invalidPeakSpecs } from "./peak-hours.js";
 import { createApi } from "./api.js";
 import { createStandaloneApi } from "./api-standalone.js";
+// 令牌轮换的接缝：standalone 实例是这里的局部变量，host 路由拿不到，轮换要靠
+// 一张只有一个槽位的注册表转交（见该文件头注释）。
+import { registerStandaloneApi, clearStandaloneApi } from "./standalone-registry.js";
 // #275 存储生命周期第一批：无损回收（手动入口，不挂启动路径）。
 import { createMaintenance } from "./maintenance.js";
 import { createChoroQueries } from "./wiki/queries.js";
@@ -846,7 +849,13 @@ export const apply = (ctx, config) => {
     // embedder 交给 /context 的查询嵌入（issue #370）：与 service.setEmbedder 同一
     // 实例（semantic.js 装配产物），lightMode 下为 null，路由侧降级规则档。
     const standalone = createStandaloneApi({ service, store, config: cfg, logger: ctx.logger, settings, maintenance, embedder });
-    disposers.push(() => standalone.server.close());
+    // 注册必须在 ready 之前：绑定失败时实例仍在（只是没在听），轮换令牌依旧要
+    // 落库；而 clear 带句柄，避免卸载旧实例时清掉已被顶替的新实例。
+    registerStandaloneApi(standalone);
+    disposers.push(() => {
+      clearStandaloneApi(standalone);
+      standalone.server.close();
+    });
     standalone.ready.catch((error) => {
       ctx.logger?.warn?.(`[dsh-mneme] standalone API failed to start: ${String(error)}`);
     });

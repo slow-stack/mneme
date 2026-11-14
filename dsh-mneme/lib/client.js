@@ -774,6 +774,11 @@ window.__ModuleLoader__.load({
         "memory.settings.extapi.token": "Token",
         "memory.settings.extapi.copy": "复制",
         "memory.settings.extapi.copied": "已复制",
+        "memory.settings.extapi.rotate": "重新生成",
+        "memory.settings.extapi.rotateConfirm": "再点一次确认",
+        "memory.settings.extapi.rotateHint": "换一个新 Token：旧的立即失效，已经配好的工具要换成新值",
+        "memory.settings.extapi.rotated": "已重新生成，旧 Token 已失效",
+        "memory.settings.extapi.rotatedRestart": "已重新生成，重启 DSH 后生效（在此之前旧 Token 仍然有效）",
         "memory.settings.serve.title": "独立服务 dsh-mneme-serve",
         "memory.settings.serve.desc": "不启动 DSH 也能以 HTTP 方式访问同一份记忆库（无 LLM 数据面）。",
         "memory.settings.serve.cmd": "npx -p @modusensus/dsh-mneme dsh-mneme-serve --memory-dir <记忆库目录> --port <端口>",
@@ -1074,13 +1079,14 @@ window.__ModuleLoader__.load({
         "memory.features.conflictFreezeEnabled": "矛盾冻结",
         "memory.features.conflictFreezeEnabled.hint": "整理发现矛盾先冻结待确认，不自动裁决。",
         "memory.features.conflictLedgerMode": "矛盾处理档位",
-        "memory.features.conflictLedgerMode.hint": "off：矛盾走人审队列（现状）。shadow：分诊只记账零处置，先跑一周看分布。enforce：确定性处置（近重复自动归档、演进落取代链、矛盾注入标注），人审与 LLM 裁决退出。与「矛盾冻结」互斥，同开时冻结让位。",
+        "memory.features.conflictLedgerMode.hint": "off：矛盾走人审队列（现状）。shadow：分诊只记账零处置，先跑一周看分布。enforce：确定性处置（近重复自动归档、演进落取代链、矛盾注入标注），人审与 LLM 裁决退出。两个键互斥：选了这个档位会自动关掉「矛盾冻结」，打开「矛盾冻结」也会把档位降成 shadow。",
         "memory.features.conflictLedgerMode.off": "off（人审队列）",
         "memory.features.conflictLedgerMode.shadow": "shadow（只记账）",
         "memory.features.conflictLedgerMode.enforce": "enforce（确定性处置）",
         // #661：档位选 off/shadow 但「矛盾冻结」开着时，冲突照样进人审队列——
         // 冻结优先，档位被覆盖。不写这一行，用户只能反复看到「已选 off 却有卡片」。
-        "memory.features.conflictLedgerMode.frozenOverrides": "「矛盾冻结」正开着，它优先于本档位：判成 conflict 的对仍会进人审队列，档位选 off / shadow 都不会少。要让队列不再新增，先关掉「矛盾冻结」。",
+        "memory.features.conflictLedgerMode.frozenOverrides": "「矛盾冻结」正开着：判成 conflict 的对会进人审队列，本档位不会减少队列。要让队列不再新增，先把「矛盾冻结」关掉，或改选 enforce。",
+        "memory.features.conflictLedgerMode.frozenDegraded": "「矛盾冻结」正开着，本档位实际是 shadow：分诊照常记账，处置不跑。这是配置文件里两个键同开的结果——在面板上点一次任一边，就会自动归成单选。",
         "memory.features.scopeEnabled": "来源标注",
         "memory.features.scopeEnabled.hint": "每条记忆标上来自哪个 Agent / 工作区。",
         "memory.features.strictScope": "严格隔离",
@@ -1946,6 +1952,11 @@ window.__ModuleLoader__.load({
         "memory.settings.extapi.token": "Token",
         "memory.settings.extapi.copy": "Copy",
         "memory.settings.extapi.copied": "Copied",
+        "memory.settings.extapi.rotate": "Rotate",
+        "memory.settings.extapi.rotateConfirm": "Click again to confirm",
+        "memory.settings.extapi.rotateHint": "Issues a new token: the old one stops working at once, and anything already configured must be updated",
+        "memory.settings.extapi.rotated": "New token issued. The old one no longer works",
+        "memory.settings.extapi.rotatedRestart": "New token issued. Takes effect after restarting DSH (the old one still works until then)",
         "memory.settings.serve.title": "Standalone service: dsh-mneme-serve",
         "memory.settings.serve.desc": "Reach the same memory library over HTTP without starting DSH (no LLM data plane).",
         "memory.settings.serve.cmd": "npx -p @modusensus/dsh-mneme dsh-mneme-serve --memory-dir <memory-dir> --port <port>",
@@ -2229,12 +2240,13 @@ window.__ModuleLoader__.load({
         "memory.features.conflictFreezeEnabled": "Conflict freeze",
         "memory.features.conflictFreezeEnabled.hint": "Freezes contradictions for review instead of auto-deciding.",
         "memory.features.conflictLedgerMode": "Conflict handling mode",
-        "memory.features.conflictLedgerMode.hint": "off: conflicts go to the human review queue (status quo). shadow: triage only records — zero disposition; run a week and inspect the distribution first. enforce: deterministic resolution (near-dups auto-archived, evolution chained, conflict pairs annotated); human review and LLM adjudication step out. Mutually exclusive with conflict freeze — freeze yields when both are on.",
+        "memory.features.conflictLedgerMode.hint": "off: conflicts go to the human review queue (status quo). shadow: triage only records — zero disposition; run a week and inspect the distribution first. enforce: deterministic resolution (near-dups auto-archived, evolution chained, conflict pairs annotated); human review and LLM adjudication step out. The two keys are mutually exclusive: picking this mode turns conflict freeze off, and turning conflict freeze on drops this mode to shadow.",
         "memory.features.conflictLedgerMode.off": "off (review queue)",
         "memory.features.conflictLedgerMode.shadow": "shadow (record only)",
         "memory.features.conflictLedgerMode.enforce": "enforce (deterministic)",
         // #661: with freeze on, the tier is overridden and conflicts still park.
-        "memory.features.conflictLedgerMode.frozenOverrides": "Conflict freeze is on and takes precedence over this mode: pairs judged conflict still enter the review queue, so off and shadow change nothing. Turn conflict freeze off to stop the queue from growing.",
+        "memory.features.conflictLedgerMode.frozenOverrides": "Conflict freeze is on: pairs judged conflict enter the review queue, and this mode does not shrink that queue. Turn conflict freeze off (or pick enforce) to stop it from growing.",
+        "memory.features.conflictLedgerMode.frozenDegraded": "Conflict freeze is on, so this mode is effectively shadow: triage still records, disposition does not run. This comes from both keys being set in the config file — clicking either one in the panel normalises them to a single choice.",
         "memory.features.scopeEnabled": "Scope tagging",
         "memory.features.scopeEnabled.hint": "Tags each memory with its agent/workspace origin.",
         "memory.features.strictScope": "Strict isolation",
@@ -2756,6 +2768,19 @@ window.__ModuleLoader__.load({
         // 第 6 槽是半透明灰（「其他」那一类）。它曾同时以「令牌 + 弧 + 图例点」三份
         // 内联副本存在过，改一处漏两处；现在弧与点都直接 var 引用这一份。
         "--mneme-chart-6:color-mix(in srgb,var(--dsw-alias-label-primary) 50%,transparent);" +
+        // 情绪五槽（2026-11，情绪页美化）：「同一个情绪词一颗恒定色」的类别身份色，
+        // 语义先例是 MEMORY_TYPE_COLORS（一个记忆类型一颗恒定色）。定义抄图表的两步
+        // 配方（静态色 → 中性灰压彩度 → label 适配主题），每槽独立一份——色槽纪律：
+        // 各家只引用自己的槽（sink 同款先例），不 var 继承 chart-*，donut 调色盘怎么
+        // 改都不该牵动情绪色。槽语义：1 绿=愉快·安心，2 琥珀=期待·感动，3 紫=好奇·
+        // 平静，4 蓝=紧张·不安，5 红=失落·恼火；词典外的词按词面哈希稳定落槽。
+        "--mneme-affect-1:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-green-500,#22c55e) 62%,var(--dsw-static-neutral-500,#7f8287)) 64%,var(--dsw-alias-label-primary));" +
+        // 琥珀槽（affect-2）比 chart-3 多混一档 label（68% vs 74%）：图表配方按图形
+        // 3:1 调，情绪词是文字要 4.5，amber 是五槽里最亮的，实测 74% 只有 4.41。
+        "--mneme-affect-2:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-amber-500,#f59e0b) 62%,var(--dsw-static-neutral-500,#7f8287)) 68%,var(--dsw-alias-label-primary));" +
+        "--mneme-affect-3:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-violet-400,#a78bfa) 74%,var(--dsw-static-neutral-500,#7f8287)) 62%,var(--dsw-alias-label-primary));" +
+        "--mneme-affect-4:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-blue-500,#3b82f6) 62%,var(--dsw-static-neutral-500,#7f8287)) 70%,var(--dsw-alias-label-primary));" +
+        "--mneme-affect-5:color-mix(in srgb,color-mix(in srgb,var(--dsw-static-red-500,#ef4444) 62%,var(--dsw-static-neutral-500,#7f8287)) 67%,var(--dsw-alias-label-primary));" +
         // 沉淀图（8 周「进来 vs 稳住」）与 donut（token 都去哪了）是两套分类，原先共用
         // chart-3 / chart-2：同一页里那根琥珀柱在 donut 是「实体抽取」、在沉淀图是「新增」，
         // 同色两义。这里给沉淀图独立语义名，取值与今天的 chart-3 / chart-2 逐字相同
@@ -2944,25 +2969,45 @@ window.__ModuleLoader__.load({
       ".mneme-relaffect{flex:none;font-size:11px;line-height:16px;color:var(--mneme-fg-dim);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:0 6px;max-width:9em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
       ".mneme-relaffect--trait{color:var(--mneme-accent);font-weight:600}",
       // #619 可见化 C：情绪归因一览。沿用面板既有色，不引入新色相——
-      // trait 用 accent 加重，其余靠灰阶分层，跟关系行那颗小标签是同一套语汇。
-      ".mneme-affective-head{margin-bottom:10px}",
+      // trait 用 accent 淡色调加重（与关系行的情绪小标签同一语汇），场合档靠灰阶；
+      // 分组头借状态页组头（.mneme-statushead）的字级语汇，页内不再长出第二套标题。
+      // 几何全部走刻度 token（panel-tokens 棘轮：本页是重写不是迁移，新声明不许
+      // 带进任何存量 px 增量）；情绪 chip 用 pill 档——它是刻度成员且有先例
+      // （conflict simbar / heatbar），比照抄关系行的 6px 更能标出「情绪是行内锚点」。
+      ".mneme-affective-head{margin-bottom:var(--mneme-space-10)}",
       ".mneme-affective-title{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary)}",
-      ".mneme-affective-sub{font-size:12px;color:var(--mneme-fg-dim);margin-top:2px;line-height:1.5}",
-      ".mneme-affective-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}",
-      ".mneme-affective-row{border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:7px 10px}",
-      ".mneme-affective-row--trait{border-color:var(--mneme-accent)}",
-      ".mneme-affective-main{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px}",
+      ".mneme-affective-sub{font-size:12px;color:var(--mneme-fg-dim);margin-top:var(--mneme-space-2);line-height:1.5}",
+      ".mneme-affective-group{margin-top:var(--mneme-space-2)}",
+      ".mneme-affective-grouphead{display:flex;align-items:center;gap:var(--mneme-space-6);font-size:var(--mneme-type-12);font-weight:600;letter-spacing:.02em;color:var(--mneme-fg-dim);margin:var(--mneme-space-10) 0 var(--mneme-space-6)}",
+      ".mneme-affective-groupcount{flex:none;font-weight:400;font-variant-numeric:tabular-nums}",
+      ".mneme-affective-list{display:flex;flex-direction:column;gap:var(--mneme-space-6);margin-top:0}",
+      ".mneme-affective-row{border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-8);padding:var(--mneme-space-8) var(--mneme-space-12);background:var(--dsw-alias-bg-base,transparent)}",
+      // trait 的档位信号只留描边这一层，不加底色 tint：行里还有情绪色 chip，两套
+      // 彩色叠在同一个底上会互相抢读，而且淡底会让情绪文字的对比度偏离锁的口径
+      // （主锁按主题画布算，混合底它看不见）。
+      ".mneme-affective-row--trait{border-color:color-mix(in srgb,var(--mneme-accent) 40%,transparent)}",
+      ".mneme-affective-main{display:flex;align-items:center;gap:var(--mneme-space-6);flex-wrap:wrap;font-size:13px}",
       ".mneme-affective-person{font-weight:600;color:var(--dsw-alias-label-primary)}",
-      ".mneme-affective-emotion{font-weight:600;color:var(--dsw-alias-label-primary)}",
-      ".mneme-affective-row--trait .mneme-affective-emotion{color:var(--mneme-accent)}",
+      // 情绪词是行内的视觉锚点：chip 化 + 按情绪落槽上色（--mneme-affect-N，见语义层
+      // 的槽定义）。#619 当初「情绪词不加色相」的纪律是对图上的边说的——那是「同一条
+      // 边上的附加信息」，加色相会被读成第三种关系；这一页不同，情绪词本身就是行的
+      // 主语，走的是 MEMORY_TYPE_COLORS「一个类别一颗恒定色」的先例。文字色全部走
+      // 令牌，对比度主锁按浅深两主题重算；描边压到 40% 只作呼应，不锁。
+      ".mneme-affective-emotion{flex:none;font-size:var(--mneme-type-13);line-height:var(--mneme-space-20);font-weight:600;color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);border-radius:var(--mneme-radius-pill);padding:0 var(--mneme-space-8)}",
+      ".mneme-affective-emotion--a1{color:var(--mneme-affect-1);border-color:color-mix(in srgb,var(--mneme-affect-1) 40%,transparent)}",
+      ".mneme-affective-emotion--a2{color:var(--mneme-affect-2);border-color:color-mix(in srgb,var(--mneme-affect-2) 40%,transparent)}",
+      ".mneme-affective-emotion--a3{color:var(--mneme-affect-3);border-color:color-mix(in srgb,var(--mneme-affect-3) 40%,transparent)}",
+      ".mneme-affective-emotion--a4{color:var(--mneme-affect-4);border-color:color-mix(in srgb,var(--mneme-affect-4) 40%,transparent)}",
+      ".mneme-affective-emotion--a5{color:var(--mneme-affect-5);border-color:color-mix(in srgb,var(--mneme-affect-5) 40%,transparent)}",
       ".mneme-affective-arrow{color:var(--mneme-fg-dim)}",
       ".mneme-affective-target{color:var(--dsw-alias-label-primary)}",
-      ".mneme-affective-tag{flex:none;font-size:11px;line-height:16px;color:var(--mneme-fg-dim);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:0 6px}",
-      ".mneme-affective-tag--trait{color:var(--mneme-accent);border-color:var(--mneme-accent);font-weight:600}",
-      ".mneme-affective-meta{font-size:11px;color:var(--mneme-fg-dim);margin-top:3px}",
-      ".mneme-affective-empty{font-size:12px;color:var(--mneme-fg-dim);line-height:1.6;padding:10px 0}",
+      ".mneme-affective-meta{font-size:11px;color:var(--mneme-fg-dim);margin-top:var(--mneme-space-4);font-variant-numeric:tabular-nums}",
+      ".mneme-affective-empty{font-size:12px;color:var(--mneme-fg-dim);line-height:1.6;padding:var(--mneme-space-10) 0}",
+      // 真空态的仪式感：图标加居中排版只在「确实一条都没有」这档出现——
+      // 读取中与失败沿用左对齐纯文字，三态在视觉上也要分得开。
+      ".mneme-affective-empty--hero{display:flex;flex-direction:column;align-items:center;gap:var(--mneme-space-10);padding:var(--mneme-space-24) 0;text-align:center}",
       ".mneme-affective-empty--error{color:var(--mneme-danger)}",
-      ".mneme-affective-note{font-size:11px;color:var(--mneme-fg-dim);margin-top:8px}",
+      ".mneme-affective-note{font-size:11px;color:var(--mneme-fg-dim);margin-top:var(--mneme-space-8)}",
       ".mneme-gs-affective{margin-top:2px}",
       // issue #24 块4 复核面：抬过的边。用虚线边色（--mneme-graphic-dim 同层）
       // 而不是新增颜色——它表达的是「同一条边，只是被用过」，不是新类别。
@@ -3803,31 +3848,39 @@ window.__ModuleLoader__.load({
       // 刻意**不新开一份 --mneme-* 语义色层**：contrast.test.js 按首次出现的
       // 「--mneme-fg-dim」定义解析色值（:118），再来一份就得保证顺序，收益却为零。
       // 这一页只用第一份色层已经覆盖到的宿主 token 与既有 -dim 类名，靠形状做手绘感。
-      ".mneme-persona{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;box-sizing:border-box;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
-      ".mneme-persona-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none}",
+      ".mneme-persona{display:flex;flex-direction:column;gap:var(--mneme-space-10);height:100%;min-height:0;box-sizing:border-box;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-persona-head{display:flex;align-items:center;gap:var(--mneme-space-8);flex-wrap:wrap;flex:none}",
       ".mneme-persona-title{font-size:15px;line-height:21px;font-weight:700;letter-spacing:.3px;color:var(--dsw-alias-label-primary)}",
       ".mneme-persona-spacer{flex:1 1 auto;min-width:0}",
-      ".mneme-persona-body{display:flex;gap:12px;min-height:0;flex:1 1 auto}",
-      ".mneme-persona-about{flex:0 1 auto;min-height:0;max-height:46%;overflow:auto;border-top:1px dashed var(--dsw-alias-border-l2);padding-top:10px;margin-top:2px}",
-      ".mneme-persona-about .mneme-set-card{padding:12px 14px;margin-bottom:8px}",
+      ".mneme-persona-body{display:flex;gap:var(--mneme-space-12);min-height:0;flex:1 1 auto}",
+      ".mneme-persona-about{flex:0 1 auto;min-height:0;max-height:46%;overflow:auto;border-top:1px dashed var(--dsw-alias-border-l2);padding-top:var(--mneme-space-10);margin-top:var(--mneme-space-2)}",
+      // 下方两张通用卡（画像/自动事实）也吃同一层纸感底色：它们与卡纸同属这一页的
+      // 「手账」隐喻，底色配方与日记纸一致（label 3% 中性混色，随主题翻转），不引新色相。
+      ".mneme-persona-about .mneme-set-card{padding:12px 14px;margin-bottom:var(--mneme-space-8);background-color:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
       // 左列身份卡：宽度固定，卡片是「贴纸」而不是菜单行。
-      ".mneme-persona-col{flex:0 0 190px;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;padding-right:2px;border-right:1px dashed var(--dsw-alias-border-l2)}",
-      ".mneme-persona-card{display:flex;align-items:center;gap:2px}",
+      ".mneme-persona-col{flex:0 0 190px;display:flex;flex-direction:column;gap:var(--mneme-space-8);min-height:0;overflow:auto;padding-right:var(--mneme-space-2);border-right:1px dashed var(--dsw-alias-border-l2)}",
+      ".mneme-persona-card{display:flex;align-items:center;gap:var(--mneme-space-2)}",
       ".mneme-persona-pick{flex:1 1 auto;min-width:0;text-align:left;border:1.5px solid transparent;background:0 0;cursor:pointer;font-family:inherit;font-size:12px;line-height:18px;padding:5px 10px;border-radius:12px 8px 13px 9px;color:var(--mneme-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-      ".mneme-persona-pick:hover{background:var(--dsw-alias-interactive-bg-hover)}",
+      // 悬停带一档同向微倾斜（-0.15°，选中态是 -0.3°）：手账贴纸的触感，幅度刻意
+      // 压在可察觉与不闹之间。
+      ".mneme-persona-pick:hover{background:var(--dsw-alias-interactive-bg-hover);transform:rotate(-.15deg)}",
       ".mneme-persona-pick:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
-      ".mneme-persona-pick--on{border-color:var(--mneme-accent);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
+      // 选中贴纸加一层 accent 淡填充：原来只有描边，贴在纸上「哪张被揭下来过」不明显；
+      // 文字仍是 label-primary（最强正文色），淡底不动摇 AA。
+      ".mneme-persona-pick--on{border-color:var(--mneme-accent);background:color-mix(in srgb,var(--mneme-accent) 7%,transparent);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
       ".mneme-persona-del{flex:none;border:0;background:0 0;cursor:pointer;font-family:inherit;font-size:13px;line-height:18px;padding:2px 6px;border-radius:8px;color:var(--mneme-fg-dim)}",
       ".mneme-persona-del:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--mneme-danger)}",
       ".mneme-persona-del:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
-      ".mneme-persona-new{display:flex;gap:6px;align-items:center;margin-top:2px}",
-      // 右列编辑区：一张「卡纸」，与日记纸同一种歪斜语言。
-      ".mneme-persona-sheet{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.14deg);display:flex;flex-direction:column;gap:8px}",
+      ".mneme-persona-new{display:flex;gap:var(--mneme-space-6);align-items:center;margin-top:var(--mneme-space-2)}",
+      // 右列编辑区：一张「卡纸」，与日记纸同一种歪斜语言；底色也抄日记纸的同一配方，
+      // 让「卡纸」真的像纸，而不是一圈描边。
+      ".mneme-persona-sheet{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.14deg);background-color:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent);display:flex;flex-direction:column;gap:var(--mneme-space-8)}",
       ".mneme-persona-label{font-size:12px;line-height:17px;font-weight:600;letter-spacing:.2px;color:var(--dsw-alias-label-secondary)}",
       ".mneme-persona-note{font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
-      ".mneme-persona-diary{flex:none;border-top:1px dashed var(--dsw-alias-border-l2);padding-top:8px;display:flex;flex-direction:column;gap:4px}",
-      ".mneme-persona-diaryrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
-      ".mneme-persona-preview{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;line-height:19px;color:var(--mneme-fg-dim);max-height:180px;overflow:auto;padding:8px 10px;border:1px dashed var(--dsw-alias-border-l2);border-radius:12px 8px 13px 9px}",
+      ".mneme-persona-diary{flex:none;border-top:1px dashed var(--dsw-alias-border-l2);padding-top:var(--mneme-space-8);display:flex;flex-direction:column;gap:var(--mneme-space-4)}",
+      ".mneme-persona-diaryrow{display:flex;gap:var(--mneme-space-8);align-items:center;flex-wrap:wrap;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
+      // 注入预览是这页的「引文」：在卡纸底上再垫一档更深的纸色（4%），虚线框不变。
+      ".mneme-persona-preview{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;line-height:19px;color:var(--mneme-fg-dim);max-height:180px;overflow:auto;padding:var(--mneme-space-8) var(--mneme-space-10);border:1px dashed var(--dsw-alias-border-l2);border-radius:12px 8px 13px 9px;background-color:color-mix(in srgb,var(--dsw-alias-label-primary) 4%,transparent)}",
       // ===== 移动端适配（mobile-adapt 车道）=====
       // 为什么主通道是 @container 而不是 @media：面板有两种形态（overlay 弹层与
       // better-sidebar 工作台 tab），容器宽度与视口宽度并不相等；`.mneme-x` 是
@@ -5061,12 +5114,17 @@ window.__ModuleLoader__.load({
       // 从词典取——所以新增一个枚举档位只改常量表与词典，不动渲染代码。
       // 值缺失时退回首档（与后端默认档一致），不会渲染出一个没有选中的下拉。
       // #661：冻结优先于档位这条互斥关系，此前只写在设置项提示语里，用户在
-      // 档位下拉旁边看不到；选了 off 却仍刷出待审卡片时无从判断。这里在下拉
-      // 下方直接标出「本档位正被冻结覆盖」，判据与后端同源（见 src/dream.js:1535
-      // 的 ledgerEnforce 与 sleep 侧同款降级），不另造一套语义。
-      const enumOverridden = (k) => k === "conflictLedgerMode"
-        && eff.conflictFreezeEnabled === true
-        && (eff[k] === "off" || eff[k] === "shadow");
+      // 档位下拉旁边看不到；选了 off 却仍刷出待审卡片时无从判断。
+      //
+      // #641 收尾后分成两种，措辞不能混：
+      //   · off / shadow + freeze —— 冻结照常停车，队列会继续涨。这是「你选的是
+      //     人审队列，冻结也在往同一个队列里塞」的正常叠加，不是降级。
+      //   · enforce + freeze —— 只可能来自配置文件（面板写入已经原子归一，选
+      //     enforce 会自动关 freeze）。运行期档位被降成 shadow：记账照跑、处置
+      //     不跑。这是真降级，必须说清楚「你以为在自动处置，其实没有」。
+      // 判据与后端同源（src/conflict-mode.js 的 resolveConflictMode），不另造语义。
+      const enumFrozen = (k) => k === "conflictLedgerMode" && eff.conflictFreezeEnabled === true;
+      const enumDegraded = (k) => enumFrozen(k) && eff[k] === "enforce";
       const enumRow = (k, valuesOverride) => {
         // valuesOverride：搜索结果分支（#653）复用同一渲染器画四个定制枚举键
         // （SEARCH_ENUM_SOURCES），正常路径不传、仍走 FEATURE_ENUM_VALUES。
@@ -5083,7 +5141,9 @@ window.__ModuleLoader__.load({
               values.map((v) => h("option", { key: v, value: v }, t(`memory.features.${k}.${v}`))))
           ),
           h("div", { className: "mneme-featsubhint" }, t(`memory.features.${k}.hint`)),
-          enumOverridden(k) && h("div", { className: "mneme-featsubhint" },
+          enumDegraded(k) && h("div", { className: "mneme-featsubhint" },
+            "⚠ " + t(`memory.features.${k}.frozenDegraded`)),
+          !enumDegraded(k) && enumFrozen(k) && h("div", { className: "mneme-featsubhint" },
             "⚠ " + t(`memory.features.${k}.frozenOverrides`))
         );
       };
@@ -5631,6 +5691,9 @@ window.__ModuleLoader__.load({
       const [extapiError, setExtapiError] = react.useState("");
       // 令牌默认遮蔽显示：完整值只经「复制」离开面板，不直接铺在页面上。
       const [extapiTokenShown, setExtapiTokenShown] = react.useState(false);
+      // 重新生成令牌是两步：第一次只把按钮换成「再点一次确认」（宿主 webview 里
+      // window.confirm 不一定存在，理由同知识库删除那一处）。4 秒没再点就复位。
+      const [extapiRotateConfirm, setExtapiRotateConfirm] = react.useState(false);
 
       // 画像搬去「人格」页之后，这一路只剩规则/指令/向量三个请求：画像的读取跟着
       // 那张卡一起走（同一个数据不该有两个所有者，否则两页会各自显示不同的旧值）。
@@ -5837,7 +5900,9 @@ window.__ModuleLoader__.load({
 
       // External API: the backend owns the token and returns the full config,
       // so every PUT response refreshes host/port/token from the server.
-      async function putExtapi(body) {
+      // hintKey：轮换要自己的回执（「旧 Token 已失效」比通用的「已保存，重启后
+      // 生效」关键得多）。不传就是原来那条保存提示。
+      async function putExtapi(body, hintKey) {
         setExtapiBusy(true);
         setExtapiError("");
         try {
@@ -5859,7 +5924,13 @@ window.__ModuleLoader__.load({
           setExtapiHost(next.host);
           setExtapiPort(next.port ? String(next.port) : "");
           setExtapiSaved(true);
-          announce(t("memory.settings.extapi.savedHint"));
+          // 服务端用 applied 如实交代：轮换在活实例上立刻生效（live），还是只落了
+          // 库、等下次启动（restart）。后者旧 Token 现在仍然能用，必须说出来，
+          // 否则用户以为「已换掉」，攻击面却没变。
+          const hint = body.rotateToken === true && data.applied === "restart"
+            ? "memory.settings.extapi.rotatedRestart"
+            : (hintKey || "memory.settings.extapi.savedHint");
+          announce(t(hint));
           setTimeout(() => setExtapiSaved(false), 2500);
         } catch (err) {
           setExtapiError((err && err.message) || "failed");
@@ -5889,6 +5960,20 @@ window.__ModuleLoader__.load({
           () => { setExtapiCopied(true); announce(t("memory.settings.extapi.copied")); setTimeout(() => setExtapiCopied(false), 1500); },
           () => {}
         );
+      }
+
+      // 重新生成外部访问令牌：两步确认，成功后把新值当场展开（用户下一步一定是
+      // 复制，省一次「显示」点击）。
+      function rotateExtapiToken() {
+        if (extapiBusy) return;
+        if (!extapiRotateConfirm) {
+          setExtapiRotateConfirm(true);
+          setTimeout(() => setExtapiRotateConfirm(false), 4000);
+          return;
+        }
+        setExtapiRotateConfirm(false);
+        setExtapiTokenShown(true);
+        putExtapi({ rotateToken: true }, "memory.settings.extapi.rotated");
       }
 
       // 示例命令必须带 -p 包名：bin 名与包名不同，裸 npx 加 bin 名会去装一
@@ -6184,6 +6269,14 @@ window.__ModuleLoader__.load({
                     }, extapiTokenShown ? t("memory.settings.extapi.hide") : t("memory.settings.extapi.reveal")),
                     h("button", { className: "mneme-btn", onClick: copyExtapiToken },
                       t("memory.settings.extapi.copy")),
+                    h("button", {
+                      className: "mneme-btn",
+                      disabled: extapiBusy,
+                      title: t("memory.settings.extapi.rotateHint"),
+                      onClick: rotateExtapiToken
+                    }, extapiRotateConfirm
+                      ? t("memory.settings.extapi.rotateConfirm")
+                      : t("memory.settings.extapi.rotate")),
                     extapiCopied && h("span", { className: "mneme-saved" }, t("memory.settings.extapi.copied"))
                   )
                 )
@@ -8343,6 +8436,31 @@ window.__ModuleLoader__.load({
     //   error    请求失败（500 / 网络），面板明说「不等于没有记录」
     //   empty    真的一条都没有，并且说清要怎么才会有
     // 这三件事在用户眼里完全不同，混成一个空列表是最容易犯也最伤人的糊弄。
+    // 情绪词 → 色槽（--mneme-affect-1..5）。常见词按语义给槽：绿=愉快·安心，
+    // 琥珀=期待·感动，紫=好奇·平静，蓝=紧张·不安，红=失落·恼火；没收录的词按
+    // 词面哈希稳定落槽——同一个词永远同一颗色（跨会话、跨主题可认），这正是
+    // MEMORY_TYPE_COLORS 那条「一个类别一颗恒定色」先例要的效果。词典只决定
+    // 「常见词落在语义合理的槽」，不决定色值本身；槽色走图表两步配方，由
+    // contrast.test.js 按浅深两主题重算。
+    const EMOTION_SLOTS = {
+      "开心": 1, "高兴": 1, "喜悦": 1, "快乐": 1, "安心": 1, "满足": 1, "肯定": 1, "认可": 1,
+      "happy": 1, "joy": 1, "glad": 1, "content": 1,
+      "期待": 2, "兴奋": 2, "感动": 2, "感激": 2, "感谢": 2, "自豪": 2,
+      "excited": 2, "grateful": 2, "hopeful": 2, "moved": 2, "proud": 2,
+      "好奇": 3, "平静": 3, "释然": 3, "踏实": 3, "专注": 3,
+      "curious": 3, "calm": 3, "relieved": 3, "reassured": 3, "focused": 3,
+      "紧张": 4, "不安": 4, "焦虑": 4, "担心": 4, "忐忑": 4, "压力": 4,
+      "anxious": 4, "worried": 4, "nervous": 4, "stressed": 4,
+      "失落": 5, "沮丧": 5, "失望": 5, "委屈": 5, "烦躁": 5, "生气": 5, "恼火": 5,
+      "sad": 5, "frustrated": 5, "disappointed": 5, "angry": 5, "upset": 5
+    };
+    function emotionSlot(word) {
+      const w = String(word ?? "").trim().toLowerCase();
+      if (EMOTION_SLOTS[w]) return EMOTION_SLOTS[w];
+      let hash = 0;
+      for (const ch of w) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+      return (hash % 5) + 1;
+    }
     function AffectivePanel({ t }) {
       const [state, setState] = useState({ loading: true, error: false, items: [], totalEdges: 0, skippedEdges: 0, truncated: false });
       useEffect(() => {
@@ -8382,8 +8500,9 @@ window.__ModuleLoader__.load({
             h("div", { className: "mneme-affective-empty mneme-affective-empty--error", role: "alert" }, t("memory.affective.error"))));
       }
 
-      const rows = state.items.map((it, i) => {
+      const buildRow = (it, i) => {
         const isTrait = it.attribution === "trait";
+        const slotCls = " mneme-affective-emotion--a" + emotionSlot(it.emotion);
         const bits = [];
         if (isTrait) {
           const n = it.traitSessionCount ?? it.sessionCount;
@@ -8402,15 +8521,30 @@ window.__ModuleLoader__.load({
             // 让 undefined 直接印在界面上。
             h("span", { className: "mneme-affective-person" }, it.person ?? "?"),
             h("span", { className: "mneme-affective-arrow" }, "·"),
-            h("span", { className: "mneme-affective-emotion" }, it.emotion),
+            h("span", { className: "mneme-affective-emotion" + slotCls }, it.emotion),
             h("span", { className: "mneme-affective-arrow" }, "·"),
-            h("span", { className: "mneme-affective-target" }, it.target ?? "?"),
-            h("span", { className: isTrait ? "mneme-affective-tag mneme-affective-tag--trait" : "mneme-affective-tag" },
-              isTrait ? t("memory.affective.trait") : t("memory.affective.occasion"))
+            h("span", { className: "mneme-affective-target" }, it.target ?? "?")
           ),
           bits.length ? h("div", { className: "mneme-affective-meta" }, bits.join(" · ")) : null
         );
+      };
+
+      // 副标题承诺「稳定倾向与单独一次分开列」：此前混在一列里只靠行内小标签
+      // 区分，承诺没兑现。trait 在前（少而重），occasion 在后（多而轻），各自带
+      // 组内计数；某一档为空就不渲染该组，不留空节头。行内的档位小标签随分组
+      // 撤销——组头已经说了，行内再说一遍是噪声。
+      const traitRows = [];
+      const occasionRows = [];
+      state.items.forEach((it, i) => {
+        (it.attribution === "trait" ? traitRows : occasionRows).push(buildRow(it, i));
       });
+      const group = (labelKey, rows) => rows.length
+        ? h("div", { className: "mneme-affective-group" },
+          h("div", { className: "mneme-affective-grouphead" },
+            t(labelKey),
+            h("span", { className: "mneme-affective-groupcount" }, String(rows.length))),
+          h("div", { className: "mneme-affective-list" }, rows))
+        : null;
 
       return h("div", { className: "mneme-set" },
         h("div", { className: "mneme-set-inner" },
@@ -8419,8 +8553,12 @@ window.__ModuleLoader__.load({
             h("div", { className: "mneme-affective-sub" }, t("memory.affective.sub"))
           ),
           state.items.length === 0
-            ? h("div", { className: "mneme-affective-empty", role: "status" }, t("memory.affective.empty"))
-            : h("div", { className: "mneme-affective-list" }, rows),
+            ? h("div", { className: "mneme-affective-empty mneme-affective-empty--hero", role: "status" },
+              h(Icon, { name: "heart", size: 20 }),
+              t("memory.affective.empty"))
+            : h(react.Fragment, null,
+              group("memory.affective.trait", traitRows),
+              group("memory.affective.occasion", occasionRows)),
           // 截断与跳过都要说出来：读者看到「就这些」时，得知道是自己没记够，
           // 还是这一页只放了这么多。
           state.truncated ? h("div", { className: "mneme-affective-note" }, t("memory.affective.truncated").replace("{n}", String(state.totalEdges))) : null,

@@ -73,3 +73,44 @@ test("summary 提示词的枚举与 VALID 对齐，且中英两份都写明不�
   // codingSummary 本来就列全了，确认没被这次批量替换改坏（它多出的说明句还在）
   assert.ok(STR.prompts.codingSummary.zh.includes("rejected_solution") && STR.prompts.codingSummary.zh.includes("pitfall"));
 });
+
+// #712：过滤空窗的第二种成因——type 合法，但 title/content 被 name/url/notes 这类
+// 别名顶掉。社区报告里 845 次 filtered-empty 有 76 次是这一型，而读数只带
+// sample_types 时它跟「分类全都自造」长得一样，每次只能靠猜。现在逐条计数。
+test("filtered-empty 能分出「type 合法但 title/content 被别名顶掉」这一型", () => {
+  const renamed = [
+    { type: "project", name: "发布只在包目录内", url: "https://example.invalid/pkg" },
+    { type: "decision", title: "编译模块改用 Rust", notes: "部署简单不再是理由" }
+  ];
+  const r = parseSummaryJsonResult(JSON.stringify(renamed));
+  assert.equal(r.ok, false);
+  assert.equal(r.failure.kind, "filtered-empty");
+  assert.equal(r.failure.rejectReasons.bad_type, 0, "分类本身是合法的——这正是这一型的关键");
+  assert.equal(r.failure.rejectReasons.bad_title, 1);
+  assert.equal(r.failure.rejectReasons.bad_content, 1);
+
+  const audit = summarizeParseFailureAudit(JSON.stringify(renamed), r.failure);
+  assert.deepEqual(audit.metadata.reject_reasons, { not_object: 0, bad_type: 0, bad_title: 1, bad_content: 1 });
+  assert.ok(
+    audit.metadata.sample_keys.some((k) => k.includes("name") && k.includes("type")),
+    "被顶掉的那条键名要原样带出来，否则下一次还是看不出来"
+  );
+});
+
+test("自造分类与键名顶掉不再是同一种读数", () => {
+  const bogus = parseSummaryJsonResult(JSON.stringify(BOGUS));
+  assert.equal(bogus.failure.rejectReasons.bad_type, 2);
+  assert.equal(bogus.failure.rejectReasons.bad_title, 0);
+});
+
+// #712：codingSummary（codingRetrospect 打开时才用）从来没有那两句约束——summary
+// 早在 #502 就补齐了，另一份提示词却漏着。只改一种语言的窗口照样写歪。
+test("codingSummary 的枚举与 VALID 对齐，中英两份都写明不许自造分类 / 不许附加键", () => {
+  const all = ["preference", "project", "decision", "history", "rejected_solution", "pitfall", "constraint"];
+  for (const lang of ["zh", "en"]) {
+    const p = STR.prompts.codingSummary[lang];
+    for (const t of all) assert.ok(p.includes(t), `codingSummary(${lang}) 枚举缺 ${t}`);
+    assert.match(p, /只能取上面枚举|must be one of the enumerated/, `codingSummary(${lang}) 缺「不许自造分类」的约束`);
+    assert.match(p, /id、source|id, source/, `codingSummary(${lang}) 要写明不许附加 id/source 等额外键`);
+  }
+});
