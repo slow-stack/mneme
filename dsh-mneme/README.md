@@ -11,7 +11,7 @@ $ cat ~/.dsh/memory/preferences.md
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm version"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm downloads"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=EFE7D8"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=111111" alt="CI"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/tests-3513%20total-EFE7D8?style=flat-square"><img src="https://img.shields.io/badge/tests-3513%20total-111111?style=flat-square" alt="tests"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/tests-3517%20total-EFE7D8?style=flat-square"><img src="https://img.shields.io/badge/tests-3517%20total-111111?style=flat-square" alt="tests"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/license-MIT-EFE7D8?style=flat-square&label=license&labelColor=B03A2E&logoColor=1C1C1C"><img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square&label=license&labelColor=B03A2E&logoColor=FFFFFF" alt="license"></picture>
 <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
@@ -559,6 +559,7 @@ dsh web
 
 - 在插件设置中开启外部 API（默认监听 `127.0.0.1:8790`，仅本机可访问）；
 - 访问 token 在插件设置 / 面板「设置 → 外部访问」中查看；
+- token 可以**重新生成**（面板「重新生成」，两步确认）：新值立刻生效、旧值同时失效，已经配好的 CLI / MCP / 网页桥接必须换成新值。`applied: "live" | "restart"` 如实交代是「当场换掉了 DSH 进程里的那个服务」还是「只落了库、下次启动生效」（`POST /api/dsh-mneme/external-api`，body `{"rotateToken": true}`；**不接受调用方自填 token**，否则等于把数据面的钥匙交给调用方）。注意独立 daemon（`dsh-mneme-serve`）是另一个进程，它启动时读这份 kv——轮换后要把 daemon 重启，它才会拿新值；
 - 除 `GET /health`（免鉴权）外，所有路由需携带 `Authorization: Bearer <token>`，无效 token 返回 `401 {"error":"unauthorized"}`。
 
 主要路由：
@@ -755,7 +756,7 @@ src/
 ├── api.js            # HTTP 路由（Web 面板数据通道，含 /conflicts 冲突队列）
 └── index.js          # 插件接线
 lib/                  # src 的同步分发产物（npm run sync，prepack 钩子在发布时自动跑；一致性由 scripts/check-sync.js 在 CI 与 release.yml 校验——它只查不同步；唯一手写例外 lib/client.js——Web 面板 bundle，sync 不覆盖）
-test/                 # 3513 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
+test/                 # 3517 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
 scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压测 · sync-lib.js 同步 · check-sync.js 发布闸门 · benchmark-recall.js / benchmark-embed.js / benchmark-rerank.js 基准 · sync-test-badge.mjs 测试徽章 · build-runtime-manifest.mjs 运行时清单
 ```
 
@@ -764,7 +765,7 @@ scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压
 ```bash
 cd dsh-mneme
 npm install        # 安装 peer 依赖（以 devDependencies 形式，用于本地测试）
-npm test           # 运行 3513 个测试
+npm test           # 运行 3517 个测试
 npm run stress     # 三轴线压测：长会话检索 / 冲突仲裁 / 多 Agent 并发（离线 mock LLM）
 npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动执行）
 ```

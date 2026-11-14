@@ -349,9 +349,11 @@ function scopeFromSearchParams(url) {
  *     蒸馏窗口的逐字原文，所以「不传即关」是故意的 fail-closed 方向（reclaim-http
  *     「没接线如实报」同族）。将来新增第三个构造点忘传 config，这个端点会安静地
  *     回 409 而不是把原文读出去——那是想要的行为，不要修成默认开。
- * Returns { server, port, host, token, ready }: `port` is the effective bound
- * port (updated to the OS-assigned one after `ready` resolves when asked to
- * bind port 0), `ready` resolves once listening and rejects if the bind fails.
+ * Returns { server, port, host, token, ready, rotateToken }: `port` is the
+ * effective bound port (updated to the OS-assigned one after `ready` resolves
+ * when asked to bind port 0), `token` is a live getter (not a snapshot — it
+ * follows rotateToken), `ready` resolves once listening and rejects if the bind
+ * fails.
  */
 export function createStandaloneApi({ service, store, config = {}, logger, settings, port, host, maintenance, strictPort = false, embedder = null, embedTimeoutMs = 3000 }) {
   const persisted = settings?.getExternalApi?.() ?? {};
@@ -997,7 +999,31 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
     }
   }).catch(() => { /* already logged by the error handler above */ });
 
-  const api = { server, port: boundPort, host: boundHost, token, ready };
+  const api = {
+    server,
+    port: boundPort,
+    host: boundHost,
+    // 令牌做成实时视图而不是快照：轮换之后 `api.token` 必须回「现在真正认的那
+    // 一个」，否则面板拿到的是旧值、抄走就 401。
+    get token() {
+      return token;
+    },
+    ready,
+    /**
+     * 重新生成 Bearer 令牌（外部 API 的令牌轮换）。
+     *
+     * 先落库再换内存：反过来一旦写库失败，运行中的服务认的是只在内存里的令牌、
+     * 重启后退回旧值——面板显示的和实际生效的就此分家，是最难查的一种不一致。
+     * 新令牌让旧令牌立刻失效，正在用旧值的调用方马上 401，这是轮换的本意。
+     * 返回新令牌；写库抛错就原样抛给调用方，不吞（调用方据此如实报 applied）。
+     */
+    rotateToken() {
+      const next = randomBytes(24).toString("base64url");
+      settings?.setExternalApi?.({ token: next });
+      token = next;
+      return next;
+    }
+  };
   // After the OS assigns the real port (bind port 0), reflect it for callers.
   ready.then(() => {
     const address = server.address();

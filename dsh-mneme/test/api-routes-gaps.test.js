@@ -10,6 +10,7 @@ import { createService } from "../src/service.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { createMaintenance } from "../src/maintenance.js";
+import { registerStandaloneApi, clearStandaloneApi } from "../src/standalone-registry.js";
 import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 import { testConfig } from "./helpers/test-config.js";
 
@@ -1092,3 +1093,68 @@ test("consolidation-stats clamps the window and reports an empty window as an em
   assert.equal(service.count(), 0);
 });
 
+
+// 令牌轮换（外部访问 API 的 token 原本只能生成一次，泄了没法撤）。
+// 两条路径必须分得清：有活实例 = 当场生效；没有 = 只落库、下次启动生效。
+// 后者若也报「已更换」就是假成功——旧令牌那时仍然能开门。
+test("external-api rotateToken persists a new token and reports restart without a live server", async () => {
+  const { routes, settings } = setup(FAKE_API_TOKEN);
+  const route = handler(routes, "/api/dsh-mneme/external-api");
+
+  const seed = new FakeRes();
+  const get0 = req("/api/dsh-mneme/external-api");
+  get0.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
+  await route.handler(get0, seed);
+  const before = JSON.parse(seed.body).config.token;
+  assert.ok(typeof before === "string" && before.length >= 16);
+
+  const res = new FakeRes();
+  const rotate = req("/api/dsh-mneme/external-api", "PUT", { rotateToken: true });
+  rotate.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
+  await route.handler(rotate, res);
+  assert.equal(res.statusCode, 200);
+  const body = JSON.parse(res.body);
+  assert.equal(body.applied, "restart", "没有活实例时不假装热更成功");
+  assert.notEqual(body.config.token, before, "回显的是新令牌");
+  assert.equal(settings.getExternalApi().token, body.config.token, "新令牌已落库");
+});
+
+test("external-api rotateToken hands the rotation to a running instance", async () => {
+  const { routes } = setup(FAKE_API_TOKEN);
+  const route = handler(routes, "/api/dsh-mneme/external-api");
+  const live = "live-token-0123456789abcdef";
+  registerStandaloneApi({ rotateToken: () => live });
+  try {
+    const res = new FakeRes();
+    const rotate = req("/api/dsh-mneme/external-api", "PUT", { rotateToken: true });
+    rotate.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
+    await route.handler(rotate, res);
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.applied, "live");
+    assert.equal(body.config.token, live, "回显活实例铸出的那个值");
+  } finally {
+    clearStandaloneApi();
+  }
+});
+
+// 允许调用方自填 token 等于允许把 8790 数据面的钥匙换成 "123456"：接口只认
+// rotateToken 这个意图，token 字段一律忽略。
+test("external-api ignores a caller-supplied token", async () => {
+  const { routes, settings } = setup(FAKE_API_TOKEN);
+  const route = handler(routes, "/api/dsh-mneme/external-api");
+
+  const seed = new FakeRes();
+  const get0 = req("/api/dsh-mneme/external-api");
+  get0.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
+  await route.handler(get0, seed);
+  const before = JSON.parse(seed.body).config.token;
+
+  const res = new FakeRes();
+  const put = req("/api/dsh-mneme/external-api", "PUT", { token: "123456" });
+  put.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
+  await route.handler(put, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(JSON.parse(res.body).config.token, before, "自填令牌不生效");
+  assert.equal(settings.getExternalApi().token, before, "库里的令牌没被改掉");
+});
