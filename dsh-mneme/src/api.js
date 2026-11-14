@@ -1736,18 +1736,30 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     }
   });
 
-  // --- affective: 情绪归因一览（#619 可见化 C） ---
+  // --- affective: 情绪归因一览（#619 可见化 C；#726 扩展） ---
   // `ego` 端点只能从某个实体往外看，回答不了「这库里一共记了哪些情绪」。
   // 所以单开一条：按 person/target/emotion 聚合，occasion 与 trait 分开。
   //
-  // 三处刻意的选择，都是为了让面板不撒谎：
+  // 刻意的选择，都是为了让面板不撒谎：
   // - 聚键含 attribution（occasion / trait），两类不混在一条里。同一个「焦虑」
   //   在一件事上是 occasion，跨三件事才是 trait，合成一条会把「这次」说成「一贯」。
-  // - trait 组带 independentSessions（跨几个独立会话）。trait 的判据本来就是会话数，
+  // - trait 组带 traitSessionCount（跨几个独立会话）。trait 的判据本来就是会话数，
   //   面板只显示「稳定倾向」而不给数字，用户没法判断它是攒够了还是被猜测出来的。
   // - 完全读不到时返回 500 + error，不返回空列表：空列表在面板上长得跟
   //   「你还没记过任何情绪」一样，而这两件事对用户的含义完全相反。
   //   前端靠 httpStatusCode 区分，不靠 items.length。
+  //
+  // #726 增量：
+  // - promotedToTrait 的边归入 trait 组。睡眠相位铸出 pattern 后只给源边打标
+  //   （edge 的 attribution 字面保持 occasion——「这条边记录的是一次场合被观察到」，
+  //   不改写），但聚合层若照字面归组，「稳定倾向」组在纯 sleep 流下永远空着，
+  //   升格后的情绪留在「一次场合」里带着一个没人读的 traitSessionCount。按展示
+  //   语义归组：边一个字没改，只是面板上它归「稳定倾向」。
+  // - why / downgradedFrom 透出：相位采集了但此前被这层丢掉，前端想做「为什么
+  //   记下这条」与「曾被判成特质又降级」的标示都没有数据。
+  // - person / emotion / attribution 过滤与 cursor 分页：按人看情绪史、做时间线
+  //   的前提。cursor 键控在（组序）上——排序加了聚合键 tiebreaker，保证同一份
+  //   数据两次请求的顺序是纯函数，游标才翻得准。
   register({
     kind: "exact",
     path: "/api/dsh-mneme/semantic/graph/affective",
@@ -1756,22 +1768,36 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
       try {
         const url = new URL(req.url, "http://localhost");
         const limit = Math.max(1, Math.min(500, Number(url.searchParams.get("limit") ?? 200) || 200));
+        const personF = String(url.searchParams.get("person") ?? "").trim().toLowerCase();
+        const emotionF = String(url.searchParams.get("emotion") ?? "").trim().toLowerCase();
+        const attributionF = String(url.searchParams.get("attribution") ?? "").trim().toLowerCase();
+        const cursorRaw = String(url.searchParams.get("cursor") ?? "").trim();
+        // 分页模式 = 请求里带了 cursor 参数（空串=从头翻第一页）。游标模式下边帽
+        // 放宽到 4×limit（下限 800）：聚合层分页分的是「组」，而组 ≤ 边——不放宽
+        // 的话一页组永远翻不出第二页。不带的旧客户端维持原边帽，行为不变。
+        const paged = url.searchParams.has("cursor");
+        const edgeCap = paged ? Math.max(800, limit * 4) : limit;
         if (typeof service.relationsByType !== "function") {
           sendJson(res, 500, { error: "unavailable" });
           return;
         }
-        const edges = service.relationsByType("affective_context", limit) ?? [];
+        const edges = service.relationsByType("affective_context", edgeCap) ?? [];
         const groups = new Map();
         for (const e of edges) {
           const meta = e.metadata && typeof e.metadata === "object" ? e.metadata : {};
           const emotion = String(meta.emotion ?? "").trim();
           // 没有情绪名的边不进聚合：它是老版本或手工写的空壳，凑进「情绪一览」
           // 会造出一个名字为空的条目。但也不能假装它不存在——计数单列。
-          const attribution = String(meta.attribution ?? "").trim() || "occasion";
+          const metaAttribution = String(meta.attribution ?? "").trim();
+          // promoted 的源边归 trait 组：见上方 #726 注释。字面 attribution 不动。
+          const attribution = metaAttribution === "trait" || meta.promotedToTrait === true
+            ? "trait"
+            : (metaAttribution || "occasion");
           if (!emotion) continue;
           const key = `${e.from_entity}\u0000${e.to_entity}\u0000${emotion}\u0000${attribution}`;
           if (!groups.has(key)) {
             groups.set(key, {
+              k: key,
               person: e.from_name ?? null,
               personId: e.from_entity,
               target: e.to_name ?? null,
@@ -1784,12 +1810,19 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
               evidenceCount: Array.isArray(meta.evidence) ? meta.evidence.length : (e.memory_id ? 1 : 0),
               firstSeen: e.created_at ?? null,
               lastSeen: e.created_at ?? null,
+              // 相位写 metadata 时 why 截 200 字、降级留痕；此前到这层被丢掉。
+              // why 取组内最新一条边的（旧的没有「最近为什么」的意义）。
+              why: String(meta.why ?? ""),
+              downgradedFrom: meta.downgradedFrom === "trait" ? "trait" : null,
               edgeIds: []
             });
           }
           const g = groups.get(key);
           g.edgeIds.push(e.id);
-          if (e.created_at && (!g.lastSeen || e.created_at > g.lastSeen)) g.lastSeen = e.created_at;
+          if (e.created_at && (!g.lastSeen || e.created_at > g.lastSeen)) {
+            g.lastSeen = e.created_at;
+            g.why = String(meta.why ?? "");
+          }
           if (e.created_at && (!g.firstSeen || e.created_at < g.firstSeen)) g.firstSeen = e.created_at;
           if (e.from_name) g.person = e.from_name;
           if (e.to_name) g.target = e.to_name;
@@ -1800,21 +1833,79 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             g.traitSessionCount = Math.max(g.traitSessionCount ?? 0, meta.traitSessionCount);
           }
           if (meta.promotedToTrait === true) g.promotedToTrait = true;
+          if (meta.downgradedFrom === "trait") g.downgradedFrom = "trait";
         }
         const items = [...groups.values()].sort((a, b) => {
-          // trait 在前（更值得看），同类按最近一次出现倒序。
+          // trait 在前（更值得看），同类按最近一次出现倒序；再按聚合键定序——
+          // 游标分页要求顺序是数据的纯函数，光靠 lastSeen 平局时不稳。
           if ((b.attribution === "trait") !== (a.attribution === "trait")) {
             return a.attribution === "trait" ? -1 : 1;
           }
-          return String(b.lastSeen ?? "").localeCompare(String(a.lastSeen ?? ""));
+          const bySeen = String(b.lastSeen ?? "").localeCompare(String(a.lastSeen ?? ""));
+          if (bySeen !== 0) return bySeen;
+          return a.k < b.k ? -1 : a.k > b.k ? 1 : 0;
+        });
+        // 过滤在排序后、分页前：skipped/totalEdges 的口径不受过滤影响（它们描述
+        // 的是池子，不是这一页）。
+        let view = items;
+        if (personF) {
+          view = view.filter((g) => String(g.person ?? "").toLowerCase() === personF || String(g.personId ?? "") === personF);
+        }
+        if (emotionF) view = view.filter((g) => g.emotion.toLowerCase() === emotionF);
+        if (attributionF === "trait" || attributionF === "occasion") {
+          view = view.filter((g) => g.attribution === attributionF);
+        }
+        let page = view;
+        let next = null;
+        if (cursorRaw) {
+          let cur = null;
+          try {
+            const parsed = JSON.parse(Buffer.from(cursorRaw, "base64url").toString("utf8"));
+            cur = Array.isArray(parsed) && parsed.length === 3
+              && [0, 1].includes(parsed[0]) && typeof parsed[1] === "string" && typeof parsed[2] === "string"
+              ? parsed
+              : null;
+          } catch {
+            cur = null;
+          }
+          if (!cur) {
+            // 游标是这层自己发的：收到解不开的游标说明调用方在拼凑或拿错了版本，
+            // 明确报错比静默从头翻更有用。
+            sendJson(res, 400, { error: "bad cursor" });
+            return;
+          }
+          const [curRank, curSeen, curKey] = cur;
+          page = view.filter((g) => {
+            const rank = g.attribution === "trait" ? 0 : 1;
+            const seen = String(g.lastSeen ?? "");
+            if (rank !== curRank) return rank > curRank;
+            if (seen !== curSeen) return seen < curSeen;
+            return g.k > curKey;
+          });
+        }
+        if (page.length > limit) {
+          const last = page[limit - 1];
+          next = Buffer.from(JSON.stringify([
+            last.attribution === "trait" ? 0 : 1,
+            String(last.lastSeen ?? ""),
+            last.k
+          ])).toString("base64url");
+          page = page.slice(0, limit);
+        }
+        // 组页不外泄聚合键：它只是排序与游标的内部坐标。
+        const clean = page.map((g) => {
+          const { k, ...rest } = g;
+          return rest;
         });
         sendJson(res, 200, {
-          items,
+          items: clean,
           // 读到了多少条原始边、其中多少条因为没情绪名没进聚合。给出来是为了
           // 让「只有 0 条」能自我解释：是库里真没有，还是有边但都不带情绪。
+          // 口径按过滤前的全量组算——过滤描述的是这一页，不是池子。
           totalEdges: edges.length,
           skippedEdges: edges.length - items.reduce((n, g) => n + g.edgeIds.length, 0),
-          truncated: edges.length >= limit
+          truncated: edges.length >= edgeCap,
+          next
         });
       } catch {
         sendJson(res, 500, { error: "internal" });
