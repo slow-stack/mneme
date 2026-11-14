@@ -1141,17 +1141,28 @@ export function createService({ store, mirror, config, onWrite, logger, document
           // Adaptive threshold (v0.5.0 1.2): the fetch runs at the loosest
           // branch floor so the head-gap rule can still re-admit the tail;
           // the final cutoff is computed against the fetched score
-          // distribution. Explicit `threshold` wins; disabled → legacy 0.
+          // distribution.
+          //
+          // #713: an explicit `threshold` (including an explicit 0 = no
+          // cutoff) always wins; adaptive off with no explicit threshold falls
+          // back to the configured fixed cutoff, never to 0. Falling back to 0
+          // made "turn adaptive off" mean "drop the relevance floor", which
+          // contradicted both docs and vectorSearchThreshold — the key then had
+          // no consumer at all, so setting it did nothing. The internal
+          // full-scan paths (hot refresh, backfill) pass 0 explicitly and keep
+          // their no-cutoff behavior.
           const adaptive = config?.adaptiveThresholdEnabled !== false;
-          const fetchThreshold = adaptive && threshold === undefined
+          const explicitThreshold = threshold === undefined ? null : threshold;
+          const fixedThreshold = explicitThreshold ?? (config?.vectorSearchThreshold ?? 0.65);
+          const fetchThreshold = adaptive && explicitThreshold === null
             ? Math.min(0.5, adaptiveThreshold(q))
-            : (threshold ?? 0);
+            : fixedThreshold;
           const search = vectorIndex
             ? vectorIndex.search(qv, { limit: lim * 2, threshold: fetchThreshold })
             : store.searchVector(qv, { limit: lim * 2, threshold: fetchThreshold });
-          const finalThreshold = adaptive && threshold === undefined
+          const finalThreshold = adaptive && explicitThreshold === null
             ? adaptiveThreshold(q, search)
-            : (threshold ?? 0);
+            : fixedThreshold;
           vector = search
             .filter((m) => (m.score ?? 1) >= finalThreshold)
             .map((m) => ({ ...m, vector: true, source: "vector" }));
