@@ -2,11 +2,12 @@ import { URL } from "node:url";
 import { isAbsolute } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { timingSafeEqual, randomBytes } from "node:crypto";
+import { timingSafeEqual, randomBytes, randomUUID } from "node:crypto";
 
 import { TYPES } from "./store.js";
 import { TYPE_FILE, renderMirrorText, renderFileHeader, parseHumanEdits, MIRROR_READONLY_TYPES } from "./mirror.js";
-import { langOf } from "./lang.js";
+import { langOf, STR, affectiveVocabFor } from "./lang.js";
+import { validateDecisions, applyDecisions } from "./dream/decisions.js";
 import { withBackgroundSession } from "./llm-session.js";
 // issue #607：面板空态要显示「能直接粘贴就跑」的命令，而面板 bundle 拿不到
 // CLI 入口路径（独立 bundle 不能 import src）——所以由这条路由把命令算好发给它。
@@ -1933,6 +1934,204 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           // 了」得能自己解释是归档了而不是丢了。
           archivedEdges
         });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  // POST /semantic/graph/affective/apply（#725）：情绪的逐条人工修正。对象是
+  // 「组」——面板把 (person, target, 归一情绪, attribution) 当一个条目，edgeIds
+  // 是组内全部边。policy token-write（写路径），SECURITY.md 安全模型表同步。
+  // 五种 op：
+  //   rename  改情绪词（词表命中→归一到主词；词表外照写，与 #723 写入纪律同向）
+  //   archive / restore  归档与恢复（与 #724 TTL 同一标记，可恢复不删除）
+  //   promote  手动升格：沿用自动通道语义——铸 type=pattern 行走
+  //            validateDecisions/applyDecisions（帽额、#512 mint 账本照旧生效），
+  //            再给组内全部边标 promotedToTrait
+  //   demote   手动降格：清 promotedToTrait/traitSessionCount，并把升格时铸的
+  //            pattern 行按同题归档（可恢复）；找不到那行时如实进 failures
+  // 每个成功的 op 逐边写 affective_journal（actor=manual）；组内并发失效的边进
+  // failures 如实摆出，不把失败装成成功，也不整包拒。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/semantic/graph/affective/apply",
+    policy: "token-write",
+    handler(req, res) {
+      if (req.method !== "POST") {
+        res.writeHead(405, { Allow: "POST" });
+        res.end("");
+        return undefined;
+      }
+      if (typeof service.relationById !== "function" || typeof service.updateRelationMetadata !== "function") {
+        return sendJson(res, 503, { error: "unavailable" });
+      }
+      return readBody(req, res).then((text) => {
+        if (text === null) return undefined;
+        const body = parseBody(text);
+        const op = typeof body.op === "string" ? body.op.trim() : "";
+        if (!["rename", "archive", "restore", "promote", "demote"].includes(op)) {
+          return sendJson(res, 400, { error: "unknown op" });
+        }
+        const edgeIds = Array.isArray(body.edgeIds)
+          ? body.edgeIds.filter((id) => typeof id === "string" && id).slice(0, 50)
+          : [];
+        if (!edgeIds.length) return sendJson(res, 400, { error: "edgeIds required" });
+        if (op === "rename" && (typeof body.emotion !== "string" || !body.emotion.trim())) {
+          return sendJson(res, 400, { error: "emotion required" });
+        }
+        const edges = [];
+        const failures = [];
+        for (const id of edgeIds) {
+          const edge = service.relationById(id);
+          if (!edge || edge.relation_type !== "affective_context") failures.push({ edgeId: id, error: "not found" });
+          else edges.push(edge);
+        }
+        if (!edges.length) return sendJson(res, 404, { error: "no edges" });
+        const language = langOf(config).startsWith("zh") ? "zh" : "en";
+        const vocab = affectiveVocabFor(language);
+        const now = new Date().toISOString();
+        let applied = 0;
+        try {
+          if (op === "rename") {
+            const raw = body.emotion.trim().slice(0, 40);
+            const hit = vocab.get(raw.toLowerCase());
+            const normalizeKey = hit ? hit.key : raw;
+            const valence = hit ? hit.valence : null;
+            for (const edge of edges) {
+              const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : {};
+              service.updateRelationMetadata(edge.id, { ...meta, emotion: raw, normalize_key: normalizeKey, valence });
+              service.recordAffectiveJournal({
+                at: now, edgeId: edge.id, op,
+                before: JSON.stringify({ emotion: meta.emotion ?? "" }),
+                after: JSON.stringify({ emotion: raw })
+              });
+              applied += 1;
+            }
+          } else if (op === "archive" || op === "restore") {
+            for (const edge of edges) {
+              const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : {};
+              const nextMeta = { ...meta };
+              if (op === "archive") nextMeta.archivedAt = now;
+              else delete nextMeta.archivedAt;
+              service.updateRelationMetadata(edge.id, nextMeta);
+              service.recordAffectiveJournal({
+                at: now, edgeId: edge.id, op,
+                before: JSON.stringify({ archivedAt: meta.archivedAt ?? null }),
+                after: JSON.stringify({ archivedAt: nextMeta.archivedAt ?? null })
+              });
+              applied += 1;
+            }
+          } else if (op === "promote") {
+            // 证据并集、会话数取组内最大——与聚合端点同口径，铸出的 trait 说的是
+            // 这一组情绪，不是某一条边。
+            const evidence = [...new Set(edges.flatMap((e) => (Array.isArray(e.metadata?.evidence) ? e.metadata.evidence : [])))].filter(Boolean);
+            const sessionCount = Math.max(1, ...edges.map((e) => (Number.isFinite(e.metadata?.sessionCount) ? e.metadata.sessionCount : 0)));
+            const firstMeta = edges[0].metadata && typeof edges[0].metadata === "object" ? edges[0].metadata : {};
+            const personEntity = service.findEntityById?.(edges[0].from_entity);
+            const targetEntity = service.findEntityById?.(edges[0].to_entity);
+            const personName = String(personEntity?.name ?? "");
+            const targetName = String(targetEntity?.name ?? "");
+            if (!personName || !targetName || evidence.length === 0) {
+              return sendJson(res, 409, { error: "promote needs resolvable entities and evidence" });
+            }
+            const trait = {
+              person: personName,
+              target: targetName,
+              emotion: firstMeta.emotion ?? "",
+              sessionCount,
+              evidence,
+              why: String(firstMeta.why ?? "").slice(0, 200)
+            };
+            const decisions = [{
+              action: "create",
+              type: "pattern",
+              title: STR.affectiveTrait.title[language](trait),
+              content: STR.affectiveTrait.content[language](trait),
+              importance: 3,
+              evidence
+            }];
+            const snapshot = new Map();
+            const validated = validateDecisions(decisions, snapshot, { maxCreatePerRun: 1, allowedActions: ["create"] });
+            if (!validated.ok) return sendJson(res, 409, { error: "trait decisions rejected", detail: validated.failures ?? null });
+            const result = applyDecisions(decisions, service, ctx.logger, snapshot, { ...config, mintSource: "manual", runId: randomUUID() });
+            if (!result.applied) {
+              return sendJson(res, 409, { error: "trait mint failed", failures: result.failures ?? [] });
+            }
+            for (const edge of edges) {
+              const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : {};
+              service.updateRelationMetadata(edge.id, { ...meta, promotedToTrait: true, traitSessionCount: sessionCount });
+              service.recordAffectiveJournal({
+                at: now, edgeId: edge.id, op,
+                before: JSON.stringify({ promotedToTrait: meta.promotedToTrait === true }),
+                after: JSON.stringify({ promotedToTrait: true, traitSessionCount: sessionCount })
+              });
+              applied += 1;
+            }
+          } else if (op === "demote") {
+            // 降格：清组内全部边的升格标记；升格时铸的 pattern 行按同题归档
+            // （可恢复）。标题由 person/target/emotion 决定，person/target 取
+            // 组内第一条边的实体——同组共享同一对实体（聚合键保证）。
+            const firstMeta = edges[0].metadata && typeof edges[0].metadata === "object" ? edges[0].metadata : {};
+            const personEntity = service.findEntityById?.(edges[0].from_entity);
+            const targetEntity = service.findEntityById?.(edges[0].to_entity);
+            const traitTitle = STR.affectiveTrait.title[language]({
+              person: String(personEntity?.name ?? "?"),
+              target: String(targetEntity?.name ?? "?"),
+              emotion: String(firstMeta.emotion ?? "")
+            });
+            const patternRow = (service.list({ type: "pattern", limit: 200 }) ?? [])
+              .find((m) => m.title === traitTitle);
+            let patternArchived = false;
+            if (patternRow && patternRow.status !== "archived") {
+              service.setArchived(patternRow.id, true);
+              patternArchived = true;
+            }
+            for (const edge of edges) {
+              const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : {};
+              if (meta.promotedToTrait !== true) continue;
+              const nextMeta = { ...meta };
+              delete nextMeta.promotedToTrait;
+              delete nextMeta.traitSessionCount;
+              service.updateRelationMetadata(edge.id, nextMeta);
+              service.recordAffectiveJournal({
+                at: now, edgeId: edge.id, op,
+                before: JSON.stringify({ promotedToTrait: true, traitSessionCount: meta.traitSessionCount ?? null }),
+                after: JSON.stringify({ promotedToTrait: false, patternArchived })
+              });
+              applied += 1;
+            }
+            if (patternArchived) applied += 0; // pattern 归档记在 journal 的 after 里，不混进边计数
+            if (applied === 0 && !patternArchived) failures.push({ error: "nothing to demote" });
+          }
+          // apply 成功后账本做一次修剪：审计事实不是检索面（profile_fact_journal
+          // 同款 keep=200）。失败不回滚已成功的 op——逐边独立，如实报告即可。
+          service.pruneAffectiveJournal?.(200);
+          sendJson(res, 200, { applied, failures });
+          return undefined;
+        } catch (error) {
+          // 同步异常（SQLite I/O）不能裸抛给宿主：500 + internal，与 profile-facts
+          // apply 的 catch 同款。
+          ctx.logger?.warn?.(`dsh-mneme: affective apply failed: ${String(error?.message ?? error)}`);
+          return sendJson(res, 500, { error: "internal" });
+        }
+      });
+    }
+  });
+
+  // GET /semantic/graph/affective/journal（#725）：人工修正账本（面板「最近变更」）。
+  // 只读，policy open 与其余 graph 读路由同口径——账本内容（情绪词、对象）本就是
+  // 那张表已在展示的数据，无新的敏感面。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/semantic/graph/affective/journal",
+    policy: "open",
+    handler(req, res) {
+      try {
+        const url = new URL(req.url, "http://localhost");
+        const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? 20) || 20));
+        if (typeof service.listAffectiveJournal !== "function") return sendJson(res, 503, { error: "unavailable" });
+        sendJson(res, 200, { items: service.listAffectiveJournal(limit) });
       } catch {
         sendJson(res, 500, { error: "internal" });
       }

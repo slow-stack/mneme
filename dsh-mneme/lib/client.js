@@ -674,6 +674,19 @@ window.__ModuleLoader__.load({
         "memory.affective.lastSeen": "最近 {time}",
         "memory.affective.truncated": "只列了最近 {n} 条边，更早的没进这一页",
         "memory.affective.skipped": "{n} 条边没有情绪名，未计入",
+        "memory.affective.applyRename": "改词",
+        "memory.affective.applyArchive": "归档",
+        "memory.affective.applyRestore": "恢复",
+        "memory.affective.applyPromote": "升为倾向",
+        "memory.affective.applyDemote": "降回场合",
+        "memory.affective.applyFailed": "没改成：{error}。库没有变化，可直接重试。",
+        "memory.affective.applyPartial": "部分边没改成（可能已被并发操作动过），其余已生效。",
+        "memory.affective.renamePlaceholder": "改成哪个词？",
+        "memory.affective.archiveShow": "归档区",
+        "memory.affective.archiveHide": "收起归档区",
+        "memory.affective.archiveEmpty": "归档区是空的。",
+        "memory.affective.journalTitle": "最近变更",
+        "memory.affective.journalEmpty": "还没有人工修正记录。",
         "memory.graph.title": "记忆图谱",
         "memory.graph.aria": "记忆图谱",
         "memory.graph.placeholder": "输入实体名，查看关联网络…",
@@ -1860,6 +1873,19 @@ window.__ModuleLoader__.load({
         "memory.affective.lastSeen": "last {time}",
         "memory.affective.truncated": "Showing the newest {n} edges only; older ones are not on this page",
         "memory.affective.skipped": "{n} edges carried no emotion name and were left out",
+        "memory.affective.applyRename": "Rename",
+        "memory.affective.applyArchive": "Archive",
+        "memory.affective.applyRestore": "Restore",
+        "memory.affective.applyPromote": "Make lasting",
+        "memory.affective.applyDemote": "Back to occasion",
+        "memory.affective.applyFailed": "Not applied: {error}. Nothing changed; you can retry right away.",
+        "memory.affective.applyPartial": "Some edges were not applied (possibly touched by a concurrent action); the rest are in effect.",
+        "memory.affective.renamePlaceholder": "Rename to what?",
+        "memory.affective.archiveShow": "Archived",
+        "memory.affective.archiveHide": "Hide archived",
+        "memory.affective.archiveEmpty": "The archive is empty.",
+        "memory.affective.journalTitle": "Recent changes",
+        "memory.affective.journalEmpty": "No manual corrections yet.",
         "memory.graph.title": "Memory Graph",
         "memory.graph.aria": "Memory graph",
         "memory.graph.placeholder": "Type an entity name to see its network…",
@@ -3008,6 +3034,15 @@ window.__ModuleLoader__.load({
       ".mneme-affective-empty--hero{display:flex;flex-direction:column;align-items:center;gap:var(--mneme-space-10);padding:var(--mneme-space-24) 0;text-align:center}",
       ".mneme-affective-empty--error{color:var(--mneme-danger)}",
       ".mneme-affective-note{font-size:11px;color:var(--mneme-fg-dim);margin-top:var(--mneme-space-8)}",
+      // #725：行级操作与页脚（归档区 + 账本）。几何全走刻度 token——本块是纯新增
+      // 声明，px 棘轮下任何一个 raw px 都会红；分隔与描边沿用行卡片自己的边，不再
+      // 另画一条 1px 线。
+      ".mneme-affective-actions{display:flex;align-items:center;gap:var(--mneme-space-4);flex-wrap:wrap;margin-top:var(--mneme-space-4)}",
+      ".mneme-affective-actions .mneme-btn{flex:none;font-size:var(--mneme-type-12);line-height:var(--mneme-space-16);padding:0 var(--mneme-space-6)}",
+      ".mneme-affective-foot{margin-top:var(--mneme-space-16);display:flex;flex-direction:column;gap:var(--mneme-space-8)}",
+      ".mneme-affective-archlist{display:flex;flex-direction:column;gap:var(--mneme-space-6)}",
+      ".mneme-affective-journal{display:flex;flex-direction:column;gap:var(--mneme-space-4)}",
+      ".mneme-affective-journalrow{display:flex;align-items:baseline;gap:var(--mneme-space-6);font-size:var(--mneme-type-12);line-height:1.5;color:var(--mneme-fg-dim);font-variant-numeric:tabular-nums}",
       ".mneme-gs-affective{margin-top:2px}",
       // issue #24 块4 复核面：抬过的边。用虚线边色（--mneme-graphic-dim 同层）
       // 而不是新增颜色——它表达的是「同一条边，只是被用过」，不是新类别。
@@ -8462,7 +8497,16 @@ window.__ModuleLoader__.load({
       return (hash % 5) + 1;
     }
     function AffectivePanel({ t }) {
-      const [state, setState] = useState({ loading: true, error: false, items: [], totalEdges: 0, skippedEdges: 0, truncated: false });
+      const [state, setState] = useState({ loading: true, error: false, items: [], totalEdges: 0, skippedEdges: 0, truncated: false, archivedEdges: 0 });
+      // #725：人工修正（apply）与它的可见性。纪律与 #497 复制回执同款——失败必须
+      // 看得见、逐边失败如实摆出，绝不把失败装成成功。
+      const [applyBusy, setApplyBusy] = useState(null);
+      const [applyError, setApplyError] = useState("");
+      const [renaming, setRenaming] = useState(null); // { key, value }：行内改词
+      const [archOpen, setArchOpen] = useState(false);
+      const [archived, setArchived] = useState(null); // null=没读；数组=归档组
+      const [journal, setJournal] = useState([]);
+      const [reloadTick, setReloadTick] = useState(0);
       useEffect(() => {
         let cancelled = false;
         apiFetch("/api/dsh-mneme/semantic/graph/affective?limit=200")
@@ -8478,16 +8522,62 @@ window.__ModuleLoader__.load({
               items: Array.isArray(j.items) ? j.items : [],
               totalEdges: j.totalEdges || 0,
               skippedEdges: j.skippedEdges || 0,
-              truncated: j.truncated === true
+              truncated: j.truncated === true,
+              archivedEdges: j.archivedEdges || 0
             });
           })
           .catch(() => {
             // 失败就报失败。这里绝不能退化成空 items —— 那会让「上游挂了」
             // 长得和「你还没记过情绪」一模一样，用户会以为功能没用。
-            if (!cancelled) setState({ loading: true, error: true, items: [], totalEdges: 0, skippedEdges: 0, truncated: false });
+            if (!cancelled) setState({ loading: true, error: true, items: [], totalEdges: 0, skippedEdges: 0, truncated: false, archivedEdges: 0 });
           });
         return () => { cancelled = true; };
-      }, []);
+      }, [reloadTick]);
+      // #725：归档区与账本各自读各自的。归档区只在展开时读——收起不挂载请求，
+      // 与状态页折叠区同一信号语义（展开才是「我要看」的明确表态）。
+      useEffect(() => {
+        if (!archOpen) return;
+        let cancelled = false;
+        apiFetch("/api/dsh-mneme/semantic/graph/affective?archived=1&limit=200")
+          .then((res) => { if (!res.ok) throw new Error(`http ${res.status}`); return res.json(); })
+          .then((j) => { if (!cancelled) setArchived(Array.isArray(j.items) ? j.items : []); })
+          .catch(() => { if (!cancelled) setArchived([]); });
+        return () => { cancelled = true; };
+      }, [archOpen, reloadTick]);
+      useEffect(() => {
+        let cancelled = false;
+        apiFetch("/api/dsh-mneme/semantic/graph/affective/journal?limit=8")
+          .then((res) => { if (!res.ok) throw new Error(`http ${res.status}`); return res.json(); })
+          .then((j) => { if (!cancelled) setJournal(Array.isArray(j.items) ? j.items : []); })
+          .catch(() => { if (!cancelled) setJournal([]); });
+        return () => { cancelled = true; };
+      }, [reloadTick]);
+
+      // #725：一次人工修正。op ∈ rename/archive/restore/promote/demote，对象是组
+      // （edgeIds 为组内全部边）。成功后广播 store-changed（依赖方即时失效）并重取
+      // 本页三份数据；失败 role=alert 明说，绝不把失败装成成功。
+      const applyAffective = async (op, edgeIds, busyKey, extra = {}) => {
+        if (applyBusy) return;
+        setApplyBusy(busyKey);
+        setApplyError("");
+        try {
+          const res = await apiFetch("/api/dsh-mneme/semantic/graph/affective/apply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ op, edgeIds, ...extra })
+          });
+          const body = await res.json().catch(() => null);
+          if (!res.ok) throw new Error(body?.error || `http ${res.status}`);
+          const failures = Array.isArray(body?.failures) ? body.failures : [];
+          setApplyError(failures.length ? t("memory.affective.applyPartial") : "");
+          window.dispatchEvent(new CustomEvent("mneme:store-changed"));
+          setReloadTick((n) => n + 1);
+        } catch (err) {
+          setApplyError(t("memory.affective.applyFailed").replace("{error}", String(err?.message ?? err)));
+        } finally {
+          setApplyBusy(null);
+        }
+      };
 
       if (state.loading && !state.error) {
         return h("div", { className: "mneme-set" },
@@ -8503,6 +8593,7 @@ window.__ModuleLoader__.load({
       const buildRow = (it, i) => {
         const isTrait = it.attribution === "trait";
         const slotCls = " mneme-affective-emotion--a" + emotionSlot(it.emotion);
+        const rowKey = `${it.personId}-${it.targetId}-${it.emotion}-${it.attribution}-${i}`;
         const bits = [];
         if (isTrait) {
           const n = it.traitSessionCount ?? it.sessionCount;
@@ -8514,7 +8605,43 @@ window.__ModuleLoader__.load({
           bits.push(t("memory.affective.evidence").replace("{n}", String(it.evidenceCount)));
         }
         if (it.lastSeen) bits.push(t("memory.affective.lastSeen").replace("{time}", formatRelativeTime(it.lastSeen, t)));
-        return h("div", { className: isTrait ? "mneme-affective-row mneme-affective-row--trait" : "mneme-affective-row", key: `${it.personId}-${it.targetId}-${it.emotion}-${it.attribution}-${i}` },
+        // #725：行级操作。对象是组（edgeIds 全量）。按钮的可见性就是操作的前提：
+        // 升格只在场合档、降格只在已升格的组——不可用的操作不渲染，而不是渲染了
+        // 再报错。改词是行内输入，Enter 或 ✓ 提交、Esc 取消。
+        const groupEdgeIds = it.edgeIds ?? [];
+        const renamingThis = renaming && renaming.key === rowKey;
+        const actions = renamingThis
+          ? h("div", { className: "mneme-affective-actions" },
+            h("input", {
+              className: "mneme-set-input", value: renaming.value,
+              placeholder: t("memory.affective.renamePlaceholder"),
+              onChange: (e) => setRenaming({ key: rowKey, value: e.target.value }),
+              onKeyDown: (e) => {
+                if (e.key === "Enter") {
+                  const v = renaming.value.trim();
+                  if (v) applyAffective("rename", groupEdgeIds, rowKey, { emotion: v }).then(() => setRenaming(null));
+                }
+                if (e.key === "Escape") setRenaming(null);
+              }
+            }),
+            h("button", {
+              type: "button", className: "mneme-btn",
+              onClick: () => { const v = renaming.value.trim(); if (v) applyAffective("rename", groupEdgeIds, rowKey, { emotion: v }).then(() => setRenaming(null)); }
+            }, "✓"),
+            h("button", { type: "button", className: "mneme-btn", onClick: () => setRenaming(null) }, "×")
+          )
+          : h("div", { className: "mneme-affective-actions" },
+            applyBusy === rowKey
+              ? h("span", { className: "mneme-affective-note" }, t("memory.affective.loading"))
+              : [
+                h("button", { key: "ren", type: "button", className: "mneme-btn", onClick: () => setRenaming({ key: rowKey, value: it.emotion }) }, "✎ " + t("memory.affective.applyRename")),
+                h("button", { key: "arc", type: "button", className: "mneme-btn", onClick: () => applyAffective("archive", groupEdgeIds, rowKey) }, t("memory.affective.applyArchive")),
+                isTrait
+                  ? (it.promotedToTrait ? h("button", { key: "dem", type: "button", className: "mneme-btn", onClick: () => applyAffective("demote", groupEdgeIds, rowKey) }, t("memory.affective.applyDemote")) : null)
+                  : h("button", { key: "pro", type: "button", className: "mneme-btn", onClick: () => applyAffective("promote", groupEdgeIds, rowKey) }, t("memory.affective.applyPromote"))
+              ]
+          );
+        return h("div", { className: isTrait ? "mneme-affective-row mneme-affective-row--trait" : "mneme-affective-row", key: rowKey },
           h("div", { className: "mneme-affective-main" },
             // 谁：服务端一直带着 person（from_name），此前前端只渲染了「对什么 ·
             // 什么情绪」，一条「不安」看不出是谁对谁。名字缺失时给占位符，不是
@@ -8525,9 +8652,26 @@ window.__ModuleLoader__.load({
             h("span", { className: "mneme-affective-arrow" }, "·"),
             h("span", { className: "mneme-affective-target" }, it.target ?? "?")
           ),
-          bits.length ? h("div", { className: "mneme-affective-meta" }, bits.join(" · ")) : null
+          bits.length ? h("div", { className: "mneme-affective-meta" }, bits.join(" · ")) : null,
+          actions
         );
       };
+
+      // #725：归档区的一行——只有恢复一个动作。
+      const archivedRow = (it, i) => h("div", { className: "mneme-affective-row", key: `arch-${i}` },
+        h("div", { className: "mneme-affective-main" },
+          h("span", { className: "mneme-affective-person" }, it.person ?? "?"),
+          h("span", { className: "mneme-affective-arrow" }, "·"),
+          h("span", { className: "mneme-affective-emotion" }, it.emotion),
+          h("span", { className: "mneme-affective-arrow" }, "·"),
+          h("span", { className: "mneme-affective-target" }, it.target ?? "?")
+        ),
+        h("div", { className: "mneme-affective-actions" },
+          applyBusy === `arch-${i}`
+            ? h("span", { className: "mneme-affective-note" }, t("memory.affective.loading"))
+            : h("button", { type: "button", className: "mneme-btn", onClick: () => applyAffective("restore", it.edgeIds ?? [], `arch-${i}`) }, t("memory.affective.applyRestore"))
+        )
+      );
 
       // 副标题承诺「稳定倾向与单独一次分开列」：此前混在一列里只靠行内小标签
       // 区分，承诺没兑现。trait 在前（少而重），occasion 在后（多而轻），各自带
@@ -8545,6 +8689,13 @@ window.__ModuleLoader__.load({
             h("span", { className: "mneme-affective-groupcount" }, String(rows.length))),
           h("div", { className: "mneme-affective-list" }, rows))
         : null;
+      const opLabel = (op) => ({
+        rename: t("memory.affective.applyRename"),
+        archive: t("memory.affective.applyArchive"),
+        restore: t("memory.affective.applyRestore"),
+        promote: t("memory.affective.applyPromote"),
+        demote: t("memory.affective.applyDemote")
+      }[op] ?? String(op ?? ""));
 
       return h("div", { className: "mneme-set" },
         h("div", { className: "mneme-set-inner" },
@@ -8552,6 +8703,7 @@ window.__ModuleLoader__.load({
             h("div", { className: "mneme-affective-title" }, t("memory.affective.title")),
             h("div", { className: "mneme-affective-sub" }, t("memory.affective.sub"))
           ),
+          applyError ? h("div", { className: "mneme-affective-empty mneme-affective-empty--error", role: "alert" }, applyError) : null,
           state.items.length === 0
             ? h("div", { className: "mneme-affective-empty mneme-affective-empty--hero", role: "status" },
               h(Icon, { name: "heart", size: 20 }),
@@ -8562,7 +8714,29 @@ window.__ModuleLoader__.load({
           // 截断与跳过都要说出来：读者看到「就这些」时，得知道是自己没记够，
           // 还是这一页只放了这么多。
           state.truncated ? h("div", { className: "mneme-affective-note" }, t("memory.affective.truncated").replace("{n}", String(state.totalEdges))) : null,
-          state.skippedEdges > 0 ? h("div", { className: "mneme-affective-note" }, t("memory.affective.skipped").replace("{n}", String(state.skippedEdges))) : null
+          state.skippedEdges > 0 ? h("div", { className: "mneme-affective-note" }, t("memory.affective.skipped").replace("{n}", String(state.skippedEdges))) : null,
+          // #725：归档区（默认收起）与人工修正账本。归档边在默认档不出现——「情绪
+          // 变少了」由按钮上的计数解释成归档了而不是丢了。
+          h("div", { className: "mneme-affective-foot" },
+            h("div", { className: "mneme-affective-actions" },
+              h("button", { type: "button", className: "mneme-btn", onClick: () => setArchOpen(!archOpen) },
+                (archOpen ? t("memory.affective.archiveHide") : t("memory.affective.archiveShow"))
+                + (state.archivedEdges ? ` (${state.archivedEdges})` : ""))),
+            archOpen
+              ? (archived === null
+                ? h("div", { className: "mneme-affective-note" }, t("memory.affective.loading"))
+                : archived.length === 0
+                  ? h("div", { className: "mneme-affective-note" }, t("memory.affective.archiveEmpty"))
+                  : h("div", { className: "mneme-affective-list mneme-affective-archlist" }, archived.map(archivedRow)))
+              : null,
+            h("div", { className: "mneme-affective-journal" },
+              h("div", { className: "mneme-affective-note" }, t("memory.affective.journalTitle")),
+              journal.length === 0
+                ? h("div", { className: "mneme-affective-note" }, t("memory.affective.journalEmpty"))
+                : journal.map((j, i) => h("div", { key: j.id ?? i, className: "mneme-affective-journalrow" },
+                  h("span", null, formatRelativeTime(j.at, t)),
+                  h("span", null, opLabel(j.op)))))
+          )
         )
       );
     }

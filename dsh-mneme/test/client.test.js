@@ -4639,6 +4639,17 @@ test("affective rows name the person, and every tab owns its icon (#619)", () =>
     "页签图标必须走 TAB_ICONS 查表，不许回到嵌套三元");
 });
 
+// #725：人工修正通道的前端接线。端点与账本读必须真实出现在 bundle 里——
+// 「页面上有按钮但没连到路由」是「数据在、界面没显示」假绿的镜像形状。
+test("affective page wires the manual apply channel (#725)", () => {
+  assert.ok(clientSource.includes("/api/dsh-mneme/semantic/graph/affective/apply"),
+    "apply 端点必须被前端真实调用");
+  assert.ok(clientSource.includes("/api/dsh-mneme/semantic/graph/affective/journal"),
+    "账本读必须接上（最近变更不是摆设）");
+  assert.ok(clientSource.includes("mneme:store-changed"),
+    "apply 成功后要广播失效事件，依赖方不能等 60s 兜底轮询");
+});
+
 // formatRelativeTime(value, t) 的 t 是必填的：它内部要 t("memory.time.now")
 // 之类的文案，少传就抛 TypeError，而它跑在 render 里 —— 整个面板会白屏，
 // 且不写进任何日志。v0.14.0-beta.1/2 的「情绪页一点就全白」就是这么来的

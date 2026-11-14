@@ -535,3 +535,111 @@ test("#724 affective overview keeps archived edges out by default and lists them
   assert.equal(arc.items[0].emotion, "不安");
   assert.equal(arc.archivedEdges, 1);
 });
+
+// --- #725：人工修正通道（apply + journal）。token 未配置时 fail-open（写也可达），
+// 与 api.test.js 的鉴权口径一致；带 token 的拒绝路径在最下一条。 ---
+function reqPost(path, payload) {
+  const r = new EventEmitter();
+  r.url = path;
+  r.method = "POST";
+  r.headers = {};
+  process.nextTick(() => {
+    r.emit("data", Buffer.from(JSON.stringify(payload)));
+    r.emit("end");
+  });
+  return r;
+}
+
+test("#725 affective apply renames, archives, restores — and writes the journal each time", async () => {
+  const { routes, service } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  const e1 = service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "紧张", normalize_key: "紧张", valence: "negative", attribution: "occasion", evidence: ["m-1"] }
+  });
+  const apply = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective/apply");
+  const call = async (payload) => {
+    const r = new FakeRes();
+    await apply.handler(reqPost("/api/dsh-mneme/semantic/graph/affective/apply", payload), r);
+    return { status: r.statusCode, body: r.body ? JSON.parse(r.body) : null };
+  };
+
+  const ren = await call({ op: "rename", edgeIds: [e1.id], emotion: "不安" });
+  assert.equal(ren.status, 200);
+  assert.equal(ren.body.applied, 1);
+  let edge = service.relationById(e1.id);
+  assert.equal(edge.metadata.emotion, "不安", "改词落库");
+  assert.equal(edge.metadata.normalize_key, "不安", "词表内的词归一到组主词");
+  assert.equal(edge.metadata.valence, "negative");
+
+  const arch = await call({ op: "archive", edgeIds: [e1.id] });
+  assert.equal(arch.status, 200);
+  edge = service.relationById(e1.id);
+  assert.ok(edge.metadata.archivedAt, "归档标记落库（与 #724 TTL 同一标记）");
+
+  const rest = await call({ op: "restore", edgeIds: [e1.id] });
+  assert.equal(rest.status, 200);
+  edge = service.relationById(e1.id);
+  assert.equal(edge.metadata.archivedAt, undefined, "恢复清掉归档标记");
+
+  const bad = await call({ op: "rename", edgeIds: ["no-such-edge"], emotion: "平静" });
+  assert.equal(bad.status, 404, "组内全部边失效时 404，不假装成功");
+
+  const jr = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective/journal");
+  const jres = new FakeRes();
+  await jr.handler(req("/api/dsh-mneme/semantic/graph/affective/journal"), jres);
+  assert.equal(jres.statusCode, 200);
+  const journal = JSON.parse(jres.body).items;
+  assert.deepEqual(journal.map((j) => j.op).slice(0, 3), ["restore", "archive", "rename"], "三次成功操作各一条，新→旧");
+  assert.equal(journal[0].actor, "manual", "人工通道的账，actor=manual");
+});
+
+test("#725 affective apply promotes via the decision channel and demote archives the minted pattern", async () => {
+  const { routes, service } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  const e1 = service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", sessionCount: 3, evidence: ["m-1", "m-2"] }
+  });
+  const apply = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective/apply");
+  const call = async (payload) => {
+    const r = new FakeRes();
+    await apply.handler(reqPost("/api/dsh-mneme/semantic/graph/affective/apply", payload), r);
+    return { status: r.statusCode, body: r.body ? JSON.parse(r.body) : null };
+  };
+
+  const pro = await call({ op: "promote", edgeIds: [e1.id] });
+  assert.equal(pro.status, 200, "升格走决策通道成功");
+  const patterns = service.list({ type: "pattern", limit: 50 });
+  assert.equal(patterns.length, 1, "铸出一条 pattern");
+  assert.match(patterns[0].title, /答辩/, "标题带对象（去重键同款约束）");
+  let edge = service.relationById(e1.id);
+  assert.equal(edge.metadata.promotedToTrait, true);
+  assert.equal(edge.metadata.traitSessionCount, 3, "traitSessionCount 取组内最大");
+
+  const dem = await call({ op: "demote", edgeIds: [e1.id] });
+  assert.equal(dem.status, 200);
+  edge = service.relationById(e1.id);
+  assert.equal(edge.metadata.promotedToTrait, undefined, "降格清掉升格标记");
+  const after = service.list({ type: "pattern", limit: 50, includeArchived: true });
+  const minted = after.find((m) => m.title === patterns[0].title);
+  assert.ok(minted, "降格不删铸出的行");
+  assert.ok(minted.archived, "铸出的 pattern 行按同题归档（可恢复）");
+
+  const demAgain = await call({ op: "demote", edgeIds: [e1.id] });
+  assert.equal(demAgain.status, 200);
+  assert.equal(demAgain.body.applied, 0, "没有升格标记时无事可做");
+  assert.ok(demAgain.body.failures.length > 0, "无事可做要如实进 failures");
+});
+
+test("#725 affective apply is token-gated when a token is configured", async () => {
+  const { routes } = setup(FAKE_API_TOKEN);
+  const apply = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective/apply");
+  const noAuth = new FakeRes();
+  await apply.handler(reqPost("/api/dsh-mneme/semantic/graph/affective/apply", { op: "archive", edgeIds: ["x"] }), noAuth);
+  assert.equal(noAuth.statusCode, 401, "带 token 配置时无凭据写操作被拒");
+});
