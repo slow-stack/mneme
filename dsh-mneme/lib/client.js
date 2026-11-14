@@ -3836,31 +3836,39 @@ window.__ModuleLoader__.load({
       // 刻意**不新开一份 --mneme-* 语义色层**：contrast.test.js 按首次出现的
       // 「--mneme-fg-dim」定义解析色值（:118），再来一份就得保证顺序，收益却为零。
       // 这一页只用第一份色层已经覆盖到的宿主 token 与既有 -dim 类名，靠形状做手绘感。
-      ".mneme-persona{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0;box-sizing:border-box;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
-      ".mneme-persona-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:none}",
+      ".mneme-persona{display:flex;flex-direction:column;gap:var(--mneme-space-10);height:100%;min-height:0;box-sizing:border-box;font-size:13px;line-height:19px;color:var(--dsw-alias-label-primary)}",
+      ".mneme-persona-head{display:flex;align-items:center;gap:var(--mneme-space-8);flex-wrap:wrap;flex:none}",
       ".mneme-persona-title{font-size:15px;line-height:21px;font-weight:700;letter-spacing:.3px;color:var(--dsw-alias-label-primary)}",
       ".mneme-persona-spacer{flex:1 1 auto;min-width:0}",
-      ".mneme-persona-body{display:flex;gap:12px;min-height:0;flex:1 1 auto}",
-      ".mneme-persona-about{flex:0 1 auto;min-height:0;max-height:46%;overflow:auto;border-top:1px dashed var(--dsw-alias-border-l2);padding-top:10px;margin-top:2px}",
-      ".mneme-persona-about .mneme-set-card{padding:12px 14px;margin-bottom:8px}",
+      ".mneme-persona-body{display:flex;gap:var(--mneme-space-12);min-height:0;flex:1 1 auto}",
+      ".mneme-persona-about{flex:0 1 auto;min-height:0;max-height:46%;overflow:auto;border-top:1px dashed var(--dsw-alias-border-l2);padding-top:var(--mneme-space-10);margin-top:var(--mneme-space-2)}",
+      // 下方两张通用卡（画像/自动事实）也吃同一层纸感底色：它们与卡纸同属这一页的
+      // 「手账」隐喻，底色配方与日记纸一致（label 3% 中性混色，随主题翻转），不引新色相。
+      ".mneme-persona-about .mneme-set-card{padding:12px 14px;margin-bottom:var(--mneme-space-8);background-color:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent)}",
       // 左列身份卡：宽度固定，卡片是「贴纸」而不是菜单行。
-      ".mneme-persona-col{flex:0 0 190px;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;padding-right:2px;border-right:1px dashed var(--dsw-alias-border-l2)}",
-      ".mneme-persona-card{display:flex;align-items:center;gap:2px}",
+      ".mneme-persona-col{flex:0 0 190px;display:flex;flex-direction:column;gap:var(--mneme-space-8);min-height:0;overflow:auto;padding-right:var(--mneme-space-2);border-right:1px dashed var(--dsw-alias-border-l2)}",
+      ".mneme-persona-card{display:flex;align-items:center;gap:var(--mneme-space-2)}",
       ".mneme-persona-pick{flex:1 1 auto;min-width:0;text-align:left;border:1.5px solid transparent;background:0 0;cursor:pointer;font-family:inherit;font-size:12px;line-height:18px;padding:5px 10px;border-radius:12px 8px 13px 9px;color:var(--mneme-fg-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
-      ".mneme-persona-pick:hover{background:var(--dsw-alias-interactive-bg-hover)}",
+      // 悬停带一档同向微倾斜（-0.15°，选中态是 -0.3°）：手账贴纸的触感，幅度刻意
+      // 压在可察觉与不闹之间。
+      ".mneme-persona-pick:hover{background:var(--dsw-alias-interactive-bg-hover);transform:rotate(-.15deg)}",
       ".mneme-persona-pick:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
-      ".mneme-persona-pick--on{border-color:var(--mneme-accent);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
+      // 选中贴纸加一层 accent 淡填充：原来只有描边，贴在纸上「哪张被揭下来过」不明显；
+      // 文字仍是 label-primary（最强正文色），淡底不动摇 AA。
+      ".mneme-persona-pick--on{border-color:var(--mneme-accent);background:color-mix(in srgb,var(--mneme-accent) 7%,transparent);color:var(--dsw-alias-label-primary);font-weight:600;transform:rotate(-.3deg)}",
       ".mneme-persona-del{flex:none;border:0;background:0 0;cursor:pointer;font-family:inherit;font-size:13px;line-height:18px;padding:2px 6px;border-radius:8px;color:var(--mneme-fg-dim)}",
       ".mneme-persona-del:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--mneme-danger)}",
       ".mneme-persona-del:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}",
-      ".mneme-persona-new{display:flex;gap:6px;align-items:center;margin-top:2px}",
-      // 右列编辑区：一张「卡纸」，与日记纸同一种歪斜语言。
-      ".mneme-persona-sheet{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.14deg);display:flex;flex-direction:column;gap:8px}",
+      ".mneme-persona-new{display:flex;gap:var(--mneme-space-6);align-items:center;margin-top:var(--mneme-space-2)}",
+      // 右列编辑区：一张「卡纸」，与日记纸同一种歪斜语言；底色也抄日记纸的同一配方，
+      // 让「卡纸」真的像纸，而不是一圈描边。
+      ".mneme-persona-sheet{flex:1 1 auto;min-width:0;overflow:auto;padding:12px 14px;border:1.5px solid var(--dsw-alias-border-l1);border-radius:16px 11px 15px 9px;transform:rotate(.14deg);background-color:color-mix(in srgb,var(--dsw-alias-label-primary) 3%,transparent);display:flex;flex-direction:column;gap:var(--mneme-space-8)}",
       ".mneme-persona-label{font-size:12px;line-height:17px;font-weight:600;letter-spacing:.2px;color:var(--dsw-alias-label-secondary)}",
       ".mneme-persona-note{font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
-      ".mneme-persona-diary{flex:none;border-top:1px dashed var(--dsw-alias-border-l2);padding-top:8px;display:flex;flex-direction:column;gap:4px}",
-      ".mneme-persona-diaryrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
-      ".mneme-persona-preview{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;line-height:19px;color:var(--mneme-fg-dim);max-height:180px;overflow:auto;padding:8px 10px;border:1px dashed var(--dsw-alias-border-l2);border-radius:12px 8px 13px 9px}",
+      ".mneme-persona-diary{flex:none;border-top:1px dashed var(--dsw-alias-border-l2);padding-top:var(--mneme-space-8);display:flex;flex-direction:column;gap:var(--mneme-space-4)}",
+      ".mneme-persona-diaryrow{display:flex;gap:var(--mneme-space-8);align-items:center;flex-wrap:wrap;font-size:12px;line-height:18px;color:var(--mneme-fg-dim)}",
+      // 注入预览是这页的「引文」：在卡纸底上再垫一档更深的纸色（4%），虚线框不变。
+      ".mneme-persona-preview{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:12px;line-height:19px;color:var(--mneme-fg-dim);max-height:180px;overflow:auto;padding:var(--mneme-space-8) var(--mneme-space-10);border:1px dashed var(--dsw-alias-border-l2);border-radius:12px 8px 13px 9px;background-color:color-mix(in srgb,var(--dsw-alias-label-primary) 4%,transparent)}",
       // ===== 移动端适配（mobile-adapt 车道）=====
       // 为什么主通道是 @container 而不是 @media：面板有两种形态（overlay 弹层与
       // better-sidebar 工作台 tab），容器宽度与视口宽度并不相等；`.mneme-x` 是
