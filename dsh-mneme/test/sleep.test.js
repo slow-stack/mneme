@@ -887,6 +887,36 @@ test("sleep: a one-session emotion lands as affective_context, and a trait claim
   store.close();
 });
 
+// #723：情绪词归一。词表内的词带 normalize_key（组主词）与 valence（组向性）；
+// 词表外的词 normalize_key=原词、valence=null，**照常落库**——词表只决定归到
+// 哪组，不改写、不丢弃（与降级纪律同向）。变异自证：把「未命中兜底」改成
+// 「未命中即丢弃」，本条必须红（rels.length 断 2）。
+test("sleep: #723 emotion words normalize through the vocabulary, off-list words fall back", async () => {
+  const { service, store } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const memA = makeMemory(service, "答辩结束", "答辩通过了，他很高兴");
+  linkSession(service, memA.id, "session-A");
+  const memB = makeMemory(service, "周末复盘", "复盘时他百感交集");
+  linkSession(service, memB.id, "session-B");
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "高兴", attribution: "occasion", evidence: [memA.id], why: "答辩通过" },
+    { person: "桉桉", target: "答辩", emotion: "百感交集", attribution: "occasion", evidence: [memB.id], why: "复盘时情绪复杂" }
+  ]);
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(result.phases.affective.status, "ok");
+  const rels = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  assert.equal(rels.length, 2, "两条边都落库，词表外的词不丢弃");
+  const happy = rels.find((r) => r.metadata.emotion === "高兴");
+  assert.equal(happy.metadata.normalize_key, "开心", "「高兴」经词表归一到组主词「开心」");
+  assert.equal(happy.metadata.valence, "positive");
+  const off = rels.find((r) => r.metadata.emotion === "百感交集");
+  assert.equal(off.metadata.normalize_key, "百感交集", "词表外的词 normalize_key=原词");
+  assert.equal(off.metadata.valence, null);
+  assert.equal(off.metadata.emotion, "百感交集", "原词永远保留，不改写");
+  store.close();
+});
+
 test("sleep: an emotion backed by enough independent sessions mints a trait pattern", async () => {
   const { service, store } = setup();
   service.createEntity({ name: "桉桉", type: "person" });

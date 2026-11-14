@@ -1,4 +1,4 @@
-import { STR, langOf } from "../lang.js";
+import { STR, langOf, affectiveVocabFor, affectiveVocabText } from "../lang.js";
 import { withBackgroundSession } from "../llm-session.js";
 // System-level sleep (v0.4.0): an idle-triggered, LLM-assisted deep pass over
 // the memory store. Four independent, fail-safe phases:
@@ -1273,6 +1273,8 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
   const maxRelations = config.sleepAffectiveMaxRelationsPerRun ?? 10;
   const maxTraits = config.sleepMaxPatternPerRun ?? 3;
   const language = langOf(config).startsWith("zh") ? "zh" : "en";
+  // #723：情绪词归一的查找表（prompt 里 {{VOCAB}} 的枚举与这是同一份，见 lang.js）。
+  const vocab = affectiveVocabFor(language);
   const entityNames = entities.map((e) => e.name).slice(0, 200).join(", ");
   const listText = memories.map((m) => `id=${m.id} | time=${m.updated_at ?? ""} | type=${m.type} | title=${m.title} | content=${m.content}`).join("\n");
   let streamFailure;
@@ -1295,7 +1297,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       messages: [
         {
           role: "system",
-          content: [{ type: "text", text: STR.prompts.affective[language].replaceAll("{{MIN_SESSIONS}}", String(traitMinSessions)) }],
+          content: [{ type: "text", text: STR.prompts.affective[language].replaceAll("{{MIN_SESSIONS}}", String(traitMinSessions)).replaceAll("{{VOCAB}}", affectiveVocabText(language)) }],
           source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" }
         },
         { role: "user", content: [{ type: "text", text: fenceListBody(language, `${entityNames}\n---\n${listText}`) }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
@@ -1358,6 +1360,13 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       dropped.push({ reason: "no emotion", person: item.person, target: item.target });
       continue;
     }
+    // #723：归一查找——命中词表 → normalize_key=组主词、valence=组向性；未命中 →
+    // normalize_key=原词、valence=null。emotion 字段永远保留模型原词：词表只决定
+    // 「归到哪组」，不改写措辞、不因词表外而丢弃（与降级纪律同向：宁可落不到组，
+    // 也不编一个归属）。
+    const vocabHit = vocab.get(emotion.toLowerCase());
+    const normalizeKey = vocabHit ? vocabHit.key : emotion;
+    const valence = vocabHit ? vocabHit.valence : null;
     // The guardrail: a claimed trait is checked against provenance, and a claim
     // that does not survive is demoted — not discarded. Demoted claims are the
     // interesting number: they are exactly the mis-attributions the probe hunts.
@@ -1436,7 +1445,11 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
         attribution: (edge.metadata && edge.metadata.attribution) || attribution,
         evidence: unionEvidence,
         sessionCount: unionSessions.size,
-        lastMergedRunId: runId
+        lastMergedRunId: runId,
+        // #723：合并要求两边 emotion 字面相同，归一查找必然同组——重算只是把
+        // 字段补齐到旧边（存量边没有 normalize_key/valence）。
+        normalize_key: normalizeKey,
+        valence
       };
       if (record.downgradedFrom && !mergedMetadata.downgradedFrom) {
         mergedMetadata.downgradedFrom = record.downgradedFrom;
@@ -1473,6 +1486,9 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
           why: record.why,
           evidence,
           sessionCount: sessions.size,
+          // #723：词表归一键与向性。词表外的词 normalize_key=原词、valence=null。
+          normalize_key: normalizeKey,
+          valence,
           ...(record.downgradedFrom ? { downgradedFrom: record.downgradedFrom } : {}),
           model: `${route.provider}:${route.model}`,
           runId
