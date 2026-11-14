@@ -1141,17 +1141,28 @@ export function createService({ store, mirror, config, onWrite, logger, document
           // Adaptive threshold (v0.5.0 1.2): the fetch runs at the loosest
           // branch floor so the head-gap rule can still re-admit the tail;
           // the final cutoff is computed against the fetched score
-          // distribution. Explicit `threshold` wins; disabled → legacy 0.
+          // distribution.
+          //
+          // #713: an explicit `threshold` (including an explicit 0 = no
+          // cutoff) always wins; adaptive off with no explicit threshold falls
+          // back to the configured fixed cutoff, never to 0. Falling back to 0
+          // made "turn adaptive off" mean "drop the relevance floor", which
+          // contradicted both docs and vectorSearchThreshold — the key then had
+          // no consumer at all, so setting it did nothing. The internal
+          // full-scan paths (hot refresh, backfill) pass 0 explicitly and keep
+          // their no-cutoff behavior.
           const adaptive = config?.adaptiveThresholdEnabled !== false;
-          const fetchThreshold = adaptive && threshold === undefined
+          const explicitThreshold = threshold === undefined ? null : threshold;
+          const fixedThreshold = explicitThreshold ?? (config?.vectorSearchThreshold ?? 0.65);
+          const fetchThreshold = adaptive && explicitThreshold === null
             ? Math.min(0.5, adaptiveThreshold(q))
-            : (threshold ?? 0);
+            : fixedThreshold;
           const search = vectorIndex
             ? vectorIndex.search(qv, { limit: lim * 2, threshold: fetchThreshold })
             : store.searchVector(qv, { limit: lim * 2, threshold: fetchThreshold });
-          const finalThreshold = adaptive && threshold === undefined
+          const finalThreshold = adaptive && explicitThreshold === null
             ? adaptiveThreshold(q, search)
-            : (threshold ?? 0);
+            : fixedThreshold;
           vector = search
             .filter((m) => (m.score ?? 1) >= finalThreshold)
             .map((m) => ({ ...m, vector: true, source: "vector" }));
@@ -1263,6 +1274,17 @@ export function createService({ store, mirror, config, onWrite, logger, document
         });
       } catch { /* recall receipt is best effort */ }
     }
+    // #713（续）：`_score` 报的是**真正参与 finalThreshold 比较的那一个余弦**
+    // ——这个分值来自 fuseRecall 无条件记下的 per-source 信号，不是 fetch
+    // 阶段的阈值常量，也不是融合后的混合分（RRF 的 0.25 与余弦的 0.5 是两把
+    // 尺子，混着报会让调阈值的人看错数）。纯新增字段：向量路没参与的行
+    // （keyword / bm25 回填）没有余弦可比，就不带这个键，旧调用方形状不变。
+    // 放在全部排序变换之后，绝不影响名次。
+    result = result.map((m) => {
+      const s = signals.get(m.id)?.vector;
+      return typeof s === "number" && Number.isFinite(s) ? { ...m, _score: s } : m;
+    });
+
     // Bug4: cache the latest semantic recall so the sync injection path can
     // reuse it when the injection query matches (no async embed available).
     lastSemanticRecall = { query: q, items: result };
@@ -2548,7 +2570,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
       ...(m.occurred_at !== undefined ? { occurred_at: m.occurred_at } : {}),
       // #230：document 指针行的文件定位随行透出——「全文按需读」的入口就是
       // 这个路径；普通行恒不带键，DTO 与 #230 前逐字节同形。
-      ...(m.doc_path !== undefined && m.doc_path !== null ? { doc_path: m.doc_path } : {})
+      ...(m.doc_path !== undefined && m.doc_path !== null ? { doc_path: m.doc_path } : {}),
+      // #713（续）：检索结果的相关度余弦随行透出（0…1，与 vectorSearchThreshold
+      // 同一把尺子）。只有向量路出过分的行才带；列表/读取/注入等非检索路径
+      // 恒不带键，DTO 与 #713 前逐字节同形。
+      ...(typeof m._score === "number" ? { _score: m._score } : {})
     }));
   }
 
