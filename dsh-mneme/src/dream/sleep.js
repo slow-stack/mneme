@@ -25,6 +25,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { validateDecisions, applyDecisions, ACTIONS } from "./decisions.js";
 import { findPotentialConflicts, cosineSimilarity } from "./clustering.js";
 import { triagePair, recordLedgerTriage } from "./triage.js";
+import { resolveConflictMode, warnConflictModeDegraded } from "../conflict-mode.js";
 import { supersedeInfoFirstPair } from "./decisions.js";
 import { scopeKeyOf } from "../scope.js";
 import { buildReceipt, describeStreamFailure, resolveDreamEffort, withEffortFallback, withMaxTokensFallback, maintainIndexAfterDream, fenceListBody, parseFailureMeta } from "../dream.js";
@@ -383,14 +384,17 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // enforce 与 freeze 同开时 freeze 让位（本相位降级 shadow + warn）：freeze 照常
   // 停车（shadow 语义 = 只记账零处置），绝不出现两套处置语义同时生效。宁可少处置，
   // 不在打架的配置下跑。
-  let ledgerMode = config.conflictLedgerMode ?? "off";
-  if (ledgerMode === "enforce" && config.conflictFreezeEnabled === true) {
-    logger?.warn?.("dsh-mneme sleep: conflictLedgerMode=enforce coexists with conflictFreezeEnabled — degrading to shadow; disable one of them");
-    ledgerMode = "shadow";
-  }
+  //
+  // 解析统一走 resolveConflictMode（src/conflict-mode.js）：同开时它已经把
+  // ledgerMode 降成 shadow，这里不再自己改值、也不再自己判 freeze——旧代码在
+  // 本文件、dream.js、service.js 三处各解析一遍，同开时给出三种答案。
+  const conflictMode = resolveConflictMode(config);
+  const freezeEnabled = conflictMode.freeze;
+  const ledgerMode = conflictMode.ledgerMode;
+  warnConflictModeDegraded(logger, conflictMode, "sleep");
   // alreadyJudged 预筛只为省 LLM：freeze 与 enforce 都不走 LLM，筛不筛不影响成本，
   // 不筛还能让 T2/T3/T4 的每轮观察持续刷新账本（tier 可能随内容更新而变）。
-  const selectionPairs = config.conflictFreezeEnabled === true || ledgerMode === "enforce"
+  const selectionPairs = freezeEnabled || ledgerMode === "enforce"
     ? fresh
     : fresh.filter((p) => isCrossScopePair(p) || !alreadyJudged(p));
   const ledgerSkipped = fresh.length - selectionPairs.length;
@@ -565,7 +569,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
   // conflictAutoResolveEnabled 的全部逻辑（autoEnabled / autoPool / autoResolved）
   // 都在这对花括号里面。两个配置键在面板上看是平行的，实际是父子：把 freeze
   // 关掉，自动档会跟着静默消失，没有任何提示。拆开之前别把它们当独立开关用。
-  if (config.conflictFreezeEnabled === true) {
+  if (freezeEnabled) {
     const maxPending = Number.isInteger(config.conflictFreezeMaxPending) ? config.conflictFreezeMaxPending : 100;
     const pendingNow = typeof service.countConflictPending === "function" ? (service.countConflictPending() ?? 0) : 0;
     const room = Math.max(0, maxPending - pendingNow);
@@ -1705,6 +1709,22 @@ export async function runSleep(ctx, service, config, logger, semantic = null, si
       logger?.warn?.(`dsh-mneme sleep: ${name} phase failed: ${error?.message ?? error}`);
     }
   };
+  // #641 收尾：先给账本收死路，再跑冲突相位。顺序有讲究——冲突相位的候选池是
+  // `!archived && !forgotten`（见 phaseConflicts），一侧退场的对不会再进 fresh，
+  // 若不留这一手，它们会永远停在 open 被注入侧当成活的真矛盾。放在相位之前而不是
+  // 之后：这一轮注入读的是上一轮结束时的状态，先收干净，本轮注入就不会再拿到
+  // 已经无从消解的对。独立 attempt：收死路失败不该连累冲突相位本身。
+  await attempt("ledger-zombify", () => {
+    const zombified = service.zombifyDeadLedgerPairs?.() ?? 0;
+    if (zombified > 0) {
+      logger?.info?.(`dsh-mneme sleep: conflict ledger zombified ${zombified} pair(s) whose side left the pool`);
+    }
+    // status 恒为 noop：deriveStatus 里 noop 既不算 anyWork 也不算 anyError，
+    // 整轮成败判定因此与加这个相位之前逐字节一致。真报了 ok，一轮「只收了账本
+    // 死路」的空转就会被记成有产出（dream_runs.status 从 noop 变 ok），而它并没有
+    // 改任何一条记忆。改写行数照旧透出在 phases 里备查。
+    return { status: "noop", zombified };
+  });
   await attempt("conflicts", () => phaseConflicts(ctx, service, config, logger, runId, semantic, signal));
   await attempt("demotion", () => phaseDemotion(service, config, logger, runId, signal));
   await attempt("patterns", () => phasePatterns(ctx, service, config, logger, runId, signal));
