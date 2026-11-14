@@ -66,3 +66,33 @@ test("an explicit threshold still wins, including 0 for a full scan", async () =
   const rows = await service.searchMemories(QUERY, { mode: "vector", topK: 10, threshold: 0 });
   assert.deepEqual(rows.map((r) => r.id), [id], "explicit 0 means no cutoff");
 });
+
+// #713（续）：`_score` 是「finalThreshold 比的那一个余弦」，调阈值的人靠它看
+// 分数分布。它必须与阈值同一把尺子，且在 DTO 里以**新增键**出现。
+test("_score carries the cosine the cutoff actually compared", async () => {
+  const { service } = setup({ adaptiveThresholdEnabled: false, vectorSearchThreshold: 0.4 });
+  const rows = await service.searchMemories(QUERY, { mode: "vector", topK: 10 });
+  assert.equal(rows.length, 1);
+  assert.ok(Math.abs(rows[0]._score - 0.5) < 1e-6, `expected cosine 0.5, got ${rows[0]._score}`);
+  const dto = service.toApiList(rows)[0];
+  assert.ok(Math.abs(dto._score - 0.5) < 1e-6, "the HTTP/tool DTO must expose it too");
+  // 现有字段与形状不受影响（_score 之外不多不少）。
+  assert.equal(dto.id, rows[0].id);
+  assert.equal(dto.title, "猫");
+});
+
+test("_score never survives filtering: rows the cutoff dropped carry nothing", async () => {
+  const { service } = setup({ adaptiveThresholdEnabled: false, vectorSearchThreshold: 0.65 });
+  const rows = await service.searchMemories(QUERY, { mode: "vector", topK: 10 });
+  assert.equal(rows.length, 0, "cosine 0.5 is filtered by 0.65");
+});
+
+test("rows that never touched the vector path carry no _score key at all", async () => {
+  const { service } = setup({ adaptiveThresholdEnabled: false, vectorSearchThreshold: 0.4 });
+  service.saveWithDedupe({ type: "project", title: QUERY, content: "字面命中即可" });
+  // keyword 模式按契约不走向量路，因此没有余弦可比。
+  const rows = await service.searchMemories(QUERY, { mode: "keyword", topK: 10 });
+  assert.ok(rows.length >= 1, "the literal row is found by keyword");
+  for (const row of rows) assert.equal("_score" in row, false);
+  for (const dto of service.toApiList(rows)) assert.equal("_score" in dto, false);
+});
