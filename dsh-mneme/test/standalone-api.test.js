@@ -44,7 +44,11 @@ test("GET /health is open without a token; every other route 401s", async () => 
   try {
     const health = await fetch(`${base}/health`);
     assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { ok: true });
+    // /health 现在兼作握手面（版本 + 契约 + 能力），不再只是一个 ok:true。
+    const handshake = await health.json();
+    assert.equal(handshake.ok, true);
+    assert.equal(handshake.version, PACKAGE_VERSION);
+    assert.deepEqual(handshake.contract, { name: "dsh-mneme-http", version: 1 });
 
     for (const path of ["/status", "/profile", "/rules", "/memories", "/memories/x", "/search?q=x", "/context"]) {
       const res = await fetch(`${base}${path}`);
@@ -54,6 +58,93 @@ test("GET /health is open without a token; every other route 401s", async () => 
 
     const bad = await fetch(`${base}/status`, { headers: { authorization: "Bearer wrong-token" } });
     assert.equal(bad.status, 401, "wrong token rejected");
+  } finally {
+    close();
+  }
+});
+
+// --- CORS / 握手（网页端桥接的前置条件）---------------------------------------
+//
+// 这三件事是「桥接一定生效」的机械保证：① 预检必须排在鉴权之前（预检不带
+// Authorization，夹在鉴权后面就恒 401，请求根本发不出去）；② 错误响应也要带
+// CORS 头（否则浏览器把 401 读成 CORS 失败，调用方看不到原因）；③ 默认空
+// 白名单时一个头都不发，行为与旧版逐字节一致。
+
+test("/health 兼作握手面：版本 + 契约 + 能力；默认白名单不发 CORS 头", async () => {
+  const { base, close } = await setup();
+  try {
+    const res = await fetch(`${base}/health`, { headers: { origin: "http://localhost:5173" } });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("access-control-allow-origin"), null, "未配置白名单 = 一个头都不发");
+
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.version, PACKAGE_VERSION);
+    assert.deepEqual(body.contract, { name: "dsh-mneme-http", version: 1 });
+    // 能力表要和真实路由一致：桥接据此判断「能不能用」，缺一项它就白试一次。
+    for (const capability of ["context", "search", "memories.write", "persona.read", "maintenance.reclaim"]) {
+      assert.ok(body.capabilities.includes(capability), `${capability} advertised`);
+    }
+    assert.equal(body.cors, false);
+  } finally {
+    close();
+  }
+});
+
+test("CORS：预检在鉴权之前，命中白名单回 204 并回显 origin", async () => {
+  const origin = "http://localhost:5173";
+  const { base, close } = await setup({ config: { externalApiAllowedOrigins: [origin] } });
+  try {
+    // 预检本身不带 Authorization——这正是它必须排在鉴权之前的原因。
+    const preflight = await fetch(`${base}/context`, {
+      method: "OPTIONS",
+      headers: {
+        origin,
+        "access-control-request-method": "GET",
+        "access-control-request-headers": "authorization"
+      }
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), origin);
+    assert.match(preflight.headers.get("access-control-allow-headers") ?? "", /authorization/i);
+    assert.equal(preflight.headers.get("vary"), "Origin");
+
+    const health = await fetch(`${base}/health`, { headers: { origin } });
+    assert.equal(health.headers.get("access-control-allow-origin"), origin);
+
+    // 错误分支也要带头：浏览器读 401 响应体的那一刻同样需要这些头。
+    const unauthorized = await fetch(`${base}/status`, { headers: { origin } });
+    assert.equal(unauthorized.status, 401);
+    assert.equal(unauthorized.headers.get("access-control-allow-origin"), origin);
+  } finally {
+    close();
+  }
+});
+
+test("CORS：未登记的 origin 预检回 403 origin-not-allowed，且不回显", async () => {
+  const { base, close } = await setup({ config: { externalApiAllowedOrigins: ["http://localhost:5173"] } });
+  try {
+    const preflight = await fetch(`${base}/context`, {
+      method: "OPTIONS",
+      headers: { origin: "http://evil.example", "access-control-request-method": "GET" }
+    });
+    assert.equal(preflight.status, 403);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), null);
+    assert.deepEqual(await preflight.json(), { error: "origin-not-allowed" });
+  } finally {
+    close();
+  }
+});
+
+test("CORS：配置里带尾斜杠归一后仍能命中", async () => {
+  const { base, close } = await setup({ config: { externalApiAllowedOrigins: ["http://localhost:5173/"] } });
+  try {
+    const preflight = await fetch(`${base}/context`, {
+      method: "OPTIONS",
+      headers: { origin: "http://localhost:5173", "access-control-request-method": "GET" }
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), "http://localhost:5173");
   } finally {
     close();
   }

@@ -11,7 +11,7 @@ $ cat ~/.dsh/memory/preferences.md
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm version"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm downloads"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=EFE7D8"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=111111" alt="CI"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/tests-3513%20total-EFE7D8?style=flat-square"><img src="https://img.shields.io/badge/tests-3513%20total-111111?style=flat-square" alt="tests"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/tests-3518%20total-EFE7D8?style=flat-square"><img src="https://img.shields.io/badge/tests-3518%20total-111111?style=flat-square" alt="tests"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/license-MIT-EFE7D8?style=flat-square&label=license&labelColor=B03A2E&logoColor=1C1C1C"><img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square&label=license&labelColor=B03A2E&logoColor=FFFFFF" alt="license"></picture>
 <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
@@ -456,6 +456,7 @@ dsh web
 | `apiToken` | 空 | 可选 API 鉴权 token；设置后写操作与密钥接口要求 `Authorization: Bearer <apiToken>` |
 | `externalApiEnabled` | `false` | 独立 HTTP API 服务开关（v0.7.12）：开 standalone API（CLI 依赖它） |
 | `externalApiHost` | `127.0.0.1` | standalone API 监听地址 |
+| `externalApiAllowedOrigins` | `[]` | CORS 白名单（网页端桥接用）：登记后 standalone API 才对跨域请求发 CORS 头并放行预检。默认空 = 一个头都不发，行为与旧版逐字节一致；只做精确匹配（`scheme://host[:port]`，尾斜杠归一），**不支持 `*`**——带 `Authorization` 头的跨域请求与通配来源在规范上互斥。预检（`OPTIONS`）在鉴权之前处理，见「网页端 / 浏览器桥接」 |
 | `externalApiPort` | `8790` | standalone API 监听端口 |
 | `lightMode` | `false` | 轻量模式（v0.7.12）：关闭所有重型增强（语义/实体/叙述/heat 等，见 feature_flags 白名单），纯存储+注入 |
 | `policyEpoch` | `0` | 冲突裁决规则版本：bump 后旧 dream_runs 降级为历史证据（receipt 不再驱动实时裁决） |
@@ -565,7 +566,7 @@ dsh web
 
 | 方法 | 路由 | 说明 |
 |------|------|------|
-| `GET` | `/health` | 健康检查（免鉴权），返回 `{ok:true}` |
+| `GET` | `/health` | 健康检查 + 握手（免鉴权）：回 `{ok, version, contract:{name,version}, capabilities:[...], cors}`；桥接据此判断这张面能不能用、能用哪些 |
 | `GET` | `/status` | 版本、记忆统计、实体数、运行时长 |
 | `GET` | `/profile` | 用户画像，返回 `{profile:"..."}`；未设置时为空字符串 |
 | `GET` | `/rules` | 行为规则列表，返回 `{rules:[...]}`；未设置时为空数组 |
@@ -600,7 +601,16 @@ dsh web
 
 **`unknown` 之下的判档故障另有一条 warn：** `unknown` 有三个生产者（空 `q` / 维度探针没跑成 / 有行却一条向量都读不出来），响应体只有 `tier` 一个键、分不出它们，而调用方对 `unknown` 的策略常常是「不告警」——所以判不出来的情形会另打一行 `dsh-mneme: /context tier left unknown: <what>`（探针抛错 / 没有可读的向量可比）。**它不是上面那六值的一员**（`tier` 不是 `degraded`，没有降级原因可记），运维程序不要按原因枚举解析它。
 
-**预算：** 判档不是免费的。`q` 非空且装配了 embedder 时，一次 `/context` 真的会起一次查询嵌入（一次网络往返 + `embedTimeoutMs` 的超时窗口）——档位要回答的正是「这次嵌入成不成」。这里没有复用 `/health` 的数据源：standalone 的 `/health` 只回 `{ok:true}`，而 `embeddingDimensionBreakdown` 是宿主面的一次全表扫（每行 JSON.parse 一个向量），按请求跑会把语义路成本翻倍。维度探针因此走 `service.vectorDimensionState()`——**按匹配短路的存在性判据**（有没有一条活跃向量的维度等于查询维度），不是「读一行的维度」：混合维度库里 `LIMIT 1` 会抽错维（明明有可比的向量却报 `degraded`），首条恰好解析失败时又会漏报成 `full`。成本是一次无 `LIMIT` 的全 id 扫描 + 按匹配短路的解析：全库同维度（常态）时循环第一行就返回，只解析 1 个向量；只有一条都不匹配时才走完整个循环，而那正是要报 `degraded` 的情形，值得。解析复用 `getParsedEmbedding` 的缓存，缓存热不热取决于 `injectCandidates` 是否真的走了 vectorIndex 分支。
+**预算：** 判档不是免费的。`q` 非空且装配了 embedder 时，一次 `/context` 真的会起一次查询嵌入（一次网络往返 + `embedTimeoutMs` 的超时窗口）——档位要回答的正是「这次嵌入成不成」。这里没有复用 `/health` 的数据源：standalone 的 `/health` 不跑维度扫描（只回握手字段），而 `embeddingDimensionBreakdown` 是宿主面的一次全表扫（每行 JSON.parse 一个向量），按请求跑会把语义路成本翻倍。维度探针因此走 `service.vectorDimensionState()`——**按匹配短路的存在性判据**（有没有一条活跃向量的维度等于查询维度），不是「读一行的维度」：混合维度库里 `LIMIT 1` 会抽错维（明明有可比的向量却报 `degraded`），首条恰好解析失败时又会漏报成 `full`。成本是一次无 `LIMIT` 的全 id 扫描 + 按匹配短路的解析：全库同维度（常态）时循环第一行就返回，只解析 1 个向量；只有一条都不匹配时才走完整个循环，而那正是要报 `degraded` 的情形，值得。解析复用 `getParsedEmbedding` 的缓存，缓存热不热取决于 `injectCandidates` 是否真的走了 vectorIndex 分支。
+
+### 网页端 / 浏览器桥接
+
+浏览器里的页面（插件自己的面板、chat-demo 这类纯前端聊天壳、浏览器扩展）默认**调不动**这张数据面：跨域请求会先发一个不带 `Authorization` 的 `OPTIONS` 预检，而预检若落在鉴权之后，就永远是 401——真正的请求根本发不出去，调用方只会看到一句读不到原因的浏览器 CORS 报错。
+
+- 把页面来源登记进 `externalApiAllowedOrigins`（例如 `["http://localhost:5173"]`），登记后服务端才回 CORS 头；**默认空 = 一个头都不发**，行为与旧版逐字节一致。
+- 预检命中白名单回 `204` 并回显 origin；未命中回 `403 {"error":"origin-not-allowed"}`——给明确原因，好过空 `204` 让人对着浏览器抱怨猜。
+- 错误响应（401 / 413 / 500）同样带 CORS 头，否则调用方连「token 不对」都读不到。
+- `GET /health` 兼作握手：`{ok, version, contract:{name:"dsh-mneme-http", version:1}, capabilities:[...], cors}`。桥接先握手再注入；契约不匹配就降级为不注入，**绝不阻断宿主自己的对话**。
 
 ### curl 示例
 
@@ -755,7 +765,7 @@ src/
 ├── api.js            # HTTP 路由（Web 面板数据通道，含 /conflicts 冲突队列）
 └── index.js          # 插件接线
 lib/                  # src 的同步分发产物（npm run sync，prepack 钩子在发布时自动跑；一致性由 scripts/check-sync.js 在 CI 与 release.yml 校验——它只查不同步；唯一手写例外 lib/client.js——Web 面板 bundle，sync 不覆盖）
-test/                 # 3513 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
+test/                 # 3518 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
 scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压测 · sync-lib.js 同步 · check-sync.js 发布闸门 · benchmark-recall.js / benchmark-embed.js / benchmark-rerank.js 基准 · sync-test-badge.mjs 测试徽章 · build-runtime-manifest.mjs 运行时清单
 ```
 
@@ -764,7 +774,7 @@ scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压
 ```bash
 cd dsh-mneme
 npm install        # 安装 peer 依赖（以 devDependencies 形式，用于本地测试）
-npm test           # 运行 3513 个测试
+npm test           # 运行 3518 个测试
 npm run stress     # 三轴线压测：长会话检索 / 冲突仲裁 / 多 Agent 并发（离线 mock LLM）
 npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动执行）
 ```
