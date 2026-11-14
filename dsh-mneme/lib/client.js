@@ -1079,13 +1079,14 @@ window.__ModuleLoader__.load({
         "memory.features.conflictFreezeEnabled": "矛盾冻结",
         "memory.features.conflictFreezeEnabled.hint": "整理发现矛盾先冻结待确认，不自动裁决。",
         "memory.features.conflictLedgerMode": "矛盾处理档位",
-        "memory.features.conflictLedgerMode.hint": "off：矛盾走人审队列（现状）。shadow：分诊只记账零处置，先跑一周看分布。enforce：确定性处置（近重复自动归档、演进落取代链、矛盾注入标注），人审与 LLM 裁决退出。与「矛盾冻结」互斥，同开时冻结让位。",
+        "memory.features.conflictLedgerMode.hint": "off：矛盾走人审队列（现状）。shadow：分诊只记账零处置，先跑一周看分布。enforce：确定性处置（近重复自动归档、演进落取代链、矛盾注入标注），人审与 LLM 裁决退出。两个键互斥：选了这个档位会自动关掉「矛盾冻结」，打开「矛盾冻结」也会把档位降成 shadow。",
         "memory.features.conflictLedgerMode.off": "off（人审队列）",
         "memory.features.conflictLedgerMode.shadow": "shadow（只记账）",
         "memory.features.conflictLedgerMode.enforce": "enforce（确定性处置）",
         // #661：档位选 off/shadow 但「矛盾冻结」开着时，冲突照样进人审队列——
         // 冻结优先，档位被覆盖。不写这一行，用户只能反复看到「已选 off 却有卡片」。
-        "memory.features.conflictLedgerMode.frozenOverrides": "「矛盾冻结」正开着，它优先于本档位：判成 conflict 的对仍会进人审队列，档位选 off / shadow 都不会少。要让队列不再新增，先关掉「矛盾冻结」。",
+        "memory.features.conflictLedgerMode.frozenOverrides": "「矛盾冻结」正开着：判成 conflict 的对会进人审队列，本档位不会减少队列。要让队列不再新增，先把「矛盾冻结」关掉，或改选 enforce。",
+        "memory.features.conflictLedgerMode.frozenDegraded": "「矛盾冻结」正开着，本档位实际是 shadow：分诊照常记账，处置不跑。这是配置文件里两个键同开的结果——在面板上点一次任一边，就会自动归成单选。",
         "memory.features.scopeEnabled": "来源标注",
         "memory.features.scopeEnabled.hint": "每条记忆标上来自哪个 Agent / 工作区。",
         "memory.features.strictScope": "严格隔离",
@@ -2239,12 +2240,13 @@ window.__ModuleLoader__.load({
         "memory.features.conflictFreezeEnabled": "Conflict freeze",
         "memory.features.conflictFreezeEnabled.hint": "Freezes contradictions for review instead of auto-deciding.",
         "memory.features.conflictLedgerMode": "Conflict handling mode",
-        "memory.features.conflictLedgerMode.hint": "off: conflicts go to the human review queue (status quo). shadow: triage only records — zero disposition; run a week and inspect the distribution first. enforce: deterministic resolution (near-dups auto-archived, evolution chained, conflict pairs annotated); human review and LLM adjudication step out. Mutually exclusive with conflict freeze — freeze yields when both are on.",
+        "memory.features.conflictLedgerMode.hint": "off: conflicts go to the human review queue (status quo). shadow: triage only records — zero disposition; run a week and inspect the distribution first. enforce: deterministic resolution (near-dups auto-archived, evolution chained, conflict pairs annotated); human review and LLM adjudication step out. The two keys are mutually exclusive: picking this mode turns conflict freeze off, and turning conflict freeze on drops this mode to shadow.",
         "memory.features.conflictLedgerMode.off": "off (review queue)",
         "memory.features.conflictLedgerMode.shadow": "shadow (record only)",
         "memory.features.conflictLedgerMode.enforce": "enforce (deterministic)",
         // #661: with freeze on, the tier is overridden and conflicts still park.
-        "memory.features.conflictLedgerMode.frozenOverrides": "Conflict freeze is on and takes precedence over this mode: pairs judged conflict still enter the review queue, so off and shadow change nothing. Turn conflict freeze off to stop the queue from growing.",
+        "memory.features.conflictLedgerMode.frozenOverrides": "Conflict freeze is on: pairs judged conflict enter the review queue, and this mode does not shrink that queue. Turn conflict freeze off (or pick enforce) to stop it from growing.",
+        "memory.features.conflictLedgerMode.frozenDegraded": "Conflict freeze is on, so this mode is effectively shadow: triage still records, disposition does not run. This comes from both keys being set in the config file — clicking either one in the panel normalises them to a single choice.",
         "memory.features.scopeEnabled": "Scope tagging",
         "memory.features.scopeEnabled.hint": "Tags each memory with its agent/workspace origin.",
         "memory.features.strictScope": "Strict isolation",
@@ -5112,12 +5114,17 @@ window.__ModuleLoader__.load({
       // 从词典取——所以新增一个枚举档位只改常量表与词典，不动渲染代码。
       // 值缺失时退回首档（与后端默认档一致），不会渲染出一个没有选中的下拉。
       // #661：冻结优先于档位这条互斥关系，此前只写在设置项提示语里，用户在
-      // 档位下拉旁边看不到；选了 off 却仍刷出待审卡片时无从判断。这里在下拉
-      // 下方直接标出「本档位正被冻结覆盖」，判据与后端同源（见 src/dream.js:1535
-      // 的 ledgerEnforce 与 sleep 侧同款降级），不另造一套语义。
-      const enumOverridden = (k) => k === "conflictLedgerMode"
-        && eff.conflictFreezeEnabled === true
-        && (eff[k] === "off" || eff[k] === "shadow");
+      // 档位下拉旁边看不到；选了 off 却仍刷出待审卡片时无从判断。
+      //
+      // #641 收尾后分成两种，措辞不能混：
+      //   · off / shadow + freeze —— 冻结照常停车，队列会继续涨。这是「你选的是
+      //     人审队列，冻结也在往同一个队列里塞」的正常叠加，不是降级。
+      //   · enforce + freeze —— 只可能来自配置文件（面板写入已经原子归一，选
+      //     enforce 会自动关 freeze）。运行期档位被降成 shadow：记账照跑、处置
+      //     不跑。这是真降级，必须说清楚「你以为在自动处置，其实没有」。
+      // 判据与后端同源（src/conflict-mode.js 的 resolveConflictMode），不另造语义。
+      const enumFrozen = (k) => k === "conflictLedgerMode" && eff.conflictFreezeEnabled === true;
+      const enumDegraded = (k) => enumFrozen(k) && eff[k] === "enforce";
       const enumRow = (k, valuesOverride) => {
         // valuesOverride：搜索结果分支（#653）复用同一渲染器画四个定制枚举键
         // （SEARCH_ENUM_SOURCES），正常路径不传、仍走 FEATURE_ENUM_VALUES。
@@ -5134,7 +5141,9 @@ window.__ModuleLoader__.load({
               values.map((v) => h("option", { key: v, value: v }, t(`memory.features.${k}.${v}`))))
           ),
           h("div", { className: "mneme-featsubhint" }, t(`memory.features.${k}.hint`)),
-          enumOverridden(k) && h("div", { className: "mneme-featsubhint" },
+          enumDegraded(k) && h("div", { className: "mneme-featsubhint" },
+            "⚠ " + t(`memory.features.${k}.frozenDegraded`)),
+          !enumDegraded(k) && enumFrozen(k) && h("div", { className: "mneme-featsubhint" },
             "⚠ " + t(`memory.features.${k}.frozenOverrides`))
         );
       };

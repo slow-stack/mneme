@@ -17,6 +17,7 @@ import { createOrganizer } from "./organize.js";
 import { createShareImport } from "./share-import.js";
 import { createCorpusIndex } from "./search/bm25.js";
 import { adaptiveThreshold } from "./search/adaptive.js";
+import { resolveConflictMode } from "./conflict-mode.js";
 import { anchorSeeds, normalizePath, cascadeDepths, HOP_QUOTA } from "./graph/anchoring.js";
 
 // Issue #369：蒸馏白名单（src/summarize.js 的 VALID）产得出 history，注入白名单
@@ -2256,7 +2257,11 @@ export function createService({ store, mirror, config, onWrite, logger, document
     if (supersededIdSet.size) {
       selected = selected.filter((m) => !supersededIdSet.has(m.id));
     }
-    if (config.conflictLedgerMode === "enforce" && selected.length > 1) {
+    // 两个键的解析走 resolveConflictMode（src/conflict-mode.js），与 dream / sleep
+    // 同源。此前这里只判 `config.conflictLedgerMode === "enforce"`、完全不看
+    // freeze：处置侧已经被 freeze 压停，注入侧却照旧给矛盾对挂标注——同一份配置
+    // 在三处算出三种答案，注入文本因此比处置更「乐观」。
+    if (resolveConflictMode(config).ledgerMode === "enforce" && selected.length > 1) {
       const language = langOf(config);
       const byId = new Map(selected.map((m) => [m.id, m]));
       for (const p of store.openConflictPairs()) {
@@ -3380,6 +3385,9 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // 调度器叫醒。
     saveConflictLedgerEntry: (r) => store.saveConflictLedgerEntry(r),
     setConflictLedgerStatus: (a, b, s) => store.setConflictLedgerStatus(a, b, s),
+    // #641 收尾：把任一侧已归档 / 遗忘的 open 账本行收进 zombied。与上面同一条
+    // bookkeeping 纪律——只改账本状态，不碰 memories 任何一列。
+    zombifyDeadLedgerPairs: () => store.zombifyDeadLedgerPairs(),
     listConflictLedger: (opts) => store.listConflictLedger(opts),
     countConflictLedger: (opts) => store.countConflictLedger(opts),
     // #641 T3 取代链：与上面 ledger 同一条 bookkeeping 纪律——纯元数据标注绝不

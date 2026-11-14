@@ -4687,24 +4687,36 @@ test("every formatRelativeTime call passes the translator (a missing t blanks th
 
 // #661：选了「off（人审队列）」却还能刷到待审冲突卡片——冻结优先于档位这条
 // 互斥关系只写在设置项提示里，用户在档位下拉旁边看不到，于是反复以为档位没生效。
-// 这里锁三件事：①判定函数存在且判据与后端同源（freeze 开 + off/shadow 才算被覆盖，
-// enforce 不被标注，因为 enforce 与 freeze 同开时后端降级到 freeze，标注反而误导）；
-// ②该判定真的接到了 enumRow 的渲染里，不是写了没调用；③提示文案中英各一条。
+//
+// #641 收尾把这一格拆成两种，判据仍只有一个（enumFrozen），措辞分成两条：
+//   · off / shadow + freeze —— 冻结照常停车，队列会继续涨（frozenOverrides）。
+//   · enforce + freeze —— 只可能来自配置文件（面板写入已原子归一）。运行期降到
+//     shadow：记账照跑、处置不跑（frozenDegraded）。旧口径说着「enforce 不会被
+//     标注」，那是在归一之前；归一之后这个组合反而最需要说清「你以为在自动处置，
+//     其实没有」。
+// 这里锁四件事：①两个判定存在且同源于 enumFrozen，判据与后端 src/conflict-mode.js
+// 一致；②都真接到了 enumRow 渲染里，不是写了没调用；③两条文案中英各一条；
+// ④两条互斥渲染，enforce 时不能同时出现「队列会涨」那条。
 test("conflict ledger mode warns when freeze overrides the chosen tier (#661)", () => {
-  // ① 判定：只在 conflictLedgerMode 上成立，且必须是 freeze 开 + off/shadow
-  const fn = clientSource.match(/const enumOverridden = \(k\) =>([\s\S]{0,260}?);\r?\n/);
-  assert.ok(fn, "enumOverridden must exist — the override notice needs a single predicate");
-  const body = fn[1];
-  assert.match(body, /k === "conflictLedgerMode"/,
-    "the override notice only applies to conflictLedgerMode (other enum keys have no freeze)");
-  assert.match(body, /eff\.conflictFreezeEnabled === true/,
+  // ① 判定：基谓词只认 conflictLedgerMode + effective freeze
+  const base = clientSource.match(/const enumFrozen = \(k\) =>([\s\S]{0,200}?);\r?\n/);
+  assert.ok(base, "enumFrozen must exist — both notices share one predicate");
+  const baseBody = base[1];
+  assert.match(baseBody, /k === "conflictLedgerMode"/,
+    "the freeze notice only applies to conflictLedgerMode (other enum keys have no freeze)");
+  assert.match(baseBody, /eff\.conflictFreezeEnabled === true/,
     "the notice must read the effective freeze flag, not the saved override");
-  assert.match(body, /\(eff\[k\] === "off" \|\| eff\[k\] === "shadow"\)/,
-    "only off/shadow are overridden by freeze — enforce is degraded to freeze server-side, where this notice would misdescribe the run");
-  assert.equal(/enforce" \)/.test(body), false,
-    "enforce must not be listed as overridden by this notice");
 
-  // ② 接线：判定必须真的消费在 enumRow 里（写了不调用 = 永远不显示）
+  // 降级谓词必须叠在基谓词上，且只认 enforce 一档
+  const degraded = clientSource.match(/const enumDegraded = \(k\) =>([\s\S]{0,200}?);\r?\n/);
+  assert.ok(degraded, "enumDegraded must exist — enforce+freeze needs its own wording");
+  const degradedBody = degraded[1];
+  assert.match(degradedBody, /enumFrozen\(k\)/,
+    "enumDegraded must build on enumFrozen, not restate the freeze check");
+  assert.match(degradedBody, /eff\[k\] === "enforce"/,
+    "only enforce is degraded — off/shadow+freeze is the normal review-queue combination");
+
+  // ② 接线：两个判定都真的消费在 enumRow 里（写了不调用 = 永远不显示）
   // 锚点只认前缀不认完整签名：#653 给 enumRow 加了 valuesOverride 形参（搜索
   // 分支复用同一渲染器画定制枚举键），这条测试锁的是提示接线，不是签名形状。
   const enumRowStart = clientSource.indexOf("const enumRow = (k");
@@ -4712,20 +4724,31 @@ test("conflict ledger mode warns when freeze overrides the chosen tier (#661)", 
   const enumRowEnd = clientSource.indexOf("const flagRow = (k) =>", enumRowStart);
   assert.ok(enumRowEnd > enumRowStart, "enumRow must end before flagRow");
   const renderer = clientSource.slice(enumRowStart, enumRowEnd);
-  assert.match(renderer, /enumOverridden\(k\) && h\("div", \{ className: "mneme-featsubhint" \}/,
-    "enumRow must render the override notice from enumOverridden(k), not a second copy of the rule");
+  assert.match(renderer, /enumDegraded\(k\) && h\("div", \{ className: "mneme-featsubhint" \}/,
+    "enumRow must render the degraded notice from enumDegraded(k)");
+  assert.match(renderer, /!enumDegraded\(k\) && enumFrozen\(k\) && h\("div", \{ className: "mneme-featsubhint" \}/,
+    "enumRow must render the override notice from enumFrozen(k) and skip it when degraded wins");
+  assert.match(renderer, /memory\.features\.\$\{k\}\.frozenDegraded/,
+    "the degraded notice text must come from the per-key dictionary entry");
   assert.match(renderer, /memory\.features\.\$\{k\}\.frozenOverrides/,
-    "the notice text must come from the per-key dictionary entry");
+    "the override notice text must come from the per-key dictionary entry");
 
-  // ③ 文案双语：恰好中英各一条（奇数次 = 漏译，>2 = 重复）
-  const occurrences = clientSource.split('"memory.features.conflictLedgerMode.frozenOverrides"').length - 1;
-  assert.equal(occurrences, 2,
-    `the frozenOverrides notice must exist as exactly one dictionary line per language (got ${occurrences})`);
-  // 文案要点：说清「冻结优先」与「要先关冻结」，否则用户仍不知道该怎么办
-  const text = clientSource.match(/"memory\.features\.conflictLedgerMode\.frozenOverrides":\s*"([^"]+)"/g) ?? [];
-  const joined = text.join(" ");
-  assert.match(joined, /\u77db\u76fe\u51bb\u7ed3|conflict freeze/i,
-    "the notice must name the freeze switch so the user knows what to turn off");
+  // ③ 文案双语：各恰好中英各一条（奇数次 = 漏译，>2 = 重复）
+  for (const key of ["frozenOverrides", "frozenDegraded"]) {
+    const occurrences = clientSource.split(`"memory.features.conflictLedgerMode.${key}"`).length - 1;
+    assert.equal(occurrences, 2,
+      `the ${key} notice must exist as exactly one dictionary line per language (got ${occurrences})`);
+  }
+  // 文案要点：两条都必须点名「矛盾冻结」，否则用户仍不知道要动哪个开关；
+  // 降级那条还必须说清「实际是 shadow / 处置不跑」，否则等于没说。
+  const overridesText = (clientSource.match(/"memory\.features\.conflictLedgerMode\.frozenOverrides":\s*"([^"]+)"/g) ?? []).join(" ");
+  assert.match(overridesText, /\u77db\u76fe\u51bb\u7ed3|conflict freeze/i,
+    "the override notice must name the freeze switch so the user knows what to turn off");
+  const degradedText = (clientSource.match(/"memory\.features\.conflictLedgerMode\.frozenDegraded":\s*"([^"]+)"/g) ?? []).join(" ");
+  assert.match(degradedText, /\u77db\u76fe\u51bb\u7ed3|conflict freeze/i,
+    "the degraded notice must name the freeze switch");
+  assert.match(degradedText, /shadow/i,
+    "the degraded notice must say the mode is effectively shadow — otherwise it reads as a no-op");
 });
 
 // ---- #653 设置页搜索 ------------------------------------------------------

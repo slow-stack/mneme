@@ -4286,9 +4286,12 @@ export function createStore(path) {
 
   // --- conflict triage ledger（issue #641，shadow 档）-----------------------
 
-  // 四态里 superseded（已被取代）与 open 有写入点；differentiated（人审判为不同事、
-  // 不必再问）与 zombied（两条都已退场、无从消解）是预留位，当前没有任何代码路径
-  // 会写它们——留着是为了状态机与面板筛选口径完整，别当成「已实现但没数据」。
+  // 四态里 open / superseded / zombied 都有写入点；differentiated（人审判为不同事、
+  // 不必再问）仍是预留位——当前没有任何代码路径会写它，留着是为了状态机与面板
+  // 筛选口径完整，别当成「已实现但没数据」。
+  //
+  // zombied 的写者是下面的 zombifyDeadLedgerPairs（#641 收尾）：账本里任一侧已经
+  // 归档 / 遗忘的对，无从消解也不该继续占着 open 被人审与注入侧当成活的真矛盾。
   const LEDGER_STATUSES = new Set(["open", "superseded", "differentiated", "zombied"]);
   const LEDGER_TIERS = new Set(["dup", "cross-scope-dup", "evolution", "conflict"]);
 
@@ -4332,6 +4335,39 @@ export function createStore(path) {
       "UPDATE conflict_ledger SET status = ? WHERE memory_a = ? AND memory_b = ?"
     ).run(status, a, b);
     return res.changes > 0;
+  }
+
+  /**
+   * 把「已无从消解」的账本行收进 zombied（#641 收尾，接上原本的预留位）。
+   *
+   * 为什么必须有人做这件事：账本是**测量记录**不是处置记录，每一对只要还被观察到就
+   * 一直住在里面（见上面 saveConflictLedgerEntry 的注释）。但冲突相位的候选池是
+   * `!archived && !forgotten`（sleep.js 的 phaseConflicts）——一侧归档或遗忘之后，
+   * 那一对**再也不会进 fresh**，于是账本行永远停在 open，没有任何代码路径能把它们
+   * 翻走。后果不止是数字难看：openConflictPairs 只按 `tier='conflict' AND status='open'`
+   * 取值，注入侧（service.js）会把这些「一侧已经不在库里的对」当成活的真矛盾，
+   * 给仍在的那条挂上「存在矛盾记忆」的标注。
+   *
+   * 只动 open：superseded / differentiated 已经是终点，重复改写成 zombied 会把
+   * 「这一对是怎么结束的」抹掉。两侧都退了与只退一侧同样处理——无从消解的判据是
+   * 「不可能再被同时观察到」，与退了几侧无关。
+   *
+   * 用一条 SQL 做，不逐对读改写：账本量级是几十行，但这是每轮睡眠都会跑的维护动作，
+   * 逐行 UPDATE 会让它在库大时变慢，而这条判据本来就是纯 SQL 能表达的。
+   *
+   * @returns {number} 本次改写的行数（0 = 没有需要收的死路）
+   */
+  function zombifyDeadLedgerPairs() {
+    const res = db.prepare(
+      `UPDATE conflict_ledger
+          SET status = 'zombied'
+        WHERE status = 'open'
+          AND (
+            NOT EXISTS (SELECT 1 FROM memories m WHERE m.id = conflict_ledger.memory_a AND m.archived = 0 AND m.forgotten = 0)
+            OR NOT EXISTS (SELECT 1 FROM memories m WHERE m.id = conflict_ledger.memory_b AND m.archived = 0 AND m.forgotten = 0)
+          )`
+    ).run();
+    return res.changes ?? 0;
   }
 
   /**
@@ -6251,6 +6287,7 @@ export function createStore(path) {
     listConflictReviewed,
     saveConflictLedgerEntry,
     setConflictLedgerStatus,
+    zombifyDeadLedgerPairs,
     supersedeChain,
     supersededIds,
     supersedeContext,

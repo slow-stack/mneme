@@ -1,6 +1,7 @@
 import { validateDecisions, applyDecisions, supersedeInfoFirstPair } from "./dream/decisions.js";
 import { clusterMemories, findPotentialConflicts, cosineSimilarity } from "./dream/clustering.js";
 import { triagePair } from "./dream/triage.js";
+import { resolveConflictMode, warnConflictModeDegraded } from "./conflict-mode.js";
 import { clusterByTag, intersectEvidence } from "./dream/narratives.js";
 import { scopeKeyOf } from "./scope.js";
 // Issue #239（第 4 项）镜像到巩固：错峰时段解析与「最近的高峰结束时刻」从独立的
@@ -1205,7 +1206,12 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     // Conflict freeze (opt-in): when enabled, conflict decisions are parked for
     // manual review instead of auto-adjudicated. Read once up front so the
     // prompt hint and the apply-split agree on the same gate.
-    const freezeEnabled = config.conflictFreezeEnabled === true;
+    //
+    // 两个键的解析统一走 resolveConflictMode（见 src/conflict-mode.js）：此前这个
+    // 文件、sleep.js、service.js 三处各自读 cfg 并各自判断，同开时给出三种答案。
+    // 这里只取它解析出的 freeze 值，不再自己拼 `=== true`。
+    const conflictMode = resolveConflictMode(config);
+    const freezeEnabled = conflictMode.freeze;
     // reflectionUpdateEnabled（默认 true，「关」= 旧记忆永不被自动改写）。同样先读
     // 一次，prompt 后缀与校验器选项用同一个值，避免两处各读一次 cfg 后彼此不一致。
     const updateEnabled = config.reflectionUpdateEnabled !== false;
@@ -1535,11 +1541,14 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     // supersedeInfoFirstPair（与 sleep 自动档同一条契约）；其余（cross-scope-dup /
     // evolution / conflict）只落 conflict_ledger 账本（tier + 信号），不停车、
     // 不归档。#616 的父子绑定不继承：enforce 与 freeze 同开时 freeze 让位——
+    // #616 的父子绑定不继承：enforce 与 freeze 同开时 freeze 让位——
     // 本段降级 shadow（conflict 照旧停车），绝不两套处置语义同时生效。
-    const ledgerEnforce = (config.conflictLedgerMode ?? "off") === "enforce" && !freezeEnabled;
-    if ((config.conflictLedgerMode ?? "off") === "enforce" && freezeEnabled) {
-      logger?.warn?.("dsh-mneme dream: conflictLedgerMode=enforce coexists with conflictFreezeEnabled — degrading to freeze; disable one of them");
-    }
+    //
+    // 判据一律取自 resolveConflictMode 的解析结果：`ledgerMode === "enforce"` 已经
+    // 内含「freeze 没开」这一步（同开时解析结果就是 shadow），不再自己与
+    // freezeEnabled 拼与。与 sleep / 注入侧同源，三处不会再算出三种答案。
+    const ledgerEnforce = conflictMode.ledgerMode === "enforce";
+    warnConflictModeDegraded(logger, conflictMode, "dream");
     if (ledgerEnforce) {
       let t1Resolved = 0;
       let t3Chained = 0;
