@@ -1343,3 +1343,32 @@ test("GET /memory/provenance: both selectors at once is 400, and limit is bounde
     close();
   }
 });
+
+// --- 令牌轮换（外部 API 的 token 原本只能生成一次，泄了没法撤）-----------------
+
+test("rotateToken mints a fresh token, kills the old one and persists it", async () => {
+  const { api, base, settings, close } = await setup();
+  try {
+    const before = api.token;
+    assert.ok(before.length >= 16);
+
+    const after = api.rotateToken();
+    assert.notEqual(after, before, "轮换必须铸一个新值");
+    assert.equal(api.token, after, "api.token 是实时视图，轮换后不能还回旧的");
+    assert.equal(settings.getExternalApi().token, after, "新令牌落库（重启后仍是它）");
+
+    const stale = await fetch(`${base}/status`, { headers: { authorization: `Bearer ${before}` } });
+    assert.equal(stale.status, 401, "旧令牌立刻失效——这正是轮换要做的事");
+
+    const fresh = await fetch(`${base}/status`, { headers: { authorization: `Bearer ${after}` } });
+    assert.equal(fresh.status, 200, "新令牌当场可用，不用重启");
+
+    // 两条鉴权通道读的是同一个闭包变量，必须一起换过去。
+    const viaHeader = await fetch(`${base}/status`, { headers: { "x-dsh-mneme-token": after } });
+    assert.equal(viaHeader.status, 200);
+    const oldViaHeader = await fetch(`${base}/status`, { headers: { "x-dsh-mneme-token": before } });
+    assert.equal(oldViaHeader.status, 401);
+  } finally {
+    close();
+  }
+});
