@@ -20,7 +20,7 @@ import { EFFORT_REJECT_RE, describeStreamFailure, resolveRoute, withEffortFallba
 import { summarizeSkipped } from "./dream/decisions.js";
 import { getInjectionSnapshot } from "./inject.js";
 import { invalidPeakSpecs } from "./peak-hours.js";
-import { renderUserSettingsBlock } from "./user-settings.js";
+import { renderUserSettingsBlock, resolvePersonaCard } from "./user-settings.js";
 import { parseProvenanceSelector, provenanceReply } from "./provenance-http.js";
 import { describeLocalRuntime, publicRuntimeStatus } from "./runtime/loader.js";
 import { hostModulesDir, provisionRuntime } from "./runtime/provision.js";
@@ -684,6 +684,98 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         sendJson(res, 200, { persona: settings.getPersona(), preview });
       } catch {
         sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  // --- 绑会话卡（#606）：单卡读写 ---------------------------------------------
+  // 为什么不扩整份 PUT /persona：那条是全量替换形状，调用方漏一维就会把别处的卡
+  // 整片抹掉（面板踩过，见 lib/client.js 的「保存发全三维」纪律）。这条路由只动
+  // bySession 里的一格，转调 settings 的 setPersonaForSession / removePersonaForSession
+  // ——服务端一次读改写，没有「客户端读全量 → 改一格 → 写全量」的时间窗口，也就
+  // 不会和 dream、画像那边的写入打架。
+  //
+  // 读侧**必须**复用 resolvePersonaCard：预览与注入同源是同一条硬纪律（#606），
+  // 另写一套优先级迟早与注入分叉。source 五档与注入器一致：
+  // session（本会话的卡）| parent（继承父会话）| agent（身份预设卡）| default | none。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/persona/session",
+    policy: "token-write",
+    handler(req, res) {
+      const sourceOf = (agentId, sessionId, parentSessionId) => {
+        const resolved = resolvePersonaCard(settings, agentId, {
+          strict: config?.personaStrictAddressing === true,
+          sessionId,
+          parentSessionId
+        });
+        const card = resolved.card ?? {};
+        let key = null;
+        if (resolved.source === "bySession") key = sessionId;
+        else if (resolved.source === "parentSession") key = parentSessionId;
+        else if (resolved.source === "byAgent") key = agentId;
+        return {
+          source: resolved.source,
+          // 上屏用显示名；卡没填名字时前端回落到 key，这里不替它编。
+          card: typeof card.name === "string" ? card.name.trim() : "",
+          key,
+          // 总闸关着时注入文本是空的，所以这里如实说「解析到了，但不会渲染」，
+          // 免得面板把 source 当成「已经在生效」。
+          enabled: config?.personaEnabled === true
+        };
+      };
+      const reply = (sessionId, agentId, parentSessionId) => sendJson(res, 200, {
+        sessionId,
+        ...sourceOf(agentId, sessionId, parentSessionId)
+      });
+      try {
+        const url = new URL(req.url, "http://localhost");
+        if (req.method === "PUT" || req.method === "POST") {
+          return readBody(req, res).then((text) => {
+            if (text === null) return undefined; // 超限已在 readBody 里回过 413
+            let body = {};
+            let jsonOk = true;
+            try {
+              body = JSON.parse(text || "{}");
+            } catch {
+              jsonOk = false;
+            }
+            const sessionId =
+              jsonOk && body && typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+            if (!sessionId) return sendJson(res, 400, { error: "sessionId" });
+            if (typeof body.card !== "string") return sendJson(res, 400, { error: "card" });
+            const key = body.card.trim();
+            const agentId = url.searchParams.get("agent");
+            const parentSessionId = url.searchParams.get("parent");
+            if (!key) {
+              // 空串 = 解绑：删掉这一格，寻址自然落回父会话 / 身份卡 / 默认卡。
+              settings.removePersonaForSession(sessionId);
+              return reply(sessionId, agentId, parentSessionId);
+            }
+            // 卡集合只认已有的身份卡（byAgent）：不接受「报个名字就建一张空卡」，
+            // 否则库里会多出谁都说不清来历的会话卡。停用的卡也不收——绑上去也不会
+            // 生效（resolvePersonaCard 要求 enabled === true），那是「绑了却没用」。
+            const card = settings.getPersona().byAgent?.[key] ?? null;
+            if (!card) return sendJson(res, 400, { error: "unknown-card" });
+            if (card.enabled !== true) return sendJson(res, 400, { error: "card-disabled" });
+            settings.setPersonaForSession(sessionId, card);
+            return reply(sessionId, agentId, parentSessionId);
+          });
+        }
+        if (req.method === "GET") {
+          const sessionId = (url.searchParams.get("session") ?? "").trim();
+          if (!sessionId) return sendJson(res, 400, { error: "sessionId" });
+          return reply(
+            sessionId,
+            url.searchParams.get("agent"),
+            url.searchParams.get("parent")
+          );
+        }
+        res.writeHead(405, { Allow: "GET, PUT, POST" });
+        res.end("");
+        return undefined;
+      } catch {
+        return sendJson(res, 500, { error: "internal" });
       }
     }
   });

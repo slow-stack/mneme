@@ -502,6 +502,15 @@ window.__ModuleLoader__.load({
         "memory.settings.personaReplyStylePlaceholder": "例如：先给结论再解释；用人在用的词，不用机制名",
         "memory.settings.personaDefaultCard": "默认卡（兜底）",
         "memory.persona.title": "人格设计",
+        "memory.personaEntry.label": "人格",
+        "memory.personaEntry.inherited": "继承父会话",
+        "memory.personaEntry.default": "默认卡",
+        "memory.personaEntry.none": "未生效",
+        "memory.personaEntry.title": "这个会话用哪张人格卡",
+        "memory.personaEntry.unbind": "解绑（跟随上层）",
+        "memory.personaEntry.loading": "读取中…",
+        "memory.personaEntry.empty": "还没有可绑的身份卡，先到「人格设计」里建一张",
+        "memory.personaEntry.failed": "保存失败，请重试",
         "memory.persona.hint": "一个身份一张卡。卡上写了名字、性格、回复要求、场景与示例对话，保存后，这个身份说话时就用它，写日记时也只用这张卡的口吻——日记页按身份分开看，就是这里的分区在日记侧的样子。",
         "memory.persona.strictBefore": "严格寻址已开：还没有任何身份卡，所有人暂时都用默认卡。建出第一张卡后规则立刻变严——没建卡的会话将不再注入人格，主会话也一样。要保留谁的人格，先给谁建卡。子 agent 会继承父会话的卡，不必单独建。",
         "memory.persona.strictAfter": "严格寻址已生效：只有建了卡的会话会注入人格，其余会话（含主会话）一律不注入。子 agent 没自己的卡时继承父会话那张。",
@@ -1684,6 +1693,15 @@ window.__ModuleLoader__.load({
         "memory.settings.personaReplyStylePlaceholder": "e.g. conclusion first; plain words over jargon",
         "memory.settings.personaDefaultCard": "Default (fallback)",
         "memory.persona.title": "Persona",
+        "memory.personaEntry.label": "Persona",
+        "memory.personaEntry.inherited": "Inherited from parent",
+        "memory.personaEntry.default": "Default card",
+        "memory.personaEntry.none": "Not in effect",
+        "memory.personaEntry.title": "Which persona card this session uses",
+        "memory.personaEntry.unbind": "Unbind (follow the layers above)",
+        "memory.personaEntry.loading": "Loading…",
+        "memory.personaEntry.empty": "No identity card to bind yet — create one in Persona first",
+        "memory.personaEntry.failed": "Save failed, try again",
         "memory.persona.hint": "One card per identity. Each card carries a name, personality, reply style, scenario and example dialogue. Once saved, that identity speaks from it — and writes its diary in that voice too: the diary page is split by identity because this is where those partitions live.",
         "memory.persona.strictBefore": "Strict addressing is on, and there are no cards yet — everyone uses the default card for now. The first card you create flips the rule: sessions without a card stop receiving a persona, including this one. Create cards for the identities you want to keep. Subagents inherit their parent session's card, so they need none of their own.",
         "memory.persona.strictAfter": "Strict addressing is in effect: only sessions with a card receive a persona; every other session, including this one, gets none. A subagent without its own card inherits its parent session's.",
@@ -11640,11 +11658,196 @@ window.__ModuleLoader__.load({
         return false;
       };
 
+      // 会话人格入口（#606）：同一个 .actions 座位上再挂一条，order 20 排在 pipeline(30)
+    // 之前。显示这一轮真正会用哪张卡（本会话绑的 / 继承父会话 / 身份预设 / 默认卡 /
+    // 未生效），点开现场换卡或解绑——写的是服务端的单卡路由，不是整份 PUT：后者漏
+    // 一维就会把别处的卡整片抹掉（面板上踩过一次，见 personaStoreShape 的「全三维」）。
+    //
+    // 总闸 personanEnabled 关着时整条入口不渲染（桉桉定的纪律：开关关掉，入口也关）。
+    // 判定用服务端回的 enabled 字段，客户端不自己去读配置——免得两份口径分叉。
+    function PersonaSessionEntry(props) {
+      const { t } = props;
+      const sessionId = typeof props.sessionId === "string" ? props.sessionId : "";
+      const [state, setState] = useState(null);
+      const [cards, setCards] = useState(null);
+      const [open, setOpen] = useState(false);
+      const [pos, setPos] = useState(null);
+      const [busy, setBusy] = useState(false);
+      const [failed, setFailed] = useState(false);
+      const rootRef = useRef(null);
+
+      const reload = useCallback(() => {
+        if (!sessionId) return undefined;
+        let alive = true;
+        apiFetch(`/api/dsh-mneme/persona/session?session=${encodeURIComponent(sessionId)}`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((body) => { if (alive && body) setState(body); })
+          .catch(() => { /* 读不到就不显示，不猜 */ });
+        return () => { alive = false; };
+      }, [sessionId]);
+      useEffect(reload, [reload]);
+
+      // 点开时才取身份卡清单：多数会话不换卡，别为每个会话头多打一次请求。
+      useEffect(() => {
+        if (!open || cards || !sessionId) return undefined;
+        let alive = true;
+        apiFetch("/api/dsh-mneme/persona")
+          .then((res) => (res.ok ? res.json() : null))
+          .then((body) => {
+            if (!alive) return;
+            const byAgent = (body && body.persona && body.persona.byAgent) || {};
+            setCards(Object.keys(byAgent).map((key) => ({ key, ...byAgent[key] })));
+          })
+          .catch(() => { if (alive) setCards([]); });
+        return () => { alive = false; };
+      }, [open, cards, sessionId]);
+
+      useEffect(() => {
+        if (!open) return undefined;
+        const onDown = (event) => {
+          if (rootRef.current && !rootRef.current.contains(event.target)) setOpen(false);
+        };
+        const onKey = (event) => { if (event.key === "Escape") setOpen(false); };
+        document.addEventListener("mousedown", onDown);
+        document.addEventListener("keydown", onKey);
+        return () => {
+          document.removeEventListener("mousedown", onDown);
+          document.removeEventListener("keydown", onKey);
+        };
+      }, [open]);
+
+      const bind = (card) => {
+        if (!sessionId || busy) return;
+        setBusy(true);
+        setFailed(false);
+        apiFetch(`/api/dsh-mneme/persona/session?session=${encodeURIComponent(sessionId)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, card })
+        })
+          .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+          .then((body) => {
+            setState(body);
+            setOpen(false);
+            // 不发 mneme:store-changed：绑的是 user_settings 里的会话卡，记忆库一个字节没动，
+            // 广播只会让 7 个数据视图白重取一次；人格面板每次挂载自己重读。
+          })
+          .catch(() => setFailed(true))
+          .finally(() => setBusy(false));
+      };
+
+      const toggle = () => {
+        if (open) {
+          setOpen(false);
+          return;
+        }
+        const rect = rootRef.current ? rootRef.current.getBoundingClientRect() : null;
+        setPos(rect ? {
+          top: Math.min(rect.bottom + 6, Math.max(8, (window.innerHeight || 0) - 300)),
+          left: Math.max(8, rect.right - 210)
+        } : null);
+        setFailed(false);
+        setOpen(true);
+      };
+
+      // 总闸关 / 还读不到真值：不占位。
+      if (!state || state.enabled !== true) return null;
+
+      const source = state.source;
+      const name = source === "bySession" || source === "byAgent" ? (state.card || state.key || "") : "";
+      const suffix = name
+        ? name
+        : source === "parentSession"
+          ? t("memory.personaEntry.inherited")
+          : source === "default"
+            ? t("memory.personaEntry.default")
+            : t("memory.personaEntry.none");
+
+      const buttonStyle = {
+        display: "inline-flex", alignItems: "center", gap: 4, height: 24,
+        padding: "0 8px", borderRadius: 6, border: "1px solid rgba(127,127,127,0.28)",
+        background: "transparent", color: "inherit", font: "inherit", cursor: "pointer"
+      };
+      const itemStyle = (current, disabled) => ({
+        display: "block", width: "100%", textAlign: "left", padding: "5px 8px",
+        borderRadius: 5, border: "none", background: current ? "rgba(127,127,127,0.16)" : "transparent",
+        color: "inherit", font: "inherit", cursor: disabled || busy ? "default" : "pointer",
+        opacity: disabled ? 0.45 : 1
+      });
+
+      return h("span", { ref: rootRef, style: { position: "relative", display: "inline-flex" } },
+        h("button", {
+          type: "button",
+          style: buttonStyle,
+          "aria-haspopup": "menu",
+          "aria-expanded": open ? "true" : "false",
+          title: t("memory.personaEntry.title"),
+          onClick: toggle
+        },
+          h(PersonaGlyph, { size: 13 }),
+          h("span", null, `${t("memory.personaEntry.label")}：${suffix}`)
+        ),
+        open && pos ? h("div", {
+          // 不用 role="dialog"：记忆库那扇窗就是被它换掉的，库里现在有一条
+          // 「client bundle 里不许再出现 dialog 面」的守卫（tab 时代收的尾）。
+          // 这里是挂在按钮下的选单，menu 才是它真正的语义。
+          role: "menu",
+          "aria-label": t("memory.personaEntry.title"),
+          style: {
+            position: "fixed", top: pos.top, left: pos.left, zIndex: 3200, width: 210,
+            padding: 6, borderRadius: 8, border: "1px solid rgba(127,127,127,0.28)",
+            background: "var(--mneme-card-bg, #ffffff)", color: "inherit",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.18)"
+          }
+        },
+          h("div", { style: { padding: "4px 8px 6px", opacity: 0.7, fontSize: 12 } },
+            t("memory.personaEntry.title")),
+          source === "bySession"
+            ? h("button", {
+              type: "button", style: itemStyle(false, false), disabled: busy,
+              onClick: () => bind("")
+            }, t("memory.personaEntry.unbind"))
+            : null,
+          cards === null
+            ? h("div", { style: { padding: "4px 8px", opacity: 0.7, fontSize: 12 } },
+              t("memory.personaEntry.loading"))
+            : cards.length === 0
+              ? h("div", { style: { padding: "4px 8px", opacity: 0.7, fontSize: 12 } },
+                t("memory.personaEntry.empty"))
+              : cards.map((card) => {
+                const current = source === "byAgent"
+                  ? state.key === card.key
+                  : source === "bySession" && !!name && name === (card.name || "");
+                return h("button", {
+                  key: card.key,
+                  type: "button",
+                  style: itemStyle(current, card.enabled !== true),
+                  disabled: busy || card.enabled !== true,
+                  onClick: () => bind(card.key)
+                }, card.name || card.key);
+              }),
+          failed
+            ? h("div", { style: { padding: "4px 8px", color: "#c0392b", fontSize: 12 } },
+              t("memory.personaEntry.failed"))
+            : null
+        ) : null
+      );
+    }
+
       // 会话头入口：.actions 座位（.corner 被原生侧栏展开键占用，别用）。
       // 会话工作目录只有客户端拿得到，而「当前是哪个会话」只在座位注入里给——所以
       // 每个座位都要 inject: (sessionId) => ({ sessionId })，否则读到的永远是全局层。
       // 宿主若不吃这个选项，project 就是 null，面板如实说「项目未知」，不假装成功。
       ctx.slots.inject("conversation.session.header.actions", () => {
+        // #606：同一座位挂第二条入口（id 不同、order 20 排在 pipeline 前）。座位是
+        // 列表型，一个 slot 允许多条注册——别为它另找座位，.corner 被宿主的侧栏
+        // 展开键占着，挪过去会抢按钮。
+        ctx.slots.register({
+          name: "conversation.session.header.actions",
+          id: "dsh-mneme:persona-session",
+          order: 20,
+          inject: (sessionId) => ({ sessionId })
+        }, (props) => h(PersonaSessionEntry, { t, sessionId: props && props.sessionId }));
         return ctx.slots.register({
           name: "conversation.session.header.actions",
           id: "dsh-mneme:pipeline",
