@@ -774,6 +774,11 @@ window.__ModuleLoader__.load({
         "memory.settings.extapi.token": "Token",
         "memory.settings.extapi.copy": "复制",
         "memory.settings.extapi.copied": "已复制",
+        "memory.settings.extapi.rotate": "重新生成",
+        "memory.settings.extapi.rotateConfirm": "再点一次确认",
+        "memory.settings.extapi.rotateHint": "换一个新 Token：旧的立即失效，已经配好的工具要换成新值",
+        "memory.settings.extapi.rotated": "已重新生成，旧 Token 已失效",
+        "memory.settings.extapi.rotatedRestart": "已重新生成，重启 DSH 后生效（在此之前旧 Token 仍然有效）",
         "memory.settings.serve.title": "独立服务 dsh-mneme-serve",
         "memory.settings.serve.desc": "不启动 DSH 也能以 HTTP 方式访问同一份记忆库（无 LLM 数据面）。",
         "memory.settings.serve.cmd": "npx -p @modusensus/dsh-mneme dsh-mneme-serve --memory-dir <记忆库目录> --port <端口>",
@@ -1946,6 +1951,11 @@ window.__ModuleLoader__.load({
         "memory.settings.extapi.token": "Token",
         "memory.settings.extapi.copy": "Copy",
         "memory.settings.extapi.copied": "Copied",
+        "memory.settings.extapi.rotate": "Rotate",
+        "memory.settings.extapi.rotateConfirm": "Click again to confirm",
+        "memory.settings.extapi.rotateHint": "Issues a new token: the old one stops working at once, and anything already configured must be updated",
+        "memory.settings.extapi.rotated": "New token issued. The old one no longer works",
+        "memory.settings.extapi.rotatedRestart": "New token issued. Takes effect after restarting DSH (the old one still works until then)",
         "memory.settings.serve.title": "Standalone service: dsh-mneme-serve",
         "memory.settings.serve.desc": "Reach the same memory library over HTTP without starting DSH (no LLM data plane).",
         "memory.settings.serve.cmd": "npx -p @modusensus/dsh-mneme dsh-mneme-serve --memory-dir <memory-dir> --port <port>",
@@ -5631,6 +5641,9 @@ window.__ModuleLoader__.load({
       const [extapiError, setExtapiError] = react.useState("");
       // 令牌默认遮蔽显示：完整值只经「复制」离开面板，不直接铺在页面上。
       const [extapiTokenShown, setExtapiTokenShown] = react.useState(false);
+      // 重新生成令牌是两步：第一次只把按钮换成「再点一次确认」（宿主 webview 里
+      // window.confirm 不一定存在，理由同知识库删除那一处）。4 秒没再点就复位。
+      const [extapiRotateConfirm, setExtapiRotateConfirm] = react.useState(false);
 
       // 画像搬去「人格」页之后，这一路只剩规则/指令/向量三个请求：画像的读取跟着
       // 那张卡一起走（同一个数据不该有两个所有者，否则两页会各自显示不同的旧值）。
@@ -5837,7 +5850,9 @@ window.__ModuleLoader__.load({
 
       // External API: the backend owns the token and returns the full config,
       // so every PUT response refreshes host/port/token from the server.
-      async function putExtapi(body) {
+      // hintKey：轮换要自己的回执（「旧 Token 已失效」比通用的「已保存，重启后
+      // 生效」关键得多）。不传就是原来那条保存提示。
+      async function putExtapi(body, hintKey) {
         setExtapiBusy(true);
         setExtapiError("");
         try {
@@ -5859,7 +5874,13 @@ window.__ModuleLoader__.load({
           setExtapiHost(next.host);
           setExtapiPort(next.port ? String(next.port) : "");
           setExtapiSaved(true);
-          announce(t("memory.settings.extapi.savedHint"));
+          // 服务端用 applied 如实交代：轮换在活实例上立刻生效（live），还是只落了
+          // 库、等下次启动（restart）。后者旧 Token 现在仍然能用，必须说出来，
+          // 否则用户以为「已换掉」，攻击面却没变。
+          const hint = body.rotateToken === true && data.applied === "restart"
+            ? "memory.settings.extapi.rotatedRestart"
+            : (hintKey || "memory.settings.extapi.savedHint");
+          announce(t(hint));
           setTimeout(() => setExtapiSaved(false), 2500);
         } catch (err) {
           setExtapiError((err && err.message) || "failed");
@@ -5889,6 +5910,20 @@ window.__ModuleLoader__.load({
           () => { setExtapiCopied(true); announce(t("memory.settings.extapi.copied")); setTimeout(() => setExtapiCopied(false), 1500); },
           () => {}
         );
+      }
+
+      // 重新生成外部访问令牌：两步确认，成功后把新值当场展开（用户下一步一定是
+      // 复制，省一次「显示」点击）。
+      function rotateExtapiToken() {
+        if (extapiBusy) return;
+        if (!extapiRotateConfirm) {
+          setExtapiRotateConfirm(true);
+          setTimeout(() => setExtapiRotateConfirm(false), 4000);
+          return;
+        }
+        setExtapiRotateConfirm(false);
+        setExtapiTokenShown(true);
+        putExtapi({ rotateToken: true }, "memory.settings.extapi.rotated");
       }
 
       // 示例命令必须带 -p 包名：bin 名与包名不同，裸 npx 加 bin 名会去装一
@@ -6184,6 +6219,14 @@ window.__ModuleLoader__.load({
                     }, extapiTokenShown ? t("memory.settings.extapi.hide") : t("memory.settings.extapi.reveal")),
                     h("button", { className: "mneme-btn", onClick: copyExtapiToken },
                       t("memory.settings.extapi.copy")),
+                    h("button", {
+                      className: "mneme-btn",
+                      disabled: extapiBusy,
+                      title: t("memory.settings.extapi.rotateHint"),
+                      onClick: rotateExtapiToken
+                    }, extapiRotateConfirm
+                      ? t("memory.settings.extapi.rotateConfirm")
+                      : t("memory.settings.extapi.rotate")),
                     extapiCopied && h("span", { className: "mneme-saved" }, t("memory.settings.extapi.copied"))
                   )
                 )

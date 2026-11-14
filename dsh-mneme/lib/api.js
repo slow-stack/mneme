@@ -35,6 +35,9 @@ import { bootstrapFromDirectory } from "./bootstrap.js";
 // 这里引的是同一份（不是照抄），谁改白名单都对得上。
 import { describeConfigKeys, flagKeysFromSpec } from "./config-keys.js";
 import { parseShareBody, shareReply, shareFilename, parseReceiveBody, receiveReply, parseUndoBody, undoReply } from "./share-http.js";
+// 令牌轮换要把新值推进**正在运行**的 standalone 实例，否则面板显示的新令牌服务
+// 不认（见 standalone-registry.js 头注释）。
+import { rotateStandaloneToken } from "./standalone-registry.js";
 // 知识库第二层（契约 §3.6）：路径表与 handler 全在 kb/routes.js 里，本文件只负责
 // 把 kbGate 与基础设施递进去。**不在这里登记任何 /kb/* 路径**——registrar 对重复的
 // kind+path 直接抛，插件会起不来。
@@ -2503,6 +2506,26 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
                 return;
               }
               patch.host = host;
+            }
+            // 令牌轮换（面板「重新生成」）：只认 `rotateToken === true` 这个意图，
+            // **不接受调用方自填 token** —— 允许自填就等于允许把 8790 数据面的钥匙
+            // 换成 "123456"。生成与落库仍由持有同一个 settings 的实例负责，这里只
+            // 把意图转交给活着的那个；没有活实例就落库、下次启动生效，并用 applied
+            // 如实告诉面板是哪一种，绝不假装热更成功。
+            if (body.rotateToken === true) {
+              // enabled/port/host 与令牌是 merge 关系，先落库不会互相覆盖。
+              if (Object.keys(patch).length > 0) settings.setExternalApi(patch);
+              const liveToken = rotateStandaloneToken();
+              if (liveToken) {
+                // 如实回显**活实例铸出的那个**值，而不是再从 kv 里读一遍：
+                // 两者理应相同，但相同要由这里保证，不能靠调用顺序碰巧成立。
+                const config = fullExternalConfig({ ...(settings.getExternalApi() ?? {}), token: liveToken });
+                sendJson(res, 200, { config, applied: "live" });
+                return;
+              }
+              const config = settings.setExternalApi({ token: randomBytes(24).toString("base64url") });
+              sendJson(res, 200, { config: fullExternalConfig(config), applied: "restart" });
+              return;
             }
             sendJson(res, 200, { config: fullExternalConfig(settings.setExternalApi(patch)) });
           });
