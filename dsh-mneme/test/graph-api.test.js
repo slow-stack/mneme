@@ -502,3 +502,36 @@ test("#723 affective overview merges synonym emotions via normalize_key", async 
   assert.equal(legacy.normalizeKey, "焦虑", "存量边按词面兜底");
   assert.equal(legacy.valence, null);
 });
+
+// #724：归档口径。默认档不出现归档边、archivedEdges 单列；?archived=1 只看归档区。
+test("#724 affective overview keeps archived edges out by default and lists them on demand", async () => {
+  const { routes, service } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "期待", normalize_key: "期待", valence: "positive", attribution: "occasion", evidence: ["m-1"] }
+  });
+  service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-2", source: "llm",
+    metadata: { emotion: "不安", attribution: "occasion", archivedAt: "2026-11-01T00:00:00.000Z", evidence: ["m-2"] }
+  });
+  const route = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective");
+  const call = async (qs) => {
+    const r = new FakeRes();
+    await route.handler(req("/api/dsh-mneme/semantic/graph/affective" + qs), r);
+    return JSON.parse(r.body);
+  };
+
+  const def = await call("");
+  assert.equal(def.items.length, 1, "默认档归档边不进 items");
+  assert.equal(def.items[0].emotion, "期待");
+  assert.equal(def.archivedEdges, 1, "归档数单列——「变少了」要能解释成归档了而不是丢了");
+  assert.equal(def.skippedEdges, 0, "归档边有情绪名，不进 skipped 账本（两本账不能混）");
+  const arc = await call("?archived=1");
+  assert.equal(arc.items.length, 1, "归档档只看归档区");
+  assert.equal(arc.items[0].emotion, "不安");
+  assert.equal(arc.archivedEdges, 1);
+});

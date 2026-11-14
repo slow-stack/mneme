@@ -1446,6 +1446,9 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
         evidence: unionEvidence,
         sessionCount: unionSessions.size,
         lastMergedRunId: runId,
+        // #724：合并就是「这条边还活着」的信号，记下时间——TTL 巡检用它当
+        // 活动锚（比 runId 可解析；runId 留着继续做审计追溯）。
+        lastMergedAt: new Date().toISOString(),
         // #723：合并要求两边 emotion 字面相同，归一查找必然同组——重算只是把
         // 字段补齐到旧边（存量边没有 normalize_key/valence）。
         normalize_key: normalizeKey,
@@ -1626,6 +1629,54 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
 }
 
 /**
+ * Phase 5b — affective TTL (#724). No LLM: occasion edges that have seen no
+ * merge/refresh for sleepAffectiveOccasionTtlDays days get an archivedAt
+ * marker — recoverable, never deleted (memory archival's same philosophy).
+ * Trait edges and promoted edges (promotedToTrait) never expire: a standing
+ * disposition has no TTL. Runs even when the attribution phase skipped (no
+ * route / no entities) — housekeeping does not need a model. Off by default
+ * (TTL = 0), config-only knob (sibling keys TraitMinSessions /
+ * MaxRelationsPerRun are also not panel flags).
+ */
+async function phaseAffectiveTtl(ctx, service, config, logger, runId, signal = null) {
+  void runId;
+  const ttlDays = config.sleepAffectiveOccasionTtlDays ?? 0;
+  if (!(ttlDays > 0)) return { status: "skipped", reason: "disabled" };
+  if (config.sleepAffectiveEnabled !== true) return { status: "skipped", reason: "affective disabled" };
+  // 巡检上限：情绪边是低频产物（每轮帽 10 条），5000 远超常态库量；超过的部分
+  // 下一轮还会巡到，不追求单轮全清。
+  const edges = (service.relationsByType?.("affective_context", 5000)) ?? [];
+  if (edges.length === 0) return { status: "skipped", reason: "no edges" };
+  const now = Date.now();
+  const ttlMs = ttlDays * 86400000;
+  const archived = [];
+  for (const e of edges) {
+    if (signal?.aborted) break;
+    const meta = e.metadata && typeof e.metadata === "object" ? e.metadata : null;
+    if (!meta || !String(meta.emotion ?? "").trim()) continue; // 空壳边不归档：聚合层本来就不展示它们
+    if (meta.attribution === "trait" || meta.promotedToTrait === true) continue;
+    if (meta.archivedAt) continue; // 已归档，不重复记账
+    // 时间锚：最近一次活动 = max(边创建, 最近合并)。两个锚都解析不出来时不动
+    // ——宁可留着，也不误杀一条看不出年龄的边。
+    const createdAtMs = Date.parse(e.created_at ?? "") || 0;
+    const mergedAtMs = Date.parse(meta.lastMergedAt ?? "") || 0;
+    const lastActivity = Math.max(createdAtMs, mergedAtMs);
+    if (!lastActivity || now - lastActivity < ttlMs) continue;
+    try {
+      service.updateRelationMetadata?.(e.id, { ...meta, archivedAt: new Date(now).toISOString() });
+      archived.push({ id: e.id, emotion: meta.emotion });
+    } catch (error) {
+      logger?.warn?.(`dsh-mneme sleep: affective ttl archive ${e.id} failed: ${String(error)}`);
+    }
+  }
+  return {
+    status: archived.length ? "ok" : "noop",
+    archived: archived.length,
+    archivedList: archived
+  };
+}
+
+/**
  * Phase 4 — entity relation completion. Detects orphan entities (zero
  * relations) and completes implied relations from memory co-occurrence:
  * entities named in the same memory → related_to; container kinds
@@ -1748,6 +1799,10 @@ export async function runSleep(ctx, service, config, logger, semantic = null, si
   // #619：情感归因排在 relations 之后——它要读实体与 provenance，先让孤立实体的
   // 结构边补完，再往上挂情绪轴；两相写的是不同 relation_type，不抢同一批对。
   await attempt("affective", () => phaseAffective(ctx, service, config, logger, runId, signal));
+  // #724：occasion 边的过期归档巡检。不依赖 LLM——即使归因相位因无路由跳过，
+  // 已有边的巡检照跑（家务活不该等模型）；排在 affective 之后，本轮刚合并过的
+  // 边带着新的 lastMergedAt，不会被误判为陈旧。
+  await attempt("affectiveTtl", () => phaseAffectiveTtl(ctx, service, config, logger, runId, signal));
 
   const status = deriveStatus(phases);
   const route = resolveSleepRoute(ctx, config, logger);

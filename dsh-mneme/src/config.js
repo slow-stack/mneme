@@ -785,6 +785,12 @@ export const Config = z.object({
   // sleepMaxPatternPerRun for the relation channel: a runaway model that
   // "finds" an emotion in every memory must be capped, not trusted.
   sleepAffectiveMaxRelationsPerRun: z.natural().min(0).max(50).default(10),
+  // #724：occasion 情绪边的过期归档天数。0=关（默认，opt-in）。归档是可恢复的
+  // 标记（metadata.archivedAt）不是删除，与记忆归档同哲学；trait 与已升格
+  // （promotedToTrait）的边不过期——稳定倾向没有 TTL。config-only 键：数值型
+  // sleep 旋钮（TraitMinSessions / MaxRelationsPerRun）按先例不进面板 feature
+  // 白名单，故 api.test 的旗标计数锁不 +1。
+  sleepAffectiveOccasionTtlDays: z.natural().max(3650).default(0),
   // #619 补链（注入侧）：把**单次场合**（attribution=occasion）的情绪边作为一行
   // 注释挂到它所属的那条记忆下，让模型看得见「她那天为什么那样」，而不是只在
   // 面板里留着。trait 档不走这条——它已被铸成 type=pattern 的记忆，本来就会
