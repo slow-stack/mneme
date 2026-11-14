@@ -21,6 +21,9 @@ import {
   recentTurns,
   runBackfill
 } from "../src/backfill.js";
+import { createService } from "../src/service.js";
+import { createStore } from "../src/store.js";
+import { testConfig } from "./helpers/test-config.js";
 
 const importedMessage = (seq) => ({
   type: "assistant/message",
@@ -327,6 +330,109 @@ test("runBackfill: summarizer 自己的失败不影响后面的会话", async ()
     assert.equal(result.failed, 1);
     assert.equal(result.results[0].status, "failed");
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+test("runBackfill: 没配蒸馏路由时真跑直接拒绝，一条都不调", async () => {
+  const root = makeRoot();
+  try {
+    writeSessionFile(root, "imported", {
+      createdAt: Date.now(),
+      events: [turnStart(1, 0), importedMessage(1), turnEnd(1, 2)]
+    });
+    let called = 0;
+    const result = await runBackfill({
+      sessionDir: root,
+      dryRun: false,
+      config: {},
+      summarizer: { summarizeNow: () => { called += 1; } }
+    });
+    // 不判这一下：50 条会话会变成 50 条 failed 加 50 行日志，读起来像批量任务坏了，
+    // 实际只是没配模型。dry-run 不受影响（它本来就不调模型）。
+    assert.equal(result.error, "no-distill-route");
+    assert.equal(result.ran, 0);
+    assert.equal(result.failed, 0);
+    assert.deepEqual(result.results, []);
+    assert.equal(called, 0);
+    assert.equal(result.plan.callsPlanned, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// 上面那些 fixture 的形状是照着设计推的；这条按插件真实写盘的样子造，并且用真
+// store/service 跑完整一遍——「0/836」之后最该补的就是这一步：真数据通路有没有被
+// 真数据验证过。形状要点：首行 session header 没有 seq、header 只有
+// version/id/createdAt/cwd/isSeeded、其后事件都带 seq、第二轮是被排除的回答
+// （没有 assistant/message，只有一条带 DEEPSEEK_EXPORT_* 的 turn/end）。
+test("真数据形状：认得出、跑得动、游标推进、第二次判断为已消费", async () => {
+  const root = makeRoot();
+  const store = createStore(":memory:");
+  try {
+    const service = createService({ store, mirror: null, config: testConfig({}) });
+    const id = "imported-real-shape";
+    const events = [
+      { type: "permission/preset", seq: 1, data: { preset: "default" } },
+      { type: "sandbox/mode", seq: 2, data: { mode: "workspace-write" } },
+      turnStart(1, 3),
+      {
+        type: "user/message",
+        seq: 4,
+        data: { turn: 1, message: { id: "u1", role: "user", content: [{ type: "text", text: "问" }] } }
+      },
+      importedMessage(5),
+      turnEnd(1, 6),
+      turnStart(2, 7),
+      {
+        type: "user/message",
+        seq: 8,
+        data: { turn: 2, message: { id: "u2", role: "user", content: [{ type: "text", text: "再问" }] } }
+      },
+      turnEnd(2, 9, "DEEPSEEK_EXPORT_TEMPLATE_RESPONSE")
+    ];
+    writeSessionFile(root, id, { createdAt: Date.now(), events });
+    const config = { summarizeProvider: "p", summarizeModel: "m" };
+
+    const plan = await planBackfill({ sessionDir: root, config, service });
+    assert.equal(plan.filesScanned, 1);
+    assert.equal(plan.importedSessions, 1);
+    assert.equal(plan.pending, 1);
+    assert.equal(plan.callsPlanned, 1);
+
+    const calls = [];
+    const summarizer = {
+      summarizeNow: (session, trigger, opts) => {
+        calls.push({ session, trigger, opts });
+        // stub 只承担真 summarizer 会做的两件持久化：推进游标 + 落原文凭证。
+        const lastSeq = Math.max(...session.events.map((event) => event.seq));
+        service.setDistillCursor(session.id, lastSeq);
+        service.saveDistillRecords([
+          { sessionId: session.id, seq: 5, role: "assistant", text: "答", windowId: "w1", distilledAt: Date.now() }
+        ]);
+      }
+    };
+
+    const first = await runBackfill({ sessionDir: root, dryRun: false, config, summarizer, service });
+    assert.equal(first.ran, 1);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].session.id, id);
+    assert.equal(calls[0].opts.bypassPeak, true);
+    assert.equal(calls[0].opts.maxEntries, DEFAULT_MAX_ENTRIES);
+    assert.equal(service.getDistillCursor(id)?.last_seq, 9);
+    assert.equal(service.distillRecordsFor(id, 0, 999).length, 1);
+
+    // 第二次：游标已经吃到末尾，不该再跑，凭证也不该多出来（幂等靠主键）。
+    const planAgain = await planBackfill({ sessionDir: root, config, service });
+    assert.equal(planAgain.alreadyDistilled, 1);
+    assert.equal(planAgain.pending, 0);
+    assert.equal(planAgain.callsPlanned, 0);
+
+    const second = await runBackfill({ sessionDir: root, dryRun: false, config, summarizer, service });
+    assert.equal(second.ran, 0);
+    assert.equal(calls.length, 1);
+    assert.equal(service.distillRecordsFor(id, 0, 999).length, 1);
+  } finally {
+    store.close?.();
     rmSync(root, { recursive: true, force: true });
   }
 });

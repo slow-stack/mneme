@@ -244,6 +244,13 @@ export async function runBackfill({
 } = {}) {
   const plan = await planBackfill({ service, dshHome, sessionDir, now, days, limit, rounds, config });
   if (dryRun) return { dryRun: true, plan };
+  // 没配蒸馏路由时真跑没有意义：plan 已经把 `callsPlanned` 报成 0，真跑却仍会逐条
+  // 调 summarizeNow，每条都因缺 provider/model 失败——50 条会话就是 50 条 failed 加
+  // 50 行日志，读起来像「批量任务坏了」而不是「你没配模型」。按 plan 的同一判据直接
+  // 拒绝，一条都不跑（dry-run 不受影响，它本来就不调模型）。
+  if (!plan.routeConfigured) {
+    return { dryRun: false, plan, error: "no-distill-route", ran: 0, failed: 0, results: [] };
+  }
   if (typeof summarizer?.summarizeNow !== "function") {
     return { dryRun: false, plan, error: "summarizer-unavailable", results: [] };
   }
