@@ -978,10 +978,17 @@ export const Config = z.object({
   //     判定+标记 D2 比它差 +17.6pp——给模型看标记的线已被 E2/E3 关闭，本闸判定
   //     结果绝不进模型上下文）。enforce 无 enabled 时无效果。
   // 降级路径：判定失败/超时/不可解析 → 本帧原样注入 + 审计行 degraded=true 且不
-  // 缓存——防线故障永不阻塞注入。判定 LLM 走 agentDefaultModel 当前选择（entity
-  // adapter 同款装配），不设独立 provider/model 键；llmAudit.enabled=false 时本闸
-  // 不运行（无账目的判定不可见也不该花钱）。lightMode 强制关（LLM-per-turn 附加
-  // 路径与低资源档互斥）。
+  // 缓存——防线故障永不阻塞注入。llmAudit.enabled=false 时本闸不运行（无账目的
+  // 判定不可见也不该花钱）。lightMode 强制关（LLM-per-turn 附加路径与低资源档互斥）。
+  // 判官路由（#718）：下面两个键都非空时判官走显式路由，否则回落 agentDefaultModel
+  // 当前选择（entity adapter 同款装配）。为什么给独立键：判定的价值依赖「判定在下一
+  // 帧到来前完成」，agentDefaultModel 上的重型/思考判官慢于渲染帧节奏，后续帧大量拿
+  // pending 原样注入（fail-open）——判定开销照付而滤除没有发生。把判官指到快速非
+  // 思考模型（entityExtraction 同款建议）是唯一不动提示词与判据就能抬执行覆盖的旋钮。
+  // 单边为空 = 整对不生效（回落），与 entityExtraction 成对语义一致；lightMode 下
+  // 本闸整体强制关，这两键无独立低资源面。
+  preInjectGateProvider: z.string().default("").description("注入前判定（preInjectGate）判官的服务商。与 preInjectGateModel 成对，都非空才生效（单边为空回落 agentDefaultModel）。判官要选快速非思考模型：判定 async prefetch + 同步消费，慢判官会让后续渲染帧大量拿 pending 原样注入（issue #718）。"),
+  preInjectGateModel: z.string().default("").description("注入前判定（preInjectGate）判官的模型。与 preInjectGateProvider 成对，都非空才生效；建议快速非思考模型（issue #718）。"),
   preInjectGate: z.object({
     enabled: z.boolean().default(false),
     enforce: z.boolean().default(false)

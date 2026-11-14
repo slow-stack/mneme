@@ -879,7 +879,14 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // #687 批内跨类型去重新增两个键：summarizeBatchCrossTypeDedupe（顶层布尔键，
   // 走 BOOLEANS 表）与 summarizeBatchCrossTypeMinSim（相似度阈，走
   // NUMBER_RANGES 表）= +2，故 136 + 2 = 138。
-  assert.equal(Object.keys(data.effective).length, 138);
+  // #718 注入前判定判官专用路由新增两个键：preInjectGateProvider /
+  // preInjectGateModel（顶层字符串键，走 FEATURE_FLAG_STRINGS 表，成对生效）
+  // = +2，故 138 + 2 = 140。
+  assert.equal(Object.keys(data.effective).length, 140);
+  // #718 判官路由默认值单独钉：默认空串 = 回落 agentDefaultModel（entity
+  // 同款成对语义，计数锁钉不住空串缺省被翻转）。
+  assert.equal(data.effective.preInjectGateProvider, "");
+  assert.equal(data.effective.preInjectGateModel, "");
   // 描述档三条的默认值单独钉：开关默认关（不配路由就一个调用都不发），
   // 路由默认空串——空串在这里的语义是「整档不跑」，不是「跟随当前模型」，
   // 所以它不能像 summarizeProvider 那样被回填成会话模型。

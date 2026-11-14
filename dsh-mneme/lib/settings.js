@@ -429,6 +429,11 @@ const FEATURE_FLAG_STRINGS = [
   // Issue #258：总览（dream_summarize）专用路由，留空 = 用巩固模型。
   "dreamSummaryProvider",
   "dreamSummaryModel",
+  // Issue #718：注入前判定（preInjectGate）判官专用路由，成对生效（单边为空
+  // 回落 agentDefaultModel）。判官要选快速非思考模型——判定 async prefetch +
+  // 同步消费，慢判官让后续渲染帧大量拿 pending 原样注入。
+  "preInjectGateProvider",
+  "preInjectGateModel",
   "localEmbedModel",
   "ollamaModel",
   // Issue #239 第 4 项：高峰时段串（"09:00-18:00"，空串 = 关闭）。
