@@ -28,6 +28,7 @@ import { createStandaloneApi } from "./api-standalone.js";
 import { registerStandaloneApi, clearStandaloneApi } from "./standalone-registry.js";
 // #275 存储生命周期第一批：无损回收（手动入口，不挂启动路径）。
 import { createMaintenance } from "./maintenance.js";
+import { runBackfill } from "./backfill.js";
 import { createChoroQueries } from "./wiki/queries.js";
 // chorography M3：开局注入块与 /choro 只读回执。两者都只吃 queries 读侧，不写任何东西。
 import { createChoroInject } from "./wiki/inject.js";
@@ -738,6 +739,20 @@ export const apply = (ctx, config) => {
   const summarizer = createSummarizer(ctx, service, cfg, {}, sessionGate);
   disposers.push(summarizer.dispose);
 
+  // 导入会话批量回填（DSH 0.2.2-rc.3 的 DeepSeek 导出导入，一次几百条会话）。
+  // 复用**同一个** summarizer：不另建一套蒸馏链、不碰 dream 的预算与节流键，
+  // 只借它的 `summarizeNow`（薄薄一层，把会话样对象喂进现有链路）。构造期零副作用，
+  // 只有手动入口（面板 API 的 POST /maintenance/backfill）会调 `run`。
+  const backfill = {
+    run: (options = {}) => runBackfill({
+      service,
+      summarizer,
+      config: cfg,
+      logger: ctx.logger,
+      ...options
+    })
+  };
+
   // QQ 日记本（v0.13，diaryEnabled）：构造期零副作用（只闭包住依赖，不建目录、不读盘、
   // 不调模型），所以位置可以放在这里——它必须早于下面的 createApi，面板的
   // 「写一篇」按钮要转调同一个 composer；而自动触发侧在 webServer 块之后挂（同
@@ -800,7 +815,7 @@ export const apply = (ctx, config) => {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,
       list: () => []
-    }, embedder, { ...semantic, vectorIndex, reranker }, cfg.apiToken, { ...cfg, memoryDir }, maintenance, extractProfileDraft, choro, profileFacts, kb, diary);
+    }, embedder, { ...semantic, vectorIndex, reranker }, cfg.apiToken, { ...cfg, memoryDir }, maintenance, extractProfileDraft, choro, profileFacts, kb, diary, backfill);
     disposers.push(api.dispose);
 
     // dsh-go 原生面板：只有宿主提供 dshGo 服务（dsh-go 手机 App）时才挂载。

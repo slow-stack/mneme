@@ -1354,7 +1354,10 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       const parsed = parsedResult.entries;
       // Issue #127 条数上限：0 = 不限（现状）。被截断的条数与去重命中数一并进
       // 审计 metadata——此前产出条数完全由模型输出决定，用户无从自查。
-      const cap = config.summarizeMaxEntriesPerRun ?? 0;
+      // `opts.maxEntries` 是给「导入会话批量回填」用的单窗覆盖（src/backfill.js）：
+      // 回填要的是「一个会话最多留几笔」，不该改全局配置、更不该造第二套抽取语义，
+      // 所以复用同一条上限闸门、只换这一次的数值。不传时逐字等于旧行为。
+      const cap = opts.maxEntries ?? config.summarizeMaxEntriesPerRun ?? 0;
       const entries = cap > 0 ? parsed.slice(0, cap) : parsed;
       const capped = parsed.length - entries.length;
       const dedupeMode = config.summarizeDedupeMode ?? "off";
@@ -1691,6 +1694,18 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
   });
 
   return {
+    /**
+     * 手动跑一次蒸馏——导入会话批量回填的唯一入口（src/backfill.js 调它）。
+     *
+     * 方法体刻意只有一行：**这里不复制任何蒸馏逻辑**，就是把一个「有 id 和 events
+     * 的会话样对象」喂进同一条 summarize。session 只需要 `id` 与带 `seq` 的 `events`
+     * （`snapshotSessionEvents` 对没有 `snapshotEvents` 的对象直接读 `.events`），
+     * `triggerEvent` 也只被用来取 `seq` 当窗口右界；`opts` 透传（`bypassPeak`、
+     * `maxEntries`）。
+     */
+    summarizeNow(session, triggerEvent, opts = {}) {
+      return summarize(session, triggerEvent, opts);
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
