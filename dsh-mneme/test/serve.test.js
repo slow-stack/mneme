@@ -49,7 +49,10 @@ test("serve: /health 免鉴权,业务路由无 token 401", async () => {
     const base = `http://127.0.0.1:${rt.api.port}`;
     const health = await fetch(`${base}/health`);
     assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { ok: true });
+    // /health 兼作握手面（版本 + 契约 + 能力），不再只是一个 ok:true。
+    const handshake = await health.json();
+    assert.equal(handshake.ok, true);
+    assert.deepEqual(handshake.contract, { name: "dsh-mneme-http", version: 1 });
 
     const noAuth = await fetch(`${base}/search?q=x`);
     assert.equal(noAuth.status, 401);

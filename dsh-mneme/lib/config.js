@@ -1025,6 +1025,12 @@ export const Config = z.object({
   externalApiEnabled: z.boolean().default(false),
   externalApiPort: z.natural().default(8790),
   externalApiHost: z.string().default("127.0.0.1"),
+  // CORS 白名单（网页端桥接用）：默认空 = 一个头都不发，行为与旧版逐字节一致。
+  // 浏览器扩展 / 本地注入器这类调用方要跨域调这张数据面，就必须在这里登记；
+  // 只做精确匹配（`scheme://host[:port]`，尾斜杠归一），不支持 `*`——带
+  // Authorization 头的跨域请求与通配来源在规范上互斥，而这张面的鉴权恰好是
+  // Bearer 头。预检（OPTIONS）在鉴权之前处理，见 src/api-standalone.js。
+  externalApiAllowedOrigins: z.array(z.string()).default([]),
 
   // --- light mode preset (v0.7.12) -------------------------------------------
   // One switch for low-resource setups: turns off every background/semantic

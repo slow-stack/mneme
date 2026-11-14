@@ -355,6 +355,7 @@
 | `externalApiEnabled` | `false` | 独立 `node:http` 数据面（生态集成用） | opt-in；双宿主共用库时只能一边开（端口冲突） |
 | `externalApiPort` | `8790` | 端口 | — |
 | `externalApiHost` | `127.0.0.1` | 绑定地址 | 改成非回环 = 把整个记忆库暴露给网络，自负其责 |
+| `externalApiAllowedOrigins` | `[]` | 允许跨域访问的页面来源白名单 | 默认空 = 不发任何 CORS 头（与旧版逐字节一致）。只做精确匹配（`scheme://host[:port]`，尾斜杠归一），**不支持 `*`**（带 `Authorization` 的跨域请求与通配来源互斥）；预检 `OPTIONS` 在鉴权之前处理，未命中回 `403 origin-not-allowed` |
 | `disableMemorySearch` | `false` | 对模型隐藏 `memory_search` 工具（v0.8.5） | 慢/轻量模型的工具往返节流；隐藏即不可调 |
 | `disableMemoryArchive` | `false` | 对模型隐藏 `memory_archive` 工具 | 同上 |
 | `organizeEnabled` | `false` | 对模型开放 `memory_organize` 工具（#231：先 dryRun 出比对报告，agent 判断后 apply 落库） | 与上面两个**反向**：那两个藏默认在场的工具，本键开默认不在场的能力。关 = 工具根本不注册（模型看不到就不会调）。dryRun→apply 是两步协议，弱模型容易漏 `run_id` 或跳过报告，所以 `LIGHT_MODE_OFF` 里有它；apply 只能引用一次真实报告、且一份报告只许落地一次 |

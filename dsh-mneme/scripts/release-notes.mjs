@@ -136,7 +136,11 @@ export function renderNotes(sectionText, opts = {}) {
     if (!b) { out.push(line); continue; }
     // 导语**只从条目首行取**：可见行必须是单行，混进换行就等于把续行又推回 details 外面。
     // 首行剩下的部分 + 全部续行（各自保留缩进，子列表才不会塌成段落）一起进折叠块。
-    const { lede: l, consumed } = lede(b.body, cap);
+    const { lede: rawLede, consumed } = lede(b.body, cap);
+    // 条目写法是 `- **标题**。正文`——标题自带句号，它落在 body 头上。导语若原样
+    // 接在分隔符后面，Release 页就会多出一段「— 。」（v0.15.1 正文真出现过）。
+    // 开头的终止符属于标题、不属于正文，去掉再拼。
+    const l = rawLede.replace(/^[。．.；;，,、：:！!？?\s]+/, "");
     out.push("- **" + b.title + "**" + (l ? " — " + l : ""));
     const rest = [b.body.slice(consumed).trim(), ...block.lines.slice(1).map((c) => c.replace(/\s+$/, ""))]
       .filter(Boolean)

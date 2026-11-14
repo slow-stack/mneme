@@ -148,6 +148,15 @@ test("lede：正文比 cap 短且以逗号结尾时，仍是整段导语 —— 
   assert.equal(body.slice(r.consumed), "", "没有剩余正文可折 —— 折叠块必须为空");
 });
 
+test("renderNotes：条目正文以句号开头时，导语不许渲染成「— 。正文」", () => {
+  // CHANGELOG 的写法是 `- **标题**。正文`——句号属于标题、落在 body 头上。
+  // 导语若原样接在分隔符后面，Release 正文会多出一段「— 。」，v0.15.1 真出现过。
+  const section = "## [9.9.9]\n\n- **标题自带句号**。正文从这一句开始，后面还有内容。\n";
+  const line = renderNotes(section, { cap: 150 }).split("\n").find((l) => l.startsWith("- **"));
+  assert.equal(line, "- **标题自带句号** — 正文从这一句开始，后面还有内容。");
+  assert.ok(!line.includes("— 。"), "分隔符后不许直接跟终止符");
+});
+
 test("renderNotes：标题 + 导语默认可见，其余折进 details，且导语不重复出现", () => {
   // 正文要长于 cap，否则整段展开（没有可折的东西时，多一步点击毫无收益）。
   const section =
