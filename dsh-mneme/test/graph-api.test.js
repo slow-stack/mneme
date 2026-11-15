@@ -775,3 +775,163 @@ test("#734 three promote/demote cycles leave a single reusable pattern row", asy
   assert.equal(all.length, 1, "三轮之后库里仍只有一行 pattern（不新增 archived 行）");
   assert.equal(all[0].archived, true, "最后停在归档态");
 });
+
+// --- #739：跨组共用的 pattern 不能因为一组降格就被归档 ---
+//
+// 两组不同的情绪（担忧／焦虑）只要 person+target 一样，promote 的「按标题去重」
+// 就让它们共用同一行 pattern。降格是「这一组」的动作：把它归档等于让另一组指着
+// 一条已归档的 id——聚合面还报「稳定倾向」，注入面那条 pattern 已经不存在。
+
+function twoGroups(routes, service) {
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  const make = (normalizeKey, memoryId) => service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: memoryId, source: "llm",
+    metadata: {
+      // 原词相同（标题模板只吃 emotion 原词，见 src/lang.js affectiveTrait.title），
+      // 归一键不同（聚合键吃 normalize_key，见 src/api.js:1810）——这正是
+      // 「面板上是两组、库里是同一行 pattern」的成因：词表归一或存量边缺键造成
+      // 同词不同组。
+      emotion: "担忧", normalize_key: normalizeKey,
+      attribution: "occasion", sessionCount: 5, evidence: [memoryId]
+    }
+  });
+  return { person, thing, e1: make("担忧", "m-1"), e2: make("焦虑", "m-2") };
+}
+
+test("#739 demote keeps a shared pattern alive and reports how many edges still use it", async () => {
+  const { routes, service } = setupCfg(testConfig({}));
+  const { e1, e2 } = twoGroups(routes, service);
+  const call = applyCaller(routes);
+
+  const pro1 = await call({ op: "promote", edgeIds: [e1.id] });
+  assert.equal(pro1.status, 200);
+  assert.equal(pro1.body.reused, false, "第一组铸行");
+  const pro2 = await call({ op: "promote", edgeIds: [e2.id] });
+  assert.equal(pro2.status, 200);
+  assert.equal(pro2.body.reused, true, "第二组按标题去重复用同一行");
+  assert.equal(pro2.body.patternId, pro1.body.patternId, "跨组共用同一行 pattern");
+  const sharedId = pro1.body.patternId;
+
+  const dem = await call({ op: "demote", edgeIds: [e1.id] });
+  assert.equal(dem.status, 200);
+  assert.equal(dem.body.applied, 1, "本组的边照样降格");
+  assert.equal(dem.body.patternArchived, false, "还有别组在引用，不许归档");
+  assert.equal(dem.body.patternRetained, true, "未归档这件事必须显式说出来");
+  assert.deepEqual(dem.body.retainedPatternIds, [sharedId]);
+  assert.equal(dem.body.retainedPatternRefs[0].edgeCount, 1, "回执报出还有几条边在引用");
+  assert.deepEqual(dem.body.retainedPatternRefs[0].edgeIds, [e2.id], "点名是哪几条边");
+  assert.equal(dem.body.retainedPatternRefs[0].edgeIdsTruncated, false, "没截断就明说没截断");
+
+  assert.equal(service.getById(sharedId).archived, false, "共用行仍是活跃的");
+  assert.equal(service.relationById(e1.id).metadata.promotedToTrait, undefined, "本组边已降格");
+  assert.equal(service.relationById(e2.id).metadata.promotedToTrait, true, "别组的边不动");
+  assert.equal(service.relationById(e2.id).metadata.traitMemoryId, sharedId, "别组仍指着这一行");
+
+  // 第二组最后一位读者降格：这时候才该归档。
+  const last = await call({ op: "demote", edgeIds: [e2.id] });
+  assert.equal(last.status, 200);
+  assert.equal(last.body.patternArchived, true, "没人再引用时正常归档");
+  assert.equal(last.body.patternRetained, false);
+  assert.equal(service.getById(sharedId).archived, true);
+});
+
+test("#739 demote still archives when the group is the only reader", async () => {
+  const { routes, service } = setupCfg(testConfig({}));
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "面试", type: "concept" });
+  const e1 = service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "紧张", normalize_key: "紧张", attribution: "occasion", sessionCount: 3, evidence: ["m-1"] }
+  });
+  const call = applyCaller(routes);
+  const pro = await call({ op: "promote", edgeIds: [e1.id] });
+  const dem = await call({ op: "demote", edgeIds: [e1.id] });
+  assert.equal(dem.status, 200);
+  assert.equal(dem.body.patternArchived, true, "唯一读者降格 → 归档，行为不变");
+  assert.equal(dem.body.patternRetained, false);
+  assert.equal(service.getById(pro.body.patternId).archived, true);
+});
+
+test("#739 demote does not crash on relations whose metadata is not valid JSON", async () => {
+  const { routes, service } = setupCfg(testConfig({}));
+  const { e1, e2 } = twoGroups(routes, service);
+  const call = applyCaller(routes);
+  const pro1 = await call({ op: "promote", edgeIds: [e1.id] });
+  await call({ op: "promote", edgeIds: [e2.id] });
+
+  // 历史行里 metadata 可能为空或非 JSON —— 裸写 json_extract 会抛
+  // `malformed JSON` 把整个请求打成 500。计数必须绕过脏行走「不匹配」。
+  service.saveRelation({
+    from_entity: e2.from_entity, to_entity: e2.to_entity, relation_type: "affective_context",
+    memory_id: "m-dirty", source: "llm", metadata: "not json"
+  });
+  service.saveRelation({
+    from_entity: e2.from_entity, to_entity: e2.to_entity, relation_type: "affective_context",
+    memory_id: "m-null", source: "llm", metadata: undefined
+  });
+
+  const dem = await call({ op: "demote", edgeIds: [e1.id] });
+  assert.equal(dem.status, 200, "脏 metadata 不能让降格变成 500");
+  assert.equal(dem.body.patternArchived, false);
+  assert.deepEqual(dem.body.retainedPatternIds, [pro1.body.patternId]);
+  assert.equal(dem.body.retainedPatternRefs[0].edgeCount, 1, "脏行不算引用");
+});
+
+test("#739 demote reports the true reference count even when the edge list is truncated", async () => {
+  const { routes, service } = setupCfg(testConfig({}));
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  // 52 条边共用一行 pattern：引用数超过 limit=50，回执里的 edgeIds 必然截断。
+  const edges = [];
+  for (let i = 0; i < 52; i++) {
+    edges.push(service.saveRelation({
+      from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+      memory_id: `m-${i}`, source: "llm",
+      metadata: { emotion: "担忧", normalize_key: "担忧", attribution: "occasion", sessionCount: 3, evidence: [`m-${i}`] }
+    }));
+  }
+  const call = applyCaller(routes);
+  // promote 单次最多 50 条边，分两批。
+  const pro1 = await call({ op: "promote", edgeIds: edges.slice(0, 50).map((e) => e.id) });
+  assert.equal(pro1.status, 200);
+  const pro2 = await call({ op: "promote", edgeIds: edges.slice(50).map((e) => e.id) });
+  assert.equal(pro2.status, 200);
+  assert.equal(pro2.body.reused, true, "后两条复用同一行");
+
+  const dem = await call({ op: "demote", edgeIds: [edges[0].id] });
+  assert.equal(dem.status, 200);
+  const ref = dem.body.retainedPatternRefs[0];
+  assert.equal(ref.edgeCount, 51, "总数是 COUNT(*) 的真值，不是被截断的数组长度");
+  assert.equal(ref.edgeIds.length, 50, "点名列表受 limit 约束");
+  assert.equal(ref.edgeIdsTruncated, true, "截断了就必须显式标出来");
+  assert.equal(service.getById(pro1.body.patternId).archived, false);
+});
+
+test("#739 demote falls back to the title when the edge id points at a row that is gone", async () => {
+  const { routes, service } = setupCfg(testConfig({}));
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  const e1 = service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "担忧", normalize_key: "担忧", attribution: "trait", sessionCount: 5, evidence: ["m-1"] }
+  });
+  const call = applyCaller(routes);
+  const pro = await call({ op: "promote", edgeIds: [e1.id] });
+  const mintedId = pro.body.patternId;
+
+  // 边上的 id 指向一行已经不在了（被删/被合并走），标题行却还在活跃——这正是
+  // 「有 id 但 id 无对应行」的情形。此时既没归档也没保留，条件若只看 id 是否为空
+  // 就会跳过回落路径，又是一次静默：边标记清掉、pattern 还在说「稳定倾向」。
+  const meta = service.relationById(e1.id).metadata;
+  service.updateRelationMetadata(e1.id, { ...meta, traitMemoryId: "gone-pattern-id" });
+
+  const dem = await call({ op: "demote", edgeIds: [e1.id] });
+  assert.equal(dem.status, 200);
+  assert.equal(dem.body.patternArchived, true, "回落路径照样要归档");
+  assert.deepEqual(dem.body.archivedPatternIds, [mintedId]);
+  assert.equal(service.getById(mintedId).archived, true);
+});

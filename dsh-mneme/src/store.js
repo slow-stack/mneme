@@ -5020,6 +5020,45 @@ export function createStore(path) {
   }
 
   /**
+   * 列出仍指着这条 trait pattern 的边（#739）：降格归档之前必须先问一句
+   * 「还有别人在用吗」，回执也要能点名是哪几条。
+   *
+   * 升格走的 `applyCreate` 按 (type, title) 去重，而标题模板只吃 person/target
+   * 与情绪**原词**（src/lang.js affectiveTrait.title）；聚合键却含归一后的
+   * `normalize_key`（src/api.js:1810）。于是「原词相同、归一键不同」的两组在
+   * 面板上是两组、在库里是同一行 pattern —— 原来的降格只清自己那组的边就把
+   * 这行归档，另一组仍指着一条已归档的 id：聚合面还说「稳定倾向」，注入面那条
+   * pattern 已经不存在。降格是「这一组」的动作，不该连带销毁别组依赖的行。
+   *
+   * 只数 `promotedToTrait === true` 的引用：降格会先清标记，所以排掉本次请求里
+   * 的边之后，剩下带标记的就是仍在使用这条 pattern 的边。
+   *
+   * `metadata` 是自由文本列（历史行有空值、也有非 JSON 的脏值），裸写
+   * `json_extract` 会抛 `malformed JSON` 把整次请求打成 500；一律用
+   * `CASE WHEN json_valid(metadata)` 包住，非法行走「不匹配」而不是报错。
+   *
+   * 返回 `{ total, ids }`：`total` 是 `COUNT(*)` 的真值，`ids` 受 `limit` 约束只用于
+   * 回执点名。别拿 `ids.length` 当总数——那正是本件要修的「静默截断」换个地方复发。
+   */
+  function relationIdsByTraitMemoryId(traitMemoryId, { excludeIds = [], limit = 50 } = {}) {
+    if (typeof traitMemoryId !== "string" || !traitMemoryId) return { total: 0, ids: [] };
+    const excluded = Array.isArray(excludeIds) ? excludeIds.filter((id) => typeof id === "string" && id) : [];
+    const placeholders = excluded.map(() => "?").join(", ");
+    const notIn = placeholders ? ` AND id NOT IN (${placeholders})` : "";
+    const scope = `WHERE CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.traitMemoryId') END = ?${notIn}
+          AND CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.promotedToTrait') END = 1`;
+    // total 走 COUNT(*)，ids 才受 limit 约束：#739 的回执要用「还有几条边在引用」
+    // 这个真值，拿被 LIMIT 截断的数组长度冒充总数，本身就是一次静默截断。
+    const total = db.prepare(`SELECT count(*) AS c FROM entity_relations ${scope}`)
+      .get(traitMemoryId, ...excluded)?.c ?? 0;
+    const rows = db.prepare(
+      `SELECT id FROM entity_relations ${scope} ORDER BY created_at ASC, id ASC LIMIT ?`
+    ).all(traitMemoryId, ...excluded, Math.max(1, Number(limit) || 50));
+    const ids = rows.map((r) => r.id);
+    return { total, ids };
+  }
+
+  /**
    * Re-point every attr row whose memory_id is fromMemoryId to toMemoryId
    * (autoDream merge migration, v0.3.0 Phase 4 / 4.3.2). When the keeper
    * already carries a live attr for the same entity+key, the source row is
@@ -6397,6 +6436,7 @@ export function createStore(path) {
     getLinkedMemoryIds,
     saveRelation,
     updateRelationMetadata,
+    relationIdsByTraitMemoryId,
     bumpRelationWeight,
     migrateAttrsToMemory,
     getRelations,

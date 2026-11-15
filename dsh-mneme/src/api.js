@@ -2122,15 +2122,36 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             const traitIds = [...new Set(edges
               .map((e) => (e.metadata && typeof e.metadata === "object" ? e.metadata.traitMemoryId : null))
               .filter((id) => typeof id === "string" && id))];
+            // #739：升格按 (type, title) 去重，两组不同情绪（担忧／焦虑）只要
+            // person+target 一样就共用同一行 pattern。降格是「这一组」的动作，
+            // 归档前必须先数还有没有别的边在用它——否则另一组仍指着一条已归档
+            // 的 id：聚合面还报「稳定倾向」，注入面那条 pattern 已经不存在。
+            // 排掉本次请求里的边（它们马上就要被清标记），剩下的带 promotedToTrait
+            // 的引用就是「别人还在用」。
+            const requestedEdgeIds = edges.map((e) => e.id);
             const archivedIds = new Set();
+            const retained = [];
             for (const id of traitIds) {
               const row = service.getById?.(id);
               if (!row || row.type !== "pattern" || row.archived) continue;
+              const refs = service.relationIdsByTraitMemoryId?.(id, { excludeIds: requestedEdgeIds });
+              const edgeCount = refs?.total ?? 0;
+              if (edgeCount > 0) {
+                // edgeCount 是 COUNT(*) 的真值；edgeIds 受 limit 约束，截断时显式标出，
+                // 不拿数组长度冒充总数。
+                const edgeIds = refs?.ids ?? [];
+                retained.push({ patternId: id, edgeCount, edgeIds, edgeIdsTruncated: edgeIds.length < edgeCount });
+                continue;
+              }
               service.setArchived(id, true);
               archivedIds.add(id);
             }
-            if (!archivedIds.size) {
-              // 回落路径：只在一条 id 都没归档成功时按标题找一次，避免两条路各归档一行。
+            if (!archivedIds.size && !retained.length) {
+              // 回落路径：只在一条 id 都没处理成功时按标题找一次，避免两条路各归档
+              // 一行。注意条件必须包含 retained——一条 id 都没归档、但也没被保留时
+              // （比如边上的 id 指向的行已被删），同样得往下走，否则又是一次静默。
+              // 旧数据（本次改动之前升格的边）没有 traitMemoryId，也走这条路。
+              // 同一把引用尺照样要用：按标题找到的行也可能是别组共用的那一行。
               const firstMeta = edges[0].metadata && typeof edges[0].metadata === "object" ? edges[0].metadata : {};
               const personEntity = service.findEntityById?.(edges[0].from_entity);
               const targetEntity = service.findEntityById?.(edges[0].to_entity);
@@ -2141,11 +2162,19 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
               });
               const row = (service.activeByTypeAndTitle?.("pattern", traitTitle) ?? [])[0];
               if (row) {
-                service.setArchived(row.id, true);
-                archivedIds.add(row.id);
+                const refs = service.relationIdsByTraitMemoryId?.(row.id, { excludeIds: requestedEdgeIds });
+                const edgeCount = refs?.total ?? 0;
+                if (edgeCount > 0) {
+                  const edgeIds = refs?.ids ?? [];
+                  retained.push({ patternId: row.id, edgeCount, edgeIds, edgeIdsTruncated: edgeIds.length < edgeCount });
+                } else {
+                  service.setArchived(row.id, true);
+                  archivedIds.add(row.id);
+                }
               }
             }
             const patternArchived = archivedIds.size > 0;
+            const patternRetained = retained.length > 0;
             for (const edge of edges) {
               const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : {};
               if (meta.promotedToTrait !== true) continue;
@@ -2158,14 +2187,20 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
               service.recordAffectiveJournal({
                 at: now, edgeId: edge.id, op,
                 before: JSON.stringify({ promotedToTrait: true, traitSessionCount: meta.traitSessionCount ?? null, traitMemoryId: clearedId }),
-                after: JSON.stringify({ promotedToTrait: false, patternArchived, traitMemoryId: null })
+                // 没说「归档了」就是没归档：回执与账本都显式记下「仍有别组在引用」。
+                after: JSON.stringify({ promotedToTrait: false, patternArchived, patternRetained, traitMemoryId: null })
               });
               applied += 1;
             }
             if (patternArchived) applied += 0; // pattern 归档记在 journal 的 after 里，不混进边计数
-            if (applied === 0 && !patternArchived) failures.push({ error: "nothing to demote" });
+            if (applied === 0 && !patternArchived && !patternRetained) failures.push({ error: "nothing to demote" });
             extra.patternArchived = patternArchived;
             extra.archivedPatternIds = [...archivedIds];
+            // #739：未归档时必须说出来，别再变成一次静默——调用方能据此提示
+            // 「这条稳定倾向还被另外 N 条边用着」。
+            extra.patternRetained = patternRetained;
+            extra.retainedPatternIds = retained.map((r) => r.patternId);
+            extra.retainedPatternRefs = retained;
           }
           // apply 成功后账本做一次修剪：审计事实不是检索面（profile_fact_journal
           // 同款 keep=200）。失败不回滚已成功的 op——逐边独立，如实报告即可。

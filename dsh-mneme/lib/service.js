@@ -3428,6 +3428,9 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // #725：人工修正通道——按 id 寻址 + 账本读写。只记账不触发 hook（审计纪律
     // 同 profile_fact_journal）；写入方只有 apply 路由（token-write）。
     relationById: (id) => store.relationById(id),
+    // #739：降格归档前先问「还有几条边指着这行 pattern」——跨组共用的行不能
+    // 因为一组降格就被归档，否则另一组仍指着一条已归档的 id。
+    relationIdsByTraitMemoryId: (traitMemoryId, opts) => store.relationIdsByTraitMemoryId(traitMemoryId, opts),
     recordAffectiveJournal: (entry) => store.recordAffectiveJournal(entry),
     listAffectiveJournal: (limit) => store.listAffectiveJournal(limit),
     pruneAffectiveJournal: (keep) => store.pruneAffectiveJournal(keep),
