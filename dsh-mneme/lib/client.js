@@ -10054,13 +10054,15 @@ window.__ModuleLoader__.load({
         { key: "memory", label: t("memory.explorer.tabMemory") },
         { key: "entity", label: t("memory.explorer.tabEntities") },
         { key: "status", label: t("memory.explorer.tabStatus") },
-        { key: "settings", label: t("memory.explorer.tabSettings") },
         // persona 页签刻意不挂闸门：它承载人格卡的查看与编辑，注入总闸关着时
         // 仍然要能改内容（先写好人设、后面再开注入），不是「关着就没意义」的
         // 数据页。affective / diary 不同：没开就没有数据可看，进来是空页。
         { key: "persona", label: t("memory.explorer.tabPersona") },
         seatOpen("sleepAffectiveEnabled") && { key: "affective", label: t("memory.explorer.tabAffective") },
-        seatOpen("diaryEnabled") && { key: "diary", label: t("memory.diary.title") }
+        seatOpen("diaryEnabled") && { key: "diary", label: t("memory.diary.title") },
+        // 设置排最右（用户 2026-11-15）：低频配置页放末位，与常见应用的
+        // 「设置在最右」惯例一致；数据页按使用频率排在前。
+        { key: "settings", label: t("memory.explorer.tabSettings") }
       ].filter(Boolean);
 
       // 闸门关掉后重开面板：view 可能还停在已经被过滤掉的那一格上，渲染出来
