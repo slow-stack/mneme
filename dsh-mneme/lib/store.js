@@ -5404,6 +5404,70 @@ export function createStore(path) {
     }));
   }
 
+  /**
+   * #613 §4：日记素材查询。按会话 id 集合取「这个 agent 在各会话里留下的痕迹」，
+   * 卡本地日窗口。四条由 #613 实测钉死的口径，全部在这条 SQL 里兑现：
+   * - **source 两形**：`session:session-<uuid>` 与裸 `session:<uuid>` 零重叠（live 库
+   *   6492 / 1146 条），只用一形会各漏 7-8 条且不报错——所以 ids 每个都展开成两形；
+   * - **occurred_at 空值占活跃行 54.4%**：COALESCE 是必需项，漏写会让整日素材静默
+   *   掉进 null 桶（10-09 实测 365 → 7，结果仍是个正常数字）；
+   * - **-480 偏移带**：854 条外部批量写入的行 occurred_at 被写成「本地时间当 UTC」，
+   *   偏移尖峰在 -(本机时区偏移) ±10 分钟内、全为整秒精度——按偏移量认（阈值法
+   *   挡不住也不行：带外还有真跨 12h 的回忆型记忆），修法是 occurred_at 加本机偏移；
+   * - **日界按本地日**：ts 是 UTC 语义，比较时再加一次本机偏移得到本地墙钟。
+   * bandLo/bandHi/offsetMinutes 由调用方按本机时区算好传入（store 不读钟）。
+   * 返回 { rows, total }：total 是窗口内全部素材数，rows 是 LIMIT 截断后的——
+   * LIMIT 截断必须可观测（#613 验收红线：500 条只准如实说用了 400 条）。
+   */
+  function diaryMaterial({ ids, excludeIds = [], dayStart, dayEnd, excludeTypes = [], limit = 400, bandLo, bandHi, offsetMinutes }) {
+    const twoForm = (list) => list.flatMap((id) => [`session:session-${id}`, `session:${id}`]);
+    const cleanIds = Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id).slice(0, 400) : [];
+    const cleanEx = Array.isArray(excludeIds) ? excludeIds.filter((id) => typeof id === "string" && id).slice(0, 400) : [];
+    let sources = [];
+    let sourceClause = "";
+    if (cleanIds.length) {
+      // 具名 agent：素材 = 它名下已落定会话的两种 source 形状。
+      sources = twoForm(cleanIds);
+      sourceClause = ` AND source IN (${sources.map(() => "?").join(", ")})`;
+    } else if (cleanEx.length) {
+      // #613 冷行语义：_unnamed 的素材 = 全部 session 源里「没落到具名 agent 的」
+      // （冷行默认进 _unnamed；具名 agent 的两形来源被显式排除）。
+      sources = twoForm(cleanEx);
+      sourceClause = ` AND source LIKE 'session:%' AND source NOT IN (${sources.map(() => "?").join(", ")})`;
+    } else {
+      return { rows: [], total: 0 };
+    }
+    const typeFilter = Array.isArray(excludeTypes) && excludeTypes.length
+      ? ` AND type NOT IN (${excludeTypes.map(() => "?").join(", ")})`
+      : "";
+    const offsetSql = `+${Number(offsetMinutes) || 0} minutes`;
+    const where = `WHERE datetime(ts_utc, '+${Number(offsetMinutes) || 0} minutes') >= ? AND datetime(ts_utc, '+${Number(offsetMinutes) || 0} minutes') < ?`;
+    const cte = `
+      WITH src AS (
+        SELECT type, title, content, created_at, occurred_at,
+          CASE WHEN CAST(round((julianday(occurred_at) - julianday(created_at)) * 1440) AS INTEGER)
+                    BETWEEN ? AND ?
+               THEN datetime(substr(occurred_at, 1, 19), '+${Number(offsetMinutes) || 0} minutes')
+               ELSE COALESCE(substr(occurred_at, 1, 19), substr(created_at, 1, 19))
+          END AS ts_utc
+        FROM memories
+        WHERE forgotten = 0 AND archived = 0${typeFilter}${sourceClause}
+      )`;
+    const baseParams = [Number(bandLo) || 0, Number(bandHi) || 0, ...(Array.isArray(excludeTypes) ? excludeTypes : []), ...sources];
+    const cap = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 400;
+    const total = db.prepare(
+      `${cte} SELECT COUNT(*) AS n FROM src ${where}`
+    ).get(...baseParams, String(dayStart ?? ""), String(dayEnd ?? "")).n;
+    const rows = db.prepare(
+      `${cte} SELECT type, title, content, datetime(ts_utc, '+${Number(offsetMinutes) || 0} minutes') AS local_ts
+         FROM src ${where} ORDER BY ts_utc ASC LIMIT ?`
+    ).all(...baseParams, String(dayStart ?? ""), String(dayEnd ?? ""), cap);
+    return {
+      rows: rows.map((r) => ({ type: r.type, title: r.title, content: r.content, localTs: r.local_ts })),
+      total
+    };
+  }
+
   /** All entities (optionally name-filtered, newest first). Used by sleep phase 4
    *  orphan detection: an entity with zero relations is a candidate for relation
    *  completion. */
@@ -6441,6 +6505,7 @@ export function createStore(path) {
     migrateAttrsToMemory,
     getRelations,
     relationsByType,
+    diaryMaterial,
     getEntityNeighbors,
     getRelationsByMemory,
     affectiveRelationsByMemories,

@@ -675,6 +675,12 @@ export const STR = {
     zh: (time) => `补记 ${time}`,
     en: (time) => `Addendum ${time}`
   },
+  // #613：素材截断必须对读者可见（验收红线：500 条只准如实说用了 400 条——
+  // 截掉的系统性偏向前半天之后的晚上那段，不报错才最伤）。
+  diaryTruncationNote: {
+    zh: (total, used) => `今天素材共 ${total} 条，本篇用了 ${used} 条。`,
+    en: (total, used) => `${total} pieces of material today; this entry used ${used}.`
+  },
   diaryTitle: {
     zh: (date) => `日记 ${date}`,
     en: (date) => `Diary ${date}`

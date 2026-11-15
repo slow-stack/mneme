@@ -9,9 +9,9 @@
  * 没有第二份。所以这里读最新一篇的 frontmatter 来认人：读不到就退回桶名，
  * 绝不猜——猜错会把 A 的日记挂到 B 名下，而那在界面上看不出来。
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, renameSync, copyFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { DIARY_FILE_RE, diaryRoot } from "./dir.js";
+import { DIARY_FILE_RE, diaryRoot, agentsRoot, isBucketName } from "./dir.js";
 
 /** frontmatter 块：文件必须以 `---` 起头，第二道横线收尾。 */
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---/;
@@ -44,25 +44,13 @@ function readBucketState(root) {
  * 所以要挡的是**路径语义**，不是字符：分隔符、上跳、控制字符、首尾空白、
  * 以及 `.` / `..` 这两个特殊目录名。挡完这些，桶名就只剩「单层目录名」这一种
  * 可能，下游可以直接拼路径，不需要再比一次路径前缀（见 `bucketDir` 的注释）。
- */
-export function isBucketName(name) {
-  const s = String(name ?? "");
-  if (!s || s !== s.trim()) return false;
-  if (s === "." || s === "..") return false;
-  if (/[/\\]/.test(s)) return false;
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(s)) return false;
-  return true;
-}
-
-/**
- * 桶名 → 目录绝对路径。名字不合法就是 `null`。
  *
- * 这里**没有**第二道「解析后比对根前缀」的校验：`isBucketName` 已经挡住了
- * 分隔符与上跳，剩下的只可能是单层名字，前缀比对永远走不到。试过写它，
- * 变异测试（把比对删掉）一跑八条用例全绿，正说明它是死代码——那就别留，
- * 留着的防御没人能验证，反而让人以为这里有一层额外的兜底。
+ * 原本住在 library.js；#613 之后 dir.js 的 diaryAgentDir 也要用同一把尺，
+ * 两份实现迟早漂——上移到路径层，这里转出口保持既有 import 面不破
+ * （diary-library.test.js 从这里 import）。
  */
+export { isBucketName };
+
 function bucketDir(root, bucket) {
   if (!isBucketName(bucket)) return null;
   return join(root, bucket);
@@ -115,12 +103,112 @@ function diaryFiles(dir) {
   return rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 }
 
+/** 账本追加的尾换行检查（与 compose.js 的 appendAudit 同一条纪律，这里是多行版）。 */
+function appendLines(file, lines) {
+  const rows = lines.filter((l) => l.trim());
+  if (!rows.length) return;
+  let prefix = "";
+  try {
+    const stat = statSync(file);
+    if (stat.size > 0) {
+      const raw = readFileSync(file, "utf8");
+      if (!/\n$/.test(raw)) prefix = "\n";
+    }
+  } catch {
+    // 目标没有账本，直接创建。
+  }
+  writeFileSync(file, prefix + rows.join("\n") + "\n", { flag: "a" });
+}
+
+/**
+ * #613 §3.2：同 hash 项目桶的自动归并。项目键的后缀是 sha256(projectRoot) 的前
+ * 8 位（candidates.js:194 起的口径），前缀清洗规则一改就漂、hash 不会——所以认
+ * 桶只认后缀，前缀仅作展示。live 库真发生过「同一项目两个桶」（QQ对话-4f061790
+ * 与 QQ---4f061790），当时是手工合并的；这里把那条手工流程自动化：
+ * - 组内只有一个桶 → 什么都不做；
+ * - 日期不重叠 → 全部条目 rename 进目标桶。目标 = 有 runs.jsonl 的那个（手工
+ *   合并时选它的依据），否则条目最多的，否则名字排序第一个；
+ * - 日期重叠 → 绝不静默覆盖：目标里先到的留原名，源桶这篇降级为
+ *   `<date>.conflict-<ts>.md`（不在 DIARY_FILE_RE 里，面板不列，盘上可查）
+ *   ——两份都留着；
+ * - runs.jsonl 按行追加进目标（§3.3：缺的就是缺，不补写、不伪造历史记账）；
+ * - 源桶清空后删除目录。
+ *
+ * 在 library 读取前跑：面板打开一次就自愈一次。best-effort——任何一步失败只
+ * warn，不阻塞列表。
+ */
+export function mergeSameHashBuckets(root, log = null) {
+  let names;
+  try {
+    names = readdirSync(root);
+  } catch {
+    return 0;
+  }
+  const groups = new Map();
+  for (const name of names) {
+    if (name.startsWith(".") || name === "agents") continue; // agents/ 是 #613 的命名空间，项目桶不许撞名
+    if (!isBucketName(name)) continue;
+    const m = /-([0-9a-f]{8})$/i.exec(name);
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(name);
+  }
+  let merged = 0;
+  for (const [, list] of groups) {
+    if (list.length < 2) continue;
+    try {
+      const sorted = [...list].sort();
+      const withRuns = sorted.filter((n) => existsSync(join(root, n, "runs.jsonl")));
+      const target = withRuns[0]
+        ?? sorted.reduce((best, n) => (diaryFiles(join(root, n)).length > diaryFiles(join(root, best)).length ? n : best), sorted[0]);
+      for (const source of sorted) {
+        if (source === target) continue;
+        const srcDir = join(root, source);
+        const dstDir = join(root, target);
+        for (const file of diaryFiles(srcDir)) {
+          const dst = join(dstDir, `${file.date}.md`);
+          if (!existsSync(dst)) {
+            // 日期不重叠：整篇归位。
+            renameSync(file.path, dst);
+          } else {
+            // 日期重叠：绝不静默覆盖——目标里先到的留原名，源桶这篇降级为
+            // conflict 副本，两份都留在盘上。
+            copyFileSync(file.path, join(dstDir, `${file.date}.conflict-${Date.now()}.md`));
+          }
+        }
+        // runs.jsonl 追加（§3.3）：源桶有的按行拼到目标尾部；没有就是没有。
+        const srcRuns = join(srcDir, "runs.jsonl");
+        if (existsSync(srcRuns)) {
+          appendLines(join(dstDir, "runs.jsonl"), readFileSync(srcRuns, "utf8").split("\n"));
+        }
+        rmSync(srcDir, { recursive: true, force: true });
+        merged += 1;
+        log?.warn?.(`[dsh-mneme] diary: merged same-hash bucket ${source} into ${target}`);
+      }
+    } catch (error) {
+      log?.warn?.(`[dsh-mneme] diary: same-hash merge failed: ${String((error && error.message) || error)}`);
+    }
+  }
+  return merged;
+}
+
 /**
  * 全部桶。读不到根目录返回空清单而不是抛——「还没写过第一篇」与「路径坏了」
  * 在面板上是两种不同的话，但这一层分不出来，交给调用方去看 `root`。
+ *
+ * #613 §3：Agent 桶（`<root>/agents/<agentId>/`）与项目桶**并存不迁移**，读取
+ * 侧都列。agent 桶没有 projectRoot/项目键——面板的「写一篇」走 agentMode 路由；
+ * 认人靠 frontmatter 的 persona 行（与项目桶同一口径）。
  */
-export function listDiaryLibrary({ memoryDir, configured = "" } = {}) {
+export function listDiaryLibrary({ memoryDir, configured = "", log = null } = {}) {
   const root = diaryRoot({ memoryDir, configured });
+  // 同 hash 桶归并先于扫描：面板打开一次就自愈一次；失败不阻塞列表。
+  try {
+    mergeSameHashBuckets(root, log);
+  } catch {
+    // 归并是自愈不是前提，失败照常列。
+  }
   let names;
   try {
     names = readdirSync(root);
@@ -130,8 +218,10 @@ export function listDiaryLibrary({ memoryDir, configured = "" } = {}) {
   const buckets = [];
   const state = readBucketState(root);
   for (const name of names) {
-    // `.deleted` 一类是回收站，不是日记。
+    // `.deleted` 一类是回收站，不是日记；`agents` 是 #613 的命名空间（归 agent
+    // 桶扫描管），项目桶不许撞名。
     if (name.startsWith(".")) continue;
+    if (name === "agents") continue;
     if (!isBucketName(name)) continue;
     const dir = join(root, name);
     let st;
@@ -171,15 +261,63 @@ export function listDiaryLibrary({ memoryDir, configured = "" } = {}) {
       entries: files.map((file) => ({ date: file.date, bytes: file.bytes, mtime: file.mtime }))
     });
   }
+  // Agent 桶扫描。`agents/<agentId>/` 一目录一本书；没有 projectRoot/项目键，
+  // 认人靠 frontmatter 的 persona 行。
+  const agentsDir = agentsRoot({ memoryDir, configured });
+  let agentNames;
+  try {
+    agentNames = readdirSync(agentsDir);
+  } catch {
+    agentNames = [];
+  }
+  for (const agentId of agentNames) {
+    if (!isBucketName(agentId)) continue;
+    const dir = join(agentsDir, agentId);
+    let st;
+    try {
+      st = statSync(dir);
+    } catch {
+      continue;
+    }
+    if (!st.isDirectory()) continue;
+    const files = diaryFiles(dir);
+    if (!files.length) continue;
+    let persona = "";
+    for (const file of files) {
+      const fm = readFrontmatter(file.path);
+      if (fm.persona) {
+        persona = fm.persona;
+        break;
+      }
+    }
+    buckets.push({
+      key: `agents/${agentId}`,
+      project: "",
+      projectRoot: "",
+      agentId,
+      persona,
+      latest: files[0].date,
+      count: files.length,
+      entries: files.map((file) => ({ date: file.date, bytes: file.bytes, mtime: file.mtime }))
+    });
+  }
   buckets.sort((a, b) => (a.latest < b.latest ? 1 : a.latest > b.latest ? -1 : 0));
   return { root, buckets };
 }
 
-/** 读一篇的正文。桶名与日期都要过校验：这条路径直接拼文件系统。 */
+/** 读一篇的正文。桶名与日期都要过校验：这条路径直接拼文件系统。
+ *  #613：`agents/<agentId>` 形状的桶读 agent 桶（isBucketName 挡路径语义后拼一层）。 */
 export function readLibraryEntry({ memoryDir, configured = "", bucket, date } = {}) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date ?? ""))) return null;
   const root = diaryRoot({ memoryDir, configured });
-  const dir = bucketDir(root, bucket);
+  const name = String(bucket ?? "");
+  let dir = null;
+  if (name.startsWith("agents/")) {
+    const agentId = name.slice("agents/".length);
+    dir = isBucketName(agentId) ? join(agentsRoot({ memoryDir, configured }), agentId) : null;
+  } else {
+    dir = bucketDir(root, bucket);
+  }
   if (dir === null) return null;
   try {
     return readFileSync(join(dir, `${date}.md`), "utf8");

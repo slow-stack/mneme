@@ -12440,6 +12440,12 @@ window.__ModuleLoader__.load({
         if (fallback) return String(fallback);
       }
       // 没有模板行（老日记）或还没读到人格卡：只剩项目名这一级，仍然不上 agent 名。
+      // #613：agent 桶没有 project 字段——persona 行解析不到时用 agentId 查卡，
+      // 最后才退回桶键（agents/<id> 是给人排查用的，不该当展示名）。
+      if (bucket && bucket.agentId && store) {
+        const card = store.byAgent && store.byAgent[bucket.agentId];
+        if (card && card.name) return String(card.name);
+      }
       if (bucket && bucket.project) return String(bucket.project);
       return String((bucket && bucket.key) || "");
     }
@@ -12595,14 +12601,18 @@ window.__ModuleLoader__.load({
         && activeBucket.projectRoot) || "";
       const writerAgent = (activeBucket && typeof activeBucket.agentId === "string"
         && activeBucket.agentId) || "";
+      // #613 §5：agent 桶（key 以 agents/ 开头）没有 projectRoot——「写一篇」走
+      // agentMode 路由，素材来自全局记忆，落点是 agents/<agentId>/。写入口按桶类型分两路。
+      const isAgentBucket = !!(activeBucket && activeBucket.agentId
+        && String(activeBucket.key || "").startsWith("agents/"));
+      const writable = isAgentBucket ? true : !!writableRoot;
 
       const say = (kind, text) => setNotice({ kind, text });
 
-      const composeToday = () => {
-        if (!writableRoot || busy) return;
+      const runCompose = (url) => {
         setBusy("compose");
         setNotice(null);
-        apiFetch(diaryUrl("/compose", writableRoot, { agent: writerAgent }), DIARY_WRITE_OPTS({}))
+        apiFetch(url, DIARY_WRITE_OPTS({}))
           .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
           .then((r) => {
             const b = r.body || {};
@@ -12620,6 +12630,16 @@ window.__ModuleLoader__.load({
             say("bad", t("memory.diary.composeFailed"));
           })
           .then(() => setBusy(""));
+      };
+
+      const composeToday = () => {
+        if (busy) return;
+        if (isAgentBucket) {
+          runCompose("/api/dsh-mneme/diary/compose?agentMode=1&agent=" + encodeURIComponent(activeBucket.agentId));
+          return;
+        }
+        if (!writableRoot) return;
+        runCompose(diaryUrl("/compose", writableRoot, { agent: writerAgent }));
       };
 
       const exportDay = () => {
@@ -12658,8 +12678,10 @@ window.__ModuleLoader__.load({
           type: "button", className: "mneme-diary-btn",
           // 账本里没有这个桶的路径 = 不知道写到哪，不给按钮（点了必然 400）。
           // 不用 title 藏原因，disabled + 下面那行说明更直接。
-          disabled: !!gate || !writableRoot || !!busy,
-          title: writableRoot ? undefined : t("memory.diary.noProjectRoot"),
+          // #613：agent 桶（agents/<id>）没有 projectRoot 也能写——素材来自全局
+          // 记忆，落点只由 agentId 决定。
+          disabled: !!gate || !writable || !!busy,
+          title: writable || isAgentBucket ? undefined : t("memory.diary.noProjectRoot"),
           onClick: composeToday
         }, busy === "compose" ? t("memory.diary.writing") : t("memory.diary.write")),
         h("button", {

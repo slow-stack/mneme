@@ -412,6 +412,13 @@ export const Config = z.object({
   // 写不写在 compose 里按落盘日期去重，所以一天最多一篇，失败也只是 warn。
   // 上限 1440（一天）：比一天更长的间隔没有意义，因为判定单位就是「天」。
   diaryWriteEveryMinutes: z.natural().min(0).max(1440).default(0),
+  // #613 §4：日记素材的类型黑名单。constraint/preference 是「长期成立的规则」，
+  // 写进「今天发生了什么」的日记里就是噪音。默认 ["constraint","preference"]。
+  diaryMemoryExcludeTypes: z.array(z.string()).default(["constraint", "preference"]),
+  // #613 §2：冷行回填。插件从没见过的会话（安装前的历史）默认整本落 _unnamed；
+  // 打开后启动时尝试从宿主的会话标题投影解一次 source.kind（user 才认），
+  // 命中名单才归到那个 agent——命中不了的仍留 _unnamed。默认关。
+  diaryBackfillColdAgents: z.boolean().default(false),
   // 隐式 keep（v0.4.4）：LLM 未提及的 snapshot 记忆自动补 {action:"keep"}，
   // 避免"未覆盖即全拒"白白浪费整轮 run。设为 false 时保留旧的严格校验
   // （未覆盖即拒绝整单）。

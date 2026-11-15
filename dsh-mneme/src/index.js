@@ -49,7 +49,7 @@ import { registerMoRunCommand } from "./pipeline-command.js";
 // 这里只管「什么时候跑」。两者分开的理由见 src/pipeline-nudge-auto.js 文件头。
 import { createNudgeAutoRun } from "./pipeline-nudge-auto.js";
 // QQ 日记本：合成管线（compose）与触发侧（auto）分开，理由见 src/diary/index.js 文件头。
-import { createDiaryComposer, createDiaryAutoRun } from "./diary/index.js";
+import { createDiaryComposer, createDiaryAutoRun, settleAgent, backfillColdSessions, personaAgentNames, agentsRoot } from "./diary/index.js";
 import { createVectorIndex } from "./vector-index.js";
 // semantic(embedder/reranker/boot 回填)纯搬移至 src/semantic.js(PR2):宿主与
 // daemon(dsh-mneme-serve,#363)共用同一套装配,原文件保留 barrel 出口。
@@ -823,21 +823,45 @@ export const apply = (ctx, config) => {
     // 取决于「谁先开口」，整天不说话也要有一篇。listProjects 用 knownProjects ——
     // 定时器唤醒时没有会话，只能靠状态文件里记过的项目根。
     const everyMinutes = Number(cfg.diaryWriteEveryMinutes) || 0;
+    // #613 §2/§5：agent 维度的解析器。每次会话流过就落定一次（首次写入定终身，
+    // 之后改标题只更新展示名），并返回该 agent 名下全部会话 id——compose 的素材
+    // 查询就吃这份 id 集合。解析失败的会话不触发 agent 维度（落到项目维度或跳过）。
+    const diaryAgentResolver = (session) => settleAgent({
+      root: agentsRoot({ memoryDir, configured: cfg.diaryDir }),
+      session,
+      knownNames: personaAgentNames(settings)
+    });
     const diaryAuto = createDiaryAutoRun({
       ctx,
       composer: diary,
       logger: ctx.logger,
       sessionGate,
       everyMs: everyMinutes > 0 ? everyMinutes * 60 * 1000 : 0,
-      listProjects: () => diary.knownProjects()
+      listProjects: () => diary.knownProjects(),
+      agentResolver: diaryAgentResolver,
+      listAgents: () => diary.knownAgents()
     });
     disposers.push(diaryAuto);
-    const projects = diary.knownProjects();
-    if (projects.length) {
-      Promise.resolve(diaryAuto.catchUp(projects)).catch((error) => {
-        ctx.logger?.warn?.("[dsh-mneme] diary startup catch-up failed: " + String(error));
-      });
+    // #613 §2：冷行回填只在显式打开时做一次——解的是标题的 source.kind（user 才
+    // 认），不是 agent 归属；命中不了名单的会话仍留 _unnamed。
+    if (cfg.diaryBackfillColdAgents === true) {
+      try {
+        const settled = backfillColdSessions({
+          ctx,
+          root: agentsRoot({ memoryDir, configured: cfg.diaryDir }),
+          knownNames: personaAgentNames(settings)
+        });
+        if (settled) ctx.logger?.info?.(`[dsh-mneme] diary cold-agent backfill settled ${settled} session(s)`);
+      } catch (error) {
+        ctx.logger?.warn?.("[dsh-mneme] diary cold-agent backfill failed: " + String((error && error.message) || error));
+      }
     }
+    // 启动补写不带长度闸：catchUp 内部按维度扫全部已知桶，compose 的落盘去重保证
+    // 一天一篇（没有项目桶时项目维度的列表是空的，agent 维度照扫）。
+    const projects = diary.knownProjects();
+    Promise.resolve(diaryAuto.catchUp(projects)).catch((error) => {
+      ctx.logger?.warn?.("[dsh-mneme] diary startup catch-up failed: " + String(error));
+    });
   }
 
   // Standalone external API (v0.7.12): plain node:http server for ecosystem

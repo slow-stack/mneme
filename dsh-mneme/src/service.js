@@ -3438,6 +3438,8 @@ export function createService({ store, mirror, config, onWrite, logger, document
     countEntities: () => store.countEntities(),
     getRelations: (id) => store.getRelations(id),
     relationsByType: (type, limit) => store.relationsByType(type, limit),
+    // #613 §4：日记素材查询（store 内 SQL，service 只透传）。纯读，无 hook。
+    diaryMaterial: (params) => store.diaryMaterial(params),
     // #24 块4 被动确认的复核出口：列出权重被 bump 抬过的边（gain = 现权 −
     // 该 source 的初值）。纯读，不动权重——「看哪些边被用出来过」是人的动作。
     listBoostedRelations: (o) => store.listBoostedRelations(o),
