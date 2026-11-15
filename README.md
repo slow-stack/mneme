@@ -52,8 +52,8 @@ dsh web
 
 | 目录 | 是什么 |
 |------|--------|
-| `~/.dsh/memory` | 记忆库本体：SQLite 正本，加十份可手改的 Markdown 镜像 |
-| `~/.dsh/mneme` | 本地嵌入模型与运行时缓存，删掉会自动重下 |
+| `~/.mneme/memory` | 记忆库本体：SQLite 正本，加十份可手改的 Markdown 镜像（有存量库时仍读 `~/.dsh/memory`） |
+| `~/.mneme/{models,runtime}` | 本地嵌入模型与运行时缓存，删掉会自动重下（旧 `~/.dsh/mneme` 存在就继续用） |
 | `~/.dsh-mneme` | CLI / MCP 的连接配置（url 与 token） |
 
 想卸掉：
@@ -62,7 +62,7 @@ dsh web
 dsh plugin --profile web remove @modusensus/dsh-mneme
 ```
 
-插件目录没了，`~/.dsh/memory` 里的记忆还在——想清干净就自己删这个目录。三个目录名字很像，别认错：[目录说明](dsh-mneme/docs/DIRECTORIES.md)。
+插件目录没了，记忆还在（默认 `~/.mneme/memory`，老用户是 `~/.dsh/memory`）——想清干净就自己删这个目录。三个目录名字很像，别认错：[目录说明](dsh-mneme/docs/DIRECTORIES.md)。
 
 ## 你会用到的
 
@@ -168,8 +168,8 @@ Where it lands on your machine:
 
 | Path | What it is |
 |------|------------|
-| `~/.dsh/memory` | The store itself: the SQLite original plus ten hand-editable Markdown mirrors |
-| `~/.dsh/mneme` | Local embedding model and runtime cache; delete it and it refetches |
+| `~/.mneme/memory` | The store itself: the SQLite original plus ten hand-editable Markdown mirrors (an existing library under `~/.dsh/memory` keeps being used) |
+| `~/.mneme/{models,runtime}` | Local embedding model and runtime cache; delete it and it refetches (a legacy `~/.dsh/mneme` keeps being used) |
 | `~/.dsh-mneme` | CLI / MCP connection settings (url and token) |
 
 To remove it:
@@ -178,7 +178,7 @@ To remove it:
 dsh plugin --profile web remove @modusensus/dsh-mneme
 ```
 
-The plugin directory goes away, the memories in `~/.dsh/memory` stay — delete that directory yourself if you want them gone. The three names are easy to mix up: [directories](dsh-mneme/docs/DIRECTORIES.md).
+The plugin directory goes away, the memories stay (default `~/.mneme/memory`, or the legacy `~/.dsh/memory`) — delete that directory yourself if you want them gone. The three names are easy to mix up: [directories](dsh-mneme/docs/DIRECTORIES.md).
 
 ## What you get
 

@@ -24,8 +24,8 @@
 import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 import { validatePipeline, RISK_LEVELS } from "./pipeline.js";
+import { expandHome as expandHomePath, memoryBase } from "./paths.js";
 
 /** 候选的状态机。`collecting` 还在攒次数，`proposed` 够格了在等人点头。 */
 export const CANDIDATE_STATUSES = ["collecting", "proposed", "promoted", "dropped"];
@@ -198,15 +198,12 @@ export function projectKey(projectRoot) {
 
 /** 展开 `~`；候选层跟 `memoryDir` 一样是本地状态，不是仓库内容。 */
 function expandHome(p) {
-  const s = String(p || "");
-  if (s === "~") return homedir();
-  if (s.startsWith("~/") || s.startsWith("~\\")) return join(homedir(), s.slice(2));
-  return s;
+  return expandHomePath(p);
 }
 
-/** 候选层的家：`<memoryDir>/candidates/<项目键>/`。memoryDir 为空时退回默认。 */
+/** 候选层的家：`<memoryDir>/candidates/<项目键>/`。memoryDir 为空时退回默认（走 paths.js 的中性根）。 */
 export function candidateDir({ memoryDir, projectRoot } = {}) {
-  const base = expandHome(memoryDir && memoryDir.trim() ? memoryDir : "~/.dsh/memory");
+  const base = memoryBase(memoryDir);
   const key = projectKey(projectRoot);
   if (!key) return null;
   return join(base, "candidates", key);

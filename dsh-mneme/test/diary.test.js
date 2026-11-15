@@ -13,6 +13,7 @@ import { join } from "node:path";
 
 import { localDateString, shouldRollDay, dayGap, MAX_CATCH_UP_DAYS } from "../src/diary/rollover.js";
 import { diaryDir, diaryFilePath, expandHome, memoryBase } from "../src/diary/dir.js";
+import { resolveMemoryDir } from "../src/paths.js";
 import { collectQqInbox, inboxFiles, redactDigits, textOf, isEffective } from "../src/diary/qq-inbox.js";
 import { collectSessionTranscript, sessionAgentId } from "../src/diary/session-provider.js";
 import { validateBody, latestDiaryDate, createDiaryComposer } from "../src/diary/compose.js";
@@ -81,11 +82,15 @@ test("diaryDir：项目根为空返回 null，绝不退成全局", () => {
   assert.equal(diaryFilePath(dir, "2026-11-07"), join(dir, "2026-11-07.md"));
 });
 
-test("expandHome / memoryBase：~` 必须展开，否则旁挂永远读不到", () => {
+test("expandHome / memoryBase：~ 必须展开，否则旁挂永远读不到", () => {
   assert.equal(expandHome("~"), homedir());
-  assert.equal(memoryBase(""), expandHome("~/.dsh/memory"));
-  assert.equal(memoryBase("  "), expandHome("~/.dsh/memory"));
   assert.equal(expandHome("D:\\x"), "D:\\x");
+  // 留空的回落不再写死 ~/.dsh/memory：交给 paths.js 解析（中性根 + 存量兼容），
+  // 所以这里只断言「与解析器同一答案」，不去钉某个具体目录——那会让测试随机器变。
+  assert.equal(memoryBase(""), resolveMemoryDir("").dir);
+  assert.equal(memoryBase("  "), resolveMemoryDir("").dir);
+  // 显式给了值就完全按它走（含 ~ 展开），不吃兼容逻辑。
+  assert.equal(memoryBase("~/mx"), join(homedir(), "mx"));
 });
 
 function frameOf({ ts, text = "你好", stage = "dispatch", ok = true, kind = "message" }) {

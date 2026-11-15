@@ -3,7 +3,7 @@
  * dsh-mneme CLI —— @modusensus/dsh-mneme 外部 API 命令行客户端
  *
  * 零依赖 ESM（Node >= 20，使用全局 fetch）。
- * 配置优先级：命令行 --url/--token > 环境变量 DSH_MNEME_URL / DSH_MNEME_TOKEN
+ * 配置优先级：命令行 --url/--token > 环境变量 MNEME_URL / MNEME_TOKEN（兼容 DSH_MNEME_URL / DSH_MNEME_TOKEN）
  *            > 配置文件 ~/.dsh-mneme/cli.json（{"url","token"}）
  * 默认服务地址：http://127.0.0.1:8790
  */
@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 const CLI_NAME = 'dsh-mneme';
 const DEFAULT_URL = 'http://127.0.0.1:8790';
-const CONFIG_DIR = path.join(os.homedir(), '.dsh-mneme');
+const CONFIG_DIR = process.env.MNEME_CONFIG_DIR || path.join(os.homedir(), '.dsh-mneme');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'cli.json');
 // 与 src/store.js 的 TYPES 对齐（CLI 是零依赖 HTTP 客户端，不 import 服务端
 // 模块，所以这里是手写字面量）。document 是唯一例外：它只能经
@@ -51,7 +51,7 @@ const USAGE = `${CLI_NAME} —— DSH 记忆插件（@modusensus/dsh-mneme）外
 
 配置（优先级从高到低）：
   1. 命令行参数 --url <url> / --token <token>
-  2. 环境变量 DSH_MNEME_URL / DSH_MNEME_TOKEN
+  2. 环境变量 MNEME_URL / MNEME_TOKEN（兼容 DSH_MNEME_URL / DSH_MNEME_TOKEN）
   3. 配置文件 ~/.dsh-mneme/cli.json（由 \`config set\` 写入）
   未配置时使用默认地址：${DEFAULT_URL}
 
@@ -225,9 +225,9 @@ function firstNonEmpty(...values) {
 function resolveConfig(flags) {
   const file = readConfigFile();
   const url =
-    firstNonEmpty(flagValue(flags, 'url'), process.env.DSH_MNEME_URL, file.url) ?? DEFAULT_URL;
+    firstNonEmpty(flagValue(flags, 'url'), process.env.MNEME_URL, process.env.DSH_MNEME_URL, file.url) ?? DEFAULT_URL;
   const token =
-    firstNonEmpty(flagValue(flags, 'token'), process.env.DSH_MNEME_TOKEN, file.token) ?? '';
+    firstNonEmpty(flagValue(flags, 'token'), process.env.MNEME_TOKEN, process.env.DSH_MNEME_TOKEN, file.token) ?? '';
   return { url: url.replace(/\/+$/, ''), token, jsonMode: false };
 }
 
@@ -261,7 +261,7 @@ function failHttp(cfg, status, pathname, data, text) {
   if (status === 401) {
     hint =
       `\n访问 token 缺失或无效。token 可在 DSH 面板「设置 → 外部访问」或插件设置中查看，\n` +
-      `然后用 \`${CLI_NAME} config set <url> <token>\`、环境变量 DSH_MNEME_TOKEN 或 --token 配置。`;
+      `然后用 \`${CLI_NAME} config set <url> <token>\`、环境变量 MNEME_TOKEN 或 --token 配置。`;
   } else if (status === 404) {
     hint = `\n资源不存在：${pathname}`;
   }
@@ -309,7 +309,7 @@ function requireToken(cfg) {
       '',
       'token 可在 DSH 面板「设置 → 外部访问」或插件设置中查看，然后任选其一配置：',
       `  1. ${CLI_NAME} config set <url> <token>`,
-      '  2. 环境变量 DSH_MNEME_TOKEN=<token>',
+      '  2. 环境变量 MNEME_TOKEN=<token>（兼容 DSH_MNEME_TOKEN）',
       '  3. 命令行参数 --token <token>',
     ].join('\n')
   );
@@ -503,7 +503,7 @@ async function cmdConfig(cfg, sub, rest) {
       console.log(`可运行 \`${CLI_NAME} config set <url> <token>\` 创建配置；`);
       console.log('token 可在 DSH 面板「设置 → 外部访问」或插件设置中查看。');
       console.log(
-        `未配置时使用默认地址 ${DEFAULT_URL}，也可用环境变量 DSH_MNEME_URL / DSH_MNEME_TOKEN。`
+        `未配置时使用默认地址 ${DEFAULT_URL}，也可用环境变量 MNEME_URL / MNEME_TOKEN（兼容 DSH_MNEME_URL / DSH_MNEME_TOKEN）。`
       );
       return;
     }
@@ -511,7 +511,7 @@ async function cmdConfig(cfg, sub, rest) {
     console.log(`  url: ${file.url ?? `(未设置，默认 ${DEFAULT_URL})`}`);
     console.log(`  token: ${maskToken(file.token)}`);
     console.log('');
-    console.log('配置优先级: --url/--token > 环境变量 DSH_MNEME_URL / DSH_MNEME_TOKEN > 配置文件');
+    console.log('配置优先级: --url/--token > 环境变量 MNEME_URL / MNEME_TOKEN（兼容 DSH_MNEME_*）> 配置文件');
     return;
   }
 

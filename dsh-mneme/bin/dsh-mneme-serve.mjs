@@ -26,7 +26,8 @@ const USAGE = `${BIN_NAME} — run the mneme data plane as a standalone service 
 Usage: dsh-mneme-serve [--memory-dir <dir>] [--port <n>] [--host <addr>] [--embed <provider>]
 
 Options:
-  --memory-dir <dir>  data directory (default: ~/.dsh/memory, same as the plugin)
+  --memory-dir <dir>  data directory (default: <MNEME_HOME>/memory, i.e. ~/.mneme/memory;
+                      an existing library under ~/.dsh/memory keeps being used)
   --port <n>          HTTP port (default: persisted external_api port, else 8790)
   --host <addr>       bind address (default: persisted external_api host, else 127.0.0.1)
   --embed <provider>  semantic retrieval: local (default, downloads the ONNX runtime
@@ -40,10 +41,21 @@ memory.db); it is generated on first boot. A busy configured port is a hard
 error — the DSH external API and this daemon must not share a port (pick one).
 
 Environment (runtime provisioning, local provider only):
-  DSH_MNEME_MEMORY_DIR            data directory override
-  DSH_MNEME_RUNTIME_DIR           self-managed runtime dir (default ~/.dsh/mneme/runtime)
-  DSH_MNEME_RUNTIME_TARBALL_DIR   offline .tgz dir preferred over the network
-  DSH_MNEME_RUNTIME_MIRROR        npm registry mirror prefix (e.g. npmmirror)`;
+  MNEME_MEMORY_DIR                data directory override (alias: DSH_MNEME_MEMORY_DIR)
+  MNEME_RUNTIME_DIR               self-managed runtime dir (default <MNEME_HOME>/runtime;
+                                  alias: DSH_MNEME_RUNTIME_DIR)
+  MNEME_RUNTIME_TARBALL_DIR       offline .tgz dir preferred over the network
+                                  (alias: DSH_MNEME_RUNTIME_TARBALL_DIR)
+  MNEME_RUNTIME_MIRROR            npm registry mirror prefix (e.g. npmmirror)
+                                  (alias: DSH_MNEME_RUNTIME_MIRROR)`;
+
+/** 第一个非空值。环境变量别名共用（MNEME_* 做主，DSH_MNEME_* 兼容）。 */
+function firstNonEmpty(...values) {
+  for (const v of values) {
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  return undefined;
+}
 
 /** 极简 argv 解析(--k=v / --k v / 旗标);够用即可,完整 CLI 在 bin/cli.mjs。 */
 function parseArgv(argv) {
@@ -87,10 +99,10 @@ async function main(argv) {
   if (args.help) { process.stdout.write(USAGE + "\n"); return; }
   if (args.version) { console.log(PKG.version); return; }
 
-  // memoryDir:CLI > env > serve.js 缺省(~/.dsh/memory)。相对路径按 CWD 解;
-  // 前导 ~ 留给 serve.js 展开(与宿主 index.js:192-194 同一口径)。
-  const rawDir = typeof args["memory-dir"] === "string" ? args["memory-dir"]
-    : (typeof process.env.DSH_MNEME_MEMORY_DIR === "string" && process.env.DSH_MNEME_MEMORY_DIR ? process.env.DSH_MNEME_MEMORY_DIR : undefined);
+  // memoryDir:CLI > MNEME_MEMORY_DIR(兼容 DSH_MNEME_MEMORY_DIR) > serve.js 缺省(中性根)。
+  // 相对路径按 CWD 解;前导 ~ 留给 serve.js 展开(与宿主 index.js 同一口径)。
+  const envDir = firstNonEmpty(process.env.MNEME_MEMORY_DIR, process.env.DSH_MNEME_MEMORY_DIR);
+  const rawDir = typeof args["memory-dir"] === "string" ? args["memory-dir"] : envDir;
   const memoryDir = rawDir && !rawDir.startsWith("~") ? resolve(rawDir) : rawDir;
 
   let port;

@@ -4,6 +4,7 @@ import { createDocumentIndex } from "./document-index.js";
 import { resolveDocumentDir } from "./document.js";
 // #368 v1：profile 作用域落点检测（只提示，不改行为）。
 import { findProfileScopeSegment } from "./placement.js";
+import { resolveMemoryDir } from "./paths.js";
 import { createService } from "./service.js";
 // #254 写入准入（第一阶段只计量，不拦截）：见 src/write-admission.js 的文件头。
 import { createWriteAdmission } from "./write-admission.js";
@@ -61,7 +62,6 @@ import { extractEntities } from "./entities/extractor.js";
 import { createProfileExtractor } from "./profile-extract.js";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 
 export const name = "dsh-mneme";
 // webServer 在 inject 声明中：cordis 会等宿主 webServer 服务激活后才 apply 本
@@ -204,11 +204,17 @@ export { backfillMissingEmbeddings } from "./semantic.js";
 export const apply = (ctx, config) => {
   const rawCfg = Config(config);
 
-  // Resolve memoryDir: expand leading "~"
-  const memoryDir = rawCfg.memoryDir.startsWith("~")
-    ? join(homedir(), rawCfg.memoryDir.slice(1))
-    : rawCfg.memoryDir;
+  // 库目录：显式配置 > MNEME_MEMORY_DIR > 中性根默认；旧目录里已有库就继续用它。
+  // 全部口径收在 src/paths.js，别再在这里写第二份 ~ 展开。
+  const resolved = resolveMemoryDir(rawCfg.memoryDir);
+  const memoryDir = resolved.dir;
   mkdirSync(memoryDir, { recursive: true });
+  if (resolved.source === "legacy") {
+    ctx.logger?.info?.(
+      `[dsh-mneme] 记忆库仍住在旧目录 ${memoryDir}（这里已有 memory.db）。` +
+      "迁到中性家可用 MNEME_HOME，或把 memoryDir 指过去；不迁也能正常用。"
+    );
+  }
 
   // #218 末楼的实际事故：profile 被清理，落在其中的记忆库连带丢失。命中
   // profile 作用域时给一条可操作的告警（只提示、不搬库、不加配置键），启发
@@ -216,7 +222,7 @@ export const apply = (ctx, config) => {
   const profileScope = findProfileScopeSegment(memoryDir);
   if (profileScope) {
     ctx.logger?.warn?.(
-      `[dsh-mneme] memoryDir is inside a profile scope ("${profileScope}"): ${memoryDir} — the library may be lost when the host cleans or migrates profiles. Prefer a location outside profiles/ (default: ~/.dsh/memory; config key: memoryDir).`
+      `[dsh-mneme] memoryDir is inside a profile scope ("${profileScope}"): ${memoryDir} — the library may be lost when the host cleans or migrates profiles. Prefer a location outside profiles/ (default: <MNEME_HOME>/memory; config key: memoryDir).`
     );
   }
 

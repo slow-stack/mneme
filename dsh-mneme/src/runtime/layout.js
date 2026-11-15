@@ -21,6 +21,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveModelCacheDir, resolveRuntimeDir } from "../paths.js";
 
 /** 运行时清单文件名，与 payload 目录同级。 */
 export const RUNTIME_MANIFEST = "mneme-runtime.json";
@@ -76,12 +77,15 @@ export function transformersVersionOk(version) {
 
 /**
  * 运行时根目录的默认位置。与 embedModelCacheDir 的既有约定保持一致
- * （都挂在 ~/.dsh/mneme/ 下，便于用户整个删掉重来）。
+ * （都挂在 mneme 的中性家下，便于用户整个删掉重来）。
+ *
+ * 家目录不再是 .dsh：见 src/paths.js 的说明。运行时是**缓存**，所以兼容规则
+ * 简单——旧家下有现成的 payload 就继续用它，避免白下 200MB；没有才用新家。
  * @param {string} [home] - 家目录，测试时可注入。
  * @returns {string} 运行时根目录。
  */
 export function defaultRuntimeDir(home = homedir()) {
-  return join(home, ".dsh", "mneme", "runtime");
+  return resolveRuntimeDir({ home });
 }
 
 /**
@@ -118,7 +122,7 @@ export function detectLibc(platform = process.platform) {
  * @returns {string} 模型缓存目录。
  */
 export function defaultModelCacheDir(home = homedir()) {
-  return join(home, ".dsh", "mneme", "models");
+  return resolveModelCacheDir({ home });
 }
 
 /**

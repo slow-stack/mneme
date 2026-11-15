@@ -46,6 +46,7 @@ import { registerKbRoutes } from "./kb/routes.js";
 import { readPipelineDoc, loadPipelines, projectPipelineDir } from "./pipeline.js";
 import { loadRunsById, runsDir, RUNS_SUFFIX } from "./pipeline-runs.js";
 import { observationDir, loadObservationsById } from "./pipeline-observations.js";
+import { memoryBase } from "./paths.js";
 import { projectKey } from "./candidates.js";
 // 日记本（v0.13）：读侧三件（列表/正文/账本）在 diary/index.js 里都是纯函数级的小实现，
 // 路由只做参数校验与闸门——把口径写在这里会让「面板与 CLI 读的是同一份」破功。
@@ -3364,9 +3365,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         let observationsById = {};
         if (project !== null) {
           try {
-            const memoryDir = (config && typeof config.memoryDir === "string" && config.memoryDir.trim() !== "")
-              ? config.memoryDir
-              : "~/.dsh/memory";
+            const memoryDir = memoryBase(config && config.memoryDir);
             const odir = observationDir({ memoryDir, projectKey: projectKey(project) });
             if (odir) {
               observationsById = loadObservationsById(odir, runIds.filter(Boolean));
@@ -3426,9 +3425,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           return;
         }
         // memoryDir 从 config 拿（与 store 同源）；取不到就退回默认，与 config.js 的默认值一致。
-        const memoryDir = (config && typeof config.memoryDir === "string" && config.memoryDir.trim())
-          ? config.memoryDir
-          : "~/.dsh/memory";
+        const memoryDir = memoryBase(config && config.memoryDir);
         sendJson(res, 200, readCandidateDoc({ memoryDir, projectRoot: project }));
       } catch (error) {
         sendJson(res, 500, {
@@ -3509,9 +3506,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             });
             return;
           }
-          const memoryDir = (config && typeof config.memoryDir === "string" && config.memoryDir.trim())
-            ? config.memoryDir
-            : "~/.dsh/memory";
+        const memoryDir = memoryBase(config && config.memoryDir);
           const doc = nudgeForProject({
             projectRoot: project,
             // 上面已经解析过并判过 400/503，这里传进来，别再扫一遍桶。

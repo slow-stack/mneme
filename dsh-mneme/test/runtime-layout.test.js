@@ -7,6 +7,7 @@ import {
   RUNTIME_MANIFEST,
   TRANSFORMERS_ENTRY,
   defaultRuntimeDir,
+  defaultModelCacheDir,
   describePayload,
   listPayloadDirs,
   nodeModulesDir,
@@ -73,8 +74,10 @@ test("payloadId 带版本、平台与架构，多份可共存", () => {
   assert.equal(payloadId({ version: "4.3.1", platform: "darwin", arch: "arm64" }), "transformers-4.3.1-node-darwin-arm64");
 });
 
-test("运行时根目录默认挂在 ~/.dsh/mneme/runtime 下", () => {
-  assert.equal(defaultRuntimeDir("/home/u"), join("/home/u", ".dsh", "mneme", "runtime"));
+test("运行时根目录默认挂在中性家 ~/.mneme/runtime 下，不再是 .dsh", () => {
+  assert.equal(defaultRuntimeDir("/home/u"), join("/home/u", ".mneme", "runtime"));
+  // 模型缓存同源：也要在中性家下，且与运行时同父目录。
+  assert.equal(defaultModelCacheDir("/home/u"), join("/home/u", ".mneme", "models"));
 });
 
 test("transformersVersionOk 只认 >=4.2.0 <5", () => {
