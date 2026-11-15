@@ -801,6 +801,21 @@ CREATE TABLE IF NOT EXISTS profile_fact_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_profile_fact_runs_card ON profile_fact_runs(agent_key, started_at);
 
+-- 情绪边的人工修正账本（#725）：谁（面板 manual）、何时、对哪条边做了什么。
+-- 审计纪律同 profile_fact_journal：只记账，不触发任何 hook。自动轮不写这张表
+-- ——写入方只有 POST /semantic/graph/affective/apply（token-write）。before/after
+-- 存 JSON 摘要（emotion / attribution / archivedAt 的变化），给「恢复」与追溯用。
+CREATE TABLE IF NOT EXISTS affective_journal (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  at        TEXT NOT NULL,
+  edge_id   TEXT,
+  op        TEXT NOT NULL,                       -- rename | archive | restore | promote | demote
+  before    TEXT,
+  after     TEXT,
+  actor     TEXT NOT NULL DEFAULT 'manual'
+);
+CREATE INDEX IF NOT EXISTS idx_affective_journal_edge ON affective_journal(edge_id, id);
+
 -- ============================================================
 -- knowledge base（知识库第二层，spec: docs/plans/2026-11-08-kb-qoder-parity.md §3.3）。
 -- 与记忆行物理隔离的硬边界同 choro 那组表：kb 的行永不进 memories /
@@ -2702,6 +2717,19 @@ export function createStore(path) {
         WHERE type = ? AND TRIM(title) = ?
           AND forgotten = 0 AND archived = 0`
     ).all(type, String(title ?? "").trim());
+    return rows.map(toRow);
+  }
+
+  // #725 收尾：升格要「复用同题行、包含已归档的那条」。activeByTypeAndTitle 只取活跃行
+  // （写路径去重用），promote→demote→promote 的循环里上一轮被归档的正是要找的那条，
+  // 所以另开一个显式带 includeArchived 的读法。TRIM(title) 与上面同一把尺、无 LIMIT
+  // ——窗口在这里同样是错的（pattern 一多就会把目标挤出窗口，那正是 #734 的 ① 号坑）。
+  function findByTypeAndTitle(type, title, { includeArchived = false } = {}) {
+    const rows = db.prepare(
+      `SELECT ${memoryColumnList} FROM memories
+        WHERE type = ? AND TRIM(title) = ?
+          AND forgotten = 0${includeArchived ? "" : " AND archived = 0"}
+     `).all(type, String(title ?? "").trim());
     return rows.map(toRow);
   }
 
@@ -5270,6 +5298,40 @@ export function createStore(path) {
   }
 
   /**
+   * #725：按 id 取单条边（人工修正通道的寻址）。面板把一组
+   * (person, target, emotion, attribution) 当一个条目，apply 的 edgeIds 是组内
+   * 全部边；并发操作可能让其中某条已不存在，调用方逐条判空、失败进回执。
+   */
+  function relationById(id) {
+    if (typeof id !== "string" || !id) return null;
+    const row = db.prepare("SELECT * FROM entity_relations WHERE id = ?").get(id);
+    return row ? toRelation(row) : null;
+  }
+
+  /**
+   * #725：人工修正账本。审计纪律同 profile_fact_journal：只记账、不触发任何
+   * hook；自动轮不写这张表——写入方只有 apply 路由（token-write）。带 prune：
+   * 账本是审计事实不是检索面，无界增长没有读者（profile_fact_journal 同款）。
+   */
+  function recordAffectiveJournal({ at, edgeId = null, op, before = null, after = null, actor = "manual" }) {
+    db.prepare(
+      "INSERT INTO affective_journal (at, edge_id, op, before, after, actor) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(at ?? new Date().toISOString(), edgeId, op, before, after, actor);
+  }
+
+  function listAffectiveJournal(limit = 50) {
+    const cap = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 50;
+    return db.prepare("SELECT * FROM affective_journal ORDER BY id DESC LIMIT ?").all(cap);
+  }
+
+  function pruneAffectiveJournal(keep = 200) {
+    return db.prepare(
+      `DELETE FROM affective_journal WHERE id NOT IN (
+         SELECT id FROM affective_journal ORDER BY id DESC LIMIT ?)`
+    ).run(keep).changes;
+  }
+
+  /**
    * 按关系类型取全部边（#619 可见化 C）。情感边散在 23k 个实体之间，`ego` 端点
    * 是「从某个实体往外看」，天然不适合回答「这库里一共记了哪些情绪」——那要的
    * 是反向的、全局的一眼。所以单开一条按类型全表取，一次 SQL，不做 N 次往返。
@@ -6195,6 +6257,8 @@ export function createStore(path) {
     // Issue #505：写路径去重的定向候选（按 type + TRIM(title) 精确取活跃行），
     // 替代「importance 前 N 条」那个会随库增长失效的窗口。
     activeByTypeAndTitle,
+    // #725 收尾：升格复用同题行要能看见已归档那条（见函数注释）。
+    findByTypeAndTitle,
     // #430：有界单列读，写路径（质量过滤）用。
     recentContents,
     search,
@@ -6340,6 +6404,10 @@ export function createStore(path) {
     getEntityNeighbors,
     getRelationsByMemory,
     affectiveRelationsByMemories,
+    relationById,
+    recordAffectiveJournal,
+    listAffectiveJournal,
+    pruneAffectiveJournal,
     setMirrorState,
     getMirrorState,
     markMirrorDirty,

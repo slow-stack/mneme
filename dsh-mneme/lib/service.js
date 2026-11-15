@@ -3288,6 +3288,10 @@ export function createService({ store, mirror, config, onWrite, logger, document
       afterSync("write");
       notifyWrite();
     },
+    // #725 收尾：升格/降格要按同题行找 pattern（含已归档），走 store 的定向读。
+    // 不用 list()：那个是「该类型最重要的 N 行」，pattern 一多就把目标挤出窗口。
+    findByTypeAndTitle: (type, title, opts) => store.findByTypeAndTitle(type, title, opts),
+    activeByTypeAndTitle: (type, title) => store.activeByTypeAndTitle(type, title),
     update: updateMemory,
     // v0.8.1 底座：scope 归属修正审计（单条记忆，新→旧）。
     listScopeChanges: (memoryId, opts) => store.listScopeChanges(memoryId, opts),
@@ -3421,6 +3425,12 @@ export function createService({ store, mirror, config, onWrite, logger, document
     saveRelation: (r) => store.saveRelation(r),
     // #619：同一条边被后续观察补充证据时回写 metadata（情感相位判重命中）。
     updateRelationMetadata: (id, metadata) => store.updateRelationMetadata(id, metadata),
+    // #725：人工修正通道——按 id 寻址 + 账本读写。只记账不触发 hook（审计纪律
+    // 同 profile_fact_journal）；写入方只有 apply 路由（token-write）。
+    relationById: (id) => store.relationById(id),
+    recordAffectiveJournal: (entry) => store.recordAffectiveJournal(entry),
+    listAffectiveJournal: (limit) => store.listAffectiveJournal(limit),
+    pruneAffectiveJournal: (keep) => store.pruneAffectiveJournal(keep),
     listEntities: (o) => store.listEntities(o),
     countEntities: () => store.countEntities(),
     getRelations: (id) => store.getRelations(id),

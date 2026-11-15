@@ -535,3 +535,243 @@ test("#724 affective overview keeps archived edges out by default and lists them
   assert.equal(arc.items[0].emotion, "不安");
   assert.equal(arc.archivedEdges, 1);
 });
+
+// --- #725：人工修正通道（apply + journal）。token 未配置时 fail-open（写也可达），
+// 与 api.test.js 的鉴权口径一致；带 token 的拒绝路径在最下一条。 ---
+function reqPost(path, payload) {
+  const r = new EventEmitter();
+  r.url = path;
+  r.method = "POST";
+  r.headers = {};
+  process.nextTick(() => {
+    r.emit("data", Buffer.from(JSON.stringify(payload)));
+    r.emit("end");
+  });
+  return r;
+}
+
+test("#725 affective apply renames, archives, restores — and writes the journal each time", async () => {
+  const { routes, service } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  const e1 = service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "紧张", normalize_key: "紧张", valence: "negative", attribution: "occasion", evidence: ["m-1"] }
+  });
+  const apply = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective/apply");
+  const call = async (payload) => {
+    const r = new FakeRes();
+    await apply.handler(reqPost("/api/dsh-mneme/semantic/graph/affective/apply", payload), r);
+    return { status: r.statusCode, body: r.body ? JSON.parse(r.body) : null };
+  };
+
+  const ren = await call({ op: "rename", edgeIds: [e1.id], emotion: "不安" });
+  assert.equal(ren.status, 200);
+  assert.equal(ren.body.applied, 1);
+  let edge = service.relationById(e1.id);
+  assert.equal(edge.metadata.emotion, "不安", "改词落库");
+  assert.equal(edge.metadata.normalize_key, "不安", "词表内的词归一到组主词");
+  assert.equal(edge.metadata.valence, "negative");
+
+  const arch = await call({ op: "archive", edgeIds: [e1.id] });
+  assert.equal(arch.status, 200);
+  edge = service.relationById(e1.id);
+  assert.ok(edge.metadata.archivedAt, "归档标记落库（与 #724 TTL 同一标记）");
+
+  const rest = await call({ op: "restore", edgeIds: [e1.id] });
+  assert.equal(rest.status, 200);
+  edge = service.relationById(e1.id);
+  assert.equal(edge.metadata.archivedAt, undefined, "恢复清掉归档标记");
+
+  const bad = await call({ op: "rename", edgeIds: ["no-such-edge"], emotion: "平静" });
+  assert.equal(bad.status, 404, "组内全部边失效时 404，不假装成功");
+
+  const jr = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective/journal");
+  const jres = new FakeRes();
+  await jr.handler(req("/api/dsh-mneme/semantic/graph/affective/journal"), jres);
+  assert.equal(jres.statusCode, 200);
+  const journal = JSON.parse(jres.body).items;
+  assert.deepEqual(journal.map((j) => j.op).slice(0, 3), ["restore", "archive", "rename"], "三次成功操作各一条，新→旧");
+  assert.equal(journal[0].actor, "manual", "人工通道的账，actor=manual");
+});
+
+test("#725 affective apply promotes via the decision channel and demote archives the minted pattern", async () => {
+  const { routes, service } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  const e1 = service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", sessionCount: 3, evidence: ["m-1", "m-2"] }
+  });
+  const apply = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective/apply");
+  const call = async (payload) => {
+    const r = new FakeRes();
+    await apply.handler(reqPost("/api/dsh-mneme/semantic/graph/affective/apply", payload), r);
+    return { status: r.statusCode, body: r.body ? JSON.parse(r.body) : null };
+  };
+
+  const pro = await call({ op: "promote", edgeIds: [e1.id] });
+  assert.equal(pro.status, 200, "升格走决策通道成功");
+  const patterns = service.list({ type: "pattern", limit: 50 });
+  assert.equal(patterns.length, 1, "铸出一条 pattern");
+  assert.match(patterns[0].title, /答辩/, "标题带对象（去重键同款约束）");
+  let edge = service.relationById(e1.id);
+  assert.equal(edge.metadata.promotedToTrait, true);
+  assert.equal(edge.metadata.traitSessionCount, 3, "traitSessionCount 取组内最大");
+
+  const dem = await call({ op: "demote", edgeIds: [e1.id] });
+  assert.equal(dem.status, 200);
+  edge = service.relationById(e1.id);
+  assert.equal(edge.metadata.promotedToTrait, undefined, "降格清掉升格标记");
+  const after = service.list({ type: "pattern", limit: 50, includeArchived: true });
+  const minted = after.find((m) => m.title === patterns[0].title);
+  assert.ok(minted, "降格不删铸出的行");
+  assert.ok(minted.archived, "铸出的 pattern 行按同题归档（可恢复）");
+
+  const demAgain = await call({ op: "demote", edgeIds: [e1.id] });
+  assert.equal(demAgain.status, 200);
+  assert.equal(demAgain.body.applied, 0, "没有升格标记时无事可做");
+  assert.ok(demAgain.body.failures.length > 0, "无事可做要如实进 failures");
+});
+
+test("#725 affective apply is token-gated when a token is configured", async () => {
+  const { routes } = setup(FAKE_API_TOKEN);
+  const apply = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective/apply");
+  const noAuth = new FakeRes();
+  await apply.handler(reqPost("/api/dsh-mneme/semantic/graph/affective/apply", { op: "archive", edgeIds: ["x"] }), noAuth);
+  assert.equal(noAuth.statusCode, 401, "带 token 配置时无凭据写操作被拒");
+});
+
+// --- #734：升格/降格的四条回归（每一条都对应一个实测过的坑） ---
+
+function setupCfg(cfg, apiToken = "") {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: cfg });
+  const settings = createSettings(store.db);
+  const commands = { add: () => {}, remove: () => {}, list: () => [] };
+  const routes = [];
+  const ctx = { webServer: { register(route) { routes.push(route); return () => {}; } } };
+  createApi(ctx, service, settings, commands, null, undefined, apiToken, cfg);
+  return { store, service, routes, cfg };
+}
+
+function applyCaller(routes) {
+  const apply = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective/apply");
+  return async (payload) => {
+    const r = new FakeRes();
+    await apply.handler(reqPost("/api/dsh-mneme/semantic/graph/affective/apply", payload), r);
+    return { status: r.statusCode, body: r.body ? JSON.parse(r.body) : null };
+  };
+}
+
+// ① 200 行窗口：库里有 250 条别的 pattern 时，demote 必须仍能归档铸出的那一条。
+//    修前它走 list({limit:200})，目标被挤出窗口 → 边标记清掉、行留活跃，双重口径。
+test("#734 demote archives the minted pattern even when 250 other patterns crowd the list", async () => {
+  const { routes, service } = setupCfg(testConfig({}));
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  const e1 = service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", sessionCount: 3, evidence: ["m-1", "m-2"] }
+  });
+  const call = applyCaller(routes);
+
+  const pro = await call({ op: "promote", edgeIds: [e1.id] });
+  assert.equal(pro.status, 200);
+  const mintedId = service.relationById(e1.id).metadata.traitMemoryId;
+  assert.ok(mintedId, "升格必须把 pattern id 写进边（降格按 id 找行）");
+
+  // 塞 250 条别的 pattern，把 list({limit:200}) 那个窗口挤满。
+  for (let i = 0; i < 250; i++) {
+    service.saveWithDedupe({ type: "pattern", title: `别的倾向 ${i}`, content: `别的倾向 ${i} 的正文`, importance: 3 });
+  }
+
+  const dem = await call({ op: "demote", edgeIds: [e1.id] });
+  assert.equal(dem.status, 200);
+  assert.equal(dem.body.patternArchived, true, "pattern 必须真归档");
+  const row = service.getById(mintedId);
+  assert.equal(row.archived, true, "铸出的那一行被归档（不是被挤出窗口就算了）");
+  assert.equal(service.relationById(e1.id).metadata.promotedToTrait, undefined, "边标记同时清掉");
+});
+
+// ② 切语言：中文铸的 pattern，界面切英文后 demote 仍要归档它。
+//    修前按当前语言重算标题，与库里的中文标题对不上 → 查不到却报 applied:1。
+test("#734 demote archives a zh-minted pattern after the language switches to en", async () => {
+  const cfg = testConfig({ language: "zh" });
+  const { routes, service } = setupCfg(cfg);
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  const e1 = service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", sessionCount: 3, evidence: ["m-1", "m-2"] }
+  });
+  const call = applyCaller(routes);
+
+  const pro = await call({ op: "promote", edgeIds: [e1.id] });
+  assert.equal(pro.status, 200);
+  const mintedId = service.relationById(e1.id).metadata.traitMemoryId;
+  const zhRow = service.getById(mintedId);
+  assert.match(zhRow.title, /稳定倾向/, "中文界面铸出的标题是中文");
+
+  // 界面切英文（config 是同一个对象，langOf 每次都现读）。
+  cfg.language = "en";
+
+  const dem = await call({ op: "demote", edgeIds: [e1.id] });
+  assert.equal(dem.status, 200);
+  assert.equal(dem.body.patternArchived, true, "语言变了也要归档到当初那一行");
+  assert.equal(service.getById(mintedId).archived, true);
+});
+
+// ③ 重复 promote 幂等：第二次必须 200 + reused，不再是「409 却 failures 为空」。
+test("#734 repeated promote reuses the same pattern instead of failing with an empty failures array", async () => {
+  const { routes, service } = setupCfg(testConfig({}));
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  const e1 = service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", sessionCount: 3, evidence: ["m-1", "m-2"] }
+  });
+  const call = applyCaller(routes);
+
+  const first = await call({ op: "promote", edgeIds: [e1.id] });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.reused, false, "第一次是真铸");
+  const firstId = first.body.patternId;
+
+  const second = await call({ op: "promote", edgeIds: [e1.id] });
+  assert.equal(second.status, 200, "重复升格不是失败");
+  assert.equal(second.body.reused, true, "第二次是复用");
+  assert.equal(second.body.patternId, firstId, "复用同一行");
+  assert.equal(service.list({ type: "pattern", limit: 100, includeArchived: true }).length, 1, "库里仍只有一行");
+});
+
+// ④ 三轮 promote→demote 循环不累积 archived 行（修前实测 3 轮留 3 条）。
+test("#734 three promote/demote cycles leave a single reusable pattern row", async () => {
+  const { routes, service } = setupCfg(testConfig({}));
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  const e1 = service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", sessionCount: 3, evidence: ["m-1", "m-2"] }
+  });
+  const call = applyCaller(routes);
+
+  for (let round = 0; round < 3; round++) {
+    const pro = await call({ op: "promote", edgeIds: [e1.id] });
+    assert.equal(pro.status, 200, `第 ${round + 1} 轮升格`);
+    assert.equal(service.relationById(e1.id).metadata.promotedToTrait, true);
+    const dem = await call({ op: "demote", edgeIds: [e1.id] });
+    assert.equal(dem.status, 200, `第 ${round + 1} 轮降格`);
+    assert.equal(dem.body.patternArchived, true);
+    assert.equal(service.relationById(e1.id).metadata.promotedToTrait, undefined);
+  }
+  const all = service.list({ type: "pattern", limit: 100, includeArchived: true });
+  assert.equal(all.length, 1, "三轮之后库里仍只有一行 pattern（不新增 archived 行）");
+  assert.equal(all[0].archived, true, "最后停在归档态");
+});
