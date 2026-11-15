@@ -1992,6 +1992,9 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const vocab = affectiveVocabFor(language);
         const now = new Date().toISOString();
         let applied = 0;
+        // #725 收尾：op 的形状标记（reused / patternId / patternArchived），只在有意义的
+        // op 上出现；不往 applied 里掺——那是边计数，混进来会让面板把它读成边数。
+        const extra = {};
         try {
           if (op === "rename") {
             const raw = body.emotion.trim().slice(0, 40);
@@ -2043,71 +2046,131 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
               evidence,
               why: String(firstMeta.why ?? "").slice(0, 200)
             };
-            const decisions = [{
-              action: "create",
-              type: "pattern",
-              title: STR.affectiveTrait.title[language](trait),
-              content: STR.affectiveTrait.content[language](trait),
-              importance: 3,
-              evidence
-            }];
-            const snapshot = new Map();
-            const validated = validateDecisions(decisions, snapshot, { maxCreatePerRun: 1, allowedActions: ["create"] });
-            if (!validated.ok) return sendJson(res, 409, { error: "trait decisions rejected", detail: validated.failures ?? null });
-            const result = applyDecisions(decisions, service, ctx.logger, snapshot, { ...config, mintSource: "manual", runId: randomUUID() });
-            if (!result.applied) {
-              return sendJson(res, 409, { error: "trait mint failed", failures: result.failures ?? [] });
+            const traitTitle = STR.affectiveTrait.title[language](trait);
+            const traitContent = STR.affectiveTrait.content[language](trait);
+            // #725 收尾 ②③：升格是幂等的。同题行已存在就复用它——包括**已归档**的那行
+            // （promote → demote → promote 的循环里，上一轮被降格归档的正是它）。此前
+            // 只有决策通道铸新行，而 saveWithDedupe 的去重候选只含活跃行，于是归档行
+            // 永远命中不到，每循环一轮就多留一条 archived 行（实测 3 轮留 3 条）。
+            // 复用分支必须显式解档：不解档等于升格完还是「降格」状态。
+            const sameTitle = (service.findByTypeAndTitle?.("pattern", traitTitle, { includeArchived: true }) ?? [])
+              .filter((m) => m && m.type === "pattern");
+            let patternId = "";
+            let reused = false;
+            if (sameTitle.length) {
+              const row = sameTitle[0];
+              patternId = row.id;
+              reused = true;
+              if (row.archived) service.setArchived(row.id, false);
+              // 正文按本次证据刷新（会话数与证据可能变了）；标题是同题键，不动。
+              service.update?.(row.id, { content: traitContent, evidence });
+            } else {
+              const decisions = [{
+                action: "create",
+                type: "pattern",
+                title: traitTitle,
+                content: traitContent,
+                importance: 3,
+                evidence
+              }];
+              const snapshot = new Map();
+              const validated = validateDecisions(decisions, snapshot, { maxCreatePerRun: 1, allowedActions: ["create"] });
+              if (!validated.ok) return sendJson(res, 409, { error: "trait decisions rejected", detail: validated.failures ?? null });
+              const result = applyDecisions(decisions, service, ctx.logger, snapshot, { ...config, mintSource: "manual", runId: randomUUID() });
+              // #725 收尾 ②：applyCreate 撞上同题活跃行走 merged 时 applied 为 0，但
+              // committed 里有那一行的 id——那不是失败，是「别人刚铸了同一条」，
+              // 按复用处理。**不许**再返回 failures 为空的 409：面板拿不到任何原因，
+              // 用户看到的就是「失败了但不知道为什么」。
+              const touched = (result.committed ?? []).find((c) => c && typeof c.id === "string" && c.id);
+              if (touched) {
+                patternId = touched.id;
+                reused = touched.action !== "create";
+              } else {
+                return sendJson(res, 409, {
+                  error: "trait mint failed",
+                  failures: result.failures ?? [],
+                  conflicts: result.conflicts ?? [],
+                  applied: result.applied
+                });
+              }
             }
             for (const edge of edges) {
               const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : {};
-              service.updateRelationMetadata(edge.id, { ...meta, promotedToTrait: true, traitSessionCount: sessionCount });
+              const nextMeta = { ...meta, promotedToTrait: true, traitSessionCount: sessionCount };
+              // #725 收尾 ①：把铸出/复用的 pattern id 写进每条边。降格时按这个 id 精确
+              // 归档，语言无关、也不受 pattern 总数影响——按标题找行那套两个坑都在这里
+              // 被绕掉（标题随界面语言变；list 的 200 行窗口会被其它 pattern 挤爆）。
+              if (patternId) nextMeta.traitMemoryId = patternId;
+              service.updateRelationMetadata(edge.id, nextMeta);
               service.recordAffectiveJournal({
                 at: now, edgeId: edge.id, op,
-                before: JSON.stringify({ promotedToTrait: meta.promotedToTrait === true }),
-                after: JSON.stringify({ promotedToTrait: true, traitSessionCount: sessionCount })
+                before: JSON.stringify({ promotedToTrait: meta.promotedToTrait === true, traitMemoryId: meta.traitMemoryId ?? null }),
+                after: JSON.stringify({ promotedToTrait: true, traitSessionCount: sessionCount, traitMemoryId: patternId || null })
               });
               applied += 1;
             }
+            extra.reused = reused;
+            extra.patternId = patternId || null;
           } else if (op === "demote") {
-            // 降格：清组内全部边的升格标记；升格时铸的 pattern 行按同题归档
-            // （可恢复）。标题由 person/target/emotion 决定，person/target 取
-            // 组内第一条边的实体——同组共享同一对实体（聚合键保证）。
-            const firstMeta = edges[0].metadata && typeof edges[0].metadata === "object" ? edges[0].metadata : {};
-            const personEntity = service.findEntityById?.(edges[0].from_entity);
-            const targetEntity = service.findEntityById?.(edges[0].to_entity);
-            const traitTitle = STR.affectiveTrait.title[language]({
-              person: String(personEntity?.name ?? "?"),
-              target: String(targetEntity?.name ?? "?"),
-              emotion: String(firstMeta.emotion ?? "")
-            });
-            const patternRow = (service.list({ type: "pattern", limit: 200 }) ?? [])
-              .find((m) => m.title === traitTitle);
-            let patternArchived = false;
-            if (patternRow && patternRow.status !== "archived") {
-              service.setArchived(patternRow.id, true);
-              patternArchived = true;
+            // 降格：先清组内全部边的升格标记，再把升格时铸的那行 pattern 归档
+            // （可恢复，不删除）。
+            //
+            // #725 收尾 ①：找行改走边上的 `traitMemoryId`——升格时写下的是什么 id，
+            // 降格就按什么 id 归档，语言无关、与库里有多少条 pattern 无关。旧数据
+            // （本次改动之前升格的边）没有这个 id，才回落到同题查找，且只查**活跃行**
+            // （与升格时同一把去重尺，且不再用 `list({limit:200})` 那个会被挤爆的窗口）。
+            const traitIds = [...new Set(edges
+              .map((e) => (e.metadata && typeof e.metadata === "object" ? e.metadata.traitMemoryId : null))
+              .filter((id) => typeof id === "string" && id))];
+            const archivedIds = new Set();
+            for (const id of traitIds) {
+              const row = service.getById?.(id);
+              if (!row || row.type !== "pattern" || row.archived) continue;
+              service.setArchived(id, true);
+              archivedIds.add(id);
             }
+            if (!archivedIds.size) {
+              // 回落路径：只在一条 id 都没归档成功时按标题找一次，避免两条路各归档一行。
+              const firstMeta = edges[0].metadata && typeof edges[0].metadata === "object" ? edges[0].metadata : {};
+              const personEntity = service.findEntityById?.(edges[0].from_entity);
+              const targetEntity = service.findEntityById?.(edges[0].to_entity);
+              const traitTitle = STR.affectiveTrait.title[language]({
+                person: String(personEntity?.name ?? "?"),
+                target: String(targetEntity?.name ?? "?"),
+                emotion: String(firstMeta.emotion ?? "")
+              });
+              const row = (service.activeByTypeAndTitle?.("pattern", traitTitle) ?? [])[0];
+              if (row) {
+                service.setArchived(row.id, true);
+                archivedIds.add(row.id);
+              }
+            }
+            const patternArchived = archivedIds.size > 0;
             for (const edge of edges) {
               const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : {};
               if (meta.promotedToTrait !== true) continue;
               const nextMeta = { ...meta };
               delete nextMeta.promotedToTrait;
               delete nextMeta.traitSessionCount;
+              const clearedId = typeof nextMeta.traitMemoryId === "string" ? nextMeta.traitMemoryId : null;
+              delete nextMeta.traitMemoryId;
               service.updateRelationMetadata(edge.id, nextMeta);
               service.recordAffectiveJournal({
                 at: now, edgeId: edge.id, op,
-                before: JSON.stringify({ promotedToTrait: true, traitSessionCount: meta.traitSessionCount ?? null }),
-                after: JSON.stringify({ promotedToTrait: false, patternArchived })
+                before: JSON.stringify({ promotedToTrait: true, traitSessionCount: meta.traitSessionCount ?? null, traitMemoryId: clearedId }),
+                after: JSON.stringify({ promotedToTrait: false, patternArchived, traitMemoryId: null })
               });
               applied += 1;
             }
             if (patternArchived) applied += 0; // pattern 归档记在 journal 的 after 里，不混进边计数
             if (applied === 0 && !patternArchived) failures.push({ error: "nothing to demote" });
+            extra.patternArchived = patternArchived;
+            extra.archivedPatternIds = [...archivedIds];
           }
           // apply 成功后账本做一次修剪：审计事实不是检索面（profile_fact_journal
           // 同款 keep=200）。失败不回滚已成功的 op——逐边独立，如实报告即可。
           service.pruneAffectiveJournal?.(200);
-          sendJson(res, 200, { applied, failures });
+          sendJson(res, 200, { applied, failures, ...extra });
           return undefined;
         } catch (error) {
           // 同步异常（SQLite I/O）不能裸抛给宿主：500 + internal，与 profile-facts

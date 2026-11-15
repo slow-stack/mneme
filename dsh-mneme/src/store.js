@@ -2720,6 +2720,19 @@ export function createStore(path) {
     return rows.map(toRow);
   }
 
+  // #725 收尾：升格要「复用同题行、包含已归档的那条」。activeByTypeAndTitle 只取活跃行
+  // （写路径去重用），promote→demote→promote 的循环里上一轮被归档的正是要找的那条，
+  // 所以另开一个显式带 includeArchived 的读法。TRIM(title) 与上面同一把尺、无 LIMIT
+  // ——窗口在这里同样是错的（pattern 一多就会把目标挤出窗口，那正是 #734 的 ① 号坑）。
+  function findByTypeAndTitle(type, title, { includeArchived = false } = {}) {
+    const rows = db.prepare(
+      `SELECT ${memoryColumnList} FROM memories
+        WHERE type = ? AND TRIM(title) = ?
+          AND forgotten = 0${includeArchived ? "" : " AND archived = 0"}
+     `).all(type, String(title ?? "").trim());
+    return rows.map(toRow);
+  }
+
   // Issue #430：写路径要的「最近若干条正文」。质量过滤的近重复判定只读 content
   // 这一列 + 前 20 行，此前写成 all().slice(0, 20) —— 全表逐行 toRow（27 字段、
   // 三次 JSON 解析）之后只截前 20 条正文；5k 行实测 100ms 级 → 0.06ms 级。
@@ -6244,6 +6257,8 @@ export function createStore(path) {
     // Issue #505：写路径去重的定向候选（按 type + TRIM(title) 精确取活跃行），
     // 替代「importance 前 N 条」那个会随库增长失效的窗口。
     activeByTypeAndTitle,
+    // #725 收尾：升格复用同题行要能看见已归档那条（见函数注释）。
+    findByTypeAndTitle,
     // #430：有界单列读，写路径（质量过滤）用。
     recentContents,
     search,

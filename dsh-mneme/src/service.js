@@ -3288,6 +3288,10 @@ export function createService({ store, mirror, config, onWrite, logger, document
       afterSync("write");
       notifyWrite();
     },
+    // #725 收尾：升格/降格要按同题行找 pattern（含已归档），走 store 的定向读。
+    // 不用 list()：那个是「该类型最重要的 N 行」，pattern 一多就把目标挤出窗口。
+    findByTypeAndTitle: (type, title, opts) => store.findByTypeAndTitle(type, title, opts),
+    activeByTypeAndTitle: (type, title) => store.activeByTypeAndTitle(type, title),
     update: updateMemory,
     // v0.8.1 底座：scope 归属修正审计（单条记忆，新→旧）。
     listScopeChanges: (memoryId, opts) => store.listScopeChanges(memoryId, opts),
