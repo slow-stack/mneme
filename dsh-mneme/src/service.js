@@ -2307,6 +2307,9 @@ export function createService({ store, mirror, config, onWrite, logger, document
         for (const m of selected) {
           const edge = byMemory.get(m.id)?.[0];
           if (!edge?.metadata || typeof edge.metadata !== "object") continue;
+          // #724：已归档的边（过期巡检或人工归档）不再进注入——「这条情绪已经
+          // 过时了」是归档的含义，注入里继续挂它等于把归档当没发生。
+          if (edge.metadata.archivedAt) continue;
           if (edge.metadata.attribution === "trait" || edge.metadata.promotedToTrait === true) continue;
           const emotion = String(edge.metadata.emotion ?? "").trim();
           if (!emotion) continue;

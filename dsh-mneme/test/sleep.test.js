@@ -917,6 +917,74 @@ test("sleep: #723 emotion words normalize through the vocabulary, off-list words
   store.close();
 });
 
+// #724：occasion 边的过期归档。归档是可恢复标记不是删除；TTL 关（默认）不动；
+// 已归档的不重复记账。变异自证：删掉 staleness 比较（所有边都归档）→ 本条
+// 「archived === 1（不含新鲜边）」必须红。
+test("sleep: #724 stale occasion edges get archived when TTL is on, fresh ones survive", async () => {
+  const { service, store } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前", "答辩前他很不安");
+  linkSession(service, mem.id, "session-A");
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "不安", attribution: "occasion", evidence: [mem.id], why: "临场不安" }
+  ]);
+  await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  let rels = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  assert.equal(rels.length, 1);
+  const edgeId = rels[0].id;
+  const old = new Date(Date.now() - 100 * 86400000).toISOString();
+  store.db.prepare("UPDATE entity_relations SET created_at = ? WHERE id = ?").run(old, edgeId);
+  // 一条新鲜边（刚写入）：TTL 开着也不能动它。
+  const memFresh = makeMemory(service, "庆功", "庆功宴上他很开心");
+  linkSession(service, memFresh.id, "session-B");
+  const ctxFresh = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "开心", attribution: "occasion", evidence: [memFresh.id], why: "庆功" }
+  ]);
+  await runSleep(ctxFresh, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+
+  let result = await runSleep(affectiveCtx([]), service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(result.phases.affectiveTtl.status, "skipped", "TTL 关（默认）整个相位跳过");
+  assert.equal(result.phases.affectiveTtl.reason, "disabled");
+
+  result = await runSleep(affectiveCtx([]), service, affectiveConfig({ sleepAffectiveOccasionTtlDays: 30 }), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(result.phases.affectiveTtl.status, "ok");
+  assert.equal(result.phases.affectiveTtl.archived, 1, "只归档过期那条，新鲜边不动");
+  rels = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  assert.equal(rels.length, 2, "归档不是删除，行还在");
+  const stale = rels.find((r) => r.metadata.emotion === "不安");
+  assert.ok(stale.metadata.archivedAt, "过期边的归档标记落库");
+  const fresh = rels.find((r) => r.metadata.emotion === "开心");
+  assert.equal(fresh.metadata.archivedAt, undefined, "新鲜边不归档");
+
+  result = await runSleep(affectiveCtx([]), service, affectiveConfig({ sleepAffectiveOccasionTtlDays: 30 }), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(result.phases.affectiveTtl.status, "noop", "已归档的不重复记账");
+  store.close();
+});
+
+// #724：trait 与已升格（promotedToTrait）的边不过期——稳定倾向没有 TTL。
+test("sleep: #724 promoted edges never expire", async () => {
+  const { service, store } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前", "答辩前他总是焦虑");
+  linkSession(service, mem.id, "session-A");
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [mem.id], why: "临场" }
+  ]);
+  await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  const rels = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  const edgeId = rels[0].id;
+  const old = new Date(Date.now() - 100 * 86400000).toISOString();
+  store.db.prepare("UPDATE entity_relations SET created_at = ? WHERE id = ?").run(old, edgeId);
+  service.updateRelationMetadata(edgeId, { ...rels[0].metadata, promotedToTrait: true, traitSessionCount: 3 });
+  const result = await runSleep(affectiveCtx([]), service, affectiveConfig({ sleepAffectiveOccasionTtlDays: 30 }), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(result.phases.affectiveTtl.status, "noop", "升格边不过期");
+  const after = service.getRelations(person.id).filter((r) => r.relation_type === "affective_context");
+  assert.equal(after[0].metadata.archivedAt, undefined);
+  store.close();
+});
+
 test("sleep: an emotion backed by enough independent sessions mints a trait pattern", async () => {
   const { service, store } = setup();
   service.createEntity({ name: "桉桉", type: "person" });

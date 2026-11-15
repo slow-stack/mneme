@@ -1772,6 +1772,12 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const emotionF = String(url.searchParams.get("emotion") ?? "").trim().toLowerCase();
         const attributionF = String(url.searchParams.get("attribution") ?? "").trim().toLowerCase();
         const cursorRaw = String(url.searchParams.get("cursor") ?? "").trim();
+        // #724：归档口径。默认只出活跃边（ archivedAt 标记 = 过期或被人工归档）；
+        // ?archived=1 只看归档区（供「归档区可查可恢复」）。archivedEdges 单列——
+        // 「只有 0 条」得能自我解释：是没记过、还是都过期了。
+        const archivedOnly = url.searchParams.get("archived") === "1";
+        let archivedEdges = 0;
+        let emotionEdges = 0;
         // 分页模式 = 请求里带了 cursor 参数（空串=从头翻第一页）。游标模式下边帽
         // 放宽到 4×limit（下限 800）：聚合层分页分的是「组」，而组 ≤ 边——不放宽
         // 的话一页组永远翻不出第二页。不带的旧客户端维持原边帽，行为不变。
@@ -1785,6 +1791,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         const groups = new Map();
         for (const e of edges) {
           const meta = e.metadata && typeof e.metadata === "object" ? e.metadata : {};
+          const isArchived = meta.archivedAt ? true : false;
+          if (isArchived) archivedEdges += 1;
           const emotion = String(meta.emotion ?? "").trim();
           // 没有情绪名的边不进聚合：它是老版本或手工写的空壳，凑进「情绪一览」
           // 会造出一个名字为空的条目。但也不能假装它不存在——计数单列。
@@ -1794,6 +1802,8 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             ? "trait"
             : (metaAttribution || "occasion");
           if (!emotion) continue;
+          emotionEdges += 1;
+          if (archivedOnly !== isArchived) continue; // 默认档跳过归档边；归档档跳过活跃边
           // #723：聚合键优先取归一键（词表主词），「开心/高兴」不再因措辞漂移裂成
           // 两组；存量边没有 normalize_key，按词面兜底。
           const canonical = String(meta.normalize_key ?? "").trim() || emotion;
@@ -1914,9 +1924,14 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           // 让「只有 0 条」能自我解释：是库里真没有，还是有边但都不带情绪。
           // 口径按过滤前的全量组算——过滤描述的是这一页，不是池子。
           totalEdges: edges.length,
-          skippedEdges: edges.length - items.reduce((n, g) => n + g.edgeIds.length, 0),
+          // skipped 只数「没情绪名」的边——归档边有名字，由 archivedEdges 单列，
+          // 两本账不能混（否则「归档了」会被读成「本来就没记」）。
+          skippedEdges: edges.length - emotionEdges,
           truncated: edges.length >= edgeCap,
-          next
+          next,
+          // #724：库里有多少条已归档的情绪边。默认档它们不进 items——「情绪变少
+          // 了」得能自己解释是归档了而不是丢了。
+          archivedEdges
         });
       } catch {
         sendJson(res, 500, { error: "internal" });
