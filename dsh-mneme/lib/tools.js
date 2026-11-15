@@ -52,6 +52,15 @@ const MEMORY_ITEM_SCHEMA = {
     occurred_at: { type: "string" },
     // #230：document 指针行的文件定位——「全文按需读」的入口；普通行缺省。
     doc_path: { type: "string" },
+    // #735：`_score` 与 #713 的 vectorSearchThreshold 是同一把尺子——它就是
+    // finalThreshold 真的比过的那一个余弦（service.js 的 searchMemories 末尾按
+    // fuseRecall 记下的 signals.vector 回填），只在向量路命中时出现；
+    // keyword 模式、memory_list / memory_get 恒不带该键，所以是可选项。
+    // 之所以必须在这里声明：schema 是 additionalProperties:false，未声明的键会被
+    // 宿主 in-process 校验直接拒收（#735 = 向量路一开 memory_search 就整体报
+    // "invalid output"）。#713 那次只补了 DTO 产地、没补声明，测试只断 DTO 形状
+    // 而不过 output schema，于是两边各自绿着、合起来红。
+    _score: { type: "number" },
     created_at: { type: "string", required: true },
     updated_at: { type: "string", required: true }
   }

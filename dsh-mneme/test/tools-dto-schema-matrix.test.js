@@ -25,6 +25,8 @@ import { validateJsonSchemaValue } from "@deepseek-ai/dsh-tools";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createTools, MEMORY_ITEM_SCHEMA } from "../src/tools.js";
+import { createVectorIndex } from "../src/vector-index.js";
+import { testConfig } from "./helpers/test-config.js";
 
 // 矩阵清单：新增工具必须同时补进本文件的分支表，否则下面第一条断言会先失败提醒
 // ——这是「系统性」的含义：漏一个工具不会静默通过。
@@ -117,6 +119,38 @@ function seedShapes(store) {
   // #230：document 指针行——doc_path 是 toApiList 的条件键，必须有一行真的产出它。
   push({ type: "document", title: "shape-doc", content: "指针行摘要", doc_path: "X:\\seed\\doc.md", evidence: [] });
   return rows;
+}
+
+// #735：向量路形态单独造一份环境——setup() 的 service 不挂 embedder，全靠它跑不
+// 出 `_score`。这里让查询恒嵌成 [1,0,0]、行向量取余弦 0.5，再显式 threshold 0
+// （全库扫描）绕开一切阈值：要验的是「这条条件展开真的会在 DTO 里出现」，不是
+// 阈值行为（阈值有自己的 test/vector-threshold.test.js）。只往 observed 里记账，
+// 不额外断言，避免与 #735 的专项测试重复。
+async function observeVectorShape(observed) {
+  const embedder = {
+    embedSingle: async () => [1, 0, 0],
+    embed: async () => [1, 0, 0],
+    schedule: () => {},
+    modelHash: "mock#1",
+    dimension: 3
+  };
+  const store = createStore(":memory:");
+  const service = createService({
+    store,
+    mirror: null,
+    config: testConfig({ adaptiveThresholdEnabled: false, vectorSearchThreshold: 0.65 })
+  });
+  const vectorIndex = createVectorIndex({ store });
+  service.setEmbedder(embedder);
+  service.setVectorIndex(vectorIndex);
+  const row = service.saveWithDedupe({ type: "project", title: "score-shape", content: "向量路形态的正文" });
+  vectorIndex.saveEmbedding(row.memory.id, [0.5, Math.sqrt(0.75), 0]);
+
+  const rows = await service.searchMemories("量子计算入门", { mode: "vector", topK: 10, threshold: 0 });
+  assert.equal(rows.length, 1, "全库扫描必须命中那一行，否则这一形态的记账是空的");
+  for (const dto of service.toApiList(rows)) {
+    for (const key of Object.keys(dto)) observed.add(key);
+  }
 }
 
 // 清单比对必须在**暴露闸全开**的配置下做：#230 的 document 与 #231 的 organize 都是
@@ -317,7 +351,7 @@ test("A' 未命中 id 的三个工具按契约抛错（而不是返回半截对�
   await assert.rejects(() => byName.memory_archive.execute({ id: "missing-195" }), /memory not found/);
 });
 
-test("B DTO 产地：toApiList 全形态输出 ⊆ MEMORY_ITEM_SCHEMA，且声明键全部被真实产出", () => {
+test("B DTO 产地：toApiList 全形态输出 ⊆ MEMORY_ITEM_SCHEMA，且声明键全部被真实产出", async () => {
   const { store, service } = setup();
   seedShapes(store);
   const rows = service.toApiList(service.list({ limit: 100 }));
@@ -330,8 +364,11 @@ test("B DTO 产地：toApiList 全形态输出 ⊆ MEMORY_ITEM_SCHEMA，且声�
     for (const key of Object.keys(dto)) observed.add(key);
   }
 
-  // 反向：声明的每个键都必须有形态真的产出它。这条让 schema 与种子互相咬合——
-  // 以后给 toApiList 增键却忘了补种子，会在这里失败并提醒补形态。
+  // #735：`_score` 是 toApiList 的条件键里唯一只能在向量路产出的那个——list/get
+  // 永远不带它。上面只喂 list，所以必须再补一次向量路形态，否则「声明键必须被
+  // 真实产出」会把这条件键正确声明判成死声明（#735 修好后这里真的红过一次）。
+  await observeVectorShape(observed);
+
   const declared = Object.keys(MEMORY_ITEM_SCHEMA.properties);
   const neverProduced = declared.filter((key) => !observed.has(key));
   assert.deepEqual(neverProduced, [], `MEMORY_ITEM_SCHEMA 声明了但矩阵从未产出的键（补种子形态或删死声明）：${neverProduced.join(", ")}`);
