@@ -14,7 +14,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createStore } from "./store.js";
-import { envFirst, resolveMemoryDir } from "./paths.js";
+import { envFirst, resolveMemoryDir, explainResolution } from "./paths.js";
 import { createSettings } from "./settings.js";
 import { createMirror, TYPE_FILE } from "./mirror.js";
 import { langOf } from "./lang.js";
@@ -51,8 +51,14 @@ export async function createServeRuntime({
   }
   // 库目录口径统一在 src/paths.js：显式传参 > MNEME_MEMORY_DIR > 中性根默认，
   // 旧目录里已有库就继续用它。目录不存在时 node:sqlite 直接抛，先 mkdir。
-  const dir = resolveMemoryDir(memoryDir).dir;
+  const memoryResolved = resolveMemoryDir(memoryDir);
+  const dir = memoryResolved.dir;
   mkdirSync(dir, { recursive: true });
+  // 与宿主同一份告警：误建恰恰常从 daemon / 测试发生，这里不喊就漏掉一半现场
+  // （v0.16.0 那次「新家长出空库、主库差点读不到」就是从这个入口进来的）。
+  const note = explainResolution(memoryResolved);
+  if (note?.level === "warn") logger?.warn?.(note.message);
+  else if (note) logger?.info?.(note.message);
 
   // 装配顺序照 index.js:197-292:store → settings → mirror → service → recoverMirror。
   const store = createStore(join(dir, "memory.db"));

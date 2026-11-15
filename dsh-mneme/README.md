@@ -405,7 +405,7 @@ dsh web
 
 | 键 | 默认值 | 说明 |
 |----|--------|------|
-| `memoryDir` | 空 | 记忆存储目录（SQLite + Markdown）。空 = `MNEME_HOME`（兼容 `DSH_MNEME_HOME`）下的 `memory/`，默认 `<home>/.mneme/memory`；**老 `~/.dsh/memory` 里已有 `memory.db` 就继续用它**；也认 `MNEME_MEMORY_DIR` |
+| `memoryDir` | 空 | 记忆存储目录（SQLite + Markdown）。空 = `MNEME_HOME`（兼容 `DSH_MNEME_HOME`）下的 `memory/`，默认 `<home>/.mneme/memory`；**老 `~/.dsh/memory` 里有 `memory.db` 就继续用它**，**两边都有库时按体积判**（新库不足旧库 10% 视为误建，仍用旧库并告警，不静默搬家）；也认 `MNEME_MEMORY_DIR`，显式设了就直接用 |
 | `language` | `zh` | 记忆语言：生成的记忆条目、注入标题与后台 LLM 提示词所用语言（`zh` / `en`） |
 | `autoInject` | `true` | 会话启动自动注入记忆 |
 | `autoSummarize` | `true` | 会话结束自动提炼摘要 |

@@ -17,6 +17,7 @@ import {
   legacyMemoryDir,
   hasDb,
   resolveMemoryDir,
+  explainResolution,
   resolveRuntimeDir,
   resolveModelCacheDir,
   expandHome
@@ -83,7 +84,7 @@ test("旧目录只是空壳（没有 memory.db）不构成理由，仍用新家"
   assert.equal(r.dir, join(home, MNEME_HOME_DIR, "memory"));
 });
 
-test("两边都有库 → 用新家（用户已迁），旧库留着不删", (t) => {
+test("两边都有库、体积相当 → 认作已迁完，用新家，旧库留着不删", (t) => {
   const home = sandbox(t);
   const old = join(home, ".dsh", "memory");
   const next = join(home, MNEME_HOME_DIR, "memory");
@@ -95,7 +96,59 @@ test("两边都有库 → 用新家（用户已迁），旧库留着不删", (t)
   const r = resolveMemoryDir("", { env: cleanEnv(), home });
   assert.equal(r.source, "default");
   assert.equal(r.dir, next);
+  assert.equal(r.conflict, undefined, "体积相当不算误建，不该报冲突");
   assert.equal(existsSync(join(old, DB_FILE)), true, "旧库必须原地留着，解析不删任何东西");
+});
+
+test("两边都有库、新库小到像误建 → 继续用旧库并报 conflict（不让一次误跑搬走主库）", (t) => {
+  const home = sandbox(t);
+  const old = join(home, ".dsh", "memory");
+  const next = join(home, MNEME_HOME_DIR, "memory");
+  mkdirSync(old, { recursive: true });
+  mkdirSync(next, { recursive: true });
+  // 主库 100KB，误跑长出来的空库 1KB —— 差两个数量级，正是线上那次的形状。
+  writeFileSync(join(old, DB_FILE), Buffer.alloc(100 * 1024, 0x61));
+  writeFileSync(join(next, DB_FILE), Buffer.alloc(1024, 0x62));
+
+  const r = resolveMemoryDir("", { env: cleanEnv(), home });
+  assert.equal(r.source, "legacy", "误建的库不能把主库顶掉");
+  assert.equal(r.dir, old);
+  assert.deepEqual(
+    r.conflict && { nextDir: r.conflict.nextDir, oldDir: r.conflict.oldDir, nextBytes: r.conflict.nextBytes, oldBytes: r.conflict.oldBytes },
+    { nextDir: next, oldDir: old, nextBytes: 1024, oldBytes: 100 * 1024 }
+  );
+  // 两个库都还在——我们不删任何东西，只是选哪本。
+  assert.equal(existsSync(join(old, DB_FILE)), true);
+  assert.equal(existsSync(join(next, DB_FILE)), true);
+});
+
+test("体积判据的边界：新库正好 10% 不算误建，略小于 10% 才算", (t) => {
+  const home = sandbox(t);
+  const old = join(home, ".dsh", "memory");
+  const next = join(home, MNEME_HOME_DIR, "memory");
+  mkdirSync(old, { recursive: true });
+  mkdirSync(next, { recursive: true });
+  writeFileSync(join(old, DB_FILE), Buffer.alloc(1000, 0x61));
+
+  writeFileSync(join(next, DB_FILE), Buffer.alloc(100, 0x62)); // 正好 10%
+  assert.equal(resolveMemoryDir("", { env: cleanEnv(), home }).dir, next);
+
+  writeFileSync(join(next, DB_FILE), Buffer.alloc(99, 0x62)); // 9.9%
+  assert.equal(resolveMemoryDir("", { env: cleanEnv(), home }).source, "legacy");
+});
+
+test("迁移后库更小但同量级（如压缩过）仍认新家", (t) => {
+  const home = sandbox(t);
+  const old = join(home, ".dsh", "memory");
+  const next = join(home, MNEME_HOME_DIR, "memory");
+  mkdirSync(old, { recursive: true });
+  mkdirSync(next, { recursive: true });
+  writeFileSync(join(old, DB_FILE), Buffer.alloc(1000, 0x61));
+  writeFileSync(join(next, DB_FILE), Buffer.alloc(300, 0x62)); // 30%
+
+  const r = resolveMemoryDir("", { env: cleanEnv(), home });
+  assert.equal(r.source, "default");
+  assert.equal(r.dir, next);
 });
 
 test("显式配置与 MNEME_MEMORY_DIR 永远赢，且不看目录里有没有库", (t) => {
@@ -141,6 +194,17 @@ test("运行时与模型缓存也搬到中性家，旧目录在就继续用", (t
   assert.equal(resolveModelCacheDir({ env: cleanEnv(), home }), join(home, ".dsh", "mneme", "models"));
 });
 
+test("旧缓存的位置跟着 DSH_HOME 走，别人把家指到别处也不会白重下 200MB", (t) => {
+  const home = sandbox(t);
+  const dshHome = join(home, "elsewhere", "dsh");
+  mkdirSync(join(dshHome, "mneme", "runtime"), { recursive: true });
+  mkdirSync(join(dshHome, "mneme", "models"), { recursive: true });
+  const env = { DSH_HOME: dshHome };
+
+  assert.equal(resolveRuntimeDir({ env, home }), join(dshHome, "mneme", "runtime"));
+  assert.equal(resolveModelCacheDir({ env, home }), join(dshHome, "mneme", "models"));
+});
+
 test("expandHome 口径与其它模块一致", () => {
   const home = "/home/u";
   assert.equal(expandHome("~", home), home);
@@ -148,6 +212,37 @@ test("expandHome 口径与其它模块一致", () => {
   assert.equal(expandHome("~\\a", home), join(home, "a"));
   assert.equal(expandHome("/abs", home), "/abs");
   assert.equal(expandHome("rel", home), "rel");
+});
+
+test("告警文案：误建走 warn 并带两个路径与体积，单纯存量走 info，正常情况不吭声", () => {
+  const home = "/home/u";
+  const conflict = {
+    dir: join(home, ".dsh", "memory"),
+    source: "legacy",
+    conflict: {
+      nextDir: join(home, MNEME_HOME_DIR, "memory"),
+      oldDir: join(home, ".dsh", "memory"),
+      nextBytes: 3 * 1048576,
+      oldBytes: 845.9 * 1048576
+    }
+  };
+  const w = explainResolution(conflict);
+  assert.equal(w.level, "warn");
+  // 两个路径都得在：只报一个，人没法自己判断该留哪个。
+  assert.ok(w.message.includes(conflict.conflict.oldDir));
+  assert.ok(w.message.includes(conflict.conflict.nextDir));
+  assert.ok(w.message.includes("845.9MB"), `体积要人读：${w.message}`);
+  assert.ok(w.message.includes("3.0MB"));
+  // 逃生阀：真迁过去的人得知道怎么让它闭嘴。
+  assert.ok(w.message.includes("MNEME_MEMORY_DIR"));
+
+  const info = explainResolution({ dir: join(home, ".dsh", "memory"), source: "legacy" });
+  assert.equal(info.level, "info");
+  assert.ok(info.message.includes(join(home, ".dsh", "memory")));
+
+  assert.equal(explainResolution({ dir: home, source: "default" }), null);
+  assert.equal(explainResolution({ dir: home, source: "config" }), null);
+  assert.equal(explainResolution(null), null);
 });
 
 // ——— 端到端：不依赖 DSH 也能跑起来 ———

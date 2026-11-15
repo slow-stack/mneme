@@ -15,14 +15,21 @@
 //
 //   1. 显式配置（config.memoryDir / --memory-dir / MNEME_MEMORY_DIR）永远赢；
 //   2. 否则看两个候选目录里**谁真的有库文件**（memory.db），有库的那个优先；
-//   3. 两个都有库 → 用新家（用户已经迁过来了），旧目录原样留着不删；
+//   3. 两个都有库 → 按体积判一次再决定（见下），不静默搬家；
 //   4. 都没有 → 用新家并新建。
 //
 // 第 2 条是这套兼容的全部要点：判据是「有没有 memory.db」，不是「目录在不在」。
 // 目录存在但空的（例如某次误跑创建的）不该把用户的主库挡掉。
 //
+// 第 3 条**不能无条件用新家**：那样任何一次误建都能永久搬走主库——谁在
+// `MNEME_HOME` 下跑一次 standalone 或一次测试，新家就长出一个几 MB 的库；下次
+// 启动时两边都有库，静默选新的，845MB 那个再也读不到，而且一条日志都没有。
+// 「已经迁完的人」和「不小心建了一个」在目录形状上完全一样，只能靠体积分：
+// 新库比旧库小到 10% 以下就判为误建，继续用旧库（source=legacy + conflict 读数，
+// 调用方据此告警）；体积相当或更大才是真的迁完了，用新家、旧库原地留着。
+//
 // @module dsh-mneme/paths
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -96,13 +103,46 @@ export function hasDb(dir) {
   }
 }
 
+/** 库文件字节数。没有库或读不到都给 0——调用方只做量级比较，不拿它当精确值。 */
+export function dbBytes(dir) {
+  if (typeof dir !== "string" || dir.trim() === "") return 0;
+  try {
+    return statSync(join(dir, DB_FILE)).size;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * 人读的字节数（`845.9MB` / `3.2MB` / `912KB`）。
+ *
+ * 与 `src/runtime/model-fetch.js:327` 那份私有 `kb` 同口径（1024 进制、MB 一位小数）；
+ * 分开写是因为那份在下载层内部、不对外导出，为一行格式化去牵手下载模块不值。
+ */
+export function fmtBytes(n) {
+  const v = Number(n) || 0;
+  if (v >= 1048576) return `${(v / 1048576).toFixed(1)}MB`;
+  if (v >= 1024) return `${Math.round(v / 1024)}KB`;
+  return `${Math.round(v)}B`;
+}
+
+/**
+ * 新库小到这个比例（相对旧库）就算误建，而不是迁移。
+ *
+ * 10% 是个经验值：真迁过来的库至少得跟旧库同一个量级，误跑一次长出来的空库
+ * 只有几 MB，对着几百 MB 的正式库差着两个数量级，10% 两头都不会误判。
+ */
+export const MISTAKEN_NEW_DB_RATIO = 0.1;
+
 /**
  * 解析最终的库目录。**所有默认路径都要走这里**，别再各写一份 `"~/.dsh/memory"`。
  *
  * @param {string=} configured 显式配置（config.memoryDir / --memory-dir）
  * @param {{env?: object, home?: string}} [opts]
- * @returns {{dir: string, source: "config"|"env"|"default"|"legacy"}}
+ * @returns {{dir: string, source: "config"|"env"|"default"|"legacy", conflict?: object}}
  *   source=legacy 时调用方应当告警一句（还住在旧目录，可迁可不迁）。
+ *   conflict 存在表示两边都有库、且新库被判为误建，字段 `{nextDir, oldDir,
+ *   nextBytes, oldBytes}` 供调用方把两个路径与体积一起打出来。
  */
 export function resolveMemoryDir(configured, opts = {}) {
   const { env = process.env, home = homedir() } = opts;
@@ -119,7 +159,20 @@ export function resolveMemoryDir(configured, opts = {}) {
   const nextHas = hasDb(nextDir);
   const oldHas = hasDb(oldDir);
 
-  // 两个都有库 → 用户已经迁过，用新家；旧目录留着不动（我们不删任何东西）。
+  if (nextHas && oldHas) {
+    const nextBytes = dbBytes(nextDir);
+    const oldBytes = dbBytes(oldDir);
+    // 两边都有库。体积分不开「迁完了」和「不小心建了一个」就只能静默搬家，
+    // 而静默搬家的后果是主库永久读不到——所以这里必须判一次。
+    if (oldBytes > 0 && nextBytes < oldBytes * MISTAKEN_NEW_DB_RATIO) {
+      return {
+        dir: oldDir,
+        source: "legacy",
+        conflict: { nextDir, oldDir, nextBytes, oldBytes }
+      };
+    }
+    return { dir: nextDir, source: "default" };
+  }
   if (nextHas) return { dir: nextDir, source: "default" };
   if (oldHas) return { dir: oldDir, source: "legacy" };
   return { dir: nextDir, source: "default" };
@@ -134,6 +187,39 @@ export function memoryBase(configured, opts = {}) {
 }
 
 /**
+ * 解析结果要不要说句话？说什么？
+ *
+ * 消息文案放在这里而不是各入口各写一份：daemon（src/serve.js）与宿主（src/index.js）
+ * 走的是同一个 `resolveMemoryDir`，同一次误建不该一个喊、一个不喊——而误建恰恰常从
+ * daemon/测试那边发生，只有宿主告警等于漏掉一半现场。
+ *
+ * @param {{dir: string, source: string, conflict?: object}} resolved
+ * @returns {{level: "warn"|"info", message: string}|null}
+ */
+export function explainResolution(resolved) {
+  if (!resolved || typeof resolved !== "object") return null;
+  if (resolved.conflict) {
+    const { nextDir, oldDir, nextBytes, oldBytes } = resolved.conflict;
+    return {
+      level: "warn",
+      message:
+        `[dsh-mneme] 检测到新建的空库，仍在用旧库 ${oldDir}（${fmtBytes(oldBytes)}）。` +
+        `新家那边有个 ${nextDir}（${fmtBytes(nextBytes)}），小到不像迁过来的库。` +
+        "若你确实已经迁到新家，显式设 MNEME_MEMORY_DIR 或 memoryDir 指向它即可。"
+    };
+  }
+  if (resolved.source === "legacy") {
+    return {
+      level: "info",
+      message:
+        `[dsh-mneme] 记忆库仍住在旧目录 ${resolved.dir}（这里已有 memory.db）。` +
+        "迁到中性家可用 MNEME_HOME，或把 memoryDir 指过去；不迁也能正常用。"
+    };
+  }
+  return null;
+}
+
+/**
  * 运行时/模型缓存的默认根，同样搬到中性家下。
  *
  * 这两处是**缓存**不是数据：缓存目录丢了会重下（200MB 量级），不会丢用户内容，
@@ -144,16 +230,17 @@ export function memoryBase(configured, opts = {}) {
  * 它们背后的解析实现，别造第二份同名字面量。
  */
 export function resolveRuntimeDir({ env = process.env, home = homedir() } = {}) {
-  // 缓存只看 home，不跟 DSH_HOME 走：这是**给定 home 就要确定**的纯函数，
-  // 否则测试传一个假 home 也会被机器上的 DSH_HOME 带偏。真实机器上
-  // `~/.dsh` 通常就是指向 DSH 家的 junction，existsSync 照样命中。
+  // 旧缓存挂在**旧家**下，而旧家可以是 DSH_HOME 指定的地方，不一定等于
+  // `join(home, ".dsh")`：宿主声明了 DSH_HOME 却没给它建 junction 时，写死
+  // `join(home, ".dsh")` 会让这 200MB 缓存当成不存在、白重下一遍。所以走
+  // legacyHome()，与库那边同一个真源。
   const next = join(mnemeHome({ env, home }), "runtime");
-  const old = join(home, ".dsh", "mneme", "runtime");
+  const old = join(legacyHome({ env, home }), "mneme", "runtime");
   return existsSync(old) && !existsSync(next) ? old : next;
 }
 
 export function resolveModelCacheDir({ env = process.env, home = homedir() } = {}) {
   const next = join(mnemeHome({ env, home }), "models");
-  const old = join(home, ".dsh", "mneme", "models");
+  const old = join(legacyHome({ env, home }), "mneme", "models");
   return existsSync(old) && !existsSync(next) ? old : next;
 }

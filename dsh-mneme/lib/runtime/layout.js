@@ -81,11 +81,16 @@ export function transformersVersionOk(version) {
  *
  * 家目录不再是 .dsh：见 src/paths.js 的说明。运行时是**缓存**，所以兼容规则
  * 简单——旧家下有现成的 payload 就继续用它，避免白下 200MB；没有才用新家。
+ *
+ * `env` 单独一个参数是为了让「旧家在哪」跟着宿主的 DSH_HOME 走（把 DSH_HOME 指到
+ * 别处的人，缓存不该被当成不存在而重下）；测试传假 home 时顺手传 `{}` 就能把
+ * 机器的 DSH_HOME 挡在外面，不必依赖字段恰好为空。
  * @param {string} [home] - 家目录，测试时可注入。
+ * @param {object} [env] - 环境变量表，测试时可注入。
  * @returns {string} 运行时根目录。
  */
-export function defaultRuntimeDir(home = homedir()) {
-  return resolveRuntimeDir({ home });
+export function defaultRuntimeDir(home = homedir(), env = process.env) {
+  return resolveRuntimeDir({ home, env });
 }
 
 /**
@@ -119,10 +124,11 @@ export function detectLibc(platform = process.platform) {
  * 收在这里是因为它必须**唯一**：embedder、reranker、verify 三方若各写一份字面量，
  * 一旦漂移，verify 就会拿另一份模型去验证，验证结果不再是运行时的真实证据。
  * @param {string} [home] - 家目录，测试时可注入。
+ * @param {object} [env] - 环境变量表，测试时可注入（见 defaultRuntimeDir）。
  * @returns {string} 模型缓存目录。
  */
-export function defaultModelCacheDir(home = homedir()) {
-  return resolveModelCacheDir({ home });
+export function defaultModelCacheDir(home = homedir(), env = process.env) {
+  return resolveModelCacheDir({ home, env });
 }
 
 /**

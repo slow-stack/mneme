@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServeRuntime } from "../src/serve.js";
@@ -14,6 +15,21 @@ import { createSettings } from "../src/settings.js";
 
 function tmpDir() {
   return mkdtempSync(join(tmpdir(), "mneme-serve-"));
+}
+
+/**
+ * 造一本体积可控的**真** sqlite 库（伪造字节串会在 createStore 里抛
+ * "file is not a database"，那样测的就不是路径解析了）。体积靠一页 blob 撑开。
+ */
+function makeDb(file, bytes) {
+  const db = new DatabaseSync(file);
+  try {
+    db.exec("CREATE TABLE padding (b BLOB)");
+    db.prepare("INSERT INTO padding VALUES (?)").run(Buffer.alloc(bytes, 0x61));
+  } finally {
+    db.close();
+  }
+  return file;
 }
 
 /** 确定性 4 维伪嵌入:同词相关、异词近正交,足以让向量路径产生非零命中。 */
@@ -305,5 +321,58 @@ test("serve: 面板从没设过质量过滤 → daemon 按默认开处理（与�
   } finally {
     rt.dispose();
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* win 文件锁偶发 */ }
+  }
+});
+
+// daemon 是误建的常见来源（跑一次就长出一个空库），所以「告警」必须在它这里也成立，
+// 不能只在宿主 index.js 里喊。这条用环境变量摆出线上那次的形状：旧家 100KB 真库、
+// 新家 1KB 空库，然后走 daemon 的真实入口。
+test("serve: 新家只有空库时不搬走旧库，并在 daemon 日志里喊出来", async () => {
+  const root = tmpDir();
+  const oldDir = join(root, "dsh", "memory");
+  const nextDir = join(root, "mneme", "memory");
+  mkdirSync(oldDir, { recursive: true });
+  mkdirSync(nextDir, { recursive: true });
+  // 两本都得是真的 sqlite（伪造的字节串会在 createStore 那儿抛），体积靠 blob 撑开：
+  // 旧库 ~100KB、新库 ~1KB，就是线上那次误建的形状。
+  makeDb(join(oldDir, "memory.db"), 100 * 1024);
+  makeDb(join(nextDir, "memory.db"), 1024);
+
+  const saved = { MNEME_HOME: process.env.MNEME_HOME, DSH_HOME: process.env.DSH_HOME, DSH_MNEME_HOME: process.env.DSH_MNEME_HOME };
+  process.env.MNEME_HOME = join(root, "mneme");
+  process.env.DSH_HOME = join(root, "dsh");
+  delete process.env.DSH_MNEME_HOME;
+
+  const warns = [];
+  let rt = null;
+  try {
+    rt = await createServeRuntime({
+      port: 0,
+      embed: "off",
+      logger: { warn: (m) => warns.push(String(m)), info: () => {} }
+    });
+    await rt.api.ready;
+    assert.ok(rt.store, "daemon 起得来");
+    const hit = warns.find((m) => m.includes("检测到新建的空库"));
+    assert.ok(hit, `daemon 必须告警，实际 warnings=${JSON.stringify(warns)}`);
+    assert.ok(hit.includes(oldDir), "告警要给出实际在用的旧库路径");
+    assert.ok(hit.includes(nextDir), "告警要给出那个可疑的新家路径");
+
+    // 光看告警不够：得证明确实连的是旧库那本。写一条，再直接打开旧库按 id 找。
+    const saved2 = rt.store.save({ type: "history", title: "daemon 落在旧库", content: "证明连的是旧库", importance: 3 });
+    const probe = new DatabaseSync(join(oldDir, "memory.db"), { readOnly: true });
+    try {
+      const row = probe.prepare("SELECT title FROM memories WHERE id = ?").get(saved2.id);
+      assert.equal(row?.title, "daemon 落在旧库", "写入必须落进旧库，而不是误建的新库");
+    } finally {
+      probe.close();
+    }
+  } finally {
+    if (rt) rt.dispose();
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try { rmSync(root, { recursive: true, force: true }); } catch { /* win 文件锁偶发 */ }
   }
 });

@@ -32,7 +32,7 @@ CLI:
 dsh-mneme-serve [--memory-dir <dir>] [--port <n>] [--host <addr>] [--embed <provider>]
 ```
 
-- `memoryDir`:CLI > env `DSH_MNEME_MEMORY_DIR` > `~/.dsh/memory`(与宿主 config.js 同默认,支持前导 `~`)。
+- `memoryDir`:CLI > env `MNEME_MEMORY_DIR`(兼容 `DSH_MNEME_MEMORY_DIR`) > `src/paths.js` 的解析结果(新家 `<MNEME_HOME>/memory`,默认 `~/.mneme/memory`;老 `~/.dsh/memory` 有库就继续用,两边都有库按体积判、误建时仍用旧库并 warn)。与宿主 `src/index.js` 走同一个 `resolveMemoryDir()`,支持前导 `~`。
 - `--embed`:语义检索提供方。`local`(默认:自管 runtime 与嵌入模型缺失时**自动取件**,download 档,约 200MB;失败降级关键词并打可操作日志)| `ollama` | `openai`(读宿主面板存的 vector-config)| `off`(纯关键词 + BM25)。取件来源可用 env 换道:`DSH_MNEME_RUNTIME_DIR`(自管 runtime 目录)、`DSH_MNEME_RUNTIME_TARBALL_DIR`(离线 .tgz 目录,优先于联网)、`DSH_MNEME_RUNTIME_MIRROR`(registry 镜像前缀)。
 - port/host 解析链与宿主「外部访问」一致:显式参数 > kv `external_api` 持久值 > 默认 8790 / 127.0.0.1。
 - token 与 DSH 面板 / CLI **共用同一份**(kv `external_api`,首次启动自动生成并持久化)——三方零配置互通。

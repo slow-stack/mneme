@@ -75,9 +75,11 @@ test("payloadId 带版本、平台与架构，多份可共存", () => {
 });
 
 test("运行时根目录默认挂在中性家 ~/.mneme/runtime 下，不再是 .dsh", () => {
-  assert.equal(defaultRuntimeDir("/home/u"), join("/home/u", ".mneme", "runtime"));
+  // 传空 env 是必须的：旧家的位置跟着 DSH_HOME 走，不隔掉就会被跑测试这台机器的
+  // DSH_HOME 带偏（本机就有）。
+  assert.equal(defaultRuntimeDir("/home/u", {}), join("/home/u", ".mneme", "runtime"));
   // 模型缓存同源：也要在中性家下，且与运行时同父目录。
-  assert.equal(defaultModelCacheDir("/home/u"), join("/home/u", ".mneme", "models"));
+  assert.equal(defaultModelCacheDir("/home/u", {}), join("/home/u", ".mneme", "models"));
 });
 
 test("transformersVersionOk 只认 >=4.2.0 <5", () => {

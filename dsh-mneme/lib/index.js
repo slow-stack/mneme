@@ -4,7 +4,7 @@ import { createDocumentIndex } from "./document-index.js";
 import { resolveDocumentDir } from "./document.js";
 // #368 v1：profile 作用域落点检测（只提示，不改行为）。
 import { findProfileScopeSegment } from "./placement.js";
-import { resolveMemoryDir } from "./paths.js";
+import { resolveMemoryDir, explainResolution } from "./paths.js";
 import { createService } from "./service.js";
 // #254 写入准入（第一阶段只计量，不拦截）：见 src/write-admission.js 的文件头。
 import { createWriteAdmission } from "./write-admission.js";
@@ -209,12 +209,10 @@ export const apply = (ctx, config) => {
   const resolved = resolveMemoryDir(rawCfg.memoryDir);
   const memoryDir = resolved.dir;
   mkdirSync(memoryDir, { recursive: true });
-  if (resolved.source === "legacy") {
-    ctx.logger?.info?.(
-      `[dsh-mneme] 记忆库仍住在旧目录 ${memoryDir}（这里已有 memory.db）。` +
-      "迁到中性家可用 MNEME_HOME，或把 memoryDir 指过去；不迁也能正常用。"
-    );
-  }
+  // 告警文案与判定都在 paths.js，daemon 那边同一份（误建常从 daemon/测试发生）。
+  const note = explainResolution(resolved);
+  if (note?.level === "warn") ctx.logger?.warn?.(note.message);
+  else if (note) ctx.logger?.info?.(note.message);
 
   // #218 末楼的实际事故：profile 被清理，落在其中的记忆库连带丢失。命中
   // profile 作用域时给一条可操作的告警（只提示、不搬库、不加配置键），启发

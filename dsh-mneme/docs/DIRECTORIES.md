@@ -10,14 +10,16 @@
 
 | 根目录 | 是什么 | 谁拥有 | 全删会怎样 |
 |---|---|---|---|
-| `~/.mneme/memory`（`memoryDir` 默认值；有存量库时仍是 `~/.dsh/memory`） | **记忆库本体**：SQLite 正本 + 镜像 md + 各类本地状态 | mneme 机器写；镜像 md 预期人改 | 见 [§ 记忆库](#记忆库-memorydir默认-mnemememory有存量库时-dshmemory) |
-| `~/.mneme/{runtime,models}`（旧 `~/.dsh/mneme` 存在就继续用） | **自管运行时**（transformers + onnxruntime 闭包）与**本地模型缓存**——不是记忆库 | mneme 机器所有 | 可整目录删掉重来（这正是把它挂在家目录下的设计原意，`src/runtime/layout.js`） |
+| `~/.mneme/memory`（`memoryDir` 默认值；老 `~/.dsh/memory` 有库时仍用它，两边都有库按体积判，见下节） | **记忆库本体**：SQLite 正本 + 镜像 md + 各类本地状态 | mneme 机器写；镜像 md 预期人改 | 见 [§ 记忆库](#记忆库-memorydir) |
+| `~/.mneme/{runtime,models}`（旧 `~/.dsh/mneme` 存在就继续用；那个「旧」的位置跟着 `DSH_HOME` 走，不写死 `~/.dsh`） | **自管运行时**（transformers + onnxruntime 闭包）与**本地模型缓存**——不是记忆库 | mneme 机器所有 | 可整目录删掉重来（这正是把它挂在家目录下的设计原意，`src/runtime/layout.js`） |
 | `~/.dsh-mneme` | `dsh-mneme` CLI / MCP 的连接配置（`cli.json`：url + token） | 用户 | 删了重新 `dsh-mneme config set` 一次 |
 | `~/.dsh`（其余部分） | DSH 宿主的地盘：`sessions/`、`profiles/`、`skills/` 等 | 宿主 | 插件只读 `sessions/` 与 skills 目录，从不写 |
 | `<项目>/.mneme/`、`<项目>/.chorography/` | 住用户仓库里的点目录（工作流、仓库地志），随 git 走 | 混合（见 [§ 用户仓库里的点目录](#用户仓库里的点目录)） | 按 git 规矩来 |
 | `<os.tmpdir()>/mneme-choro-t1-*` | chorography T1 子进程的临时 overlay | mneme，用完即删 | 无关紧要 |
 
-## 记忆库 `<memoryDir>`（默认 `~/.mneme/memory`，有存量库时 `~/.dsh/memory`）
+## 记忆库 `<memoryDir>`
+
+三种情形决定这个目录**到底是哪一个**（`src/paths.js` 的 `resolveMemoryDir()`）：老 `~/.dsh/memory` 有 `memory.db`、新家没有 → 用老的（一行 info，可迁可不迁）；两边都有库 → **按体积判**，新库不足旧库 10% 就认作误建（有人在 `MNEME_HOME` 下跑了一次 standalone 或测试，长出一个空库），继续用旧库并 `warn` 出两个路径与各自体积——不静默搬家，因为「已经迁完」和「不小心建了一个」在目录形状上完全一样，只能靠体积分；体积相当或更大才认作已迁完。真迁过库的人若被误判，显式设 `MNEME_MEMORY_DIR` 或 `memoryDir` 即可绕过判定。这条告警由宿主入口与 daemon 入口共用同一份文案（`src/index.js` / `src/serve.js`），**不删任何一个库**。
 
 除「用户仓库里的点目录」与「重运行时」两类例外，mneme 的一切本地状态都宿在 `memoryDir` 下——宿主挂载入口与独立 daemon 都会展开前导 `~` 并在启动时建目录（`src/index.js` / `src/serve.js`），全部路径配置键见 [§ 路径配置键](#路径配置键一张表)。这不是随意的堆放：写盘纪律是**「删掉插件的目录就回滚干净」**（`src/diary/dir.js`、`src/candidates.js`、`src/pipeline-observations.js` 三处注释同一条纪律）——记忆库不在了，用户的仓库里不该留下任何 mneme 的痕迹。
 

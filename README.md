@@ -52,8 +52,8 @@ dsh web
 
 | 目录 | 是什么 |
 |------|--------|
-| `~/.mneme/memory` | 记忆库本体：SQLite 正本，加十份可手改的 Markdown 镜像（有存量库时仍读 `~/.dsh/memory`） |
-| `~/.mneme/{models,runtime}` | 本地嵌入模型与运行时缓存，删掉会自动重下（旧 `~/.dsh/mneme` 存在就继续用） |
+| `~/.mneme/memory` | 记忆库本体：SQLite 正本，加十份可手改的 Markdown 镜像（老 `~/.dsh/memory` 有库就继续读；两边都有库按体积判，误建的空库不会顶掉主库） |
+| `~/.mneme/{models,runtime}` | 本地嵌入模型与运行时缓存，删掉会自动重下（旧 `~/.dsh/mneme` 存在就继续用，那个「旧」的位置跟着 `DSH_HOME` 走） |
 | `~/.dsh-mneme` | CLI / MCP 的连接配置（url 与 token） |
 
 想卸掉：
@@ -168,8 +168,8 @@ Where it lands on your machine:
 
 | Path | What it is |
 |------|------------|
-| `~/.mneme/memory` | The store itself: the SQLite original plus ten hand-editable Markdown mirrors (an existing library under `~/.dsh/memory` keeps being used) |
-| `~/.mneme/{models,runtime}` | Local embedding model and runtime cache; delete it and it refetches (a legacy `~/.dsh/mneme` keeps being used) |
+| `~/.mneme/memory` | The store itself: the SQLite original plus ten hand-editable Markdown mirrors (an existing library under `~/.dsh/memory` keeps being used; when both exist, size decides, so a stray empty library cannot take over) |
+| `~/.mneme/{models,runtime}` | Local embedding model and runtime cache; delete it and it refetches (a legacy `~/.dsh/mneme` keeps being used, and that legacy path follows `DSH_HOME`) |
 | `~/.dsh-mneme` | CLI / MCP connection settings (url and token) |
 
 To remove it:
