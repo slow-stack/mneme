@@ -46,6 +46,48 @@ export function diaryDir({ memoryDir, projectRoot, configured = "" } = {}) {
   return join(diaryRoot({ memoryDir, configured }), key);
 }
 
+/**
+ * #613 §3：Agent 桶的根 `<root>/agents/`。与项目桶**并存不迁移**——存量项目桶
+ * 一行不动，v2 起新写入进 Agent 桶；正交的两个维度，读取侧都列（library.js）。
+ */
+export function agentsRoot({ memoryDir, configured = "" } = {}) {
+  return join(diaryRoot({ memoryDir, configured }), "agents");
+}
+
+/**
+ * 桶名合法性：**不按字符集白名单**，按「它是个单层目录名」判。
+ *
+ * 一开始写的是 `^[A-Za-z0-9._-]+$`，理由是路径成分越严越好——但现场就有一个
+ * 保留中文的桶（`QQ对话-4f061790`，用户那天让另一个会话手工写的）。白名单会把
+ * 那一本从导航栏里抹掉，等于把用户写过的日记藏起来，而界面上看不出来。
+ *
+ * 所以要挡的是**路径语义**，不是字符：分隔符、上跳、控制字符、首尾空白、
+ * 以及 `.` / `..` 这两个特殊目录名。挡完这些，桶名就只剩「单层目录名」这一种
+ * 可能，下游可以直接拼路径，不需要再比一次路径前缀（见 `bucketDir` 的注释）。
+ *
+ * 原本住在 library.js；#613 之后 dir.js 的 diaryAgentDir 也要用同一把尺，
+ * 两份实现迟早漂——上移到路径层，library.js 转出口保持既有 import 面。
+ */
+export function isBucketName(name) {
+  const s = String(name ?? "");
+  if (!s || s !== s.trim()) return false;
+  if (s === "." || s === "..") return false;
+  if (/[/\\]/.test(s)) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(s)) return false;
+  return true;
+}
+
+/**
+ * `<root>/agents/<agentId>/`。agentId 必须是单层目录名（isBucketName 口径），
+ * 不合法返回 null——调用方据此落到 `_unnamed`，绝不退成别的目录名。
+ */
+export function diaryAgentDir({ memoryDir, agentId, configured = "" } = {}) {
+  const id = String(agentId ?? "").trim();
+  if (!id || !isBucketName(id)) return null;
+  return join(agentsRoot({ memoryDir, configured }), id);
+}
+
 /** 只认 `YYYY-MM-DD.md`：同目录还住着 runs.jsonl，扫最新日期时不能把它算进去。 */
 export const DIARY_FILE_RE = /^\d{4}-\d{2}-\d{2}\.md$/;
 

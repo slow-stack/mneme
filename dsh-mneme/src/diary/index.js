@@ -18,7 +18,10 @@ export { createDiaryComposer, validateBody, latestDiaryDate, MIN_BODY_CHARS, MAX
 export { createDiaryAutoRun, DIARY_MIN_INTERVAL_MS } from "./auto.js";
 export { collectQqInbox, inboxFiles, redactDigits, resolveInboxDir, INBOX_FILE_RE } from "./qq-inbox.js";
 export { collectSessionTranscript, sessionAgentId, MAX_ITEM_CHARS } from "./session-provider.js";
-export { diaryDir, diaryRoot, diaryFilePath, diaryAuditPath, memoryBase, expandHome, DIARY_FILE_RE } from "./dir.js";
+// #613：agent 维度——身份解析/落定、agents/ 桶路径、全局记忆素材。
+export { settleAgent, resolveAgentId, sessionTitleOf, personaAgentNames, backfillColdSessions, readAgentSessions, UNNAMED_AGENT } from "./agent-bucket.js";
+export { collectMemoryMaterial, localDayWindow, localTzOffsetMinutes } from "./memory-provider.js";
+export { diaryDir, diaryAgentDir, agentsRoot, diaryRoot, diaryFilePath, diaryAuditPath, memoryBase, expandHome, DIARY_FILE_RE } from "./dir.js";
 export { localDateString, shouldRollDay, dayGap, MAX_CATCH_UP_DAYS } from "./rollover.js";
 export { listDiaries, readDiary, exportDiary, EXPORT_SUBDIR } from "./export.js";
 // 左侧「ta 的日记」面板读的是**跨桶**清单（它拿不到当前会话的项目），

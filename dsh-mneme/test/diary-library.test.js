@@ -36,11 +36,12 @@ function entry({ persona = "", project = "p", body = "正文" } = {}) {
 }
 
 test("按桶列出日记，名字取自 frontmatter 的 persona 而不是目录名", (t) => {
-  // 两个桶是同一个项目（#613 的双桶现场）：目录名一个保留中文、一个被洗成 -。
+  // 两个桶是**不同项目**（异 hash）：#613 §3.2 之后同 hash 双桶会在读取时自动
+  // 归并，所以「两个桶各挂各的人格名」的现场要用不同后缀来钉命名语义。
   // 面板要显示的是「amarre」与「ptc」，不是那两个目录键。
   const { memoryDir } = fixture({
     "QQ对话-4f061790": { "2026-11-07": entry({ persona: "settings (amarre)", project: "QQ对话-4f061790" }) },
-    "QQ---4f061790": { "2026-11-08": entry({ persona: "default (ptc)", project: "QQ---4f061790" }) }
+    "QQ---7c3be210": { "2026-11-08": entry({ persona: "default (ptc)", project: "QQ---7c3be210" }) }
   });
   t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
 
@@ -48,9 +49,9 @@ test("按桶列出日记，名字取自 frontmatter 的 persona 而不是目录�
   assert.equal(buckets.length, 2);
   const byKey = Object.fromEntries(buckets.map((b) => [b.key, b]));
   assert.equal(byKey["QQ对话-4f061790"].persona, "settings (amarre)");
-  assert.equal(byKey["QQ---4f061790"].persona, "default (ptc)");
+  assert.equal(byKey["QQ---7c3be210"].persona, "default (ptc)");
   // 桶键原样保留（面板要用它拼路由），没被改写。
-  assert.ok(byKey["QQ---4f061790"]);
+  assert.ok(byKey["QQ---7c3be210"]);
 });
 
 test("新的在前；每桶带 latest / count / entries", (t) => {

@@ -27,7 +27,10 @@ export function createDiaryAutoRun({
   now = () => Date.now(),
   minIntervalMs = DIARY_MIN_INTERVAL_MS,
   everyMs = 0,
-  listProjects = null
+  listProjects = null,
+  /** #613 §5：给出时触发走 agent 维度（一个 Agent 一本）；缺席维持项目维度。 */
+  agentResolver = null,
+  listAgents = null
 } = {}) {
   const log = logger || (ctx && ctx.logger) || null;
   let disposed = false;
@@ -48,17 +51,33 @@ export function createDiaryAutoRun({
     return s;
   };
 
-  const runOne = (projectRoot, trigger, session = null) => {
-    pending.delete(projectRoot);
+  const runOne = (key, trigger, payload = null) => {
+    pending.delete(key);
     if (disposed || !composer) return null;
-    checkedAt.set(normalize(projectRoot), now());
-    // session 与 agentId 一起传：素材取会话转录，声音取这个会话的人格卡。
-    // 两者必须来自同一个会话，否则会写出「A 的人格 + B 的素材」那种缝合怪。
-    const task = composer.compose({ trigger, projectRoot, session, agentId: sessionAgentId(session) });
+    checkedAt.set(normalize(key), now());
+    let task;
+    if (payload && payload.agentMode) {
+      // #613 §5：agent 维度——素材来自全局记忆（compose 内部按 agentId 查已落定
+      // 会话），projectRoot 在 agent 桶里没有意义；会话只是身份来源之一。
+      task = composer.compose({
+        trigger,
+        agentMode: true,
+        agentId: payload.agentId,
+        session: payload.session ?? null
+      });
+    } else {
+      // projectRoot 用 pending 里记的**原始**路径：normalize 的键是小写正斜杠，
+      // 只配去重，不能当路径传出去（Windows 下大小写/反斜杠是用户看到的路径）。
+      const projectRoot = (payload && payload.projectRoot) || key;
+      const session = payload ? payload.session ?? null : null;
+      // session 与 agentId 一起传：素材取会话转录，声音取这个会话的人格卡。
+      // 两者必须来自同一个会话，否则会写出「A 的人格 + B 的素材」那种缝合怪。
+      task = composer.compose({ trigger, projectRoot, session, agentId: sessionAgentId(session) });
+    }
     // compose 是异步的（要等模型），绝不能返回给 session/event 的派发方去 await——
     // 那会把回合收尾吊在模型延迟上（本机实测 p90 五十秒级）。
     return Promise.resolve(task).catch((error) => {
-      log?.warn?.("[dsh-mneme] diary compose failed (" + projectRoot + "): " + String((error && error.message) || error));
+      log?.warn?.("[dsh-mneme] diary compose failed (" + key + "): " + String((error && error.message) || error));
       return null;
     });
   };
@@ -68,8 +87,8 @@ export function createDiaryAutoRun({
     if (disposed) return;
     const first = pending.entries().next();
     if (first.done) return;
-    const [projectRoot, queued] = first.value;
-    runOne(projectRoot, queued.trigger, queued.session);
+    const [key, queued] = first.value;
+    runOne(key, queued.trigger, queued);
     if (pending.size > 0 && !disposed) defer();
   };
 
@@ -85,8 +104,18 @@ export function createDiaryAutoRun({
     const key = normalize(projectRoot);
     const last = checkedAt.get(key);
     if (last !== undefined && now() - last < minIntervalMs) return;
-    if (pending.has(projectRoot)) return;
-    pending.set(projectRoot, { session, trigger });
+    if (pending.has(key)) return;
+    // projectRoot 原样进 pending：key 只做去重，跑的时候要原始路径。
+    pending.set(key, { session, trigger, projectRoot });
+    defer();
+  };
+
+  const scheduleAgent = (agentId, payload = {}, trigger = "rollover") => {
+    const key = "agent:" + String(agentId);
+    const last = checkedAt.get(key);
+    if (last !== undefined && now() - last < minIntervalMs) return;
+    if (pending.has(key)) return;
+    pending.set(key, { ...payload, agentMode: true, trigger });
     defer();
   };
 
@@ -94,6 +123,22 @@ export function createDiaryAutoRun({
     if (disposed) return;
     if (sessionGate?.isOff(session)) return;
     if (!event || event.type !== "turn/end") return;
+    // #613 §5：有 agent 解析器时走 agent 维度；解析器缺席（旧接线/纯测试）维持
+    // 项目维度，行为与 v0.13 逐字节一致。解析失败返回 null 才落到项目维度——
+    // 解析成功（含 _unnamed）都有自己的桶。
+    if (agentResolver) {
+      let resolved = null;
+      try {
+        resolved = agentResolver(session);
+      } catch (error) {
+        log?.warn?.("[dsh-mneme] diary agent resolve failed: " + String((error && error.message) || error));
+      }
+      if (resolved && resolved.agentId) {
+        scheduleAgent(resolved.agentId, { session });
+        return;
+      }
+      if (resolved !== null) return;
+    }
     const projectRoot = projectRootOf(session);
     if (!projectRoot) return;
     schedule(projectRoot, session);
@@ -119,13 +164,24 @@ export function createDiaryAutoRun({
     ticker = null;
     if (!composer || everyMs <= 0) return;
     try {
-      const projects = typeof listProjects === "function" ? listProjects() : [];
-      const list = Array.isArray(projects) ? projects.filter(Boolean) : [];
-      for (const projectRoot of list) {
-        if (disposed) break;
-        // 同一个项目由 turn/end 刚判过就不必再判（minIntervalMs 已经在 schedule 里
-        // 拦了一道，这里只是省掉一次 map 写入）。
-        schedule(projectRoot, null, "timer");
+      // #613 §5：agent 维度在位时，定时巡检扫的是 agent 名单（素材来自全局记忆，
+      // 不需要会话在场）；否则维持项目清单（v0.13 行为）。
+      if (agentResolver) {
+        const agents = typeof listAgents === "function" ? listAgents() : [];
+        const list = Array.isArray(agents) ? agents.filter(Boolean) : [];
+        for (const agentId of list) {
+          if (disposed) break;
+          scheduleAgent(agentId, {}, "timer");
+        }
+      } else {
+        const projects = typeof listProjects === "function" ? listProjects() : [];
+        const list = Array.isArray(projects) ? projects.filter(Boolean) : [];
+        for (const projectRoot of list) {
+          if (disposed) break;
+          // 同一个项目由 turn/end 刚判过就不必再判（minIntervalMs 已经在 schedule 里
+          // 拦了一道，这里只是省掉一次 map 写入）。
+          schedule(projectRoot, null, "timer");
+        }
       }
     } catch (error) {
       log?.warn?.("[dsh-mneme] diary timer scan failed: " + String((error && error.message) || error));
@@ -156,6 +212,20 @@ export function createDiaryAutoRun({
    */
   const catchUp = (projects = []) => {
     if (disposed || !composer) return Promise.resolve([]);
+    // #613 §5：agent 维度在位时，启动补写扫 agent 名单（knownAgents——compose 的
+    // 落盘去重保证一天一篇）；项目维度在 agent 模式下不再接收新写入。
+    if (agentResolver) {
+      const agents = typeof listAgents === "function" ? listAgents() : [];
+      const list = Array.isArray(agents) ? agents.filter(Boolean) : [];
+      return Promise.all(
+        list.map((agentId) =>
+          Promise.resolve(composer.compose({ trigger: "startup", agentMode: true, agentId })).catch((error) => {
+            log?.warn?.("[dsh-mneme] diary startup catch-up failed (" + agentId + "): " + String((error && error.message) || error));
+            return null;
+          })
+        )
+      );
+    }
     const list = Array.isArray(projects) ? projects.filter(Boolean) : [];
     return Promise.all(
       list.map((projectRoot) =>

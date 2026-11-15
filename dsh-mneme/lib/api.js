@@ -3437,6 +3437,26 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         sendJson(res, 405, { error: "method-not-allowed", allow: "POST" }, { Allow: "POST" });
         return;
       }
+      // #613 §5：agentMode——面板对 agent 桶（key 以 agents/ 开头）的「写一篇」
+      // 走这条分支：不需要 projectRoot（素材来自全局记忆，落点是 agents/<agentId>/），
+      // agentId 是桶身份本身。项目桶的路径原样保留在下方。
+      const q0 = new URL(req.url, "http://localhost").searchParams;
+      if (q0.get("agentMode") === "1") {
+        const agentId = (typeof q0.get("agent") === "string" ? q0.get("agent").trim() : "");
+        if (!agentId) {
+          sendJson(res, 400, { error: "agent required" });
+          return;
+        }
+        Promise.resolve(diary.compose({ trigger: "manual", agentMode: true, agentId }))
+          .then((result) => {
+            const status = result && result.ok === false ? 500 : 200;
+            sendJson(res, status, { contract: "mneme.diary/v1", ...result });
+          })
+          .catch((error) => {
+            sendJson(res, 500, { error: "diary-compose-failed", detail: String((error && error.message) || error) });
+          });
+        return;
+      }
       const project = diaryProject(req, res);
       if (!project) return;
       // 会话身份（「设定好人格的 agent 只以这个人格的口吻写日记」）：手动「写一篇」

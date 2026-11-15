@@ -25,7 +25,9 @@ import { breakFenceMarkers } from "../fence.js";
 import { STR, langOf } from "../lang.js";
 import { collectQqInbox, resolveInboxDir } from "./qq-inbox.js";
 import { collectSessionTranscript } from "./session-provider.js";
-import { DIARY_FILE_RE, diaryAuditPath, diaryDir, diaryFilePath, diaryRoot } from "./dir.js";
+import { collectMemoryMaterial } from "./memory-provider.js";
+import { readAgentSessions, agentSessionIds, UNNAMED_AGENT } from "./agent-bucket.js";
+import { DIARY_FILE_RE, diaryAuditPath, diaryAgentDir, diaryDir, diaryFilePath, diaryRoot, agentsRoot, isBucketName } from "./dir.js";
 import { localDateString, shouldRollDay } from "./rollover.js";
 
 /** 正文太短当失败：模型偶尔只回一句「今天聊了聊天」，那不是日记，落盘就是噪音。 */
@@ -89,7 +91,9 @@ export function latestDiaryDate(dir) {
 function renderMaterial(items) {
   return items
     .map((it) => {
-      const tag = it.role === "assistant" ? "assistant" : "user";
+      // #613：素材不止两种角色——记忆条目带 type（preference/decision/…），直接
+      // 作为标签展示；assistant/user 保持原语义（session-provider 那侧不受影响）。
+      const tag = String(it.role || "user");
       if (!Number.isFinite(it.ts)) return `[${tag}] ${it.text}`;
       const d = new Date(it.ts);
       const hh = String(d.getHours()).padStart(2, "0");
@@ -159,10 +163,16 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
    * @param {object|null} [input.session] 当前会话对象：素材主来源
    * @param {string|null} [input.agentId] 会话身份（`header.agentPreset`）：决定用哪张人格卡
    */
-  async function compose({ trigger = "rollover", projectRoot, chatId = null, session = null, agentId = null } = {}) {
+  async function compose({ trigger = "rollover", projectRoot, chatId = null, session = null, agentId = null, agentMode = false } = {}) {
     const at = now();
     const today = localDateString(at);
-    const root = diaryDir({ memoryDir, projectRoot, configured: config?.diaryDir });
+    // #613 §3：两种桶**并存不迁移**——项目桶（v0.13 存量，一行不动）与 Agent 桶
+    // （v2 起新写入）。agentMode 时 projectRoot 被忽略：素材来自全局记忆，落点只
+    // 由 agentId 决定；agentId 不合法就落到 _unnamed（验收红线：不存在的 Agent
+    // 不许有同名目录，不认识的会话不许冒出目录）。
+    const root = agentMode
+      ? diaryAgentDir({ memoryDir, agentId, configured: config?.diaryDir })
+      : diaryDir({ memoryDir, projectRoot, configured: config?.diaryDir });
     const auditFile = root ? diaryAuditPath(root) : null;
     const audit = (record) => {
       if (!auditFile) return;
@@ -178,14 +188,20 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
     };
 
     if (!root) {
-      // 项目根为空 = 这条会话不属于任何项目。绝不能退回宿主 cwd 写日记，
-      // 那会把私密正文摊到启动目录里（与 /pipeline 拒 project-not-absolute 同语义）。
-      audit({ status: "skipped", reason: "project-unknown" });
-      return { ok: true, status: "skipped", reason: "project-unknown", date: today };
+      // 项目根为空 = 这条会话不属于任何项目（agentMode 则是 agentId 形状不合法）。
+      // 绝不能退回宿主 cwd 写日记，那会把私密正文摊到启动目录里（与 /pipeline
+      // 拒 project-not-absolute 同语义）。
+      const reason = agentMode ? "agent-invalid" : "project-unknown";
+      audit({ status: "skipped", reason });
+      return { ok: true, status: "skipped", reason, date: today };
     }
-
-    const state = await readState(join(root, ".."));
-    const key = root.split(/[\\/]/).filter(Boolean).pop() || "";
+    // stateRoot 在 root 判空之后算：root 为 null 时 join(null, "..") 会 TypeError，
+    // 而那个 null 正是上面刚处理完的「项目未知/身份不合法」分支。
+    const stateRoot = agentMode
+      ? agentsRoot({ memoryDir, configured: config?.diaryDir })
+      : join(root, "..");
+    const state = await readState(stateRoot);
+    const key = agentMode ? String(agentId).trim() : root.split(/[\\/]/).filter(Boolean).pop() || "";
     const entry = state[key] || {};
     const lastDate = entry.lastDate || latestDiaryDate(root);
     const roll = shouldRollDay(lastDate, today);
@@ -197,7 +213,7 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
     if (!manual && existed && !roll.gap) {
       // 文件已存在但状态文件说没写过（状态丢过一次）：以文件为准，不重写。
       state[key] = { ...entry, projectRoot, lastDate: today, chatId: chatId ?? entry.chatId ?? null };
-      writeState(join(root, ".."), state);
+      writeState(stateRoot, state);
       return skip("already-written", { lastDate: today });
     }
 
@@ -209,7 +225,38 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
     // 的意思是「把现在这段写下来」，不是「写今天 00:00 到现在的」。
     const source = { kind: "session", scanned: 0, ignored: 0 };
     let collected = { items: [] };
-    if (session) {
+    // #724 截断统计（#613 §4）：total/used 必须可观测——LIMIT 静默砍掉的正是
+    // 晚上那段（#613 实测 11-07 尾部 18/19/22 点共 267 条），不报错。
+    let memoryStats = null;
+    if (agentMode) {
+      // #613 §4：素材主来源 = 全局记忆。具名 agent：它名下已落定会话的痕迹；
+      // _unnamed：全部 session 源里「没落到具名 agent 的」冷行（验收红线 8：
+      // 冷行默认进 _unnamed；diaryBackfillColdAgents 的回填会逐步把它们解走）。
+      // 会话转录与 QQ inbox 不参与 agent 桶——那是「某一段对话」，不是「这个
+      // agent 的日记」。类型黑名单由配置给（默认 constraint/preference）。
+      const bySession = readAgentSessions(agentsRoot({ memoryDir, configured: config?.diaryDir }));
+      const isUnnamed = String(agentId).trim() === UNNAMED_AGENT;
+      const excludeIds = isUnnamed
+        ? Object.entries(bySession).filter(([, row]) => row && row.agent && row.agent !== UNNAMED_AGENT).map(([id]) => id)
+        : [];
+      const ids = agentSessionIds(bySession, key);
+      const fromMemories = collectMemoryMaterial({
+        service,
+        sessionIds: ids,
+        excludeIds,
+        dateLocal: today,
+        maxItems: MAX_MATERIAL_ITEMS,
+        excludeTypes: Array.isArray(config?.diaryMemoryExcludeTypes) ? config.diaryMemoryExcludeTypes : []
+      });
+      if (fromMemories.error) {
+        audit({ status: "skipped", reason: `memories-${fromMemories.error}` });
+        return { ok: true, status: "skipped", reason: `memories-${fromMemories.error}`, date: today };
+      }
+      collected = { items: fromMemories.items, scanned: fromMemories.total, ignored: 0 };
+      source.kind = "memories";
+      source.scanned = fromMemories.total;
+      memoryStats = fromMemories;
+    } else if (session) {
       const fromSession = collectSessionTranscript({
         session,
         dateLocal: trigger === "manual" ? null : today,
@@ -220,7 +267,7 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
         source.kind = "session";
       }
     }
-    if (!collected.items.length) {
+    if (!agentMode && !collected.items.length) {
       const inboxDir = resolveInboxDir({ memoryDir, configured: config?.diaryInboxDir });
       const fromInbox = collectQqInbox({ dir: inboxDir, dateLocal: today, maxItems: MAX_MATERIAL_ITEMS });
       if (!fromInbox.error && fromInbox.items.length) {
@@ -234,7 +281,7 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
       // 当天零条有效消息：不调模型、不落盘。空素材调一次模型是纯浪费，
       // 而它写出来的东西必然是编的。
       state[key] = { ...entry, projectRoot, lastDate: today, chatId: chatId ?? entry.chatId ?? null };
-      writeState(join(root, ".."), state);
+      writeState(stateRoot, state);
       return skip("no-material", { scanned: collected.scanned, ignored: collected.ignored, source: source.kind });
     }
 
@@ -329,7 +376,9 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
     const front = [
       "---",
       `date: ${today}`,
-      `project: ${key}`,
+      // #613 §3.4：project 记的是「生成时的项目键」，只作历史留痕——读取侧一律
+      // 以目录路径为准。agent 桶没有项目，这一行整个省掉（library 用 agentId 认人）。
+      ...(agentMode ? [] : [`project: ${key}`]),
       `source: ${source.kind}`,
       `persona: ${personaSource}${agentId ? ` (${agentId})` : ""}`,
       "---"
@@ -352,6 +401,11 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
         finalText = `${previous.replace(/\s+$/, "")}\n\n## ${str("diaryAddendum", stamp)}\n\n${body}\n`;
       }
     }
+    // #613 验收红线：LIMIT 截断必须对读者可见——正文末尾一行「今天素材 N 条，
+    // 本篇用了 M 条」，账本 diaryTruncated 同步。两处都做：正文给人，账本给排查。
+    if (memoryStats && memoryStats.truncated) {
+      finalText = `${finalText.replace(/\s+$/, "")}\n\n---\n\n${str("diaryTruncationNote", memoryStats.total, memoryStats.used)}\n`;
+    }
 
     try {
       mkdirSync(root, { recursive: true });
@@ -362,7 +416,7 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
     }
 
     state[key] = { ...entry, projectRoot, lastDate: today, chatId: chatId ?? entry.chatId ?? null, agentId: agentId ?? entry.agentId ?? null };
-    writeState(join(root, ".."), state);
+    writeState(stateRoot, state);
 
     // 指针行：登记进记忆库，让日记能被检索到。登记不上不算失败——正文已经在盘上、
     // 已经被用户拥有，那一层不该被一个开关或者一次 dedupe 收走。
@@ -384,8 +438,31 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
       pointer = { action: "skipped", reason: "documentMemoryEnabled-off" };
     }
 
-    audit({ status: "written", mode, items: collected.items.length, source: source.kind, persona: personaSource, pointer: pointer?.action ?? null });
-    return { ok: true, status: "written", mode, date: today, path: file, pointer, degraded, items: collected.items.length, source: source.kind, persona: personaSource };
+    audit({
+      status: "written",
+      mode,
+      items: collected.items.length,
+      source: source.kind,
+      persona: personaSource,
+      pointer: pointer?.action ?? null,
+      ...(agentMode ? { agent: agentId } : {}),
+      ...(memoryStats && memoryStats.truncated ? { diaryTruncated: { total: memoryStats.total, used: memoryStats.used } } : {})
+    });
+    return {
+      ok: true,
+      status: "written",
+      mode,
+      date: today,
+      path: file,
+      pointer,
+      degraded,
+      items: collected.items.length,
+      source: source.kind,
+      persona: personaSource,
+      // diaryTruncated 只在真截断时出现：未截断的计数是日常，不是需要向读者
+      // 交代的事（正文注记与账本字段都只在截断时写）。
+      ...(memoryStats && memoryStats.truncated ? { diaryTruncated: { total: memoryStats.total, used: memoryStats.used } } : {})
+    };
   }
 
   /**
@@ -414,6 +491,17 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
   return {
     compose: (input) => enqueue(() => compose(input)),
     knownProjects,
+    /** #613：agents/ 下写过日记的 agent 名单（catchUp 与定时巡检的输入）。 */
+    knownAgents() {
+      const root = agentsRoot({ memoryDir, configured: config?.diaryDir });
+      let names;
+      try {
+        names = readdirSync(root);
+      } catch {
+        return [];
+      }
+      return names.filter((n) => isBucketName(n) && latestDiaryDate(join(root, n)));
+    },
     /** 只读一次账本：面板要回答「今天为什么没有日记」时必须读它，不能靠猜。 */
     readAudit({ projectRoot, limit = 50 } = {}) {
       const root = diaryDir({ memoryDir, projectRoot, configured: config?.diaryDir });
