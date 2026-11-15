@@ -333,3 +333,134 @@ test("#619 affective overview reports 500 when the store cannot answer", async (
   assert.equal(JSON.parse(res.body).error, "unavailable");
   service.relationsByType = original;
 });
+
+// --- #726：聚合端点扩展（why/downgradedFrom 透出、promoted 归组、过滤、cursor 分页） ---
+
+// #726：相位采集了 why 与 downgradedFrom，此前到聚合层被丢掉。前端要做「为什么
+// 记下这条」的悬浮和「曾被判成特质又降级」的标示，没有这两个字段就只能瞎猜。
+test("#726 affective overview exposes why and downgradedFrom", async () => {
+  const { routes, service } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "紧张", attribution: "occasion", why: "提到答辩就手心出汗", evidence: ["m-1"] }
+  });
+  service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-2", source: "llm",
+    metadata: { emotion: "不安", attribution: "occasion", downgradedFrom: "trait", why: "只出现过一次", evidence: ["m-2"] }
+  });
+  const res = new FakeRes();
+  await graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective")
+    .handler(req("/api/dsh-mneme/semantic/graph/affective"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  const tense = data.items.find((i) => i.emotion === "紧张");
+  assert.equal(tense.why, "提到答辩就手心出汗", "why 要透出到聚合层");
+  assert.equal(tense.downgradedFrom, null, "没降级过的边 downgradedFrom 是 null，不是 undefined 或空串");
+  const demoted = data.items.find((i) => i.emotion === "不安");
+  assert.equal(demoted.downgradedFrom, "trait", "降级痕迹要透出，前端才标得出「曾被判成特质」");
+});
+
+// #726：升格后的源边归「稳定倾向」组。睡眠相位铸 pattern 后只打 promotedToTrait 标，
+// 边的字面 attribution 留在 occasion（边记录的是场合被观察到，不改写）——聚合层若
+// 照字面归组，「稳定倾向」组在纯 sleep 流下永远空着。按展示语义归组，边本身不动。
+test("#726 promoted occasion edges group under trait", async () => {
+  const { routes, service } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", promotedToTrait: true, traitSessionCount: 3, evidence: ["m-1"] }
+  });
+  const res = new FakeRes();
+  await graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective")
+    .handler(req("/api/dsh-mneme/semantic/graph/affective"), res);
+  const data = JSON.parse(res.body);
+  assert.equal(data.items.length, 1);
+  assert.equal(data.items[0].attribution, "trait", "promoted 边在展示语义下属于稳定倾向");
+  assert.equal(data.items[0].traitSessionCount, 3);
+  assert.equal(data.items[0].promotedToTrait, true);
+  assert.equal(data.next, null, "不分页时 next 必须是 null——旧客户端多读一个字段不炸");
+});
+
+// #726：过滤参数。skipped/totalEdges 描述的是池子，不受过滤影响。
+test("#726 affective overview filters by person, emotion and attribution", async () => {
+  const { routes, service } = setup();
+  const a = service.createEntity({ name: "桉桉", type: "person" });
+  const b = service.createEntity({ name: "乙", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  const other = service.createEntity({ name: "面试", type: "concept" });
+  const add = (from, to, emotion, attribution) => service.saveRelation({
+    from_entity: from.id, to_entity: to.id, relation_type: "affective_context",
+    memory_id: "m-" + emotion + to.name, source: "llm",
+    metadata: { emotion, attribution, evidence: ["x"] }
+  });
+  add(a, thing, "焦虑", "occasion");
+  add(a, other, "期待", "occasion");
+  add(b, thing, "焦虑", "trait");
+  // 没有情绪名的边：不进任何过滤结果，但 skipped 口径照常报出来。
+  service.saveRelation({
+    from_entity: a.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-none", source: "llm", metadata: { attribution: "occasion" }
+  });
+  const route = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective");
+  const call = async (qs) => {
+    const r = new FakeRes();
+    await route.handler(req("/api/dsh-mneme/semantic/graph/affective" + qs), r);
+    return JSON.parse(r.body);
+  };
+
+  const all = await call("");
+  assert.equal(all.items.length, 3);
+  assert.equal(all.skippedEdges, 1);
+  assert.equal(all.next, null);
+
+  const byPerson = await call("?person=桉桉");
+  assert.equal(byPerson.items.length, 2, "按人过滤");
+  assert.equal(byPerson.skippedEdges, all.skippedEdges, "过滤不动池子口径");
+  const byPersonId = await call(`?person=${encodeURIComponent(a.id)}`);
+  assert.equal(byPersonId.items.length, 2, "按实体 id 过滤等价");
+
+  const byEmotion = await call("?emotion=焦虑");
+  assert.equal(byEmotion.items.length, 2, "同一情绪跨人/跨档各一组");
+
+  const byAttr = await call("?attribution=trait");
+  assert.equal(byAttr.items.length, 1);
+  assert.equal(byAttr.items[0].person, "乙");
+});
+
+// #726：cursor 分页。组数超过一页时 next 给出游标、翻页接着走；解不开的游标 400。
+// 第一页也要带 cursor 参数（空串=从头翻）——分页模式下边帽才放宽，组才翻得出去。
+test("#726 affective overview paginates by cursor", async () => {
+  const { routes, service } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const things = ["一", "二", "三", "四"].map((n) => service.createEntity({ name: n, type: "concept" }));
+  things.forEach((t, i) => service.saveRelation({
+    from_entity: person.id, to_entity: t.id, relation_type: "affective_context",
+    memory_id: "m-" + i, source: "llm",
+    metadata: { emotion: "情绪" + i, attribution: "occasion", evidence: ["x"] }
+  }));
+  const route = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective");
+  const call = async (qs) => {
+    const r = new FakeRes();
+    await route.handler(req("/api/dsh-mneme/semantic/graph/affective" + qs), r);
+    return { status: r.statusCode, body: JSON.parse(r.body) };
+  };
+
+  const page1 = await call("?limit=2&cursor=");
+  assert.equal(page1.status, 200);
+  assert.equal(page1.body.items.length, 2, "每页 limit 组");
+  assert.ok(page1.body.next, "还有下一页时必须给游标");
+  const page2 = await call(`?limit=2&cursor=${encodeURIComponent(page1.body.next)}`);
+  assert.equal(page2.body.items.length, 2, "第二页接着走");
+  assert.equal(page2.body.next, null, "翻到底 next 归位");
+  const seen = [...page1.body.items, ...page2.body.items].map((i) => i.emotion).sort();
+  assert.deepEqual(seen, ["情绪0", "情绪1", "情绪2", "情绪3"], "两页合起来是无重无漏的全集");
+
+  const bad = await call("?limit=2&cursor=%%%not-a-cursor");
+  assert.equal(bad.status, 400, "解不开的游标明确报错，不静默从头翻");
+});
