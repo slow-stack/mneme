@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { createStore } from "../src/store.js";
 import { localDateString } from "../src/diary/rollover.js";
@@ -64,29 +65,30 @@ function fakeSession(id, { title = "", titleSource = "user", preset = null } = {
 
 function materialFixture(store) {
   const tz = localTzOffsetMinutes();
-  // 2026-11-08T20:30:00Z 在 UTC+8 是本地 11-09 04:30——期望日按被测同款函数算，
-  // 任何时区的 CI 上都成立（红线 1：时区）。
+  // 夹具一律按**本地墙钟**构造（localIso），不按 UTC 字面量：本机时区从 UTC-11 到
+  // UTC+14 都成立。红线 1 要钉的正是「用本地日而非 UTC 日」——m-tz 落在本地 11-09
+  // 的 00:15，UTC+8 下它的 UTC 日期还是 11-08，只认 UTC 日的实现会把它归错日。
   insertMemory(store, {
-    id: "m-tz", type: "project", title: "跨日素材", content: "晚上八点半之后写下的东西",
-    source: "session:session-s1", created: "2026-11-08T20:30:00.000Z"
+    id: "m-tz", type: "project", title: "跨日素材", content: "刚过午夜写下的东西",
+    source: "session:session-s1", created: localIso(DAY_B, 0, 15)
   });
-  // 红线 3：occurred_at 带本机时区的「本地时间被当 UTC 写入」偏移（UTC+8 上是
-  // -480±10 分带，854 条实测量）。夹具按本机偏移动态构造——修正后落点 =
-  // created 的本地日，任何时区都成立。
+  // 红线 3：occurred_at 带整时区的「本地时间被当 UTC 写入」偏移（UTC+8 上是 -480±10
+  // 分带，854 条实测量）。偏移与修正带都按本机 tz 推导，东半球是负、西半球是正，
+  // 公式对两者同时成立：修正后落点 = created 的本地日。
   insertMemory(store, {
     id: "m-480", type: "project", title: "批量写入的行", content: "外部导入造成的整时区偏移",
-    source: "session:session-s1", created: "2026-11-08T12:21:15.000Z",
-    occurred: new Date(Date.parse("2026-11-08T12:21:15.000Z") - tz * 60000 - 60000).toISOString()
+    source: "session:session-s1", created: localIso(DAY_A, 10, 21, 15),
+    occurred: new Date(Date.parse(localIso(DAY_A, 10, 21, 15)) - tz * 60000 - 60000).toISOString()
   });
   // 红线 2：occurred_at 为 NULL（占活跃行 54.4%）→ COALESCE 到 created 的本地日。
   insertMemory(store, {
     id: "m-null", type: "decision", title: "没有 occurred 的行", content: "COALESCE 是必需项",
-    source: "session:s2", created: "2026-11-08T10:00:00.000Z"
+    source: "session:s2", created: localIso(DAY_A, 14, 0)
   });
   // 两形 source：同一 uuid 的两种写法都要被认出来（红线 4）。
   insertMemory(store, {
     id: "m-bare", type: "project", title: "裸形 source", content: "另一台宿主写出的形状",
-    source: "session:s1", created: "2026-11-08T09:00:00.000Z"
+    source: "session:s1", created: localIso(DAY_A, 9, 0)
   });
 }
 
@@ -94,29 +96,128 @@ const dayOf = (utc) => localDateString(new Date(utc));
 /** 某一天的查询窗口（与 compose agentMode 传参同口径：本地墙钟字符串）。 */
 const windowOf = (day) => ({ dayStart: `${day} 00:00:00`, dayEnd: `${day} 23:59:59` });
 
+// 偏移与修正带一律由本机时区推导，跟生产路径（memory-provider.js:66-68）同一套
+// 公式。写死 480 会让断言在 UTC runner 上必然挂：CI 不是东八区。
+const tzNow = localTzOffsetMinutes();
+
+// 夹具用到的两个本地日。分开写是为了让「跨日」这件事有地方可钉：素材必须落回
+// 自己的本地日，不能因为 UTC 日期不同就被挪走。
+const DAY_A = "2026-11-08";
+const DAY_B = "2026-11-09";
+
+/**
+ * 本地墙钟 → UTC ISO。`localIso("2026-11-08", 23, 45)` 在任何时区都是「本地 11-08
+ * 23:45」，它的 UTC 日期可能已经是次日或前一日——这正是要测的东西。
+ * 用 Date(y, m-1, d, ...) 而不是手算偏移，因为那样夏令时会算错。
+ */
+function localIso(day, hh = 12, mm = 0, ss = 0) {
+  const [y, mo, d] = day.split("-").map(Number);
+  return new Date(y, mo - 1, d, hh, mm, ss).toISOString();
+}
+
 test("#613 红线1-4：两形 source、本地日、COALESCE、-480 修正全部生效", () => {
   const store = createStore(":memory:");
   materialFixture(store);
   const q = (day, extra = {}) => store.diaryMaterial({
     ids: ["s1", "s2"], limit: 400, excludeTypes: [],
-    bandLo: -490, bandHi: -470, offsetMinutes: 480,
+    bandLo: -tzNow - 10, bandHi: -tzNow + 10, offsetMinutes: tzNow,
     ...windowOf(day), ...extra
   });
 
-  // 11-08（本机时区）这一天有三条：m-480（-480 修正拉回 created 的本地日）、
-  // m-null（COALESCE 到 created）、m-bare（裸形 source）。m-tz 落在哪个本地日
-  // 随时区走，单独按它自己的期望日断言。
-  const dayA = dayOf("2026-11-08T12:21:15.000Z");
-  const three = q(dayA).rows.map((r) => r.title).sort();
-  assert.deepEqual(three, ["裸形 source", "批量写入的行", "没有 occurred 的行"].sort(),
+  // DAY_A：m-480（-480 修正拉回 created 的本地日）、m-null（COALESCE 到 created）、
+  // m-bare（裸形 source）三条，且**只有**这三条。
+  const gotA = q(DAY_A).rows.map((r) => r.title).sort();
+  assert.deepEqual(gotA, ["裸形 source", "批量写入的行", "没有 occurred 的行"].sort(),
     "两形 source + COALESCE + -480 修正缺一不可");
 
-  // m-tz 的 created 是 20:30Z：UTC+8 落在**次日**凌晨——期望日按同款函数算。
-  const tzDay = dayOf("2026-11-08T20:30:00.000Z");
-  const tzRes = q(tzDay);
-  assert.deepEqual(tzRes.rows.map((r) => r.title), ["跨日素材"], "20:30Z 落在本地次日（时区红线）");
+  // DAY_B：只有 00:15 那条。它按 UTC 日期在 UTC+8 下属于 DAY_A，必须被归到 DAY_B。
+  const gotB = q(DAY_B).rows.map((r) => r.title);
+  assert.deepEqual(gotB, ["跨日素材"], "localIso(DAY_B, 0, 15) 必须落在本地 DAY_B");
 
   store.close();
+});
+
+// 上面那条在所有时区都成立，但它证明不了「用的是本地日而不是 UTC 日」——UTC runner
+// 上两者恰好相等。跨日的语义只能钉在一个确定的时区里，所以另起一个子进程带
+// TZ=Asia/Shanghai 跑：20:30Z 必须是 11-09，而不是 11-08。
+test("#613 红线1（时区）：UTC+8 下 20:30Z 落在本地次日 11-09", () => {
+  const url = (p) => new URL(p, import.meta.url).href;
+  const script = `
+import assert from "node:assert/strict";
+import { createStore } from ${JSON.stringify(url("../src/store.js"))};
+import { localDateString } from ${JSON.stringify(url("../src/diary/rollover.js"))};
+import { localTzOffsetMinutes } from ${JSON.stringify(url("../src/diary/memory-provider.js"))};
+
+assert.equal(process.env.TZ, "Asia/Shanghai", "子进程环境没带上 TZ");
+const tz = localTzOffsetMinutes();
+assert.equal(tz, 480, "TZ=Asia/Shanghai 下的偏移必须是 480，实际 " + tz);
+
+const store = createStore(":memory:");
+store.db.prepare(
+  "INSERT INTO memories (id, type, title, content, importance, source, created_at, occurred_at, updated_at, forgotten, archived, epistemic_status)" +
+  " VALUES (?, ?, ?, ?, 3, ?, ?, NULL, ?, 0, 0, 'subjective')"
+).run("m-tz", "project", "跨日素材", "晚上八点半之后写下的东西", "session:session-s1",
+      "2026-11-08T20:30:00.000Z", "2026-11-08T20:30:00.000Z");
+
+const q = (day) => store.diaryMaterial({
+  ids: ["s1"], limit: 400, excludeTypes: [],
+  bandLo: -tz - 10, bandHi: -tz + 10, offsetMinutes: tz,
+  dayStart: day + " 00:00:00", dayEnd: day + " 23:59:59"
+});
+
+assert.equal(localDateString(new Date("2026-11-08T20:30:00.000Z")), "2026-11-09", "20:30Z 的本地日是次日");
+const nd = q("2026-11-09").rows.map((r) => r.title);
+assert.deepEqual(nd, ["跨日素材"], "UTC+8 下必须落在 11-09，实际 " + JSON.stringify(nd));
+const same = q("2026-11-08").rows.map((r) => r.title);
+assert.deepEqual(same, [], "绝不能再出现在 UTC 的 11-08，实际 " + JSON.stringify(same));
+store.close();
+`;
+  execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+    cwd: new URL("..", import.meta.url),
+    env: { ...process.env, TZ: "Asia/Shanghai" },
+    stdio: "pipe",
+    encoding: "utf8"
+  });
+});
+
+// 负偏移必须单独钉：CI 跑在 UTC 上，offsetMinutes=0 时符号分支根本没被走到——
+// 当年那个「'+' 拼负数 → SQLite 判非法 → datetime() 返回 NULL → 整天素材静默为空」
+// 的 bug，在 UTC runner 上是绿的。这条子进程带 TZ=America/New_York（-300）跑。
+test("#613 红线1（负偏移）：UTC 以西时区的素材不被静默清空", () => {
+  const url = (p) => new URL(p, import.meta.url).href;
+  const script = `
+import assert from "node:assert/strict";
+import { createStore } from ${JSON.stringify(url("../src/store.js"))};
+import { localTzOffsetMinutes } from ${JSON.stringify(url("../src/diary/memory-provider.js"))};
+
+assert.equal(process.env.TZ, "America/New_York", "子进程环境没带上 TZ");
+const tz = localTzOffsetMinutes();
+assert.ok(tz < 0, "西半球的偏移必须是负数，实际 " + tz);
+
+const store = createStore(":memory:");
+// 2026-11-08T18:00Z 在纽约是 13:00（同一天），窗口取本地 11-08 全天。
+store.db.prepare(
+  "INSERT INTO memories (id, type, title, content, importance, source, created_at, occurred_at, updated_at, forgotten, archived, epistemic_status)" +
+  " VALUES (?, ?, ?, ?, 3, ?, ?, NULL, ?, 0, 0, 'subjective')"
+).run("m-neg", "project", "西半球素材", "不该被清空", "session:s1",
+      "2026-11-08T18:00:00.000Z", "2026-11-08T18:00:00.000Z");
+
+const res = store.diaryMaterial({
+  ids: ["s1"], limit: 400, excludeTypes: [],
+  bandLo: -tz - 10, bandHi: -tz + 10, offsetMinutes: tz,
+  dayStart: "2026-11-08 00:00:00", dayEnd: "2026-11-08 23:59:59"
+});
+assert.equal(res.total, 1, "负偏移下窗口不能恒为空");
+assert.equal(res.rows.length, 1);
+assert.equal(res.rows[0].localTs, "2026-11-08 13:00:00", "local_ts 是本地墙钟");
+store.close();
+`;
+  execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+    cwd: new URL("..", import.meta.url),
+    env: { ...process.env, TZ: "America/New_York" },
+    stdio: "pipe",
+    encoding: "utf8"
+  });
 });
 
 test("#613 红线5：LIMIT 截断不静默——total 照实、used 照实、truncated 照实", () => {
@@ -124,13 +225,13 @@ test("#613 红线5：LIMIT 截断不静默——total 照实、used 照实、tru
   for (let i = 0; i < 5; i += 1) {
     insertMemory(store, {
       id: "m" + i, type: "project", title: "素材" + i, content: "第 " + i + " 条",
-      source: "session:s9", created: `2026-11-08T0${i}:00:00.000Z`
+      source: "session:s9", created: localIso(DAY_A, i, 0)
     });
   }
-  const day = dayOf("2026-11-08T01:00:00.000Z");
+  const day = DAY_A;
   const res = store.diaryMaterial({
     ids: ["s9"], dayStart: `${day} 00:00:00`, dayEnd: `${day} 23:59:59`,
-    excludeTypes: [], limit: 3, bandLo: -490, bandHi: -470, offsetMinutes: 480
+    excludeTypes: [], limit: 3, bandLo: -tzNow - 10, bandHi: -tzNow + 10, offsetMinutes: tzNow
   });
   assert.equal(res.total, 5, "窗口内全部素材数照实");
   assert.equal(res.rows.length, 3, "rows 只带 LIMIT 条");
@@ -145,14 +246,14 @@ test("#613 黑名单类型不进素材；provider 暴露 total/used/truncated �
   const store = createStore(":memory:");
   insertMemory(store, {
     id: "m-c", type: "constraint", title: "长期成立的规则", content: "不该进日记",
-    source: "session:s1", created: "2026-11-08T10:00:00.000Z"
+    source: "session:s1", created: localIso(DAY_A, 10, 0)
   });
   insertMemory(store, {
     id: "m-p", type: "project", title: "真素材", content: "该进日记的那条",
-    source: "session:s1", created: "2026-11-08T11:00:00.000Z"
+    source: "session:s1", created: localIso(DAY_A, 11, 0)
   });
   const service = { diaryMaterial: (p) => store.diaryMaterial(p) };
-  const day = dayOf("2026-11-08T10:00:00.000Z");
+  const day = DAY_A;
   const res = collectMemoryMaterial({
     service,
     sessionIds: ["s1"],
@@ -271,13 +372,13 @@ test("#613 compose agentMode：素材来自记忆库，截断写进正文与账�
     insertMemory(store, {
       id: "am" + i, type: "project", title: "素材" + i, content: "agent 当天第 " + i + " 条痕迹",
       source: i % 2 === 0 ? "session:session-a1" : "session:a1",
-      created: `2026-11-08T1${i}:00:00.000Z`
+      created: localIso(DAY_A, 10 + i, 0)
     });
   }
   // 黑名单类型：不该进素材。
   insertMemory(store, {
     id: "am-x", type: "constraint", title: "规则类", content: "不进日记",
-    source: "session:a1", created: "2026-11-08T15:00:00.000Z"
+    source: "session:a1", created: localIso(DAY_A, 15, 0)
   });
   const service = { diaryMaterial: (p) => store.diaryMaterial(p) };
   const { ctx } = fakeBodyCtx();
@@ -297,7 +398,7 @@ test("#613 compose agentMode：素材来自记忆库，截断写进正文与账�
   writeAgentSessions(agentsRoot({ memoryDir }), { a1: { agent: "Amarre", title: "Amarre · 记忆研究", source: "user" } });
   const result = await composer.compose({ trigger: "manual", agentMode: true, agentId: "Amarre" });
   assert.equal(result.status, "written");
-  const day = dayOf("2026-11-08T10:00:00.000Z");
+  const day = DAY_A;
   const dir = diaryAgentDir({ memoryDir, agentId: "Amarre" });
   assert.ok(dir && dir.includes(join("agents", "Amarre")), "落点是 agents/<agentId>/");
   const file = readdirSync(dir).find((n) => n.startsWith(day));
@@ -319,7 +420,7 @@ test("#613 compose agentMode：素材超限如实截断（红线5 的正文侧�
   for (let i = 0; i < 6; i += 1) {
     insertMemory(store, {
       id: "bt" + i, type: "project", title: "素材" + i, content: "第 " + i + " 条，白天到深夜的分布",
-      source: "session:a2", created: `2026-11-08T${String(10 + i).padStart(2, "0")}:00:00.000Z`
+      source: "session:a2", created: localIso(DAY_A, 10 + i, 0)
     });
   }
   const service = { diaryMaterial: (p) => store.diaryMaterial(p) };
@@ -352,7 +453,7 @@ test("#613 compose agentMode：素材超限如实截断（红线5 的正文侧�
   assert.equal(result.diaryTruncated.total, 6, "total 照实");
   assert.equal(result.diaryTruncated.used, 4, "used 照实（4 = 被钉住的上限）");
   const dir = diaryAgentDir({ memoryDir, agentId: "Amarre" });
-  const file = readdirSync(dir).find((n) => n.startsWith("2026-11-08"));
+  const file = readdirSync(dir).find((n) => n.startsWith(DAY_A));
   const text = readFileSync(join(dir, file), "utf8");
   assert.match(text, /今天素材共 6 条，本篇用了 4 条。/, "正文末尾的截断说明对读者可见");
   const audit = JSON.parse(readFileSync(join(dir, "runs.jsonl"), "utf8").trim().split("\n").pop());

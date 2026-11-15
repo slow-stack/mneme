@@ -5440,14 +5440,18 @@ export function createStore(path) {
     const typeFilter = Array.isArray(excludeTypes) && excludeTypes.length
       ? ` AND type NOT IN (${excludeTypes.map(() => "?").join(", ")})`
       : "";
-    const offsetSql = `+${Number(offsetMinutes) || 0} minutes`;
-    const where = `WHERE datetime(ts_utc, '+${Number(offsetMinutes) || 0} minutes') >= ? AND datetime(ts_utc, '+${Number(offsetMinutes) || 0} minutes') < ?`;
+    // SQLite 的 modifier 只认「±N minutes」，$-300$ 这种「+」后跟负号会被判非法，
+    // datetime() 直接返回 NULL——窗口条件恒为假，整天的素材一条都取不到，还不报错。
+    // 偏移在 UTC 以西（美洲、太平洋）就是负数，所以符号必须显式拼。
+    const offMin = Number(offsetMinutes) || 0;
+    const offsetSql = `${offMin < 0 ? "-" : "+"}${Math.abs(offMin)} minutes`;
+    const where = `WHERE datetime(ts_utc, '${offsetSql}') >= ? AND datetime(ts_utc, '${offsetSql}') < ?`;
     const cte = `
       WITH src AS (
         SELECT type, title, content, created_at, occurred_at,
           CASE WHEN CAST(round((julianday(occurred_at) - julianday(created_at)) * 1440) AS INTEGER)
                     BETWEEN ? AND ?
-               THEN datetime(substr(occurred_at, 1, 19), '+${Number(offsetMinutes) || 0} minutes')
+               THEN datetime(substr(occurred_at, 1, 19), '${offsetSql}')
                ELSE COALESCE(substr(occurred_at, 1, 19), substr(created_at, 1, 19))
           END AS ts_utc
         FROM memories
@@ -5459,7 +5463,7 @@ export function createStore(path) {
       `${cte} SELECT COUNT(*) AS n FROM src ${where}`
     ).get(...baseParams, String(dayStart ?? ""), String(dayEnd ?? "")).n;
     const rows = db.prepare(
-      `${cte} SELECT type, title, content, datetime(ts_utc, '+${Number(offsetMinutes) || 0} minutes') AS local_ts
+      `${cte} SELECT type, title, content, datetime(ts_utc, '${offsetSql}') AS local_ts
          FROM src ${where} ORDER BY ts_utc ASC LIMIT ?`
     ).all(...baseParams, String(dayStart ?? ""), String(dayEnd ?? ""), cap);
     return {
