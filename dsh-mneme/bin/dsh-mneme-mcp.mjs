@@ -225,7 +225,8 @@ async function runList(config, args) {
     ...(args.offset !== undefined ? { offset: String(args.offset) } : {}),
     ...(args.include_archived !== undefined ? { include_archived: String(args.include_archived) } : {}),
     ...(args.occurred_from !== undefined ? { occurred_from: String(args.occurred_from) } : {}),
-    ...(args.occurred_to !== undefined ? { occurred_to: String(args.occurred_to) } : {})
+    ...(args.occurred_to !== undefined ? { occurred_to: String(args.occurred_to) } : {}),
+    ...(args.workspace_scope !== undefined ? { workspace_scope: String(args.workspace_scope) } : {})
   };
   const res = await apiRequest(config, "/memories", { query });
   assertOk(res, [200]);
@@ -333,7 +334,8 @@ export const MCP_TOOLS = [
         offset: intSchema("Page offset (default 0)"),
         include_archived: boolSchema("Include archived (hidden) entries so they can be found and restored (default false)"),
         occurred_from: stringSchema(OCCURRED_FROM_NOTE),
-        occurred_to: stringSchema(OCCURRED_TO_NOTE)
+        occurred_to: stringSchema(OCCURRED_TO_NOTE),
+        workspace_scope: stringSchema("Optional: list only entries belonging to exactly this workspace label (exact match, any scope source). This is a picker filter, not a visibility gate — it does NOT widen what strictScope hides.")
       },
       required: []
     }

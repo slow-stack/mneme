@@ -100,6 +100,10 @@ const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 // ?limit=100000 会让一次免鉴权 GET 把全库序列化出来（2026-10 审计：免鉴权读面
 // + 浏览器简单请求 = 廉价 DoS）。1000/200 远高于面板与 CLI 的任何真实用法。
 const MAX_PAGE_LIMIT = 1000;
+// 批量改 scope 一次最多搬多少条（2026-11-15）。与工具侧 edgeIds 的 50 同档：
+// 挑几十条是正常操作，几百条说明调用方在拿它做全库迁移——那该走专门的迁移
+// 通道，不该混在「我挑了几条」里。
+const MAX_PROMOTE_IDS = 50;
 const MAX_SEARCH_TOP_K = 200;
 
 /** Merge persisted external-api kv over the defaults for client display. */
@@ -452,12 +456,18 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         // merge/update verdict ∪ source=dream 直写）——状态页「查看全部」
         // 与记忆库的「沉淀」筛选 chip 共用这个视图。
         const depositedOnly = url.searchParams.get("deposited") === "only";
+        // workspaceScope（2026-11-15）：**选料清单**，不是可见性闸门。面板要把
+        // 某个工作区的行一条条列给人挑着搬到别处（桉桉的「单独一个记忆区 + 手动
+        // 挑选入库」），就得有一个「就列这一格」的入口——它与 strictScope 的
+        // 硬过滤是两件不同的事：后者决定看得见什么，这个决定列的是哪一格。
+        // 空串/全空白视为不过滤（与 source 同款：缺省即老行为）。
+        const workspaceScope = (url.searchParams.get("workspaceScope") ?? "").trim() || undefined;
         // id: 按主键取单条（含归档行）。面板打开/保存前要拿「这一条」的最新值，
         // 分页扫列表最多只能看到前 1000 条，已归档的更不在默认视图里；扫不到就
         // 只能拿陈旧缓存去比对 updated_at，等于没有版本检查。
         const idFilter = (url.searchParams.get("id") ?? "").trim();
         const rows = idFilter === ""
-          ? service.list({ type, limit, offset, order, minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly })
+          ? service.list({ type, limit, offset, order, minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly, workspaceScope })
           // getById 是裸 SELECT，没有 forgotten 谓词；这条路由是 open 的，
           // 不过滤等于让本机任意进程按 id 读到已遗忘记忆的全文（评审 #1）。
           // 归档行仍要放行：归档 ≠ 遗忘，面板保存前要用它比对 updated_at。
@@ -485,7 +495,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         // Total honors the same filters as the rows, or the pager's
         // has-more math breaks whenever minImportance/source/updated-at
         // bounds are active. 按 id 取单条时总数就是命中的行数。
-        const listCountFilters = { minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly };
+        const listCountFilters = { minImportance, source, updatedFrom, updatedTo, onlyArchived, depositedOnly, workspaceScope };
         const total = idFilter === ""
           ? service.count(type, listCountFilters)
           : rows.length;
@@ -1191,6 +1201,83 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           if (Object.keys(patch).length) service.update(id, patch, { actor: "panel" });
           if (body.archived !== undefined) service.setArchived(id, body.archived);
           sendJson(res, 200, { memory: service.getById(id) });
+        });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  // --- 批量改写 scope（2026-11-15，「挑着搬」的出库口）------------------------
+  // 桉桉的口径是「单独一个记忆区，然后手动挑选入库」：导入区的行先关在硬墙里，
+  // 由人一条条挑出来搬进常用区或 global。单条搬用 /update 就够（它已经会盖
+  // explicit 章 + 落 scope_changes 审计），但挑十几条时逐条打请求会让人不敢用，
+  // 而且中途失败会留下搬了一半的状态说不清。
+  //
+  // 三个口径刻意写死在这里：
+  //  1. **逐条回执**，不用「批量成功」蒙掉个体失败——搬错一条的代价是这条记忆
+  //     在别处露头，必须让人看见是哪条没搬动、为什么。
+  //  2. `from` 给了就严格校验：行的当前 workspace_scope 不等于 from 一律拒并点名
+  //     （带上实际值）。这是防「ids 里混进别区的行」——批量接口最容易在这里
+  //     变成把人别处的记忆一起搬走。
+  //  3. 审计走 service.update 的同一条路（actor=panel），不在这里另写一份
+  //     scope_changes：两处写审计迟早会长歪。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/scope/promote",
+    policy: "token",
+    handler(req, res) {
+      try {
+        if (req.method !== "POST") {
+          sendJson(res, 404, { error: "not-found" });
+          return;
+        }
+        return readBody(req, res).then((text) => {
+          if (text === null) return;
+          const body = parseBody(text);
+          const ids = Array.isArray(body.ids)
+            ? [...new Set(body.ids.filter((v) => typeof v === "string" && v.trim()).map((v) => v.trim()))]
+            : [];
+          if (ids.length === 0) {
+            sendJson(res, 400, { error: "missing-ids" });
+            return;
+          }
+          // 上限与工具侧的 edgeIds 同档：一次挑几十条是正常操作，几百条说明
+          // 调用方在拿这个接口做全库迁移——那不是「挑选」，该走专门的迁移通道。
+          if (ids.length > MAX_PROMOTE_IDS) {
+            sendJson(res, 400, { error: "too-many-ids", limit: MAX_PROMOTE_IDS });
+            return;
+          }
+          if (typeof body.to !== "string" || !body.to.trim()) {
+            sendJson(res, 400, { error: "missing-to" });
+            return;
+          }
+          // to="global"（或 "*"）经 normalizeExplicitScope 归一成 NULL + explicit 章
+          // = 放宽到全局；其余值是收窄/改标到那个区。归一化本身交给 service.update，
+          // 这里只保证它拿到的是字符串。
+          const to = body.to.trim();
+          const from = typeof body.from === "string" && body.from.trim() ? body.from.trim() : null;
+          const results = [];
+          for (const id of ids) {
+            const row = service.getById(id);
+            if (!row) {
+              results.push({ id, ok: false, error: "not-found" });
+              continue;
+            }
+            if (from !== null && (row.workspace_scope ?? null) !== from) {
+              // 点名 + 带上实际值：调用方要能一眼看出这条为什么没搬。
+              results.push({ id, ok: false, error: "not-in-scope", actual: row.workspace_scope ?? null });
+              continue;
+            }
+            try {
+              service.update(id, { workspace_scope: to }, { actor: "panel" });
+              results.push({ id, ok: true, workspace_scope: service.getById(id)?.workspace_scope ?? null });
+            } catch (e) {
+              results.push({ id, ok: false, error: "update-failed", detail: String(e?.message ?? e) });
+            }
+          }
+          const applied = results.filter((r) => r.ok).length;
+          sendJson(res, 200, { applied, requested: ids.length, to, from, results });
         });
       } catch {
         sendJson(res, 500, { error: "internal" });

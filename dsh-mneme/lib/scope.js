@@ -185,3 +185,71 @@ export function normalizeExplicitScope(raw) {
 export function scopeKeyOf(v) {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
+
+/**
+ * 硬墙名单命中判定（2026-11-15）。名单来自 config.scopeHardWallWorkspaces，
+ * 命中的工作区写入时盖 explicit 章而不是 auto——strictScope 的硬墙只认 explicit
+ * （issue #170 4.3），这是让「圈一块地」真的立起来的地方。
+ *
+ * 比较口径：去掉末尾分隔符后不区分大小写。理由不是洁癖——workspace_scope 的
+ * 值来自两条路（registry 的 realpath、header.cwd），同一台机器上大小写与末尾
+ * 斜杠都可能与用户手填的名单不一致；按字面比会让墙时灵时不灵，而这种「有时
+ * 拦住有时拦不住」的失效最难被发现。
+ *
+ * 非字符串/空/名单为空一律 false（不命中 = 不进硬墙），保持存量行为逐字节不变。
+ *
+ * @param {unknown} workspaceScope 解析出来的工作区标签
+ * @param {unknown} list 硬墙名单
+ * @returns {boolean}
+ */
+export function isHardWallWorkspace(workspaceScope, list) {
+  const key = scopeKeyOf(workspaceScope);
+  if (key === null) return false;
+  if (!Array.isArray(list) || list.length === 0) return false;
+  const norm = (s) => s.replace(/[\\/]+$/, "").toLowerCase();
+  const target = norm(key);
+  return list.some((entry) => {
+    const name = scopeKeyOf(entry);
+    return name !== null && norm(name) === target;
+  });
+}
+
+/**
+ * 一维 scope 的盖章决定（memory_save / register_document / memory_organize /
+ * 蒸馏写库共用）。四路：
+ *   1. 调用方显式传了参数 → 归一化 + explicit（值可以是 null = 显式全局）；
+ *   2. 未显式传、自动标注可用、且命中硬墙名单 → **explicit**；
+ *   3. 未显式传、自动标注可用、未命中 → auto（存量行为）；
+ *   4. 都取不到 → null（该维不加字段）。
+ *
+ * 第 2 路是本次新增，也是唯一有风险的一路：explicit + NULL = 全局可见，等于
+ * 把墙拆了。所以解析不到非空标签时**退回落 auto**，并 warn 一次——宁可这一条
+ * 软隔离，也不能盖一个空墙章。
+ *
+ * @param {object} p
+ * @param {unknown} p.explicitValue 调用方显式传的原值（undefined = 没传）
+ * @param {unknown} p.autoValue 会话自动标注解析出的值
+ * @param {boolean} [p.hardWall] 是否命中硬墙名单
+ * @param {(msg: string) => void} [p.warn] 硬墙落空时的告警出口
+ * @returns {{value: string|null, source: "explicit"|"auto"}|null}
+ */
+export function resolveScopeStamp({ explicitValue, autoValue, hardWall = false, warn } = {}) {
+  if (explicitValue !== undefined) {
+    return { value: normalizeExplicitScope(explicitValue), source: "explicit" };
+  }
+  const auto = scopeKeyOf(autoValue);
+  if (auto === null) return null;
+  if (hardWall) {
+    // 走到这里 auto 已经非空，但仍按 resolveScopeStamp 的契约再确认一次：
+    // 将来有人把 scopeKeyOf 换成更宽的口径，这里不能跟着静默放宽。
+    const wall = scopeKeyOf(auto);
+    if (wall !== null) return { value: wall, source: "explicit" };
+    try {
+      warn?.("[dsh-mneme] hard-wall workspace resolved no non-empty label; falling back to auto");
+    } catch {
+      // 告警自身故障不能拖挂写入（同 resolveWriteScope 的硬约束）
+    }
+  }
+  return { value: auto, source: "auto" };
+}
+

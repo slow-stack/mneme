@@ -8,7 +8,7 @@ import { injectChildEnabled } from "./config.js";
 // 三条链路同一降级语义，不另造第二份实现。
 import { withEffortFallback, describeStreamFailure, EFFORT_REJECT_RE } from "./dream.js";
 // v0.9.0（M.O. 项目记忆）：蒸馏写入复用工具路径那把作用域解析器，见 createSummarizer。
-import { createScopeResolver } from "./scope.js";
+import { createScopeResolver, isHardWallWorkspace, resolveScopeStamp } from "./scope.js";
 // #493 补充 §③：断链与巩固侧同一份实现（src/fence.js）。转录里出现闭合标记时
 // 原先能提前闭合围栏——那是把用户消息升格成指令最短的一条路。
 import { breakFenceMarkers } from "./fence.js";
@@ -1371,6 +1371,22 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       const writeScope = config?.scopeEnabled === true
         ? resolveSessionScope({ agent: { session } })
         : null;
+      // 硬墙（2026-11-15）：这个窗口的工作区若在 config.scopeHardWallWorkspaces
+      // 里，蒸馏写库也盖 explicit 章。不这么做的话，硬墙只在工具写入那条路成立，
+      // 同一块地里蒸馏出来的行仍是 auto（软隔离），墙就是漏的。
+      // 非硬墙路径保持原样（写 auto 章，值原样）——名单留空时行为逐字节不变。
+      const hardWall = config?.scopeEnabled === true
+        && isHardWallWorkspace(writeScope?.workspace_scope, config?.scopeHardWallWorkspaces);
+      // 硬墙只在 agent 维**不**生效（按工作区圈地），所以 agent 章永远走 auto；
+      // 工作区维命中时改盖 explicit，但值必须非空——explicit + NULL = 全局可见
+      // = 把墙拆了，宁可不盖章也不盖空章（resolveScopeStamp 负责退回落）。
+      const wallStamp = hardWall
+        ? resolveScopeStamp({
+          autoValue: writeScope?.workspace_scope,
+          hardWall: true,
+          warn: (msg) => ctx.logger?.warn?.(msg)
+        })
+        : null;
       const writes = [];
       for (const entry of entries) {
         // Provenance: the summarizer runs on a real session (turn/end hook), so
@@ -1453,7 +1469,12 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
             // 作用域隔离没做成，重复倒留下了。传字段、让合并分支按自己的口径处理，
             // 才是「不重贴」与「新行必贴」两个要求的唯一相容解。
             ...(writeScope ? { agent_scope: writeScope.agent_scope, agent_scope_source: "auto" } : {}),
-            ...(writeScope ? { workspace_scope: writeScope.workspace_scope, workspace_scope_source: "auto" } : {}),
+            ...(writeScope
+              ? {
+                workspace_scope: wallStamp?.value ?? writeScope.workspace_scope,
+                workspace_scope_source: wallStamp?.source ?? "auto"
+              }
+              : {}),
             ...(dup ? { _mergeInto: dup.memory.id } : {})
           });
           // created 与 merged 两条成功分支都返回 memory（含 id）；merged 时 id 是

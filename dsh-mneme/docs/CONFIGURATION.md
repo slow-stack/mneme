@@ -62,6 +62,7 @@
 |---|---|---|---|
 | `scopeEnabled` | `false` | 存储层总开关：**两条写入路径**（工具调用 `memory_save`/`memory_update`，以及机器提炼·会话蒸馏）都自动标注 agent_scope / workspace_scope（标注只贴**新建行**：并入既有行时不重贴，既有行的归属属于它原来被提炼出来的语境），去重键扩展；检索与注入排序按当前会话作用域加权（命中 ×1.25、他 scope ×0.5 保留可见，issue #339 补齐注入通道） | opt-in；关 = 写入不标注、行为与 A1 前逐字节一致 |
 | `strictScope` | `false` | 硬过滤模式（A3）：他 scope 完全不可见、未标注恒可见（fail-closed）；硬过滤先于软加权执行 | 依赖 `scopeEnabled` 打开才有意义；关 = A2 软隔离（他 scope 降权保留可见，检索与注入同权重） |
+| `scopeHardWallWorkspaces` | `[]` | 硬墙工作区名单：**写入时**命中名单的行把 `workspace_scope_source` 落 `explicit`，于是上面那条 `strictScope` 硬过滤对它们生效（否则只有 `auto`，跨区仍会被检索与注入带出来）。两条落库路径都盖：工具调用与机器提炼·会话蒸馏 | 依赖 `scopeEnabled`；留空 = 行为逐字节不变。比较前去掉末尾分隔符且不分大小写（值可能来自 registry realpath 或会话 `cwd`）。**解析不到非空标签就退回 `auto`**——`explicit` + NULL 等于全局可见，等于把墙拆了 |
 
 ## 作用域级可逆闸门（issue #471）
 

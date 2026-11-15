@@ -1170,6 +1170,19 @@ export const Config = z.object({
   // 打开才有意义（没有写入标注就无可过滤维度），但独立成键：可先开标注积累
   // 数据、观察 A2 加权质量后再切硬过滤。
   strictScope: z.boolean().default(false),
+  // 硬墙名单（2026-11-15）：列在这里的工作区，写入时直接把 workspace_scope_source
+  // 落成 explicit，而不是 auto。
+  //
+  // 为什么需要它：strictScope 的硬墙只对 explicit 来源生效（见 service.js 的
+  // isVisibleInScope 与 store.js 的 visibility 谓词，是 issue #170 4.3 的裁决：
+  // auto 可信度不足，只吃软加权）。而导入、蒸馏、工具自动标注原本都落 auto，
+  // 于是「把会话固定写进某个工作区就等于一块封闭记忆区」并不成立——实测 auto
+  // 行会经 searchMemories 与 injectCandidates 跨区现身（三面探针，2026-11-15）。
+  //
+  // 名单是配置而不是写死：同一个机制将来可能圈第二个区。留空 = 行为逐字节不变。
+  // 值必须能解析出非空标签才落 explicit；解析不到退回 auto——explicit + NULL
+  // 等于全局可见，那等于把墙拆了（见 scope.js 的 normalizeExplicitScope）。
+  scopeHardWallWorkspaces: z.array(z.string()).default([]),
 
   // scopeState（issue #471）：政策轴——作用域级可逆闸门。与上面两个键是**两条不同
   // 的轴**：scopeEnabled/strictScope 管「这条记忆属于谁」（事实轴：持久、跟着记忆

@@ -581,7 +581,15 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
         const includeArchived = url.searchParams.get("include_archived") === "true";
         const occurredFrom = url.searchParams.get("occurred_from") ?? undefined;
         const occurredTo = url.searchParams.get("occurred_to") ?? undefined;
-        const listFilters = { includeArchived, ...(occurredFrom ? { occurredFrom } : {}), ...(occurredTo ? { occurredTo } : {}) };
+        // workspace_scope：选料清单（就列这一格），不是可见性闸门——与宿主内
+        // /list 同口径，只做等值匹配、不看 scope source、不碰 NULL 行。
+        const workspaceScope = (url.searchParams.get("workspace_scope") ?? "").trim() || undefined;
+        const listFilters = {
+          includeArchived,
+          ...(occurredFrom ? { occurredFrom } : {}),
+          ...(occurredTo ? { occurredTo } : {}),
+          ...(workspaceScope ? { workspaceScope } : {})
+        };
         const items = service.toApiList(service.list({ type, limit, offset, order, minImportance, source, ...listFilters }));
         // Total honors the same filters so pager math stays correct.
         // #597：typeCounts 与宿主内 /list 同口径（同一份筛选、不带 type 的全库分布），
