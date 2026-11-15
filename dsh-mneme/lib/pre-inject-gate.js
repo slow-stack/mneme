@@ -199,11 +199,25 @@ export function createPreInjectGate({ llm, agentDefaultModel, service, config, l
   // { verdict, timedOut, settled }：verdict=null 即失败/不可解析/超时（审计行记
   // degraded）；timedOut 且 !settled = 底层流未随 abort 停止（调用方进冷却）。
   async function judgePool(query, candidates) {
+    // 判官路由（issue #718）：显式配置（preInjectGateProvider+preInjectGateModel
+    // 都非空，entityExtraction 同款成对语义）优先于 agentDefaultModel。为什么需要
+    // 独立键：判定是 async prefetch + 同步消费，其价值依赖「判定在下一帧到来前完成」
+    // ——agentDefaultModel 上的重型/思考判官 p50 数秒级，渲染帧间隔远小于它，后续帧
+    // 大量拿 pending 原样注入（fail-open），判定开销照付而滤除没有发生。把判官指到
+    // 快速非思考模型是唯一不动提示词与判据就能抬执行覆盖的旋钮。两键缺一或都空 =
+    // 回落 agentDefaultModel（逐字节等于 #718 之前的行为）。
     let route = {};
-    try {
-      const sel = agentDefaultModel?.currentSelection?.();
-      if (sel?.provider && sel?.model) { route.provider = sel.provider; route.model = sel.model; }
-    } catch { /* fall through：无路由照常判定、照常落账（model_id 落 "unknown"） */ }
+    const cfgProvider = typeof config?.preInjectGateProvider === "string" ? config.preInjectGateProvider.trim() : "";
+    const cfgModel = typeof config?.preInjectGateModel === "string" ? config.preInjectGateModel.trim() : "";
+    if (cfgProvider && cfgModel) {
+      route.provider = cfgProvider;
+      route.model = cfgModel;
+    } else {
+      try {
+        const sel = agentDefaultModel?.currentSelection?.();
+        if (sel?.provider && sel?.model) { route.provider = sel.provider; route.model = sel.model; }
+      } catch { /* fall through：无路由照常判定、照常落账（model_id 落 "unknown"） */ }
+    }
     const modelId = route.provider && route.model ? `${route.provider}:${route.model}` : "";
     const startedAt = Date.now();
     const timestamp = new Date(startedAt).toISOString();

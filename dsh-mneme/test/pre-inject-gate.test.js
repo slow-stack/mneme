@@ -160,6 +160,36 @@ test("enabled 观察档：候选不动、审计行落分布（flagged ids / n_po
   assert.equal(rows[0].related_memory_ids.length, 1, "flagged id 映射回真实 UUID");
 });
 
+test("#718 判官专用路由：两键都非空时判定走显式路由（llm 入参 + 审计行 model_id）", async () => {
+  const llm = fakeLlm([{ json: { ids: ["m#1"], reason: "stance" } }]);
+  const s = setup(
+    { preInjectGate: { enabled: true }, preInjectGateProvider: "fastpool", preInjectGateModel: "flash-judge" },
+    llm
+  );
+  seedPool(s.service);
+  frame(s.memoryText, QUERY);
+  await settle();
+
+  assert.equal(llm.calls.length, 1, "判定恰好一次");
+  assert.equal(llm.calls[0].options.provider, "fastpool", "显式路由优先于 agentDefaultModel");
+  assert.equal(llm.calls[0].options.model, "flash-judge");
+  const rows = gateRows(s.store);
+  assert.equal(rows[0].model_id, "fastpool:flash-judge", "审计行 model_id 反映实际判官");
+});
+
+test("#718 判官路由：单边为空 = 整对不生效，回落 agentDefaultModel（entity 同款成对语义）", async () => {
+  const llm = fakeLlm([{ json: { ids: ["m#1"], reason: "stance" } }]);
+  const s = setup({ preInjectGate: { enabled: true }, preInjectGateProvider: "fastpool" }, llm);
+  seedPool(s.service);
+  frame(s.memoryText, QUERY);
+  await settle();
+
+  assert.equal(llm.calls[0].options.provider, "test", "provider 单边配置不生效，回落 agentDefaultModel");
+  assert.equal(llm.calls[0].options.model, "judge-1");
+  const rows = gateRows(s.store);
+  assert.equal(rows[0].model_id, "test:judge-1", "回落路径审计行与 #718 之前逐字节一致");
+});
+
 test("enforce：冷缓存首帧降级原样，缓存命中帧滤除被标记候选", async () => {
   const llm = fakeLlm([{ json: { ids: ["m#1"], reason: "stance" } }]);
   const s = setup({ preInjectGate: { enabled: true, enforce: true } }, llm);

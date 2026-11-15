@@ -113,8 +113,9 @@
 |---|---|---|---|
 | `preInjectGate.enabled` | `false` | 跑池级判定。判定 async prefetch + cache、渲染帧同步消费（宿主 systemPrompt 渲染是同步回调） | 关 = 注入行为与现状逐字节一致。**冷缓存首帧降级**：新查询的第一帧原样注入，下一轮同 key 渲染生效；判定完成落 `llm_audit_logs`（`trigger_source=preInjectGate`，真实 token 用量，`related_memory_ids`=被标记记忆）——先观察真实负载的意见占比分布 |
 | `preInjectGate.enforce` | `false` | 缓存命中帧真的滤除被标记候选 | 关 = 仅观察：候选集不动。**enforce 无 enabled 时无效果**。pin 池（constraint/preference，#249 逐字保真）与 graphHint 线索行豁免——判定与过滤只作用于一般记忆槽 |
+| `preInjectGateProvider` / `preInjectGateModel` | 空 | 判官专用路由（issue #718，成对生效） | 单边为空或都空 = 回落 `agentDefaultModel` 当前选择（与 #718 之前逐字节一致）。判定 async prefetch + 同步消费——判官慢于渲染帧节奏时后续帧大量拿 pending 原样注入，判定开销照付而滤除没有发生；把判官指到快速非思考模型是抬执行覆盖的唯一旋钮 |
 
-降级路径：判定失败/超时/不可解析 → 本帧原样注入 + 审计行 `degraded:true` 且不缓存（下一帧重试）——防线故障永不阻塞注入；连续失败 3 次熔断一个冷却期（判定器系统性坏掉时不再逐帧花钱，到期自动恢复）。**整池被标记**时放弃本帧 enforce（fail-open）：记忆正文是判定模型的可影响输入，一条指令型记忆不该让整个记忆块静默失明——该形态在审计行里就是 `n_flagged == n_pool`（判定与审计按原样保留，只有滤除让位）。判定 LLM 走 `agentDefaultModel` 当前选择（entity adapter 同款装配，无独立 provider/model 键；审计行带实际模型与用量，无默认模型路由时 `model_id` 落 `unknown` 占位——判定生效就必有账；成本痛了再加覆盖键）。缓存键 = 查询 + 候选 `id:内容` 集，候选集变化（轮换/新记忆）或候选内容被就地修正（`updateMemory`）即重新判定，不吃旧判定；命中刷新序（LRU，容量 8）。`llmAudit.enabled=false` 时本闸不运行（无账目的判定不可见也不该花钱）。lightMode 强制关（LLM-per-turn 附加路径与低资源档互斥）。
+降级路径：判定失败/超时/不可解析 → 本帧原样注入 + 审计行 `degraded:true` 且不缓存（下一帧重试）——防线故障永不阻塞注入；连续失败 3 次熔断一个冷却期（判定器系统性坏掉时不再逐帧花钱，到期自动恢复）。**整池被标记**时放弃本帧 enforce（fail-open）：记忆正文是判定模型的可影响输入，一条指令型记忆不该让整个记忆块静默失明——该形态在审计行里就是 `n_flagged == n_pool`（判定与审计按原样保留，只有滤除让位）。判定 LLM 走 `agentDefaultModel` 当前选择，可用 `preInjectGateProvider` / `preInjectGateModel` 覆盖（#718，成对生效；审计行带实际模型与用量，无任何路由时 `model_id` 落 `unknown` 占位——判定生效就必有账）。缓存键 = 查询 + 候选 `id:内容` 集，候选集变化（轮换/新记忆）或候选内容被就地修正（`updateMemory`）即重新判定，不吃旧判定；命中刷新序（LRU，容量 8）。`llmAudit.enabled=false` 时本闸不运行（无账目的判定不可见也不该花钱）。lightMode 强制关（LLM-per-turn 附加路径与低资源档互斥）。
 
 ## 蒸馏（会话 → 记忆）
 
