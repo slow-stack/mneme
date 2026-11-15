@@ -464,3 +464,41 @@ test("#726 affective overview paginates by cursor", async () => {
   const bad = await call("?limit=2&cursor=%%%not-a-cursor");
   assert.equal(bad.status, 400, "解不开的游标明确报错，不静默从头翻");
 });
+
+// #723：聚合键优先取 normalize_key——「开心/高兴」不再因措辞漂移裂成两组；
+// 组透出主词、向性与全部原词；存量边（无 normalize_key）按词面兜底。
+test("#723 affective overview merges synonym emotions via normalize_key", async () => {
+  const { routes, service } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-1", source: "llm",
+    metadata: { emotion: "高兴", normalize_key: "开心", valence: "positive", attribution: "occasion", evidence: ["m-1"] }
+  });
+  service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-2", source: "llm",
+    metadata: { emotion: "开心", normalize_key: "开心", valence: "positive", attribution: "occasion", evidence: ["m-2"] }
+  });
+  // 存量边：没有 normalize_key，按词面兜底成自己的一组。
+  service.saveRelation({
+    from_entity: person.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-3", source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", evidence: ["m-3"] }
+  });
+  const res = new FakeRes();
+  await graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective")
+    .handler(req("/api/dsh-mneme/semantic/graph/affective"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.equal(data.items.length, 2, "同义两词并作一组 + 存量词面一组");
+  const merged = data.items.find((i) => i.normalizeKey === "开心");
+  assert.ok(merged, "归一组存在");
+  assert.deepEqual(merged.originals.sort(), ["开心", "高兴"], "两个原词都保留");
+  assert.equal(merged.valence, "positive");
+  assert.equal(merged.emotion, "开心", "组内 emotion 显示主词——原词序在同毫秒下不稳定，主词才是稳定锚");
+  const legacy = data.items.find((i) => i.emotion === "焦虑");
+  assert.equal(legacy.normalizeKey, "焦虑", "存量边按词面兜底");
+  assert.equal(legacy.valence, null);
+});

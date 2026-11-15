@@ -46,8 +46,8 @@ const PROMPTS = {
   // 凭一次发言一律算场合。宁可全判 occasion（写关系、不改画像），也不要误升特质：
   // 升错的代价是不可逆的画像污染，漏升只是一条关系没建。
   "affective": {
-    "zh": "你是记忆库情感归因助手。下面给出记忆条目（id、时间、正文）和这些条目里出现过的实体名。\n\n任务：找出**明确表达了情绪**的条目，判断这份情绪属于哪一类，并指出情绪属于谁、是关于什么的。\n\n两类，必须分清：\n1. occasion（场合性）——这一次、那天、那件事引起的情绪。「答辩前一晚很焦虑」「被退稿那天特别失落」「今天这个 bug 修好很开心」。这类**只**输出 occasion。\n2. trait（稳定特质）——反复出现、跨越多个不同场合仍成立的倾向。「每次截止日期前都会焦虑」「一向对公开演讲发怵」。输出 trait 时必须能指出至少 {{MIN_SESSIONS}} 个**相互独立**的会话作为依据。\n\n判据：只凭一次发言、一次事件、一个时间点，一律判 occasion。拿不准就判 occasion。\n\n对每条输出一个对象：\n{ \"person\": \"实体名（情绪属于谁，必须来自给定实体名）\", \"target\": \"实体名或事项名（关于什么，必须来自给定实体名）\", \"emotion\": \"情绪词（简短，如 焦虑/开心/沮丧/愤怒/安心）\", \"attribution\": \"occasion | trait\", \"evidence\": [\"支持这条判断的记忆 id\"], \"why\": \"一句话依据\" }\n规则：\n- person 与 target 必须是给定实体名里的真实名字，不要编造\n- evidence 必须真实存在于列表中\n- 判 trait 时 evidence 必须覆盖至少 {{MIN_SESSIONS}} 个不同会话；做不到就判 occasion\n- 只输出 JSON 数组，不要其他文字；没有可归因的情绪就输出 []",
-    "en": "You are the memory affective-attribution assistant. Below are memory entries (id, time, body) and the entity names that appear in them.\n\nTask: find entries that **explicitly express emotion**, decide which class the emotion belongs to, and say whose emotion it is and what it is about.\n\nTwo classes, and they must not be confused:\n1. occasion — an emotion caused by this one time, that day, that event. \"was anxious the night before the defence\", \"felt awful the day the paper was rejected\", \"happy this bug is finally fixed\". These get **only** occasion.\n2. trait — a disposition that recurs across several different occasions. \"always anxious before a deadline\", \"consistently afraid of public speaking\". A trait claim must point to at least {{MIN_SESSIONS}} **mutually independent** sessions as grounds.\n\nRule of judgment: one remark, one event, one point in time is always occasion. When unsure, choose occasion.\n\nFor each item output an object:\n{ \"person\": \"entity name (whose emotion)\", \"target\": \"entity or matter name (about what)\", \"emotion\": \"short emotion word\", \"attribution\": \"occasion | trait\", \"evidence\": [\"memory ids supporting this\"], \"why\": \"one-line rationale\" }\nRules:\n- person and target must be real names from the given entity list; never invent them\n- evidence must really exist in the list\n- a trait claim needs evidence spanning at least {{MIN_SESSIONS}} distinct sessions; if it does not, use occasion\n- Output only a JSON array, no other text; output [] when there is no attributable emotion\n- Write every why in English"
+    "zh": "你是记忆库情感归因助手。下面给出记忆条目（id、时间、正文）和这些条目里出现过的实体名。\n\n任务：找出**明确表达了情绪**的条目，判断这份情绪属于哪一类，并指出情绪属于谁、是关于什么的。\n\n两类，必须分清：\n1. occasion（场合性）——这一次、那天、那件事引起的情绪。「答辩前一晚很焦虑」「被退稿那天特别失落」「今天这个 bug 修好很开心」。这类**只**输出 occasion。\n2. trait（稳定特质）——反复出现、跨越多个不同场合仍成立的倾向。「每次截止日期前都会焦虑」「一向对公开演讲发怵」。输出 trait 时必须能指出至少 {{MIN_SESSIONS}} 个**相互独立**的会话作为依据。\n\n判据：只凭一次发言、一次事件、一个时间点，一律判 occasion。拿不准就判 occasion。\n\n对每条输出一个对象：\n{ \"person\": \"实体名（情绪属于谁，必须来自给定实体名）\", \"target\": \"实体名或事项名（关于什么，必须来自给定实体名）\", \"emotion\": \"情绪词（简短，如 焦虑/开心/沮丧/愤怒/安心）\", \"attribution\": \"occasion | trait\", \"evidence\": [\"支持这条判断的记忆 id\"], \"why\": \"一句话依据\" }\n规则：\n- person 与 target 必须是给定实体名里的真实名字，不要编造\n- evidence 必须真实存在于列表中\n- emotion 必须从这份情绪词表里挑主词（括号内是近义词，挑得到就输出主词）：{{VOCAB}}。词表都不贴切时可用你自己的词——它将无法与其他情绪合并归类\n- 判 trait 时 evidence 必须覆盖至少 {{MIN_SESSIONS}} 个不同会话；做不到就判 occasion\n- 只输出 JSON 数组，不要其他文字；没有可归因的情绪就输出 []",
+    "en": "You are the memory affective-attribution assistant. Below are memory entries (id, time, body) and the entity names that appear in them.\n\nTask: find entries that **explicitly express emotion**, decide which class the emotion belongs to, and say whose emotion it is and what it is about.\n\nTwo classes, and they must not be confused:\n1. occasion — an emotion caused by this one time, that day, that event. \"was anxious the night before the defence\", \"felt awful the day the paper was rejected\", \"happy this bug is finally fixed\". These get **only** occasion.\n2. trait — a disposition that recurs across several different occasions. \"always anxious before a deadline\", \"consistently afraid of public speaking\". A trait claim must point to at least {{MIN_SESSIONS}} **mutually independent** sessions as grounds.\n\nRule of judgment: one remark, one event, one point in time is always occasion. When unsure, choose occasion.\n\nFor each item output an object:\n{ \"person\": \"entity name (whose emotion)\", \"target\": \"entity or matter name (about what)\", \"emotion\": \"short emotion word\", \"attribution\": \"occasion | trait\", \"evidence\": [\"memory ids supporting this\"], \"why\": \"one-line rationale\" }\nRules:\n- person and target must be real names from the given entity list; never invent them\n- evidence must really exist in the list\n- emotion must be picked from this vocabulary (main word first, synonyms in parentheses; output the main word when one fits): {{VOCAB}}. If none fits, use your own word — it will not be merged with related emotions\n- a trait claim needs evidence spanning at least {{MIN_SESSIONS}} distinct sessions; if it does not, use occasion\n- Output only a JSON array, no other text; output [] when there is no attributable emotion\n- Write every why in English"
   },
   "freezeSuffix": {
     "zh": "\n\n当前为「冲突冻结」模式：检测到内容矛盾的条目时，仍请输出 conflict，并以 winner/loser 作为候选、reason 说明理由；冲突不会被自动裁决，而会冻结待人工确认。",
@@ -114,6 +114,58 @@ const PROMPTS = {
     en: "You are describing an image. The description is merged into a conversation transcript so another model can understand the image without seeing it.\n\nRequirements:\n- Describe only what is actually in the image: subject, scene, visible on-screen text and controls, chart data and trends\n- Copy on-screen text (buttons, headings, code, error messages) verbatim — that is the most useful part\n- Do not guess; if something is unreadable write \"unreadable\"; never fill it in with a plausible-looking value\n- No evaluation, no guessing at intent, no \"this probably means ...\"\n- Under 100 words, one plain line, no markdown, no prefix"
   }
 };
+
+// #723：情绪词表——同义词组归一到组首主词（key），valence 跟组走。放 lang.js 的
+// 理由：词表是「每语言一份」的语义资产，与 affectiveNote/affectiveTrait 同居；
+// prompt 里的情绪枚举（{{VOCAB}}）与 sleep 写入时的归一查找（affectiveVocabFor）
+// 必须是同一份，分开放迟早漂。词表外的词照写：normalize_key=原词、valence=null——
+// 词表只决定「归到哪组」，不改写、不丢弃任何措辞；宁可不归组，也不编一个归属。
+export const AFFECTIVE_VOCAB = {
+  zh: [
+    { key: "开心", valence: "positive", words: ["开心", "高兴", "喜悦", "快乐", "愉快"] },
+    { key: "满足", valence: "positive", words: ["满足", "满意", "踏实", "安心", "释然", "放松"] },
+    { key: "期待", valence: "positive", words: ["期待", "兴奋", "憧憬"] },
+    { key: "感动", valence: "positive", words: ["感动", "感激", "感谢"] },
+    { key: "自豪", valence: "positive", words: ["自豪", "骄傲"] },
+    { key: "好奇", valence: "neutral", words: ["好奇", "感兴趣", "惊讶", "意外", "吃惊"] },
+    { key: "平静", valence: "neutral", words: ["平静", "冷静", "专注"] },
+    { key: "紧张", valence: "negative", words: ["紧张", "忐忑", "有压力"] },
+    { key: "不安", valence: "negative", words: ["不安", "担心", "忧虑", "心虚"] },
+    { key: "焦虑", valence: "negative", words: ["焦虑", "烦躁", "着急"] },
+    { key: "失落", valence: "negative", words: ["失落", "失望", "沮丧", "灰心", "委屈", "不甘"] },
+    { key: "生气", valence: "negative", words: ["生气", "愤怒", "恼火", "气恼"] }
+  ],
+  en: [
+    { key: "happy", valence: "positive", words: ["happy", "glad", "joyful", "cheerful", "delighted"] },
+    { key: "satisfied", valence: "positive", words: ["satisfied", "content", "relieved", "at ease"] },
+    { key: "excited", valence: "positive", words: ["excited", "eager", "thrilled", "looking forward"] },
+    { key: "grateful", valence: "positive", words: ["grateful", "thankful", "touched", "moved"] },
+    { key: "proud", valence: "positive", words: ["proud", "accomplished"] },
+    { key: "curious", valence: "neutral", words: ["curious", "interested", "intrigued", "surprised", "astonished"] },
+    { key: "calm", valence: "neutral", words: ["calm", "focused", "composed"] },
+    { key: "anxious", valence: "negative", words: ["anxious", "nervous", "tense", "on edge"] },
+    { key: "worried", valence: "negative", words: ["worried", "uneasy", "concerned"] },
+    { key: "stressed", valence: "negative", words: ["stressed", "overwhelmed", "frustrated"] },
+    { key: "disappointed", valence: "negative", words: ["disappointed", "down", "discouraged", "sad"] },
+    { key: "angry", valence: "negative", words: ["angry", "annoyed", "irritated", "upset"] }
+  ]
+};
+
+// 归一查找表：word（小写）→ 组。sleep 写 metadata 时用；每语言约 70 词，随建随用。
+export function affectiveVocabFor(language) {
+  const map = new Map();
+  for (const g of AFFECTIVE_VOCAB[language] ?? []) {
+    for (const w of g.words) map.set(w.toLowerCase(), g);
+  }
+  return map;
+}
+
+// prompt 里 {{VOCAB}} 的展开文本：主词（近义词/…）。
+export function affectiveVocabText(language) {
+  return (AFFECTIVE_VOCAB[language] ?? [])
+    .map((g) => `${g.key}（${g.words.filter((w) => w !== g.key).join("/") || "—"}）`)
+    .join("、");
+}
 
 export const STR = {
   // --- summarize.js：蒸馏的时间锚点 ------------------------------------------

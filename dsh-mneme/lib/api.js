@@ -1794,7 +1794,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             ? "trait"
             : (metaAttribution || "occasion");
           if (!emotion) continue;
-          const key = `${e.from_entity}\u0000${e.to_entity}\u0000${emotion}\u0000${attribution}`;
+          // #723：聚合键优先取归一键（词表主词），「开心/高兴」不再因措辞漂移裂成
+          // 两组；存量边没有 normalize_key，按词面兜底。
+          const canonical = String(meta.normalize_key ?? "").trim() || emotion;
+          const key = `${e.from_entity}\u0000${e.to_entity}\u0000${canonical}\u0000${attribution}`;
           if (!groups.has(key)) {
             groups.set(key, {
               k: key,
@@ -1802,7 +1805,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
               personId: e.from_entity,
               target: e.to_name ?? null,
               targetId: e.to_entity,
-              emotion,
+              // emotion 显示主词：归一组里「哪个原词排第一」取决于边序（同毫秒
+              // 创建时不稳定），主词是稳定锚；原词在 originals 里全量保留。
+              // 存量边没有 normalize_key → canonical=词面，行为不变。
+              emotion: canonical,
               attribution,
               promotedToTrait: meta.promotedToTrait === true,
               sessionCount: Number.isFinite(meta.sessionCount) ? meta.sessionCount : null,
@@ -1814,11 +1820,16 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
               // why 取组内最新一条边的（旧的没有「最近为什么」的意义）。
               why: String(meta.why ?? ""),
               downgradedFrom: meta.downgradedFrom === "trait" ? "trait" : null,
+              // #723：组的主词、向性与组内出现过的全部原词（措辞不丢）。
+              normalizeKey: canonical,
+              valence: typeof meta.valence === "string" ? meta.valence : null,
+              originals: [emotion],
               edgeIds: []
             });
           }
           const g = groups.get(key);
           g.edgeIds.push(e.id);
+          if (!g.originals.includes(emotion)) g.originals.push(emotion);
           if (e.created_at && (!g.lastSeen || e.created_at > g.lastSeen)) {
             g.lastSeen = e.created_at;
             g.why = String(meta.why ?? "");
