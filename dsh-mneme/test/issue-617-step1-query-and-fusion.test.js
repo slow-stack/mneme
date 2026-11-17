@@ -150,6 +150,11 @@ test("#745: 宿主快照与 Bot 间投递仍不算提问（反向对照）", () 
     { kind: "plugin:dsh-mneme" },
     { kind: "coordinator", form: "relay" },
     { kind: "agent-message", form: "relay" },
+    // review 意见：白名单里的 kind 也可能带机器形态的 form，不能只看 kind
+    { kind: "bot", form: "notice" },
+    { kind: "bot", form: "snapshot" },
+    { kind: "user", form: "instructions" },
+    { kind: "plugin:dsh-onebot", form: "catalog" },
     { kind: "system" }
   ]) {
     session.events.push({ type: "user/message", data: { source, content: [{ type: "text", text: "不该当查询的一段" }] } });
