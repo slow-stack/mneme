@@ -1,6 +1,7 @@
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 // Issue #611：图片块的文本口径（占位，不是空串），与 summarize.js 共用一份。
 import { contentToText } from "./attachment-text.js";
+import { isHumanInputSource } from "./human-source.js";
 
 // #249 N3（压缩边缘双落点）：上下文即将大幅精简前，抢救「正在做什么」。
 //
@@ -128,10 +129,9 @@ export function deriveContinuity(session, fieldMax = CONTINUITY_FIELD_MAX) {
   for (const event of sessionEvents(session)) {
     const data = event?.data ?? {};
     if (event?.type === "user/message") {
-      // 只认用户自己写的：source.kind 缺省（旧事件）或 "user"。插件消息（我们自己的
-      // 注入、其它插件）与子代理上报都不是"当前指令"。
-      const kind = data?.source?.kind;
-      if (kind !== undefined && kind !== "user") continue;
+      // 只认人写的：判据见 human-source.js（#745 起中继消息 `kind:"bot"` 也算人）。
+      // 插件注入（我们自己的、其它插件的）与子代理上报都不是"当前指令"。
+      if (!isHumanInputSource(data?.source)) continue;
       const text = textOf(data.content).trim();
       if (text) currentWork = text.slice(0, fieldMax);
     } else if (event?.type === "assistant/message") {
