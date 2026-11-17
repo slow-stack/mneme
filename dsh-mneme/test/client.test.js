@@ -4752,6 +4752,63 @@ test("affective page wires the manual apply channel (#725)", () => {
     "apply 成功后要广播失效事件，依赖方不能等 60s 兜底轮询");
 });
 
+// #729/#732 的字段落页面：后端一直在给 why / downgradedFrom / valence / originals /
+// firstSeen，前端此前一个都没消费——「数据在、界面没显示」的又一次假绿。锁五件事：
+// why 上行（全文进 title）、降级徽标、向性与原词进 meta、首页就按游标模式取
+// （否则边帽=limit，next 永远是 null，翻页按钮长不出来）。
+test("affective rows consume the #729/#732 fields the server already returns", () => {
+  const start = clientSource.indexOf("function AffectivePanel({ t })");
+  const end = clientSource.indexOf("function StatusPanel({ t, onBrowse })", start);
+  const body = clientSource.slice(start, end);
+
+  assert.ok(/it\.why \? h\("div", \{ className: "mneme-affective-why", title: it\.why \}/.test(body),
+    "why 必须上行（截断展示 + title 带全文），不能只躺在响应里");
+  assert.ok(/it\.downgradedFrom === "trait"\s*\?/.test(body) && body.includes("mneme-affective-flag"),
+    "降级留痕要摆到明面上（曾按倾向记后降回场合）");
+  assert.ok(/it\.valence/.test(body) && /valencePositive|valenceNegative|valenceNeutral/.test(body),
+    "向性要进 meta（词表外的词 valence=null，不渲染就是了）");
+  assert.ok(/it\.originals\.length > 1/.test(body),
+    "归一组出现过的原词要可见，措辞漂移不能静默发生");
+  assert.ok(/it\.firstSeen && it\.firstSeen !== it\.lastSeen/.test(body),
+    "首现只在与最近不同时说");
+  // 首页就带 cursor 恒参：不带 cursor 的请求边帽=limit（200），组数永远到不了帽，
+  // 服务端永远不发 next——翻页按钮就永远长不出来。
+  assert.ok(/cursor: opts\.cursor \?\? ""/.test(body),
+    "首页必须按游标模式取（cursor 空串=从头翻第一页），否则 next 永远是 null");
+  assert.ok(body.includes("loadMoreMain") && body.includes("mneme-affective-more"),
+    "下一页要真有按钮，不能只留截断提示");
+});
+
+// 过滤下的空 ≠ 没记过：两句话混用一句，用户会以为整条情绪线是空的。
+// 锁：过滤参数真的进请求串、生效态与草稿态分开、过滤空态有自己的文案。
+test("affective filters hit the server params and keep filtered-empty apart from true-empty", () => {
+  const start = clientSource.indexOf("function AffectivePanel({ t })");
+  const end = clientSource.indexOf("function StatusPanel({ t, onBrowse })", start);
+  const body = clientSource.slice(start, end);
+
+  assert.ok(/person: filters\.person, emotion: filters\.emotion/.test(body),
+    "过滤参数要真的进请求（服务端支持 person/emotion，#729）");
+  assert.ok(/setFilters\(\{ person: "", emotion: "" \}\)/.test(body),
+    "清除过滤要一键回到全量，不是让用户逐格删字");
+  assert.ok(body.includes("memory.affective.emptyFiltered"),
+    "过滤下的空态要有自己的话，不能冒充「库里还没有情绪边」");
+});
+
+// 账本的 before/after 后端一直在写（rename 是词面、promote/demote/archive/restore
+// 是档位与归档态），面板此前只读 at+op——「改了什么」全靠用户脑补。
+test("affective journal rows surface the before/after delta", () => {
+  const start = clientSource.indexOf("function AffectivePanel({ t })");
+  const end = clientSource.indexOf("function StatusPanel({ t, onBrowse })", start);
+  const body = clientSource.slice(start, end);
+
+  assert.ok(/const journalDelta = \(j\) =>/.test(body), "delta 派生函数要存在");
+  assert.ok(/j\.op === "rename" && before\?\.emotion && after\?\.emotion/.test(body),
+    "改词要显示词面变化（旧词 → 新词）");
+  assert.ok(/if \(j\.op === "promote"\) return/.test(body) && /if \(j\.op === "restore"\) return/.test(body)
+    && /j\.op === "archive"/.test(body) && /j\.op === "demote"/.test(body),
+    "归档/恢复/升格/降格都要显示状态迁移（活跃 ↔ 已归档、场合 ↔ 倾向）");
+});
+
 // formatRelativeTime(value, t) 的 t 是必填的：它内部要 t("memory.time.now")
 // 之类的文案，少传就抛 TypeError，而它跑在 render 里 —— 整个面板会白屏，
 // 且不写进任何日志。v0.14.0-beta.1/2 的「情绪页一点就全白」就是这么来的
