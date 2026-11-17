@@ -3026,3 +3026,142 @@ test("POST /diary/compose 两个身份参数都没有时传 null，不假装自�
   assert.equal(res.statusCode, 200);
   assert.equal(calls[0].agentId, null, "不知道是谁 ≠ 以为是 default");
 });
+
+// ── DSH 访问检查（fkysly 在 awesome 条目里点出的那条：只有 apiToken 挡不住
+// 浏览器里任意网页对 127.0.0.1 的请求）。宿主给了 connection 就必须先过
+// requestRejection；没给（headless / 旧宿主 / 测试 mock）则行为退回加这层之前。
+
+function setupWithConnection(connection, apiToken = FAKE_API_TOKEN) {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: testConfig({}) });
+  const settings = createSettings(store.db);
+  const commands = {
+    add: (def) => settings.addCommand(def),
+    remove: (id) => settings.removeCommand(id),
+    list: () => settings.listCommands()
+  };
+  const routes = [];
+  const ctx = {
+    webServer: {
+      register(route) {
+        routes.push(route);
+        return () => {};
+      }
+    },
+    connection
+  };
+  createApi(ctx, service, settings, commands, null, undefined, apiToken, null);
+  return { routes, service, store };
+}
+
+const ALLOW_ALL = { requestRejection: () => undefined };
+
+test("connection 说 403 时，连 policy=open 的路由也不放行（跨站网页调不动）", async () => {
+  const seen = [];
+  const { routes } = setupWithConnection({
+    requestRejection(request) {
+      seen.push(request.url);
+      return 403;
+    }
+  });
+  // /api/dsh-mneme/info 是 policy=open：加这层之前它对谁都不设防。
+  const route = findHandler(routes, "/api/dsh-mneme/info");
+  assert.equal(route.policy, "open", "这条测试的前提就是它 policy=open");
+
+  const res = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/info"), res);
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body, "", "被拒时不该回插件数据，也不该回 JSON 错误体");
+  assert.equal(seen.length, 1, "requestRejection 恰好被问一次");
+});
+
+test("connection 说 401 时同样挡下，且不改写状态码以外的响应", async () => {
+  const { routes } = setupWithConnection({ requestRejection: () => 401 });
+  const res = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/info").handler(req("/api/dsh-mneme/info"), res);
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body, "");
+});
+
+test("connection 放行后策略照旧：open 直接过，token 仍要 token", async () => {
+  const { routes } = setupWithConnection(ALLOW_ALL);
+
+  const openRes = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/info").handler(req("/api/dsh-mneme/info"), openRes);
+  assert.equal(openRes.statusCode, 200, "放行后 open 路由行为不变");
+
+  const noAuth = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/memory/provenance")
+    .handler(req("/api/dsh-mneme/memory/provenance?id=x"), noAuth);
+  assert.equal(noAuth.statusCode, 401, "访问检查不等于鉴权：token 策略还要 token");
+
+  const authed = new FakeRes();
+  const r = req("/api/dsh-mneme/info");
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
+  await findHandler(routes, "/api/dsh-mneme/info").handler(r, authed);
+  assert.equal(authed.statusCode, 200);
+});
+
+test("宿主没提供 connection 时不加检查，行为与加这层之前逐字一致", async () => {
+  const { routes } = setupWithConnection(undefined);
+  const res = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/info").handler(req("/api/dsh-mneme/info"), res);
+  assert.equal(res.statusCode, 200, "headless / 旧宿主不能因为拿不到 connection 就整体 401");
+});
+
+test("connection 对象在手、但没有 requestRejection 方法时按「没提供」处理", async () => {
+  const { routes } = setupWithConnection({});
+  const res = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/info").handler(req("/api/dsh-mneme/info"), res);
+  assert.equal(res.statusCode, 200);
+});
+
+test("connection 在 createApi 之后才挂上时，随后的请求仍然过检查（惰性读取）", async () => {
+  // cordis 里宿主服务的存续会变（重载、后到），createApi 那一刻的快照不能
+  // 被冻死：否则先起的面板就永久裸奔。
+  const store = { connection: undefined };
+  const routes = [];
+  const ctx = {
+    reflect: { get: (name) => (name === "webServer"
+      ? { register(r) { routes.push(r); return () => {}; } }
+      : store[name]) },
+    webServer: { register(r) { routes.push(r); return () => {}; } }
+  };
+  const storeDb = createStore(":memory:");
+  const service = createService({ store: storeDb, mirror: null, config: testConfig({}) });
+  const settings = createSettings(storeDb.db);
+  createApi(ctx, service, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "", null);
+
+  const route = findHandler(routes, "/api/dsh-mneme/info");
+
+  // 先没有 connection：放行。
+  const before = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/info"), before);
+  assert.equal(before.statusCode, 200);
+
+  // 之后宿主挂上 connection 并开始拒绝：同一个 handler 必须跟着变。
+  store.connection = { requestRejection: () => 403 };
+  const after = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/info"), after);
+  assert.equal(after.statusCode, 403, "后来挂上的 connection 必须被看到");
+});
+
+test("读 connection 抛错时按未提供处理，不让面板 500", async () => {
+  const routes = [];
+  const ctx = {
+    reflect: {
+      get(name) {
+        if (name === "webServer") return { register(r) { routes.push(r); return () => {}; } };
+        throw new Error("cannot get required service \"connection\" in inactive context");
+      }
+    }
+  };
+  const storeDb = createStore(":memory:");
+  const service = createService({ store: storeDb, mirror: null, config: testConfig({}) });
+  const settings = createSettings(storeDb.db);
+  createApi(ctx, service, settings, { add() {}, remove() {}, list: () => [] }, null, undefined, "", null);
+
+  const res = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/info").handler(req("/api/dsh-mneme/info"), res);
+  assert.equal(res.statusCode, 200, "宿主卸载中的抛错不能变成面板 500");
+});
