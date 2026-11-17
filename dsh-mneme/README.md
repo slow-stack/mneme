@@ -3,7 +3,7 @@
 </p>
 
 ```
-$ cat ~/.dsh/memory/preferences.md
+$ cat ~/.mneme/memory/preferences.md
 # 你的偏好，写在本机磁盘上，随时能改
 ```
 
@@ -11,7 +11,7 @@ $ cat ~/.dsh/memory/preferences.md
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm version"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm downloads"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=EFE7D8"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=111111" alt="CI"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/tests-3599%20total-EFE7D8?style=flat-square"><img src="https://img.shields.io/badge/tests-3599%20total-111111?style=flat-square" alt="tests"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/tests-3620%20total-EFE7D8?style=flat-square"><img src="https://img.shields.io/badge/tests-3620%20total-111111?style=flat-square" alt="tests"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/license-MIT-EFE7D8?style=flat-square&label=license&labelColor=B03A2E&logoColor=1C1C1C"><img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square&label=license&labelColor=B03A2E&logoColor=FFFFFF" alt="license"></picture>
 <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
@@ -54,7 +54,7 @@ dsh web
 
 ### 记忆存储（SQLite + Markdown 镜像）
 
-- **SQLite 主存储**：`~/.dsh/memory/memory.db`，`node:sqlite` 内置，零原生依赖
+- **SQLite 主存储**：`~/.mneme/memory/memory.db`（有存量库时仍是 `~/.dsh/memory/memory.db`），`node:sqlite` 内置，零原生依赖
 - **Markdown 镜像**：按类型分文件（`preferences.md` / `projects.md` / `decisions.md` / `history.md` / `summary.md` / `patterns.md` / `pitfalls.md` / `constraints.md` / `rejected-solutions.md`，外加只读视图 `documents.md`），文件头是 YAML frontmatter（`type` / `generated.by` / `generated.at` / `covered` / `coverage` / `tags`）。人类可读，条目标题与正文可手工编辑（**人工修改优先**合并回库）；`documents.md` 例外：它只有 document 指针行（id、标题、摘要首句、文件路径），不含正文也不参与人工回填。文件头与条目元数据行由机器维护
 - **10 种记忆类型**：`preference` 偏好 / `project` 项目 / `decision` 决策 / `history` 历史 / `summary` 会话总览 / `pattern` 模式 + 编码记忆三型 `rejected_solution` 被否方案 / `pitfall` 踩坑 / `constraint` 约束（v0.7.13 起，`codingRetrospect` 默认关；v0.7.11 近重写已收窄删除 user/fact 两型）+ `document` 文档指针（#230，只存摘要与 `doc_path`，正文留在磁盘由 agent 自管）
 - **镜像同步状态机（v0.3.6+）**：mirror 与主库强一致，用 `generation`（期望轮次）/ `applied_generation`（已应用轮次）建模同步债务
@@ -181,7 +181,7 @@ dsh web
 
 保存配置后点「重建索引」，为已有记忆批量补建向量（新写入的记忆会自动嵌入）。之后在记忆面板输入查询并点「语义」，即可用向量召回语义相关结果；向量服务不可用时自动回退全文搜索。
 
-> ⚠️ 密钥仅保存在本机 `~/.dsh/memory/memory.db` 的 `user_settings` 表，不会上传，也不会写入代码仓库。
+> ⚠️ 密钥仅保存在本机记忆库（默认 `~/.mneme/memory/memory.db`）的 `user_settings` 表，不会上传，也不会写入代码仓库。
 > 需要 embedding 而非 rerank 模型：如阿里云 `text-embedding-v3` 可用，`qwen3-vl-rerank` 是 rerank 模型（不走 `/embeddings`）。
 
 ### 语义增强（Semantic）🧠
@@ -192,7 +192,7 @@ v0.2 起新增**可以完全离线运行的语义记忆引擎**（本地模型 +
 - **Rerank 精排**：`Xenova/bge-reranker-base` 对召回候选交叉编码精排，提升 Top-K 准确率
 - **autoDream 语义增强**：对记忆向量聚类（`clusterMemories`），自动发现主题相近 / 疑似矛盾的记忆，巩固更精准
 - **搜索流水线**：混合召回（关键词 + 向量）→ Rerank → Top-K
-- **自管运行时**：本地推理的依赖闭包（`@huggingface/transformers` + `onnxruntime-node` + `sharp`，从宿主收编时本机实测 49 个包 / 约 393MB）可收编到 `~/.dsh/mneme/runtime/`，与 profile 的依赖图解耦——由于 profile 是所有插件共用的依赖图，这份闭包留在此前的位置会让「安装任何插件」都替它重走一遍整条依赖链；收编优先硬链接，同盘时几乎不额外占盘。`@huggingface/transformers` 已从 `dependencies` 降为**可选 peer**，因此安装插件不再携带它；正在使用本地嵌入的用户请先按文档收编，否则升级后本地嵌入不可用（读写信道不受影响）
+- **自管运行时**：本地推理的依赖闭包（`@huggingface/transformers` + `onnxruntime-node` + `sharp`，从宿主收编时本机实测 49 个包 / 约 393MB）可收编到 `~/.mneme/runtime/`，与 profile 的依赖图解耦——由于 profile 是所有插件共用的依赖图，这份闭包留在此前的位置会让「安装任何插件」都替它重走一遍整条依赖链；收编优先硬链接，同盘时几乎不额外占盘。`@huggingface/transformers` 已从 `dependencies` 降为**可选 peer**，因此安装插件不再携带它；正在使用本地嵌入的用户请先按文档收编，否则升级后本地嵌入不可用（读写信道不受影响）
 - **取回运行时的三条来源**：① 收编本机已有（零网络、同盘硬链接）→ ② 本地 `.tgz` 目录（`runtimeTarballDir`，某个包网络下不到时用）→ ③ npm registry（`runtimeMirror` 可换镜像），按随包发布的 `runtime-manifest.json` 逐个取并**先校验 sha512 再落盘**（win32-x64 实测约 33 个包 / 2142 个文件 / 数百 MB；清单平台无关，一份覆盖 win32/darwin/linux × x64/arm64；剔除 `onnxruntime-web`——Node 构建从不 import 它）。面板「向量索引」卡片在不就绪时会给出这段代价说明并提供一个按钮；不想开面板也可以让 agent 用 `memory_runtime` 工具（`status` / `provision` / `verify`）代做
 
 配置只需在 `cordis.patch.yml` 里设置 `embedProvider`（默认 `openai`，保持 v0.1 行为；改为 `local` 即离线）。升级无需迁移数据。
@@ -364,7 +364,7 @@ dsh plugin --profile web add "C:/path/to/modusensus-dsh-mneme-0.9.0.tgz"
 - id: dsh-mneme
   name: '@modusensus/dsh-mneme'
   config:
-    memoryDir: ~/.dsh/memory
+    # memoryDir 留空 = 由 src/paths.js 解析：MNEME_HOME 下的 memory/（默认 ~/.mneme/memory）
     language: zh
     autoInject: true
     autoSummarize: true
@@ -380,7 +380,7 @@ dsh plugin --profile web add "C:/path/to/modusensus-dsh-mneme-0.9.0.tgz"
 
 **升级只动代码，不动你的记忆和设置。**
 
-设置与记忆是**同一个 SQLite 文件**里的表（`user_settings` 与 `memories` 等），文件位置由 `memoryDir` 决定，默认在 `~/.dsh/memory`——**不在插件安装目录下**。所以卸插件、装插件都不碰它。
+设置与记忆是**同一个 SQLite 文件**里的表（`user_settings` 与 `memories` 等），文件位置由 `memoryDir` 决定，默认在 `~/.mneme/memory`（老用户仍在 `~/.dsh/memory`）——**不在插件安装目录下**。所以卸插件、装插件都不碰它。
 
 升级就是覆盖安装，装完重启一次：
 
@@ -405,7 +405,7 @@ dsh web
 
 | 键 | 默认值 | 说明 |
 |----|--------|------|
-| `memoryDir` | `~/.dsh/memory` | 记忆存储目录（SQLite + Markdown） |
+| `memoryDir` | 空 | 记忆存储目录（SQLite + Markdown）。空 = `MNEME_HOME`（兼容 `DSH_MNEME_HOME`）下的 `memory/`，默认 `<home>/.mneme/memory`；**老 `~/.dsh/memory` 里有 `memory.db` 就继续用它**，**两边都有库时按体积判**（新库不足旧库 10% 视为误建，仍用旧库并告警，不静默搬家）；也认 `MNEME_MEMORY_DIR`，显式设了就直接用 |
 | `language` | `zh` | 记忆语言：生成的记忆条目、注入标题与后台 LLM 提示词所用语言（`zh` / `en`） |
 | `autoInject` | `true` | 会话启动自动注入记忆 |
 | `autoSummarize` | `true` | 会话结束自动提炼摘要 |
@@ -467,10 +467,10 @@ dsh web
 | `localEmbedBatchSize` | `8` | 本地 embedding 批大小（1-64） |
 | `ollamaBaseUrl` | `http://localhost:11434` | Ollama 服务地址 |
 | `ollamaModel` | `nomic-embed-text` | Ollama embedding 模型 |
-| `embedModelCacheDir` | 空 | 模型缓存目录（空 = 用户级 `~/.dsh/mneme/models`） |
+| `embedModelCacheDir` | 空 | 模型缓存目录（空 = `MNEME_HOME` 下的 `models/`，默认 `<home>/.mneme/models`；旧 `~/.dsh/mneme/models` 存在就继续用） |
 | `embedModelMirror` | `https://hf-mirror.com` | 模型下载镜像源 |
 | `resilientModelDownload` | `true` | 模型文件下载断点续传与重试（v0.8.3，#194/#207）：Range/If-Range 续传、416/偏移失配重置、单写者锁+降级直通、空闲看门狗；`false` 恢复 env.fetch 原样 |
-| `runtimeDir` | 空 | 自管运行时目录（#131）：空 = `~/.dsh/mneme/runtime`，放收编/下载的 transformers+onnxruntime 闭包（不留宿主 profile 依赖图） |
+| `runtimeDir` | 空 | 自管运行时目录（#131）：空 = `MNEME_HOME` 下的 `runtime/`（默认 `<home>/.mneme/runtime`，环境变量 `MNEME_RUNTIME_DIR`，兼容 `DSH_MNEME_RUNTIME_DIR`；旧 `~/.dsh/mneme/runtime` 存在就继续用），放收编/下载的 transformers+onnxruntime 闭包（不留宿主 profile 依赖图） |
 | `runtimeTarballDir` | 空 | 运行时离线取件：本地 `.tgz` 目录（如 onnxruntime-node 网络下不到时 `npm pack` 丢进去），有则优先于联网 |
 | `runtimeMirror` | 空 | 运行时 registry 镜像前缀（如 `https://npmmirror.com/mirrors/npm/`）；留空用 runtime-manifest.json 官方地址 |
 | `vectorSearchTopK` | `20` | 向量搜索返回 Top-K |
@@ -673,7 +673,7 @@ dsh-mneme undo-share pack.json --apply               # 按 pack_id 整包收回�
 不启动 DSH 也能让记忆库对外服务：`dsh-mneme-serve` 在宿主之外组装同一套 lib，把数据面跑成常驻进程（路由与鉴权与「独立外部 API」完全同源）。适用场景：第三方集成（如 [Mneme-Bridge](https://github.com/SternChiri/Mneme-Bridge) 这类网页端桥接，见下方[社区适配器](#社区适配器)）需要长期挂载记忆库，而 DSH 不必一直开着。
 
 ```bash
-dsh-mneme-serve                                              # 默认 ~/.dsh/memory + 8790
+dsh-mneme-serve                                              # 默认 <MNEME_HOME>/memory + 8790
 dsh-mneme-serve --memory-dir "D:\my mem" --port 8790 --host 127.0.0.1
 dsh-mneme-serve --embed off                                  # 纯关键词 + BM25(不取件模型)
 ```
@@ -769,9 +769,9 @@ src/
 ├── api.js            # HTTP 路由（Web 面板数据通道，含 /conflicts 冲突队列）
 └── index.js          # 插件接线
 lib/                  # src 的同步分发产物（npm run sync，prepack 钩子在发布时自动跑；一致性由 scripts/check-sync.js 在 CI 与 release.yml 校验——它只查不同步；唯一手写例外 lib/client.js——Web 面板 bundle，sync 不覆盖）
-test/                 # 3599 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
+test/                 # 3620 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
 
-test/                 # 3599 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
+test/                 # 3620 个 node:test 测试（审计与三轴线压测不变量；src↔lib 一致性由 scripts/check-sync.js 发布闸门校验）
 scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压测 · sync-lib.js 同步 · check-sync.js 发布闸门 · benchmark-recall.js / benchmark-embed.js / benchmark-rerank.js 基准 · sync-test-badge.mjs 测试徽章 · build-runtime-manifest.mjs 运行时清单
 ```
 
@@ -780,9 +780,9 @@ scripts/              # e2e-dsh.js 端到端演示 · stress-dsh.js 三轴线压
 ```bash
 cd dsh-mneme
 npm install        # 安装 peer 依赖（以 devDependencies 形式，用于本地测试）
-npm test           # 运行 3599 个测试
+npm test           # 运行 3620 个测试
 
-npm test           # 运行 3599 个测试
+npm test           # 运行 3620 个测试
 npm run stress     # 三轴线压测：长会话检索 / 冲突仲裁 / 多 Agent 并发（离线 mock LLM）
 npm run sync       # 把 src/ 同步到 lib/（发布时由 prepack 钩子自动执行）
 ```

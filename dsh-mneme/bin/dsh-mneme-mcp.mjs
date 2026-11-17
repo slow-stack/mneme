@@ -13,7 +13,7 @@
  * save 不做自动标注、只认显式 agent_scope / workspace_scope 声明。
  *
  * 配置优先级（沿用 CLI 约定）：
- *   环境变量 DSH_MNEME_URL / DSH_MNEME_TOKEN > ~/.dsh-mneme/cli.json（{"url","token"}）
+ *   环境变量 MNEME_URL / MNEME_TOKEN（兼容 DSH_MNEME_*）> ~/.dsh-mneme/cli.json（{"url","token"}）
  *   > 默认 http://127.0.0.1:8790
  *
  * Claude Code 挂载示例（.mcp.json）：
@@ -31,14 +31,14 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_URL = "http://127.0.0.1:8790";
-const CONFIG_PATH = path.join(os.homedir(), ".dsh-mneme", "cli.json");
+const CONFIG_PATH = path.join(process.env.MNEME_CONFIG_DIR || path.join(os.homedir(), ".dsh-mneme"), "cli.json");
 const REQUEST_TIMEOUT_MS = 10_000;
 const SUPPORTED_PROTOCOL_VERSIONS = ["2024-11-05", "2025-03-26", "2025-06-18"];
 const LATEST_PROTOCOL_VERSION = "2025-06-18";
 const SERVER_NAME = "dsh-mneme";
 
 const UNAUTHORIZED_HINT =
-  "unauthorized: the dsh-mneme standalone API rejected the token. Set DSH_MNEME_TOKEN " +
+  "unauthorized: the dsh-mneme standalone API rejected the token. Set MNEME_TOKEN (alias: DSH_MNEME_TOKEN) " +
   "(or `dsh-mneme config set <url> <token>`); the token is shown in the DSH panel " +
   "under Settings -> External API.";
 
@@ -72,8 +72,8 @@ function firstNonEmpty(...values) {
 
 export function resolveMcpConfig(env = process.env, configPath = CONFIG_PATH) {
   const file = readConfigFile(configPath);
-  const url = firstNonEmpty(env.DSH_MNEME_URL, file.url) ?? DEFAULT_URL;
-  const token = firstNonEmpty(env.DSH_MNEME_TOKEN, file.token) ?? "";
+  const url = firstNonEmpty(env.MNEME_URL, env.DSH_MNEME_URL, file.url) ?? DEFAULT_URL;
+  const token = firstNonEmpty(env.MNEME_TOKEN, env.DSH_MNEME_TOKEN, file.token) ?? "";
   return { url: url.replace(/\/+$/, ""), token };
 }
 
@@ -402,7 +402,7 @@ async function dispatch(config, msg) {
         serverInfo: { name: SERVER_NAME, version: PKG_VERSION },
         instructions:
           "dsh-mneme cross-session memory (six tools mirroring the in-DSH memory tools). " +
-          "Data plane: the plugin's standalone API. Configure DSH_MNEME_URL / DSH_MNEME_TOKEN or ~/.dsh-mneme/cli.json."
+          "Data plane: the plugin's standalone API. Configure MNEME_URL / MNEME_TOKEN (aliases: DSH_MNEME_URL / DSH_MNEME_TOKEN) or ~/.dsh-mneme/cli.json."
       };
     }
     case "ping":
@@ -477,7 +477,7 @@ function createMcpServer(config) {
       process.on("SIGTERM", shutdown);
       // token 缺失只 warn 不退出——health/open 路由仍可用，且提示比静默 401 友好。
       if (!config.token) {
-        process.stderr.write("[dsh-mneme-mcp] warning: no token configured (DSH_MNEME_TOKEN / ~/.dsh-mneme/cli.json); authenticated calls will fail.\n");
+        process.stderr.write("[dsh-mneme-mcp] warning: no token configured (MNEME_TOKEN / ~/.dsh-mneme/cli.json); authenticated calls will fail.\n");
       }
     }
   };

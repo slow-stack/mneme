@@ -13,10 +13,11 @@
  * 不在其中（样本里 message_sent 命中 0）。所以日记能写「今天她说了什么」，
  * 写不了「我怎么回的」——需要时得另找来源，不能靠这一份编。
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { localDateString } from "./rollover.js";
 import { memoryBase } from "./dir.js";
+import { legacyHome } from "../paths.js";
 
 /** `qq-inbox.jsonl` = 当前代（0），`qq-inbox.N.jsonl` = 越旧 N 越大。 */
 export const INBOX_FILE_RE = /^qq-inbox(?:\.(\d+))?\.jsonl$/;
@@ -128,15 +129,24 @@ export function collectQqInbox({ dir, dateLocal, maxItems = 400 } = {}) {
 }
 
 /**
- * 把 `<DSH_HOME>/media/onebot` 推出来：memoryDir 默认就是 `<DSH_HOME>/memory`。
+ * 把 `<宿主家>/media/onebot` 推出来。
  *
- * 推不出来（memoryDir 被指到别处、或给了显式配置）就用配置值；两者都没有时这个来源
- * 直接报 `no-inbox-dir`——宁可这一路没有素材，也不去猜别的盘。
+ * 旧口径是从 memoryDir 往上退一级再拼 `media/onebot`——那时库的默认值是
+ * `<DSH_HOME>/memory`，退一级恰好就是宿主家，所以碰巧对。默认库搬到
+ * `~/.mneme/memory` 之后这个巧合没了：新装的机器会推出 `~/.mneme/media/onebot`，
+ * 而 onebot 实际写的是 `<DSH_HOME>/media/onebot`（`docs/DIRECTORIES.md`），
+ * 日记素材静默读不到（#744 review）。
+ *
+ * 现在的顺序：显式 `diaryInboxDir` > 库目录旁边那个（已有安装的现场位置，存在就用，
+ * 保证升级后不断流）> 宿主家下的正式位置。推不出来时这一路直接报 `no-inbox-dir`——
+ * 宁可没有素材，也不去猜别的盘。
  */
 export function resolveInboxDir({ memoryDir, configured = "" } = {}) {
   const custom = String(configured ?? "").trim();
   if (custom) return custom;
   // 必须走 memoryBase 而不是直接用配置串：默认值就是带 `~` 的字面量，
   // 不展开的话 join 出来的路径永远落空，旁挂会静默读不到（CodeRabbit #458 F2）。
-  return join(memoryBase(memoryDir), "..", "media", "onebot");
+  const besideMemory = join(memoryBase(memoryDir), "..", "media", "onebot");
+  if (existsSync(besideMemory)) return besideMemory;
+  return join(legacyHome(), "media", "onebot");
 }

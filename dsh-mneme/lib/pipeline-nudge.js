@@ -58,6 +58,7 @@ import { homedir } from "node:os";
 import zlib from "node:zlib";
 import { validatePipeline, projectPipelineDir, projectLabel, suggestRetirements } from "./pipeline.js";
 import { projectKey, scanIrreversible } from "./candidates.js";
+import { expandHome as expandHomePath, memoryBase } from "./paths.js";
 
 /**
  * 提议门槛：同一段序列要在**至少两个不同的会话**里出现。
@@ -156,12 +157,9 @@ const WRITE_TOOLS = new Set(["write", "edit", "apply_patch", "notebook_edit"]);
 /** 反事实那一条问题的原文。它出现在每一张问题上，所以在这里只写一次。 */
 const COUNTERFACTUAL_QUESTION = "没有这一步，那次会不会漏步、会不会失败？";
 
-/** 展开 `~`。候选层与 `memoryDir` 一样是本地状态，不是仓库内容。 */
+/** 展开 `~`。候选层与 `memoryDir` 一样是本地状态，不是仓库内容（统一走 paths.js）。 */
 function expandHome(p) {
-  const s = String(p || "");
-  if (s === "~") return homedir();
-  if (s.startsWith("~/") || s.startsWith("~\\")) return join(homedir(), s.slice(2));
-  return s;
+  return expandHomePath(p);
 }
 
 /** 会话根目录。默认由 `DSH_HOME` 推导，**不写死本机路径**——仓库里出现盘符是红线。 */
@@ -1275,7 +1273,7 @@ export function writeDraftPipeline({ projectRoot, pipeline, force = false } = {}
 export function proposalDir({ memoryDir, projectRoot } = {}) {
   const key = projectKey(projectRoot);
   if (!key) return null;
-  const base = expandHome(memoryDir && String(memoryDir).trim() ? memoryDir : "~/.dsh/memory");
+  const base = memoryBase(memoryDir);
   return join(base, "proposals", key);
 }
 

@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   RUNTIME_MANIFEST,
   TRANSFORMERS_ENTRY,
   defaultRuntimeDir,
+  defaultModelCacheDir,
   describePayload,
   listPayloadDirs,
   nodeModulesDir,
@@ -73,8 +74,36 @@ test("payloadId 带版本、平台与架构，多份可共存", () => {
   assert.equal(payloadId({ version: "4.3.1", platform: "darwin", arch: "arm64" }), "transformers-4.3.1-node-darwin-arm64");
 });
 
-test("运行时根目录默认挂在 ~/.dsh/mneme/runtime 下", () => {
-  assert.equal(defaultRuntimeDir("/home/u"), join("/home/u", ".dsh", "mneme", "runtime"));
+test("运行时根目录默认挂在中性家 ~/.mneme/runtime 下，不再是 .dsh", () => {
+  // 传空 env 是必须的：旧家的位置跟着 DSH_HOME 走，不隔掉就会被跑测试这台机器的
+  // DSH_HOME 带偏（本机就有）。
+  assert.equal(defaultRuntimeDir("/home/u", {}), join("/home/u", ".mneme", "runtime"));
+  // 模型缓存同源：也要在中性家下，且与运行时同父目录。
+  assert.equal(defaultModelCacheDir("/home/u", {}), join("/home/u", ".mneme", "models"));
+});
+
+test("旧缓存目录存在就用旧的，新目录是不是空壳不参与判定（#744 review）", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "mneme-layout-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const env = {};
+
+  // 两个旧目录都在，新目录也建出来（只是空壳）。
+  mkdirSync(join(home, ".dsh", "mneme", "runtime"), { recursive: true });
+  mkdirSync(join(home, ".dsh", "mneme", "models"), { recursive: true });
+  mkdirSync(join(home, ".mneme", "runtime"), { recursive: true });
+  mkdirSync(join(home, ".mneme", "models"), { recursive: true });
+
+  assert.equal(
+    defaultRuntimeDir(home, env),
+    join(home, ".dsh", "mneme", "runtime"),
+    "旧缓存存在就不该被空壳新目录顶掉，否则那 200MB 白重下"
+  );
+  assert.equal(defaultModelCacheDir(home, env), join(home, ".dsh", "mneme", "models"));
+
+  // 旧目录不在时才去新家。
+  rmSync(join(home, ".dsh"), { recursive: true, force: true });
+  assert.equal(defaultRuntimeDir(home, env), join(home, ".mneme", "runtime"));
+  assert.equal(defaultModelCacheDir(home, env), join(home, ".mneme", "models"));
 });
 
 test("transformersVersionOk 只认 >=4.2.0 <5", () => {

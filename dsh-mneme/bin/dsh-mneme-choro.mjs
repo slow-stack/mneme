@@ -18,6 +18,7 @@ import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createStore } from "../lib/store.js";
+import { resolveMemoryDir } from "../lib/paths.js";
 import { runChoroT0, ChoroRefusal } from "../lib/wiki/t0.js";
 import { createT1, DEFAULT_T1_MODEL, T1Refusal } from "../lib/wiki/t1.js";
 
@@ -39,7 +40,7 @@ const USAGE = `${BIN_NAME} — 仓库地志（chorography）：T0 确定性骨�
   --retry-failed       把 failed 页拉进来重试（T1；成功后计数清零）
   --dsh-exe <路径>     DeepSeek Harness 主程序定位（缺省走 DSH_EXE / 标准安装位）
   --dsh-cli <路径>     直接指定 headless CLI（缺省自动探测两种安装布局）
-  --db <path>    memory.db 路径（缺省 ~/.dsh/memory/memory.db，前导 ~ 会展开）
+  --db <path>    memory.db 路径（缺省 <MNEME_HOME>/memory/memory.db，前导 ~ 会展开）
   --json         receipt 用机器可读 JSON 输出
   -h, --help     本帮助
   -V, --version  版本
@@ -98,7 +99,8 @@ function expandHome(path) {
 }
 
 function defaultDbPath() {
-  return expandHome("~/.dsh/memory/memory.db");
+  // 与插件同一条解析：显式配置 > MNEME_MEMORY_DIR > 中性根默认，存量旧库继续用。
+  return join(resolveMemoryDir("").dir, "memory.db");
 }
 
 async function main() {

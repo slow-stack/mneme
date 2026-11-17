@@ -11,21 +11,18 @@
  * `src/pipeline-observations.js:11-19`）：**项目键分桶、宿在 memoryDir 下、不进仓库**。
  * 「入库到绑定项目」是另一件事——用户点按钮时导出过去，那是一个主动动作。
  */
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { projectKey } from "../candidates.js";
+import { expandHome as expandHomePath, resolveMemoryDir } from "../paths.js";
 
-/** 展开 `~`。candidates.js 里那份是私有的，这里按同一口径抄一份最小实现。 */
+/** 展开 `~`。统一走 paths.js 的口径（原先这里与 candidates.js 各抄一份）。 */
 export function expandHome(p) {
-  const s = String(p ?? "");
-  if (s === "~") return homedir();
-  if (s.startsWith("~/") || s.startsWith("~\\")) return join(homedir(), s.slice(2));
-  return s;
+  return expandHomePath(p);
 }
 
-/** memoryDir 的基座，与 candidates/proposals/observations 三处同一条回落。 */
+/** memoryDir 的基座，与 candidates/proposals/observations 三处同一条回落（中性根 + 存量兼容）。 */
 export function memoryBase(memoryDir) {
-  return expandHome(memoryDir && String(memoryDir).trim() ? memoryDir : "~/.dsh/memory");
+  return resolveMemoryDir(memoryDir).dir;
 }
 
 /**

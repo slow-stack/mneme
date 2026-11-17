@@ -2,7 +2,7 @@
 
 > 先记住这一句，它防的是本项目真实发生过的事故（#278：把模型缓存当成了记忆库）——
 >
-> **记忆数据在 `~/.dsh/memory`，模型与运行时缓存在 `~/.dsh/mneme`，CLI 连接配置在 `~/.dsh-mneme`。三个名字像、位置也近的目录互不相干。**
+> **记忆数据默认在 `~/.mneme/memory`（老用户仍在 `~/.dsh/memory`），模型与运行时缓存默认在 `~/.mneme/{models,runtime}`（老的 `~/.dsh/mneme` 存在就继续用），CLI 连接配置在 `~/.dsh-mneme`。这几个名字像、位置也近的目录互不相干。**
 
 本文是落盘面的总账：每个目录是什么、谁拥有（人改还是机器写）、删了会怎样。它是**代码的投影，不是愿望清单**——每个条目都标了出处文件，改动写盘面的 PR 顺手核对本表；发现文档与代码不一致，以代码为准并回来改这里。单个子系统的细节仍归各自的域文档。
 
@@ -10,14 +10,16 @@
 
 | 根目录 | 是什么 | 谁拥有 | 全删会怎样 |
 |---|---|---|---|
-| `~/.dsh/memory`（`memoryDir` 默认值） | **记忆库本体**：SQLite 正本 + 镜像 md + 各类本地状态 | mneme 机器写；镜像 md 预期人改 | 见 [§ 记忆库](#记忆库-memorydir默认-dshmemory) |
-| `~/.dsh/mneme` | **自管运行时**（transformers + onnxruntime 闭包）与**本地模型缓存**——不是记忆库 | mneme 机器所有 | 可整目录删掉重来（这正是挂在 `~/.dsh/mneme/` 下的设计原意，`src/runtime/layout.js`） |
+| `~/.mneme/memory`（`memoryDir` 默认值；老 `~/.dsh/memory` 有库时仍用它，两边都有库按体积判，见下节） | **记忆库本体**：SQLite 正本 + 镜像 md + 各类本地状态 | mneme 机器写；镜像 md 预期人改 | 见 [§ 记忆库](#记忆库-memorydir) |
+| `~/.mneme/{runtime,models}`（旧 `~/.dsh/mneme` 存在就继续用；那个「旧」的位置跟着 `DSH_HOME` 走，不写死 `~/.dsh`） | **自管运行时**（transformers + onnxruntime 闭包）与**本地模型缓存**——不是记忆库 | mneme 机器所有 | 可整目录删掉重来（这正是把它挂在家目录下的设计原意，`src/runtime/layout.js`） |
 | `~/.dsh-mneme` | `dsh-mneme` CLI / MCP 的连接配置（`cli.json`：url + token） | 用户 | 删了重新 `dsh-mneme config set` 一次 |
 | `~/.dsh`（其余部分） | DSH 宿主的地盘：`sessions/`、`profiles/`、`skills/` 等 | 宿主 | 插件只读 `sessions/` 与 skills 目录，从不写 |
 | `<项目>/.mneme/`、`<项目>/.chorography/` | 住用户仓库里的点目录（工作流、仓库地志），随 git 走 | 混合（见 [§ 用户仓库里的点目录](#用户仓库里的点目录)） | 按 git 规矩来 |
 | `<os.tmpdir()>/mneme-choro-t1-*` | chorography T1 子进程的临时 overlay | mneme，用完即删 | 无关紧要 |
 
-## 记忆库 `<memoryDir>`（默认 `~/.dsh/memory`）
+## 记忆库 `<memoryDir>`
+
+三种情形决定这个目录**到底是哪一个**（`src/paths.js` 的 `resolveMemoryDir()`）：老 `~/.dsh/memory` 有 `memory.db`、新家没有 → 用老的（一行 info，可迁可不迁）；两边都有库 → **按体积判**，新库不足旧库 10% 就认作误建（有人在 `MNEME_HOME` 下跑了一次 standalone 或测试，长出一个空库），继续用旧库并 `warn` 出两个路径与各自体积——不静默搬家，因为「已经迁完」和「不小心建了一个」在目录形状上完全一样，只能靠体积分；体积相当或更大才认作已迁完。真迁过库的人若被误判，显式设 `MNEME_MEMORY_DIR` 或 `memoryDir` 即可绕过判定。这条告警由宿主入口与 daemon 入口共用同一份文案（`src/index.js` / `src/serve.js`），**不删任何一个库**。
 
 除「用户仓库里的点目录」与「重运行时」两类例外，mneme 的一切本地状态都宿在 `memoryDir` 下——宿主挂载入口与独立 daemon 都会展开前导 `~` 并在启动时建目录（`src/index.js` / `src/serve.js`），全部路径配置键见 [§ 路径配置键](#路径配置键一张表)。这不是随意的堆放：写盘纪律是**「删掉插件的目录就回滚干净」**（`src/diary/dir.js`、`src/candidates.js`、`src/pipeline-observations.js` 三处注释同一条纪律）——记忆库不在了，用户的仓库里不该留下任何 mneme 的痕迹。
 
@@ -37,7 +39,7 @@
 
 **别把 memoryDir 放进宿主的 profile 目录**：profile 被清理或迁移时记忆库会连带丢失（#218 的真实事故）。命中 profile 作用域时启动会告警（`src/index.js`，启发式边界见 `src/placement.js`）——只提示、不搬库。
 
-## 运行时与模型缓存 `~/.dsh/mneme`（不是记忆库）
+## 运行时与模型缓存 `~/.mneme/{runtime,models}`（不是记忆库）
 
 这里只有两样东西，全部机器所有、**可以整目录删掉重来**——`src/runtime/layout.js` 的注释原文就是「便于用户整个删掉重来」：
 
@@ -87,7 +89,7 @@
 | `candidates/` `proposals/` `observations/` | 能 | 草稿与 M.O. 证据没了，库与检索不受影响 |
 | `diaries/` | **不能** | 那是用户自己的日记，任何地方都没有第二份；库里的 document 指针行会悬空 |
 | `documents/` 里 agent 的文件 | mneme 不管 | 管线对正文零读零写；注册后再没有任何地方读它，删了也没有检测点——指针行悬空而已 |
-| `~/.dsh/mneme` 整目录 | 能 | 重启后按需重下 / 重收编，代价是时间与流量 |
+| `~/.mneme/{runtime,models}`（或遗留的 `~/.dsh/mneme`）整目录 | 能 | 重启后按需重下 / 重收编，代价是时间与流量 |
 | `.mneme/` `.chorography/` | 按 git 规矩 | 机器产物可重跑再生成；`plan.yaml` 别随手删——删了就是回默认启发式 |
 | `~/.dsh/sessions/` | 不归插件管 | 宿主的数据，别以插件的名义动它 |
 
@@ -95,19 +97,19 @@
 
 | 键 | 默认（空串语义） | `~` 展开 | 出处 |
 |---|---|---|---|
-| `memoryDir` | `~/.dsh/memory` | 展开 | `src/config.js`、`src/index.js` |
+| `memoryDir` | 空 | 展开 | `src/config.js`、`src/paths.js`、`src/index.js` |
 | `documentDir` | `<memoryDir>/documents/` | 展开；相对路径落 memoryDir 下 | `src/document.js`（#296） |
 | `diaryDir` | `<memoryDir>/diaries/` | 展开；相对路径落 memoryDir 下 | `src/diary/dir.js` |
 | `diaryInboxDir` | `<memoryDir>/../media/onebot` | 展开 | `src/diary/qq-inbox.js` |
-| `embedModelCacheDir` | `~/.dsh/mneme/models` | **不展开，指别处写绝对路径** | `src/local-embedder.js` |
-| `runtimeDir` | `~/.dsh/mneme/runtime`（daemon 另认 `DSH_MNEME_RUNTIME_DIR`） | **不展开** | `src/runtime/layout.js` |
+| `embedModelCacheDir` | 空 | **不展开，指别处写绝对路径** | `src/local-embedder.js`、`src/paths.js` |
+| `runtimeDir` | 空（daemon 另认 `MNEME_RUNTIME_DIR`，兼容 `DSH_MNEME_RUNTIME_DIR`） | **不展开** | `src/runtime/layout.js`、`src/paths.js` |
 | `runtimeTarballDir` | 空 = 不启用离线取件 | 不展开 | `src/runtime/download.js` |
 
 全键语义见 [CONFIGURATION.md](CONFIGURATION.md)。
 
 ## 已知坑
 
-1. **两个 CLI 的默认落点各站一边**：`dsh-mneme-choro.mjs` 的 `--db` 默认指 `~/.dsh/memory/memory.db`（数据侧），`scripts/mneme-runtime.mjs` 动的是 `~/.dsh/mneme`（运行时侧）。
+1. **两个 CLI 的默认落点各站一边**：`dsh-mneme-choro.mjs` 的 `--db` 默认走 `src/paths.js` 的解析（数据侧，与插件同一答案），`scripts/mneme-runtime.mjs` 动的是 `~/.dsh/mneme`（运行时侧）。
 2. **`documents.md` 与 `documents/` 是两回事**：前者是镜像里 document 型的只读指针视图（一个文件，在 memoryDir 根上）；后者是 managed 文档目录（一个目录，装 agent 的正文）。
 3. **镜像手改的窗口**：人改在同步时赢，但只对有可编辑正文的 type 生效；`documents.md` 与镜像排除集（如未来新增的排除 type）里的手改一律被覆盖。
 4. **路径键的展开规则不一致**（见上一节表）：`memoryDir` 一族做 `~` 展开与相对回落，模型 / 运行时一族不做——拿着 `~/models` 这类值去配 `embedModelCacheDir` 会得到一个字面叫 `~/models` 的目录。

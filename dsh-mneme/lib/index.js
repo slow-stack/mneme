@@ -4,6 +4,7 @@ import { createDocumentIndex } from "./document-index.js";
 import { resolveDocumentDir } from "./document.js";
 // #368 v1：profile 作用域落点检测（只提示，不改行为）。
 import { findProfileScopeSegment } from "./placement.js";
+import { resolveMemoryDir, explainResolution } from "./paths.js";
 import { createService } from "./service.js";
 // #254 写入准入（第一阶段只计量，不拦截）：见 src/write-admission.js 的文件头。
 import { createWriteAdmission } from "./write-admission.js";
@@ -61,7 +62,6 @@ import { extractEntities } from "./entities/extractor.js";
 import { createProfileExtractor } from "./profile-extract.js";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 
 export const name = "dsh-mneme";
 // webServer 在 inject 声明中：cordis 会等宿主 webServer 服务激活后才 apply 本
@@ -204,11 +204,15 @@ export { backfillMissingEmbeddings } from "./semantic.js";
 export const apply = (ctx, config) => {
   const rawCfg = Config(config);
 
-  // Resolve memoryDir: expand leading "~"
-  const memoryDir = rawCfg.memoryDir.startsWith("~")
-    ? join(homedir(), rawCfg.memoryDir.slice(1))
-    : rawCfg.memoryDir;
+  // 库目录：显式配置 > MNEME_MEMORY_DIR > 中性根默认；旧目录里已有库就继续用它。
+  // 全部口径收在 src/paths.js，别再在这里写第二份 ~ 展开。
+  const resolved = resolveMemoryDir(rawCfg.memoryDir);
+  const memoryDir = resolved.dir;
   mkdirSync(memoryDir, { recursive: true });
+  // 告警文案与判定都在 paths.js，daemon 那边同一份（误建常从 daemon/测试发生）。
+  const note = explainResolution(resolved);
+  if (note?.level === "warn") ctx.logger?.warn?.(note.message);
+  else if (note) ctx.logger?.info?.(note.message);
 
   // #218 末楼的实际事故：profile 被清理，落在其中的记忆库连带丢失。命中
   // profile 作用域时给一条可操作的告警（只提示、不搬库、不加配置键），启发
@@ -216,7 +220,7 @@ export const apply = (ctx, config) => {
   const profileScope = findProfileScopeSegment(memoryDir);
   if (profileScope) {
     ctx.logger?.warn?.(
-      `[dsh-mneme] memoryDir is inside a profile scope ("${profileScope}"): ${memoryDir} — the library may be lost when the host cleans or migrates profiles. Prefer a location outside profiles/ (default: ~/.dsh/memory; config key: memoryDir).`
+      `[dsh-mneme] memoryDir is inside a profile scope ("${profileScope}"): ${memoryDir} — the library may be lost when the host cleans or migrates profiles. Prefer a location outside profiles/ (default: <MNEME_HOME>/memory; config key: memoryDir).`
     );
   }
 
@@ -782,11 +786,16 @@ export const apply = (ctx, config) => {
     // panel's `data.embeddings` was permanently null on a real install — the
     // typeof guard in api.js fell through every time, and no test noticed
     // because none asserted on `data.embeddings`.
+    // `memoryDir` 一并钉进给的 config：cfg.memoryDir 是**原始**配置（没配置就是
+    // 空串），而真正选中的目录是上面 resolveMemoryDir 的结论。api.js 的
+    // /pipeline、/candidates、/nudge 会自己再调 memoryBase(config.memoryDir)，
+    // 两边都有库时那个函数按体积重算，旧库涨过 10 倍就会翻到另一本——store 却
+    // 还开着这本，旁挂数据写到别人家去。这里钉死，api.js 一律用启动时的结论。
     const api = createApi(ctx, service, settings, commands ?? {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,
       list: () => []
-    }, embedder, { ...semantic, vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro, profileFacts, kb, diary);
+    }, embedder, { ...semantic, vectorIndex, reranker }, cfg.apiToken, { ...cfg, memoryDir }, maintenance, extractProfileDraft, choro, profileFacts, kb, diary);
     disposers.push(api.dispose);
 
     // dsh-go 原生面板：只有宿主提供 dshGo 服务（dsh-go 手机 App）时才挂载。

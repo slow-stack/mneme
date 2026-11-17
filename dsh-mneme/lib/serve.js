@@ -12,9 +12,9 @@
 // autoDream 单侧纪律),不依赖用户自觉。语义检索(PR2 起)与宿主共用 src/semantic.js
 // 的同一份装配;daemon 不参与做梦,但向量检索/语义去重与宿主同质。
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { createStore } from "./store.js";
+import { envFirst, resolveMemoryDir, explainResolution } from "./paths.js";
 import { createSettings } from "./settings.js";
 import { createMirror, TYPE_FILE } from "./mirror.js";
 import { langOf } from "./lang.js";
@@ -31,7 +31,7 @@ const EMBED_PROVIDERS = new Set(["off", "local", "ollama", "openai"]);
 /**
  * 组装并启动一个独立数据面(含语义管线)。
  * @param {object} opts
- *   memoryDir  — 数据目录;缺省与宿主同默认 ~/.dsh/memory(config.js:9),支持前导 ~。
+ *   memoryDir  — 数据目录;缺省由 src/paths.js 解析(默认 <MNEME_HOME>/memory,存量旧库继续用),支持前导 ~。
  *   port/host  — 透传 createStandaloneApi;缺省走 kv external_api 持久值 > 8790/127.0.0.1。
  *   logger     — console 形状(info/warn/error,收单字符串);缺省 null(全链路容缺)。
  *   strictPort — 默认 true:配置端口被占即失败(第三方把 URL 写死,顺延=静默打到
@@ -49,9 +49,16 @@ export async function createServeRuntime({
   if (!EMBED_PROVIDERS.has(embed)) {
     throw new Error(`invalid embed provider: ${String(embed)}(允许 off/local/ollama/openai)`);
   }
-  // index.js:192-195:~ 展开只认前导;目录不存在时 node:sqlite 直接抛,先 mkdir。
-  const dir = String(memoryDir || join(homedir(), ".dsh", "memory")).replace(/^~(?=$|[\\/])/, homedir());
+  // 库目录口径统一在 src/paths.js：显式传参 > MNEME_MEMORY_DIR > 中性根默认，
+  // 旧目录里已有库就继续用它。目录不存在时 node:sqlite 直接抛，先 mkdir。
+  const memoryResolved = resolveMemoryDir(memoryDir);
+  const dir = memoryResolved.dir;
   mkdirSync(dir, { recursive: true });
+  // 与宿主同一份告警：误建恰恰常从 daemon / 测试发生，这里不喊就漏掉一半现场
+  // （v0.16.0 那次「新家长出空库、主库差点读不到」就是从这个入口进来的）。
+  const note = explainResolution(memoryResolved);
+  if (note?.level === "warn") logger?.warn?.(note.message);
+  else if (note) logger?.info?.(note.message);
 
   // 装配顺序照 index.js:197-292:store → settings → mirror → service → recoverMirror。
   const store = createStore(join(dir, "memory.db"));
@@ -209,7 +216,7 @@ function daemonSemanticCfg(embed) {
     embedModelCacheDir: "",                        // :336(空=local-embedder 内部解析 ~/.dsh/mneme/models)
     embedModelMirror: "https://hf-mirror.com",     // :337
     resilientModelDownload: true,                  // :342
-    runtimeDir: process.env.DSH_MNEME_RUNTIME_DIR || "",  // :348(空=defaultRuntimeDir;取件/加载同源)
+    runtimeDir: envFirst("MNEME_RUNTIME_DIR", "DSH_MNEME_RUNTIME_DIR"),  // :348(空=defaultRuntimeDir;取件/加载同源)
     rerankEnabled: false,                          // :419
     rerankProvider: "none",                        // :420
     autoReindexOnBoot: true                        // :367
@@ -222,12 +229,12 @@ function daemonSemanticCfg(embed) {
  * 已打降级日志)。并发安全由 provisionRuntime 的 IN_FLIGHT 锁保证(按归一化 runtimeDir 串行)。
  */
 async function ensureRuntimePayload(logger) {
-  const runtimeDir = process.env.DSH_MNEME_RUNTIME_DIR || "";
+  const runtimeDir = envFirst("MNEME_RUNTIME_DIR", "DSH_MNEME_RUNTIME_DIR");
   const dir = runtimeDir || defaultRuntimeDir();
   if (listPayloadDirs(dir).length > 0) return true;
-  logger?.info?.("[dsh-mneme] 本地推理运行时缺失,开始取件(download 档,约 200MB;离线可用 DSH_MNEME_RUNTIME_TARBALL_DIR / DSH_MNEME_RUNTIME_MIRROR)…");
+  logger?.info?.("[dsh-mneme] 本地推理运行时缺失,开始取件(download 档,约 200MB;离线可用 MNEME_RUNTIME_TARBALL_DIR / MNEME_RUNTIME_MIRROR)…");
   try {
-    const result = await provisionRuntime({ runtimeDir, localTarballDir: process.env.DSH_MNEME_RUNTIME_TARBALL_DIR || "", mirror: process.env.DSH_MNEME_RUNTIME_MIRROR || "" });
+    const result = await provisionRuntime({ runtimeDir, localTarballDir: envFirst("MNEME_RUNTIME_TARBALL_DIR", "DSH_MNEME_RUNTIME_TARBALL_DIR"), mirror: envFirst("MNEME_RUNTIME_MIRROR", "DSH_MNEME_RUNTIME_MIRROR") });
     if (!result.ok) throw new Error(result.reason);
     logger?.info?.(`[dsh-mneme] 运行时就绪(${result.strategy}):${result.packages} 包 / ${result.files} 文件`);
     return true;

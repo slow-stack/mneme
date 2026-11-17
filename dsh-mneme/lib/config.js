@@ -16,7 +16,10 @@ export const Config = z.object({
   // 行为不变）/ 'en'。启动时读入，切换后重启生效。
   language: z.union([z.const("zh"), z.const("en")]).default("zh")
     .description("记忆语言：生成的记忆条目、注入标题与后台 LLM 提示词所用语言（zh=默认中文，en=英文）。"),
-  memoryDir: z.string().default("~/.dsh/memory"),
+  // 库目录。留空 = 由 src/paths.js 解析：MNEME_HOME（或 DSH_MNEME_HOME）下的
+  // memory/；存量用户若旧目录 ~/.dsh/memory 里已有 memory.db，会继续用旧的（不换空库）。
+  // 显式给了值就完全按这个值走（前导 ~ 会展开）。
+  memoryDir: z.string().default(""),
   autoInject: z.boolean().default(true),
   autoSummarize: z.boolean().default(true),
   // Optional model override for summarization. When both are non-empty, they

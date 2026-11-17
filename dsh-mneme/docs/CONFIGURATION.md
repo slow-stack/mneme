@@ -25,7 +25,7 @@
 | 键 | 默认 | 作用 | 开启后果 / 冲突 |
 |---|---|---|---|
 | `language` | `zh` | 记忆语言：生成条目、注入标题、后台提示词所用语言（`zh`/`en`） | 切换后重启生效 |
-| `memoryDir` | `~/.dsh/memory` | SQLite 记忆库目录 | WAL + busy_timeout 已为多进程就绪；两个宿主共用库时 `externalApiEnabled` 与 `autoDream` 只能一边开 |
+| `memoryDir` | 空 | SQLite 记忆库目录 | 空 = 由 `src/paths.js` 解析：`MNEME_HOME`（兼容 `DSH_MNEME_HOME`）下的 `memory/`，默认 `<home>/.mneme/memory`；**判据是那个目录里有没有 `memory.db`**：老 `~/.dsh/memory` 有库、新家没有就继续用老的（不换空库，可迁可不迁）；**两边都有库时按体积判**——新库不足旧库 10% 视为误建（standalone/测试跑出来的空库），仍用旧库并 `warn` 出两个路径与体积，体积相当或更大才认作已迁完；也认 `MNEME_MEMORY_DIR`（兼容 `DSH_MNEME_MEMORY_DIR`），显式设了就直接用、不看体积。WAL + busy_timeout 已为多进程就绪；两个宿主共用库时 `externalApiEnabled` 与 `autoDream` 只能一边开 |
 | `lightMode` | `false` | 轻量档总闸：一键关掉全部重型路径，保留核心循环（见文末清单） | 面板 `panel_mode=light` 等效为 `true` 且优先于 bundle 配置 |
 
 ## 容量预警（#275，空间维度）
@@ -386,10 +386,10 @@
 | `localEmbedPooling` | `auto` | 池化：`auto`（BGE→cls，其余→mean）/ `cls` / `mean` | 池化决定向量空间——改动会变 modelHash、触发既有索引重建 |
 | `ollamaBaseUrl` | `http://localhost:11434` | Ollama 地址 | 只接受 http/https（SSRF 防线） |
 | `ollamaModel` | `nomic-embed-text` | Ollama 嵌入模型 | — |
-| `embedModelCacheDir` | `""` | 模型缓存目录 | 空 = `~/.dsh/mneme/models` |
+| `embedModelCacheDir` | `""` | 模型缓存目录 | 空 = `MNEME_HOME` 下的 `models/`（默认 `<home>/.mneme/models`）；旧 `~/.dsh/mneme/models` 存在就继续用它，免得白下 200MB |
 | `embedModelMirror` | `https://hf-mirror.com` | 模型下载镜像 | — |
 | `resilientModelDownload` | `true` | 模型下载断点续传 + 空闲看门狗（#194） | 关 = 恢复原生 fetch（线上回滚开关） |
-| `runtimeDir` | `""` | 自管运行时目录（transformers + onnxruntime 闭包，#131） | 空 = `~/.dsh/mneme/runtime`；把重依赖挪出宿主 profile 的依赖图 |
+| `runtimeDir` | `""` | 自管运行时目录（transformers + onnxruntime 闭包，#131） | 空 = `MNEME_HOME` 下的 `runtime/`（默认 `<home>/.mneme/runtime`）；旧 `~/.dsh/mneme/runtime` 存在就继续用它。环境变量 `MNEME_RUNTIME_DIR`（兼容 `DSH_MNEME_RUNTIME_DIR`）。把重依赖挪出宿主 profile 的依赖图 |
 | `runtimeTarballDir` | `""` | 本地 `.tgz` 离线取件目录 | 有货优先于联网（弱网下装 onnxruntime-node 用） |
 | `runtimeMirror` | `""` | registry 镜像前缀（如 `https://npmmirror.com/mirrors/npm/`） | 空 = manifest 里的官方地址 |
 | `reindexMaxPerBoot` | `500` | 启动期向量回填的单次上限（原先硬编码 500） | `0` = 不限、本次跑完整个积压（4k 行积压靠重启九次才清空的旧行为就是被这个上限卡住的） |
