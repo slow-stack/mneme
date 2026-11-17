@@ -112,7 +112,7 @@ export function validateBody(body) {
   return null;
 }
 
-export function createDiaryComposer({ ctx, config, logger, service = null, settings = null, memoryDir, now = () => new Date() }) {
+export function createDiaryComposer({ ctx, config, logger, service = null, settings = null, memoryDir, sessionGate = null, now = () => new Date() }) {
   const lang = langOf(config);
   // PROMPTS 不单独 export——它挂在 STR.prompts 上（src/lang.js:536）。走同一条出口，
   // 免得 lang.js 多一个「既有具名导出又有默认导出」的双份形状。
@@ -260,7 +260,8 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
       const fromSession = collectSessionTranscript({
         session,
         dateLocal: trigger === "manual" ? null : today,
-        maxItems: MAX_MATERIAL_ITEMS
+        maxItems: MAX_MATERIAL_ITEMS,
+        sessionGate
       });
       if (!fromSession.error) {
         collected = fromSession;

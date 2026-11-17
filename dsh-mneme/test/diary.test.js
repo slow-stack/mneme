@@ -18,6 +18,7 @@ import { collectSessionTranscript, sessionAgentId } from "../src/diary/session-p
 import { validateBody, latestDiaryDate, createDiaryComposer } from "../src/diary/compose.js";
 import { createDiaryAutoRun, DIARY_MIN_INTERVAL_MS } from "../src/diary/auto.js";
 import { exportDiary, listDiaries, readDiary } from "../src/diary/export.js";
+import { createSessionGate } from "../src/session-gate.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "mneme-diary-"));
 test.after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -381,6 +382,30 @@ test("collectSessionTranscript：会话读不到给 error，不返回空数组�
   assert.equal(collectSessionTranscript({ session: null }).error, "no-session");
   assert.equal(collectSessionTranscript({ session: { events: "nope" } }).error, "session-unreadable");
   assert.deepEqual(collectSessionTranscript({ session: { events: [] } }).items, []);
+});
+
+test("#539/#745：无痕会话的转录一条都不采，且是在读事件之前就挡住", () => {
+  // 放宽「谁算人提问」之后，中继会话的正文会真的进素材。闸门若只挡在触发侧，
+  // 面板「写一篇」（直接调 compose）与任何直调 collectSessionTranscript 的入口
+  // 都会把无痕会话的正文送进模型。这里钉住的是「读动作本身被挡住」——
+  // 用调用计数记账，事件被读过一次就转红。
+  let reads = 0;
+  const makeSession = (id) => ({
+    id,
+    header: { agentPreset: "Amarre" },
+    snapshotEvents() {
+      reads += 1;
+      return [userEv(new Date(2026, 10, 7, 10).getTime(), "这句不该被读出来")];
+    }
+  });
+  const gate = createSessionGate({ sessionGateEnabled: true, sessionGateSessions: ["secret"] });
+  const got = collectSessionTranscript({ session: makeSession("secret"), dateLocal: null, sessionGate: gate });
+  assert.equal(got.error, "session-gated");
+  assert.equal(reads, 0, "闸门命中时不该碰事件日志");
+  // 反向对照：同一份事件、闸门不命中时照常采集（否则「挡住」只是因为坏了）。
+  const normal = collectSessionTranscript({ session: makeSession("captain"), dateLocal: null, sessionGate: gate });
+  assert.ok(!normal.error, JSON.stringify(normal));
+  assert.deepEqual(normal.items.map((i) => i.text), ["这句不该被读出来"]);
 });
 
 test("sessionAgentId：只认 session.header.agentPreset（不读 requestHeader）", () => {

@@ -125,6 +125,10 @@ function inboxMessageQuery(message) {
 function extractRounds(ctx, maxRounds) {
   try {
     const session = ctx?.agent?.session;
+    // #539/#745：无痕会话的闸门在渲染侧（memoryContext.text 的第一行）——它先于
+    // 本函数返回空串，所以这里读日志的前提已经过闸，不必再判一次。此处刻意不加
+    // 第二道：加了也走不到，是假防线（test/session-gate.test.js 用「事件被读过
+    // 几次」的计数锁住了这点）。
     // DSH ≥0.1.2-rc only exposes events via snapshotEvents(); older builds
     // still have the .events property, so fall back to it.
     const events = session?.snapshotEvents?.() ?? session?.events;
