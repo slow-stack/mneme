@@ -112,7 +112,7 @@ export function validateBody(body) {
   return null;
 }
 
-export function createDiaryComposer({ ctx, config, logger, service = null, settings = null, memoryDir, now = () => new Date() }) {
+export function createDiaryComposer({ ctx, config, logger, service = null, settings = null, memoryDir, sessionGate = null, now = () => new Date() }) {
   const lang = langOf(config);
   // PROMPTS 不单独 export——它挂在 STR.prompts 上（src/lang.js:536）。走同一条出口，
   // 免得 lang.js 多一个「既有具名导出又有默认导出」的双份形状。
@@ -225,6 +225,10 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
     // 的意思是「把现在这段写下来」，不是「写今天 00:00 到现在的」。
     const source = { kind: "session", scanned: 0, ignored: 0 };
     let collected = { items: [] };
+    // #539/#745：会话被无痕闸门挡下时，它和「当天真的没说过话」是两回事。
+    // 行为一样（都不写、都落 skip），但审计里的原因必须分开记，否则以后查
+    // 「这天为什么没写日记」会被误导成素材不够，而去翻一堆并不存在的日志。
+    let gatedBy = null;
     // #724 截断统计（#613 §4）：total/used 必须可观测——LIMIT 静默砍掉的正是
     // 晚上那段（#613 实测 11-07 尾部 18/19/22 点共 267 条），不报错。
     let memoryStats = null;
@@ -260,11 +264,14 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
       const fromSession = collectSessionTranscript({
         session,
         dateLocal: trigger === "manual" ? null : today,
-        maxItems: MAX_MATERIAL_ITEMS
+        maxItems: MAX_MATERIAL_ITEMS,
+        sessionGate
       });
       if (!fromSession.error) {
         collected = fromSession;
         source.kind = "session";
+      } else if (fromSession.error === "session-gated") {
+        gatedBy = "session-gated";
       }
     }
     if (!agentMode && !collected.items.length) {
@@ -280,9 +287,12 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
     if (!collected.items.length) {
       // 当天零条有效消息：不调模型、不落盘。空素材调一次模型是纯浪费，
       // 而它写出来的东西必然是编的。
+      //
+      // 但原因要分开记（见上面 gatedBy）：闸门命中与「真的没素材」在审计里
+      // 必须是两个 reason，不能都写成 no-material。
       state[key] = { ...entry, projectRoot, lastDate: today, chatId: chatId ?? entry.chatId ?? null };
       writeState(stateRoot, state);
-      return skip("no-material", { scanned: collected.scanned, ignored: collected.ignored, source: source.kind });
+      return skip(gatedBy ?? "no-material", { scanned: collected.scanned, ignored: collected.ignored, source: source.kind });
     }
 
     const material = renderMaterial(collected.items);

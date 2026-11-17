@@ -18,6 +18,7 @@ import { collectSessionTranscript, sessionAgentId } from "../src/diary/session-p
 import { validateBody, latestDiaryDate, createDiaryComposer } from "../src/diary/compose.js";
 import { createDiaryAutoRun, DIARY_MIN_INTERVAL_MS } from "../src/diary/auto.js";
 import { exportDiary, listDiaries, readDiary } from "../src/diary/export.js";
+import { createSessionGate } from "../src/session-gate.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "mneme-diary-"));
 test.after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -381,6 +382,75 @@ test("collectSessionTranscript：会话读不到给 error，不返回空数组�
   assert.equal(collectSessionTranscript({ session: null }).error, "no-session");
   assert.equal(collectSessionTranscript({ session: { events: "nope" } }).error, "session-unreadable");
   assert.deepEqual(collectSessionTranscript({ session: { events: [] } }).items, []);
+});
+
+test("#539/#745：无痕会话的转录一条都不采，且是在读事件之前就挡住", () => {
+  // 放宽「谁算人提问」之后，中继会话的正文会真的进素材。闸门若只挡在触发侧，
+  // 面板「写一篇」（直接调 compose）与任何直调 collectSessionTranscript 的入口
+  // 都会把无痕会话的正文送进模型。这里钉住的是「读动作本身被挡住」——
+  // 用调用计数记账，事件被读过一次就转红。
+  let reads = 0;
+  const makeSession = (id) => ({
+    id,
+    header: { agentPreset: "Amarre" },
+    snapshotEvents() {
+      reads += 1;
+      return [userEv(new Date(2026, 10, 7, 10).getTime(), "这句不该被读出来")];
+    }
+  });
+  const gate = createSessionGate({ sessionGateEnabled: true, sessionGateSessions: ["secret"] });
+  const got = collectSessionTranscript({ session: makeSession("secret"), dateLocal: null, sessionGate: gate });
+  assert.equal(got.error, "session-gated");
+  assert.equal(reads, 0, "闸门命中时不该碰事件日志");
+  // 反向对照：同一份事件、闸门不命中时照常采集（否则「挡住」只是因为坏了）。
+  const normal = collectSessionTranscript({ session: makeSession("captain"), dateLocal: null, sessionGate: gate });
+  assert.ok(!normal.error, JSON.stringify(normal));
+  assert.deepEqual(normal.items.map((i) => i.text), ["这句不该被读出来"]);
+});
+
+test("#539/#745：闸门命中在审计里记 session-gated，不冒名成 no-material", async () => {
+  // 行为两条路一样（都不写、都落 skip），但原因必须分开：写成 no-material 的话，
+  // 以后查「这天为什么没写日记」会以为是当天没素材，去翻一堆本来就被关掉的日志。
+  // 这条钉的是账本口径，不是隐私——隐私已由上面那条（reads === 0）钉住。
+  const memoryDir = fresh("compose-gated");
+  const { ctx, calls } = fakeCtx();
+  const gate = createSessionGate({ sessionGateEnabled: true, sessionGateSessions: ["secret"] });
+  const composer = createDiaryComposer({
+    ctx,
+    config: { diaryEnabled: true, language: "zh" },
+    memoryDir,
+    settings: null,
+    now: () => new Date(2026, 10, 7, 10),
+    sessionGate: gate
+  });
+  const result = await composer.compose({
+    trigger: "rollover",
+    projectRoot: "D:\\proj-gated",
+    session: { ...sessionOf([userEv(new Date(2026, 10, 7, 9).getTime(), "被关掉的会话里的正文")]), id: "secret" }
+  });
+  assert.equal(result.status, "skipped");
+  assert.equal(result.reason, "session-gated");
+  assert.equal(calls.length, 0, "闸门命中时不该调模型");
+  // 账本里也必须是这个 reason，否则面板读到的是另一回事。
+  const rows = composer.readAudit({ projectRoot: "D:\\proj-gated" });
+  assert.equal(rows.filter((r) => r.reason === "session-gated").length, 1, JSON.stringify(rows));
+  assert.equal(rows.filter((r) => r.reason === "no-material").length, 0, JSON.stringify(rows));
+});
+
+// #745：经 DS Bot / 群聊中继进来的人话是 kind:"bot"，旧判据把它当成机器注入整条
+// 丢掉——日记里于是只有 agent 自己的独白，读起来像「今天用户什么都没说」。
+test("#745：中继进来的人话算素材，白名单 kind 上的机器 form 仍然不算", () => {
+  const at = new Date(2026, 10, 7, 10).getTime();
+  const session = sessionOf([
+    ev("user/message", at, { content: [{ type: "text", text: "中继进来的真实提问" }], source: { kind: "bot", form: "relay", role: "room" } }),
+    botEv(at, "回答"),
+    ev("user/message", at, { content: [{ type: "text", text: "中继形态的面板快照" }], source: { kind: "bot", form: "snapshot" } }),
+    ev("user/message", at, { content: [{ type: "text", text: "中继形态的插件通知" }], source: { kind: "bot", form: "notice" } })
+  ]);
+  const got = collectSessionTranscript({ session, dateLocal: "2026-11-07" });
+  assert.ok(!got.error, JSON.stringify(got));
+  assert.deepEqual(got.items.map((i) => i.text), ["中继进来的真实提问", "回答"]);
+  assert.deepEqual(got.items.map((i) => i.role), ["user", "assistant"]);
 });
 
 test("sessionAgentId：只认 session.header.agentPreset（不读 requestHeader）", () => {

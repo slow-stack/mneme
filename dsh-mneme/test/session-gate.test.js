@@ -153,6 +153,34 @@ test("all system-prompt surfaces are empty for incognito and remain available to
   assert.equal(gate.isOff("worker"), true);
 });
 
+// 热记忆是按**会话原始事件日志**重建的，与注入块的文本闸门不是同一条路。
+// 放宽「谁算人提问」之后中继会话的正文会真的进轮次，所以这里要单独钉住：
+// 无痕会话连日志都不许读，普通会话照常渲染。
+test("#539/#745: hot memory never reads the log of an incognito session", () => {
+  const { contexts } = injectionSetup();
+  const memory = contexts.find((item) => item.name === "memory");
+  const events = [
+    { seq: 1, type: "user/message", data: { source: { kind: "bot", form: "relay" }, content: [{ type: "text", text: "这句属于无痕会话" }] } },
+    { seq: 2, type: "assistant/message", data: { message: { content: [{ type: "text", text: "回答也不该出现" }] } } }
+  ];
+  let reads = 0;
+  const makeSession = (id) => ({
+    id,
+    header: { origin: "main" },
+    snapshotEvents() { reads += 1; return events; }
+  });
+
+  const gated = memory.text({ agent: { session: makeSession("private") } });
+  assert.equal(gated, "", "no memory block at all for an incognito session");
+  assert.equal(reads, 0, "the outer gate must short-circuit before any log read");
+
+  // 反向对照：同一份事件、普通会话照常渲染（否则「挡住」只是因为坏了）。
+  const normal = memory.text({ agent: { session: makeSession("captain") } });
+  assert.ok(normal.includes("[短期上下文]"), "hot block still renders for a normal session");
+  assert.ok(normal.includes("这句属于无痕会话"), "and it carries the real query");
+  assert.ok(reads >= 1, "the log really was read for the normal session");
+});
+
 test("every registered memory tool rejects before side effects for an incognito session", async () => {
   const store = createStore(":memory:");
   const baseService = createService({ store, mirror: null, config: testConfig({}) });

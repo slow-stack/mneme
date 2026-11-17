@@ -15,6 +15,8 @@
  */
 import { localDateString } from "./rollover.js";
 import { redactDigits } from "./qq-inbox.js";
+// #745：与 summarize.js / inject.js 共用同一份「谁算人提问」判据。
+import { isHumanInputSource } from "../human-source.js";
 
 /** 单条消息进 prompt 的上限：一条超长粘贴不该把整篇日记的预算吃掉。 */
 export const MAX_ITEM_CHARS = 1200;
@@ -60,10 +62,11 @@ function textOf(content) {
 /** 事件里有没有**可公开的会话正文**。与 summarize.js 的 publicTranscriptParts 同一套判据。 */
 function bodyOf(event) {
   const data = event?.data ?? {};
-  const kind = data?.source?.kind;
   if (event?.type === "user/message") {
-    // 机器注入内容（kind 非 user）不进素材：那不是「你们今天聊的」。
-    if (kind !== undefined && kind !== "user") return null;
+    // 机器注入内容不进素材：那不是「你们今天聊的」。#745：判据换成与注入侧共用
+    // 的那一份——经 DS Bot / 群聊中继进来的人话是 kind:"bot"，旧判据会当成机器
+    // 注入整条丢掉，日记里于是没有用户说过的话。
+    if (!isHumanInputSource(data?.source)) return null;
     const text = textOf(data?.content).trim();
     return text ? { role: "user", text } : null;
   }
@@ -83,8 +86,13 @@ function bodyOf(event) {
  *
  * 返回 `{items, scanned, ignored}`（items 可以为空）或 `{error}`。
  */
-export function collectSessionTranscript({ session, dateLocal = null, maxItems = 400, maxChars = MAX_ITEM_CHARS } = {}) {
+export function collectSessionTranscript({ session, dateLocal = null, maxItems = 400, maxChars = MAX_ITEM_CHARS, sessionGate = null } = {}) {
   if (!session) return { error: "no-session" };
+  // #539/#745：无痕会话的正文不采集。闸门放在了**读事件之前**——这一层的输出会
+  // 直接进模型 prompt（日记素材），不是「读出来不用」，所以必须在这里挡，而不是
+  // 指望上层拿到 items 之后再过滤。触发侧（diary/auto.js）已经挡过一次，但 compose
+  // 与 collectSessionTranscript 都能被单独调用（面板按钮、测试、将来的其他入口）。
+  if (sessionGate?.isOff(session)) return { error: "session-gated" };
   let events = null;
   try {
     events = typeof session.snapshotEvents === "function" ? session.snapshotEvents() : session.events;

@@ -735,7 +735,7 @@ export const apply = (ctx, config) => {
   // actionNudge 的 TDZ 理由）。关闸时 composer 是 null：路由回 409、座位不注册，
   // 与「装配缺失」的 503 严格区分（#497 先例）。
   const diary = cfg.diaryEnabled === true
-    ? createDiaryComposer({ ctx, config: cfg, logger: ctx.logger, service, settings, memoryDir })
+    ? createDiaryComposer({ ctx, config: cfg, logger: ctx.logger, service, settings, memoryDir, sessionGate })
     : null;
 
   // #275 存储生命周期第一批：无损回收的手动入口。刻意不挂启动路径、不接定时器——
