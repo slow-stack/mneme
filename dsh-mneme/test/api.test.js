@@ -886,7 +886,9 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // BOOLEANS 表）= +1，故 140 + 1 = 141。同批的 distillExcludeProjects 是字符串
   // 数组，按既有口径**不进**白名单（数组键一律走 fileOnly，与 codingKeywords /
   // sessionGateSessions 同表），所以它不在这笔账里。
-  assert.equal(Object.keys(data.effective).length, 141);
+  // 「Agent 眼中的你」阅读面摘要新增 profileDigestEnabled（顶层布尔键，不需要
+  // NESTED_FLAG_PATHS 条目）= +1，故 141 + 1 = 142。
+  assert.equal(Object.keys(data.effective).length, 142);
   // #718 判官路由默认值单独钉：默认空串 = 回落 agentDefaultModel（entity
   // 同款成对语义，计数锁钉不住空串缺省被翻转）。
   assert.equal(data.effective.preInjectGateProvider, "");

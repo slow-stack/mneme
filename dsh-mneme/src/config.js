@@ -1303,6 +1303,12 @@ export const Config = z.object({
   // 占用轻量档预算的考量见键注释末句。
   profileFactsEnabled: z.boolean().default(false),
 
+  // 「Agent 眼中的你」阅读面摘要蒸馏（2026-11-18）：dream 维护轮事实有变后重蒸馏
+  // 一次 + 面板手动重蒸馏。opt-in 默认关（同 profileFactsEnabled 的定性：额外一次
+  // LLM 调用）；摘要只作阅读面，注入不读它，故不占轻量档注入预算——进
+  // LIGHT_MODE_OFF 省的是那次蒸馏调用本身。
+  profileDigestEnabled: z.boolean().default(false),
+
   // chorography 面板闭环（2026-11-08 kb-qoder parity，契约见
   // docs/plans/2026-11-08-kb-qoder-parity.md §3.1）。三个键都是「面板能不能替人
   // 动手」的授权闸，与上面的 chorographyEnabled（子系统总闸）分层：总闸关着时
@@ -1372,6 +1378,9 @@ const LIGHT_MODE_OFF = [
   // 记忆，与低资源档互斥（同 organizeEnabled 的定性）。注入段本身是几十行常驻文本，
   // 关掉自动轮不省注入成本、省的是维护调用——这正是该进这张表的路径。
   "profileFactsEnabled",
+  // 摘要蒸馏跟着事实维护轮走：事实维护被轻量档关掉时，自动重蒸馏没有挂点，
+  // 单独开着只会造成「手动按钮可用、自动永不过期」的错觉（同定性互斥）。
+  "profileDigestEnabled",
   // 图像描述档：一次额外的视觉调用，与低资源档互斥（同 profileFactsEnabled 的
   // 定性）。预设关不是强制，用户显式勾选仍然赢。
   "imageDescribeEnabled",

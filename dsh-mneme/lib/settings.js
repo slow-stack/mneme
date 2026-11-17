@@ -313,6 +313,11 @@ const FEATURE_FLAG_BOOLEANS = [
   // 进 LIGHT_MODE_OFF（自动维护轮与低资源档互斥）。顶层扁平键，与 config.js schema
   // 成对出现（计数锁 test/api.test.js 钉住）。
   "profileFactsEnabled",
+  // 「Agent 眼中的你」阅读面摘要（2026-11-18）：dream 维护轮事实有变后重蒸馏一次
+  // + 面板手动重蒸馏。摘要只作阅读面，注入不读它；默认关，进 LIGHT_MODE_OFF（一次
+  // 额外蒸馏调用，与低资源档互斥，同 profileFactsEnabled 的定性）。顶层扁平键，
+  // 与 config.js schema 成对出现（计数锁 test/api.test.js 钉住）。
+  "profileDigestEnabled",
   // 图像描述档（docs/DISTILL.md:346）：蒸馏前给窗口里的图出描述。默认关，进
   // LIGHT_MODE_OFF —— 它是一次额外的视觉调用，与低资源档互斥。路由两个键走
   // FEATURE_FLAG_STRINGS（留空 = 不描述，理由写在 config.js 那三个键的注释里）。

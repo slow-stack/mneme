@@ -41,6 +41,7 @@ import { createT1Jobs } from "./wiki/t1-jobs.js";
 import { createSettings } from "./settings.js";
 // 「Agent 眼中的你」自动事实（2026-11-06）：逐卡事实清单 + dream 后自动维护轮。
 import { createProfileFacts } from "./profile-facts.js";
+import { createProfileDigest } from "./profile-digest.js";
 // 知识库第二层（契约 §3.4）：装配与开关无关（createKb 只建对象，读侧零 IO），
 // 闸在路由与工具两层——这样「没开」与「没装配」在 HTTP 面上是两个可区分答案。
 import { createKb } from "./kb/index.js";
@@ -501,6 +502,11 @@ export const apply = (ctx, config) => {
   // 位置必须在 dream 调度器之前：onRun 的 fire-and-forget 收尾要引用它。
   const profileFacts = createProfileFacts({ ctx, service, store, config: cfg, logger: ctx.logger });
 
+  // 「Agent 眼中的你」阅读面摘要（2026-11-18，opt-in：profileDigestEnabled）：把事实
+  // 清单蒸馏成分节散文，只给面板看、注入不读。装配同样与开关无关（闸在消费侧：
+  // dream 挂点判 flag、路由 409/503），profile-digest.js 一份实现、api 与面板共用。
+  const profileDigest = createProfileDigest({ ctx, service, store, config: cfg, logger: ctx.logger });
+
   // Dream scheduler: automatic consolidation + summary runs, triggered by
   // store growth. Writes through the service fire the dream hook, which asks
   // the scheduler to (re)schedule a run once absolute and since-last-run
@@ -590,7 +596,13 @@ export const apply = (ctx, config) => {
           if (cfg.profileFactsEnabled !== true || (rep && rep.ok === false)) return;
           for (const key of profileFacts.autoPassCandidates()) {
             try {
-              await service.enqueue(() => profileFacts.runFor(key, { trigger: "auto" }));
+              const receipt = await service.enqueue(() => profileFacts.runFor(key, { trigger: "auto" }));
+              // 摘要跟着事实变更走：维护轮真的落了 op 才重蒸馏（noop 说明事实没变，
+              // 旧摘要仍然有效——白蒸一次只是烧 token，不产生任何信息）。
+              // 失败只 warn：摘要缺失有过期提示兜底，不能计入 dream 的失败退避。
+              if (cfg.profileDigestEnabled === true && receipt && receipt.status === "ok" && receipt.opsApplied > 0) {
+                await service.enqueue(() => profileDigest.composeFor(key, { trigger: "auto" }));
+              }
             } catch (error) {
               ctx.logger?.warn?.(`[dsh-mneme] profile-facts auto pass failed for card "${key || "default"}": ${error?.message ?? error}`);
             }
@@ -815,7 +827,7 @@ export const apply = (ctx, config) => {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,
       list: () => []
-    }, embedder, { ...semantic, vectorIndex, reranker }, cfg.apiToken, { ...cfg, memoryDir }, maintenance, extractProfileDraft, choro, profileFacts, kb, diary, backfill);
+    }, embedder, { ...semantic, vectorIndex, reranker }, cfg.apiToken, { ...cfg, memoryDir }, maintenance, extractProfileDraft, choro, profileFacts, kb, diary, backfill, profileDigest);
     disposers.push(api.dispose);
 
     // dsh-go 原生面板：只有宿主提供 dshGo 服务（dsh-go 手机 App）时才挂载。

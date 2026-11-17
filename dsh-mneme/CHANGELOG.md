@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **过期判定拿毫秒精度的时间戳当锚点，同毫秒写入时永远判不出过期（#752）**。「Agent 眼中的你」摘要的 stale 原先用 `profile_facts.updated_at` 的 `MAX` 对比摘要里记的锚点。可 `updated_at` 只有毫秒精度，而生成摘要与修正事实完全可能落在同一毫秒里——锚点一字不变，`>` 判为 false，改过的事实不会提示过期，面板把旧摘要当新的显示。不是测试抖动：本机实测「添两条事实、立刻改一条」300 次，**221 次锚点根本没前移**。
+
+  修法是换锚点不换语义：改用该卡 `profile_fact_journal` 的 `MAX(id)` 作修订号。journal 的 `id` 是 `INTEGER PRIMARY KEY AUTOINCREMENT`，每次 add/update/archive 都在 `applyOps` 的同一事务里落一行；`pruneProfileFactJournal` 只按 `id DESC LIMIT keep` 裁最老的那批，`MAX(id)` **永不回退**——单调、免费、不需要新加一列计数器。表列从 `facts_max_updated_at TEXT` 改为 `facts_revision INTEGER NOT NULL DEFAULT 0`：`profile_digests` 是 #752 新增的整张表，上线库里连表都没有（实测 `no such table`），所以直接改列名、不留迁移代码。`updated_at` 的业务语义一字未动。
+
+  **测试** +2：新增一条**不依赖时钟**的用例——改完事实后把 `updated_at` 显式钉回生成时刻，先断言「时间戳确实一模一样」，再断言必须报过期；原来那条靠真实时钟碰运气、在 CI 上偶发红的用例现在稳定了。另一条锁住前提：把 journal 顶过 `keep=200` 的裁剪线后，修订号照常前进（否则用 journal id 当锚点就不成立）。变异自证：把 `isProfileDigestStale` 退回 `MAX(updated_at)` 对比 → 两条过期用例同时红。
+
 - **保护层复审：七处真问题，三处会让功能实际失效（#755 复审）**。CodeRabbit 在 PR #755 上提了 7 条，逐条核实**全部属实**，其中最要紧的三条不是风格问题——
   ① `distillExcludeProjects` 是字符串数组，却被我登记进了 `FEATURE_FLAG_BOOLEANS`。`validateFlag` 对这张表的成员只收 boolean，于是**写名单抛 TypeError、写 `false` 却通过并存下来**：用户以为自己关掉了「导入隔离」，重启后名单变成一个假的开关。核查既有 5 个数组型 schema 键（`codingKeywords`、`diaryMemoryExcludeTypes`、`externalApiAllowedOrigins`、`scopeHardWallWorkspaces`、`sessionGateSessions`）在 `settings.js` 里出现次数**全为 0**——数组键一律不进白名单、走 `fileOnly` 桶，这条口径原先就立着，是我自己撞上去的。现在把它移出白名单，只留 `distillSkipImportedSessions`（真布尔）。
   ② `createSummarizer` 第一行 `if (!config.autoSummarize) return { dispose }` —— 关掉自动蒸馏时**连 `summarizeNow` 一起消失**，而回填正是靠它手动跑，`runBackfill` 会直接返回 `error: "summarizer-unavailable"`。等于「关掉自动蒸馏」悄悄搭上了「导入会话永远补不上记忆」。改为只跳过 `session/event` 订阅，`summarizeNow` 照常提供。

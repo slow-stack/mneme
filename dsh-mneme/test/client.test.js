@@ -3591,6 +3591,56 @@ test("profile facts card ships management UI, run outcomes and never touches the
     "the facts card must re-read its flag snapshot when features change");
 });
 
+// 摘要（2026-11-18）面板面：事实卡的阅读面投影。锁四件事——①摘要是「读」的：
+// GET /profile-digest 进面板、POST /generate 是唯一写路径；②账本（最近变更）保留
+// 在折叠区外，摘要改造不许吃掉审计面（用户的原话：「更新倒是可以保留」）；③过期
+// 提示是后端现算的 stale 字段，前端只读不自己比时间戳（锚点口径一份皮，在 store）；
+// ④摘要是投影——面板不许把它送进任何注入路径。
+test("profile digest ships a reading surface over the fact list, journal intact", () => {
+  const apiSource = readFileSync(join(root, "src/api.js"), "utf8");
+  for (const pathLiteral of [
+    'path: "/api/dsh-mneme/profile-digest"',
+    'path: "/api/dsh-mneme/profile-digest/generate"'
+  ]) {
+    assert.ok(apiSource.includes(pathLiteral), `the backend must register ${pathLiteral}`);
+  }
+  assert.ok(clientSource.includes("apiFetch(`/api/dsh-mneme/profile-digest?agent="),
+    "the panel must load the digest per card");
+  assert.ok(clientSource.includes('"/api/dsh-mneme/profile-digest/generate"'),
+    "manual generation must go through the generate route");
+  // 双语键成对（摘要区五句结局 + 锚点行 + 过期提示 + 折叠标签）。
+  for (const key of [
+    "memory.settings.digestSection",
+    "memory.settings.digestGenerate",
+    "memory.settings.digestMeta",
+    "memory.settings.digestStale",
+    "memory.settings.digestRunOk",
+    "memory.settings.digestRunNoop",
+    "memory.settings.digestRunDisabled",
+    "memory.settings.digestRunNoRoute",
+    "memory.settings.digestRunFailed",
+    "memory.settings.digestFactsFold",
+    "memory.features.profileDigestEnabled",
+    "memory.features.profileDigestEnabled.hint"
+  ]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  // 开关要真有可勾的座位：FEATURE_GROUPS group.persona 必须带上 profileDigestEnabled。
+  assert.ok(/group\.persona[\s\S]{0,1200}"profileDigestEnabled"/.test(clientSource),
+    "FEATURE_GROUPS group.persona must carry profileDigestEnabled");
+  // 账本保留：最近变更的渲染仍在事实卡里（在折叠区外），没有随摘要改造被删。
+  assert.ok(clientSource.includes('t("memory.settings.factsJournalTitle")'),
+    "the journal must stay on the facts card");
+  // 过期判定不在前端比时间戳：面板只读 stale 布尔（锚点口径一份皮，在 store）。
+  assert.ok(/factsDigest\?\.stale/.test(clientSource),
+    "the panel must read the server-computed stale flag, not re-derive it");
+  // 注入面零接触：摘要段不得出现在 user-settings.js 的注入渲染里（摘要是阅读面）。
+  const userSettingsSource = readFileSync(join(root, "src/user-settings.js"), "utf8");
+  assert.ok(!userSettingsSource.includes("profile_digest") && !userSettingsSource.includes("getProfileDigest"),
+    "the digest must never enter the injection path (facts remain the injected surface)");
+});
+
 // 复制的竞态（CodeRabbit #559 第二轮）：剪贴板是异步的，回调属于哪一份草稿必须能认出来。
 // 复制 A 还没落地时又提取出草稿 B，A 的回调就会在 B 上打勾或报错——B 一个字都没被复制过，
 // 而「已复制」会挂 1.5 秒，于是同一屏上可能出现「已复制」和「复制没成功」两句相反的话。

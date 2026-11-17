@@ -576,6 +576,21 @@ window.__ModuleLoader__.load({
         "memory.settings.factsActorManual": "手动",
         "memory.settings.factsRunLast": "最近一轮：",
         "memory.settings.factsRunCounts": "输入 {input} 条 · 应用 {ops} 项操作",
+        "memory.settings.digestSection": "摘要",
+        "memory.settings.digestGenerate": "生成摘要",
+        "memory.settings.digestRegenerate": "重新生成",
+        "memory.settings.digestRunning": "生成中…",
+        "memory.settings.digestEmpty": "还没有摘要。生成一次，把这张卡的事实蒸馏成一段可扫读的短文；事实变更后可重新生成。",
+        "memory.settings.digestReadFailed": "摘要读不到（请求失败），这不等于没有摘要。",
+        "memory.settings.digestMeta": "更新于 {time} · 由 {n} 条事实提炼",
+        "memory.settings.digestStale": "摘要有未合入的更新：事实在这次生成之后又变过。重新生成让它跟上。",
+        "memory.settings.digestRunOk": "摘要已生成",
+        "memory.settings.digestRunNoop": "这张卡还没有事实，没有可蒸馏的内容",
+        "memory.settings.digestRunDisabled": "功能开关里的「摘要蒸馏」没开，先到功能开关区打开它。",
+        "memory.settings.digestRunNoRoute": "没有可用的模型：先在宿主里选一个默认模型（或在配置里填 dreamProvider / dreamModel），再点一次。",
+        "memory.settings.digestRunFailed": "摘要没成：模型没按格式返回，或这次调用失败了。稍后可重试。",
+        "memory.settings.digestGateOff": "功能开关里的「摘要蒸馏」没开：打开后 dream 轮会在事实变更后自动重蒸馏，这里的手动生成也会解禁。",
+        "memory.settings.digestFactsFold": "原始事实",
         "memory.settings.factsRunStatusOk": "成功",
         "memory.settings.factsRunStatusNoop": "无变更",
         "memory.settings.factsRunStatusFailed": "失败",
@@ -587,6 +602,8 @@ window.__ModuleLoader__.load({
         "memory.features.profileExtractEnabled.hint": "从记忆生成「Agent 眼中的你」草稿，只出副本。",
         "memory.features.profileFactsEnabled": "自动事实",
         "memory.features.profileFactsEnabled.hint": "每次巩固后自动维护「Agent 眼中的你」事实清单。",
+        "memory.features.profileDigestEnabled": "摘要蒸馏",
+        "memory.features.profileDigestEnabled.hint": "事实变更后把清单蒸馏成面板上可扫读的摘要；只作阅读面，注入不读它。",
         "memory.features.chorographyEnabled": "仓库地志",
         "memory.features.chorographyEnabled.hint": "把仓库读成一份带页码的志书，四个入口随开随用。",
         "memory.features.chorographyInject": "开局注入档位",
@@ -1787,6 +1804,21 @@ window.__ModuleLoader__.load({
         "memory.settings.factsActorManual": "manual",
         "memory.settings.factsRunLast": "Last run: ",
         "memory.settings.factsRunCounts": "input {input} · applied {ops} ops",
+        "memory.settings.digestSection": "Digest",
+        "memory.settings.digestGenerate": "Generate digest",
+        "memory.settings.digestRegenerate": "Regenerate",
+        "memory.settings.digestRunning": "Generating…",
+        "memory.settings.digestEmpty": "No digest yet. Generate one to distill this card's facts into a readable summary; regenerate after facts change.",
+        "memory.settings.digestReadFailed": "Could not read the digest (request failed) — that is not the same as having no digest.",
+        "memory.settings.digestMeta": "Updated {time} · distilled from {n} facts",
+        "memory.settings.digestStale": "The digest is out of date: facts changed after it was generated. Regenerate to catch up.",
+        "memory.settings.digestRunOk": "Digest generated",
+        "memory.settings.digestRunNoop": "No facts on this card yet; nothing to distill",
+        "memory.settings.digestRunDisabled": "The digest switch is off; enable it in the feature switches first.",
+        "memory.settings.digestRunNoRoute": "No usable model: pick an agent default model in the host (or set dreamProvider / dreamModel in config), then try again.",
+        "memory.settings.digestRunFailed": "Digest failed: the model did not return a usable shape, or the call failed. Retry later.",
+        "memory.settings.digestGateOff": "The digest switch is off: once enabled, dream runs re-distill after facts change, and manual generation here unlocks.",
+        "memory.settings.digestFactsFold": "Raw facts",
         "memory.settings.factsRunStatusOk": "ok",
         "memory.settings.factsRunStatusNoop": "no change",
         "memory.settings.factsRunStatusFailed": "failed",
@@ -1798,6 +1830,8 @@ window.__ModuleLoader__.load({
         "memory.features.profileExtractEnabled.hint": "Generates a draft profile from memories — copy only, never auto-applied.",
         "memory.features.profileFactsEnabled": "Auto facts",
         "memory.features.profileFactsEnabled.hint": "Maintains the facts list after every consolidation run.",
+        "memory.features.profileDigestEnabled": "Digest distillation",
+        "memory.features.profileDigestEnabled.hint": "Re-distills the fact list into a readable panel summary after facts change; reading surface only, never injected.",
         "memory.features.chorographyEnabled": "Repo chorography",
         "memory.features.chorographyEnabled.hint": "Reads the repo into a paginated gazetteer; four entry points.",
         "memory.features.chorographyInject": "Opening injection tier",
@@ -4863,7 +4897,7 @@ window.__ModuleLoader__.load({
       { key: "group.retrieve", items: ["hotMemoryEnabled", "injectTimePrefix", "rerankEnabled", "bm25SearchEnabled", "searchSemanticDedup", "heatEnabled", "resilientModelDownload"] },
       // 个性化（beta 区）：人格注入总闸 + 严格寻址 + 画像草稿 + 自动事实。
       // 人格内容在「个性化」页的人格卡，这里只有开关。
-      { key: "group.persona", items: ["personaEnabled", "personaStrictAddressing", "profileExtractEnabled", "profileFactsEnabled"] },
+      { key: "group.persona", items: ["personaEnabled", "personaStrictAddressing", "profileExtractEnabled", "profileFactsEnabled", "profileDigestEnabled"] },
       // M.O. 已下架（v0.13.x）：那一组连同首屏位一起摘掉，不是「折进全部设置」。
       // 反转的是 v0.9.0 时产品主人「别藏在里面」的点名——主人明确要求下架，
       // 所以反向操作。三个键仍在 config schema 与 settings 白名单里，座位闸门那条
@@ -13231,8 +13265,35 @@ window.__ModuleLoader__.load({
       // 总闸快照只管「立即更新」按钮的可用性：null = 还没读到（读失败不猜，按钮保持
       // 可用，点下去由后端 409 disabled 兜底）；事实的展示与人工修正不受这个闸管。
       const [factsFlag, setFactsFlag] = react.useState(null);
+      // 摘要（2026-11-18）：阅读面投影，事实清单太长没法扫读——摘要回答「它到底
+      // 懂了我什么」。digest=null=没读到/没有摘要（fail-closed，不拿别卡摘要冒充）；
+      // stale 由后端读侧现算（锚点对比），前端不自己比时间戳。
+      const [factsDigest, setFactsDigest] = react.useState(null);
+      const [digestBusy, setDigestBusy] = react.useState(false);
+      const [digestEnd, setDigestEnd] = react.useState(null);
+      const [digestFlag, setDigestFlag] = react.useState(null);
+      // 事实折叠区受控开合：摘要成为第一阅读面后，逐条修正仍要留在手边——折起来
+      // 而不是删掉。开合用受控 details + summary preventDefault（#412：details 的
+      // 原生 onClick 会连子元素的点击一起吃掉），收起时不挂载子树。
+      const [factsFoldOpen, setFactsFoldOpen] = react.useState(false);
       // 与 loadPreview 同一套序号守卫：先切 A 再切 B，A 的响应后到不能盖掉 B 的。
       const factsSeq = react.useRef(0);
+      const digestSeq = react.useRef(0);
+      const loadDigest = react.useCallback(async (agentKey) => {
+        const seq = ++digestSeq.current;
+        try {
+          const res = await apiFetch(`/api/dsh-mneme/profile-digest?agent=${encodeURIComponent(agentKey)}`);
+          const body = await res.json().catch(() => null);
+          if (seq !== digestSeq.current) return;
+          // 后端过旧没有 /profile-digest 路由 → 404/503：按「读不到」处理——
+          // 不冒充「没有摘要」，也不让读失败堵死这张卡。
+          setFactsDigest(res.ok && body && (body.digest === null || body.digest && typeof body.digest === "object")
+            ? { digest: body.digest, stale: body.stale === true }
+            : { error: true });
+        } catch {
+          if (seq === digestSeq.current) setFactsDigest({ error: true });
+        }
+      }, []);
       const loadFacts = react.useCallback(async (agentKey) => {
         const seq = ++factsSeq.current;
         try {
@@ -13262,14 +13323,18 @@ window.__ModuleLoader__.load({
       // 切卡先清行再取：上一张卡的事实留在屏上会被当成这张的（同 loadPreview 的
       // 单一所有者纪律——这里没有直接写数据，都交给 loadFacts）。维护轮结局一并
       // 清：A 卡跑完的「已更新 N 条」不该显示在 B 卡下（评审 P3：跨卡残留）。
+      // 摘要同卡同清：摘要跟着卡走，B 卡的摘要不能是 A 卡蒸馏出来的。
       react.useEffect(() => {
         setFactsRows(null);
         setFactsEditId(null);
         setFactsEditDraft("");
         setFactsNotice(null);
         setFactsRunEnd(null);
+        setFactsDigest(null);
+        setDigestEnd(null);
         loadFacts(factsAgent);
-      }, [factsAgent, loadFacts]);
+        loadDigest(factsAgent);
+      }, [factsAgent, loadFacts, loadDigest]);
       // 总闸快照：features 由功能开关卡管写，这里只读不写、失败不猜。功能开关卡
       // 即改即存并广播 mneme:features-changed——不监听的话，按提示开了「自动事实」
       // 还得关面板重开才解禁（正是广播工作项要消灭的那类体验）。
@@ -13282,6 +13347,7 @@ window.__ModuleLoader__.load({
               if (cancelled) return;
               const eff = (j && j.effective) || {};
               setFactsFlag(eff.profileFactsEnabled === true);
+              setDigestFlag(eff.profileDigestEnabled === true);
             })
             .catch(() => {}); // 读失败保持 null：按钮不锁死，409 兜底
         };
@@ -13320,6 +13386,8 @@ window.__ModuleLoader__.load({
           setFactsNotice({ kind, text });
           announce(text);
           await loadFacts(factsAgent);
+          // 事实变了 → 摘要锚点可能落后：重取过期标记（后端现算，前端只读）。
+          await loadDigest(factsAgent);
           return body;
         } catch {
           setFactsNotice({ kind: "fail", text: t("memory.settings.factsApplyError") });
@@ -13392,6 +13460,39 @@ window.__ModuleLoader__.load({
           setFactsRunning(false);
         }
       }
+      // 摘要蒸馏（手动轮）：结局映射与 facts/run 同款——disabled 是闸没开、no-route
+      // 重跑也一样、unparseable 等可重试。noop 是正常结局（这张卡没有事实）。
+      // 成功与否都重取摘要与过期标记，让「由 n 条事实提炼」跟着后端走。
+      async function generateDigest() {
+        if (digestBusy) return;
+        setDigestBusy(true);
+        setDigestEnd(null);
+        try {
+          const res = await apiFetch("/api/dsh-mneme/profile-digest/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agent: factsAgent })
+          });
+          const body = await res.json().catch(() => null);
+          if (res.ok && body && typeof body.status === "string") {
+            setDigestEnd({ kind: body.status === "noop" ? "noop" : "ok" });
+            announce(t(body.status === "noop" ? "memory.settings.digestRunNoop" : "memory.settings.digestRunOk"));
+          } else {
+            const error = body && typeof body.error === "string" ? body.error : "";
+            const kind = error === "disabled" ? "disabled" : error === "no-route" ? "noroute" : "failed";
+            setDigestEnd({ kind });
+            announce(t(kind === "disabled" ? "memory.settings.digestRunDisabled"
+              : kind === "noroute" ? "memory.settings.digestRunNoRoute"
+              : "memory.settings.digestRunFailed"));
+          }
+          await loadDigest(factsAgent);
+        } catch {
+          setDigestEnd({ kind: "failed" });
+          announce(t("memory.settings.digestRunFailed"));
+        } finally {
+          setDigestBusy(false);
+        }
+      }
       // 账本行的摘要截断：before/after 各 ~40 字符，长了加省略号——账本给「扫一眼」
       // 用，整句塞进来会把最近变更撑成一堵墙。
       const clipFactText = (s) => {
@@ -13402,6 +13503,142 @@ window.__ModuleLoader__.load({
         : op === "update" ? t("memory.settings.factsOpUpdate")
         : op === "archive" ? t("memory.settings.factsOpArchive")
         : String(op ?? ""));
+
+      // 事实折叠区（原始事实的逐条修正，全部原样保留）：默认收起、收起不挂载子树。
+      const activeFacts = factsRows === null ? [] : factsRows.filter((f) => f && f.status === "active");
+      const factsFold = factsRows === null ? null : h("details", { open: factsFoldOpen },
+        h("summary", {
+          onClick: (e) => { e.preventDefault(); setFactsFoldOpen(!factsFoldOpen); }
+        },
+          t("memory.settings.digestFactsFold") + `（${activeFacts.length}）`,
+          h("span", { className: "mneme-set-desc", style: { marginLeft: 8 } },
+            factsFoldOpen ? "▾" : "▸")),
+        factsFoldOpen ? h("div", null,
+          // 只列活跃行：归档的行留在账本里可追溯，不再回到清单上（恢复=重新添加）。
+          activeFacts.length === 0
+            ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsEmpty"))
+            : null,
+          activeFacts.map((f) =>
+            factsEditId === f.id
+              ? h("div", { key: f.id, className: "mneme-set-row" },
+                  h("input", {
+                    className: "mneme-set-input",
+                    style: { marginBottom: 0, flex: "1 1 auto" },
+                    value: factsEditDraft,
+                    autoFocus: true,
+                    onChange: (e) => setFactsEditDraft(e.target.value),
+                    onKeyDown: (e) => {
+                      if (e.key === "Enter") saveFactEdit();
+                      if (e.key === "Escape") cancelFactEdit();
+                    }
+                  }),
+                  h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: saveFactEdit },
+                    t("memory.settings.factsRowSave")),
+                  h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: cancelFactEdit },
+                    t("memory.settings.factsRowCancel"))
+                )
+              : h("div", { key: f.id, className: "mneme-set-row" },
+                  h("span", { className: "mneme-set-ruletext", style: { flex: "1 1 auto" } }, f.content),
+                  // ✎ 与 × 都走 mneme-set-del（悬停显形）：低频动作不常驻，
+                  // 与规则卡同一套视觉语言。
+                  h("button", {
+                    type: "button",
+                    className: "mneme-set-del",
+                    title: t("memory.settings.factsRowEdit"),
+                    "aria-label": t("memory.settings.factsRowEdit"),
+                    onClick: () => startFactEdit(f)
+                  }, "✎"),
+                  // 删除不二次确认：archive 可恢复（账本里留 before），打断比误删贵。
+                  h("button", {
+                    type: "button",
+                    className: "mneme-set-del",
+                    title: t("memory.settings.factsRowDelete"),
+                    "aria-label": t("memory.settings.factsRowDelete"),
+                    onClick: () => archiveFact(f.id)
+                  }, "×")
+                )
+          ),
+          h("div", { style: { display: "flex", gap: 8, marginTop: 6 } },
+            h("input", {
+              className: "mneme-set-input",
+              style: { marginBottom: 0 },
+              value: factsNew,
+              placeholder: t("memory.settings.factsAddPlaceholder"),
+              onChange: (e) => setFactsNew(e.target.value),
+              onKeyDown: (e) => { if (e.key === "Enter") addFact(); }
+            }),
+            h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: addFact },
+              t("memory.settings.factsAdd"))
+          ),
+          // apply 回执：失败（role=alert）与跳重如实摆出来，全成才说成功。
+          factsNotice
+            ? h("div", {
+                className: "mneme-set-desc",
+                role: factsNotice.kind === "fail" ? "alert" : undefined,
+                style: { color: factsNotice.kind === "fail" ? "var(--mneme-danger)" : undefined }
+              }, factsNotice.text)
+            : null,
+          // 手动维护轮：总闸快照关着就禁用（features 只读不写）；快照没读到时
+          // 不锁——点下去由后端 409 disabled 给出同款解释。
+          h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 12 } },
+            h("button", {
+              type: "button",
+              className: "mneme-btn",
+              disabled: factsRunning || factsFlag === false,
+              onClick: runFacts
+            }, factsRunning ? t("memory.settings.factsRunning") : t("memory.settings.factsRun")),
+            factsRunning ? h("span", { className: "mneme-saved" }, t("memory.settings.factsRunning")) : null
+          ),
+          factsFlag === false ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsGateOff")) : null,
+          // 五种结局各一句话（profileDraft 的 kind 分支同款）。
+          factsRunEnd?.kind === "ok" ? h("div", { className: "mneme-set-desc" },
+            t("memory.settings.factsRunOk").replace("{n}", String(factsRunEnd.n))) : null,
+          factsRunEnd?.kind === "noop" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunNoop")) : null,
+          factsRunEnd?.kind === "disabled" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunDisabled")) : null,
+          factsRunEnd?.kind === "noroute" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunNoRoute")) : null,
+          factsRunEnd?.kind === "failed" ? h("div", { className: "mneme-set-desc", role: "alert", style: { color: "var(--mneme-danger)" } },
+            t("memory.settings.factsRunFailed")) : null
+        ) : null);
+
+      // 摘要区（阅读面第一屏）：节标题 + 散文 + 锚点行。锚点行与过期提示永远可见
+      // ——摘要是蒸馏产物，读者得知道它「由几条事实、锚到哪一刻」而来；事实在
+      // 生成后又变过，就明说过期，不装新鲜。
+      const digestSections = factsDigest && !factsDigest.error && Array.isArray(factsDigest.digest?.sections)
+        ? factsDigest.digest.sections : [];
+      const digestBlock = h("div", { style: { marginTop: 12 } },
+        h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+          h("div", { className: "mneme-featnumlabel" }, t("memory.settings.digestSection")),
+          h("button", {
+            type: "button", className: "mneme-btn",
+            disabled: digestBusy || digestFlag === false,
+            onClick: generateDigest
+          }, digestBusy
+            ? t("memory.settings.digestRunning")
+            : (digestSections.length ? t("memory.settings.digestRegenerate") : t("memory.settings.digestGenerate"))),
+          factsDigest?.digest
+            ? h("span", { className: "mneme-set-desc" },
+                t("memory.settings.digestMeta")
+                  .replace("{time}", formatRelativeTime(factsDigest.digest.generatedAt, t))
+                  .replace("{n}", String(Number(factsDigest.digest.factCount) || 0)))
+            : null
+        ),
+        digestFlag === false ? h("div", { className: "mneme-set-desc", style: { marginTop: 6 } }, t("memory.settings.digestGateOff")) : null,
+        factsDigest?.error ? h("div", { className: "mneme-set-desc" }, t("memory.settings.digestReadFailed")) : null,
+        digestBusy ? h("div", { className: "mneme-set-desc" }, t("memory.settings.digestRunning")) : null,
+        !digestBusy && factsDigest && !factsDigest.error && digestSections.length === 0
+          ? h("div", { className: "mneme-xempty" }, t("memory.settings.digestEmpty"))
+          : null,
+        digestSections.map((s, i) => h("div", { key: i, style: { marginTop: i ? 10 : 8 } },
+          h("div", { className: "mneme-featnumlabel" }, s.heading),
+          h("div", { className: "mneme-set-ruletext" }, s.text))),
+        factsDigest?.stale ? h("div", { className: "mneme-set-desc", style: { marginTop: 8 } }, t("memory.settings.digestStale")) : null,
+        digestEnd?.kind === "ok" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.digestRunOk")) : null,
+        digestEnd?.kind === "noop" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.digestRunNoop")) : null,
+        digestEnd?.kind === "disabled" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.digestRunDisabled")) : null,
+        digestEnd?.kind === "noroute" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.digestRunNoRoute")) : null,
+        digestEnd?.kind === "failed" ? h("div", { className: "mneme-set-desc", role: "alert", style: { color: "var(--mneme-danger)" } },
+          t("memory.settings.digestRunFailed")) : null
+      );
 
       useEffect(() => {
         let dead = false;
@@ -13762,93 +13999,11 @@ window.__ModuleLoader__.load({
                   onClick: () => setFactsAgent(k)
                 }, k))
             ),
+            digestBlock,
             factsRows === null
               ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsUnavailable"))
               : h("div", null,
-                  // 只列活跃行：归档的行留在账本里可追溯，不再回到清单上（恢复=重新添加）。
-                  factsRows.filter((f) => f && f.status === "active").length === 0
-                    ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsEmpty"))
-                    : null,
-                  factsRows.filter((f) => f && f.status === "active").map((f) =>
-                    factsEditId === f.id
-                      ? h("div", { key: f.id, className: "mneme-set-row" },
-                          h("input", {
-                            className: "mneme-set-input",
-                            style: { marginBottom: 0, flex: "1 1 auto" },
-                            value: factsEditDraft,
-                            autoFocus: true,
-                            onChange: (e) => setFactsEditDraft(e.target.value),
-                            onKeyDown: (e) => {
-                              if (e.key === "Enter") saveFactEdit();
-                              if (e.key === "Escape") cancelFactEdit();
-                            }
-                          }),
-                          h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: saveFactEdit },
-                            t("memory.settings.factsRowSave")),
-                          h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: cancelFactEdit },
-                            t("memory.settings.factsRowCancel"))
-                        )
-                      : h("div", { key: f.id, className: "mneme-set-row" },
-                          h("span", { className: "mneme-set-ruletext", style: { flex: "1 1 auto" } }, f.content),
-                          // ✎ 与 × 都走 mneme-set-del（悬停显形）：低频动作不常驻，
-                          // 与规则卡同一套视觉语言。
-                          h("button", {
-                            type: "button",
-                            className: "mneme-set-del",
-                            title: t("memory.settings.factsRowEdit"),
-                            "aria-label": t("memory.settings.factsRowEdit"),
-                            onClick: () => startFactEdit(f)
-                          }, "✎"),
-                          // 删除不二次确认：archive 可恢复（账本里留 before），打断比误删贵。
-                          h("button", {
-                            type: "button",
-                            className: "mneme-set-del",
-                            title: t("memory.settings.factsRowDelete"),
-                            "aria-label": t("memory.settings.factsRowDelete"),
-                            onClick: () => archiveFact(f.id)
-                          }, "×")
-                        )
-                  ),
-                  h("div", { style: { display: "flex", gap: 8, marginTop: 6 } },
-                    h("input", {
-                      className: "mneme-set-input",
-                      style: { marginBottom: 0 },
-                      value: factsNew,
-                      placeholder: t("memory.settings.factsAddPlaceholder"),
-                      onChange: (e) => setFactsNew(e.target.value),
-                      onKeyDown: (e) => { if (e.key === "Enter") addFact(); }
-                    }),
-                    h("button", { type: "button", className: "mneme-btn", disabled: factsBusy, onClick: addFact },
-                      t("memory.settings.factsAdd"))
-                  ),
-                  // apply 回执：失败（role=alert）与跳重如实摆出来，全成才说成功。
-                  factsNotice
-                    ? h("div", {
-                        className: "mneme-set-desc",
-                        role: factsNotice.kind === "fail" ? "alert" : undefined,
-                        style: { color: factsNotice.kind === "fail" ? "var(--mneme-danger)" : undefined }
-                      }, factsNotice.text)
-                    : null,
-                  // 手动维护轮：总闸快照关着就禁用（features 只读不写）；快照没读到时
-                  // 不锁——点下去由后端 409 disabled 给出同款解释。
-                  h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 12 } },
-                    h("button", {
-                      type: "button",
-                      className: "mneme-btn",
-                      disabled: factsRunning || factsFlag === false,
-                      onClick: runFacts
-                    }, factsRunning ? t("memory.settings.factsRunning") : t("memory.settings.factsRun")),
-                    factsRunning ? h("span", { className: "mneme-saved" }, t("memory.settings.factsRunning")) : null
-                  ),
-                  factsFlag === false ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsGateOff")) : null,
-                  // 五种结局各一句话（profileDraft 的 kind 分支同款）。
-                  factsRunEnd?.kind === "ok" ? h("div", { className: "mneme-set-desc" },
-                    t("memory.settings.factsRunOk").replace("{n}", String(factsRunEnd.n))) : null,
-                  factsRunEnd?.kind === "noop" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunNoop")) : null,
-                  factsRunEnd?.kind === "disabled" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunDisabled")) : null,
-                  factsRunEnd?.kind === "noroute" ? h("div", { className: "mneme-set-desc" }, t("memory.settings.factsRunNoRoute")) : null,
-                  factsRunEnd?.kind === "failed" ? h("div", { className: "mneme-set-desc", role: "alert", style: { color: "var(--mneme-danger)" } },
-                    t("memory.settings.factsRunFailed")) : null,
+                  factsFold,
                   // 最近变更（账本尾 8 条，后端按新→旧给）：时间 + op + 内容变化 + actor 徽章。
                   h("div", { className: "mneme-featnumlabel", style: { marginTop: 12 } }, t("memory.settings.factsJournalTitle")),
                   factsJournal.length === 0 ? h("div", { className: "mneme-xempty" }, t("memory.settings.factsJournalEmpty")) : null,

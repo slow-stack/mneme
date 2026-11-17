@@ -804,6 +804,22 @@ CREATE TABLE IF NOT EXISTS profile_fact_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_profile_fact_runs_card ON profile_fact_runs(agent_key, started_at);
 
+-- profile_digests：Agent 记忆的阅读面投影（生成走宿主 LLM，注入不读这里）。
+-- 每卡一份（PK agent_key，重生成即整行覆盖）；stale 由读侧现算（facts_revision 落后
+-- 于当前事实修订号），不单独建表。修订号取该卡 profile_fact_journal 的 MAX(id)：
+-- 每次事实写入都在同一事务里落一行 journal，而 prune 只裁最老的行、MAX(id) 永不回退，
+-- 所以它是单调的（归档同样写 journal，无需特别含 archived 行）。原先拿
+-- MAX(updated_at) 当锚点会漏判：updated_at 只有毫秒精度，生成摘要与修正事实落在
+-- 同一毫秒时锚点根本没前移。
+CREATE TABLE IF NOT EXISTS profile_digests (
+  agent_key            TEXT PRIMARY KEY,
+  sections             TEXT NOT NULL,               -- JSON：[{heading, text}]
+  fact_count           INTEGER NOT NULL DEFAULT 0,  -- 生成时纳入的事实条数
+  facts_revision       INTEGER NOT NULL DEFAULT 0,  -- 生成时的事实修订号（过期判定）
+  model                TEXT,
+  generated_at         TEXT NOT NULL
+);
+
 -- 情绪边的人工修正账本（#725）：谁（面板 manual）、何时、对哪条边做了什么。
 -- 审计纪律同 profile_fact_journal：只记账，不触发任何 hook。自动轮不写这张表
 -- ——写入方只有 POST /semantic/graph/affective/apply（token-write）。before/after
@@ -6158,6 +6174,61 @@ export function createStore(path) {
     ).run(agentKey, agentKey, keep).changes;
   }
 
+  // --- profile_digests：阅读面投影（见 schema 注释；注入不读这里） ---
+  /**
+   * 事实修订号：该卡 journal 的最大行号。单调不减——journal 只增，prune 只裁最老的
+   * 那批（ORDER BY id DESC LIMIT keep），MAX(id) 永不回退；且每次事实写入都必然在
+   * 同一事务里落一行。拿它做过期锚点，不依赖 updated_at 的毫秒精度。
+   */
+  function profileFactsRevision(agentKey) {
+    const row = db.prepare(
+      "SELECT MAX(id) AS m FROM profile_fact_journal WHERE agent_key = ?"
+    ).get(agentKey);
+    return Number(row?.m ?? 0) || 0;
+  }
+
+  function getProfileDigest(agentKey) {
+    const r = db.prepare("SELECT * FROM profile_digests WHERE agent_key = ?").get(agentKey);
+    if (!r) return null;
+    let sections = [];
+    try {
+      const v = JSON.parse(r.sections);
+      if (Array.isArray(v)) sections = v;
+    } catch { /* 落库前已校验形状；坏行按「无摘要」处理，不抛 */ }
+    return {
+      agentKey: r.agent_key,
+      sections: sections.filter((s) => s && typeof s.heading === "string" && typeof s.text === "string"),
+      factCount: r.fact_count,
+      factsRevision: r.facts_revision,
+      model: r.model,
+      generatedAt: r.generated_at
+    };
+  }
+
+  function upsertProfileDigest({ agentKey, sections, factCount, factsRevision, model, generatedAt }) {
+    db.prepare(
+      `INSERT INTO profile_digests (agent_key, sections, fact_count, facts_revision, model, generated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(agent_key) DO UPDATE SET
+         sections = excluded.sections,
+         fact_count = excluded.fact_count,
+         facts_revision = excluded.facts_revision,
+         model = excluded.model,
+         generated_at = excluded.generated_at`
+    ).run(agentKey, JSON.stringify(sections), factCount, factsRevision, model, generatedAt);
+  }
+
+  function deleteProfileDigest(agentKey) {
+    db.prepare("DELETE FROM profile_digests WHERE agent_key = ?").run(agentKey);
+  }
+
+  /** 读侧现算的过期判据：生成之后事实又变过（自动轮/人工修正）即为真。 */
+  function isProfileDigestStale(agentKey) {
+    const d = getProfileDigest(agentKey);
+    if (!d) return false;
+    return profileFactsRevision(agentKey) > (Number(d.factsRevision) || 0);
+  }
+
   function insertProfileFactRun({ id, agentKey, triggerSource, status, cursor = null, inputCount = 0, opsApplied = 0, detail = null, startedAt, finishedAt }) {
     db.prepare(
       `INSERT INTO profile_fact_runs (id, agent_key, trigger_source, status, cursor, input_count, ops_applied, detail, started_at, finished_at)
@@ -6593,6 +6664,11 @@ export function createStore(path) {
     listProfileFactJournal,
     pruneProfileFactJournal,
     insertProfileFactRun,
+    profileFactsRevision,
+    getProfileDigest,
+    upsertProfileDigest,
+    deleteProfileDigest,
+    isProfileDigestStale,
     listProfileFactRuns,
     profileFactsCursor,
     listFactInputRows,
