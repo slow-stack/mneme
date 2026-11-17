@@ -408,6 +408,35 @@ test("#539/#745：无痕会话的转录一条都不采，且是在读事件之�
   assert.deepEqual(normal.items.map((i) => i.text), ["这句不该被读出来"]);
 });
 
+test("#539/#745：闸门命中在审计里记 session-gated，不冒名成 no-material", async () => {
+  // 行为两条路一样（都不写、都落 skip），但原因必须分开：写成 no-material 的话，
+  // 以后查「这天为什么没写日记」会以为是当天没素材，去翻一堆本来就被关掉的日志。
+  // 这条钉的是账本口径，不是隐私——隐私已由上面那条（reads === 0）钉住。
+  const memoryDir = fresh("compose-gated");
+  const { ctx, calls } = fakeCtx();
+  const gate = createSessionGate({ sessionGateEnabled: true, sessionGateSessions: ["secret"] });
+  const composer = createDiaryComposer({
+    ctx,
+    config: { diaryEnabled: true, language: "zh" },
+    memoryDir,
+    settings: null,
+    now: () => new Date(2026, 10, 7, 10),
+    sessionGate: gate
+  });
+  const result = await composer.compose({
+    trigger: "rollover",
+    projectRoot: "D:\\proj-gated",
+    session: { ...sessionOf([userEv(new Date(2026, 10, 7, 9).getTime(), "被关掉的会话里的正文")]), id: "secret" }
+  });
+  assert.equal(result.status, "skipped");
+  assert.equal(result.reason, "session-gated");
+  assert.equal(calls.length, 0, "闸门命中时不该调模型");
+  // 账本里也必须是这个 reason，否则面板读到的是另一回事。
+  const rows = composer.readAudit({ projectRoot: "D:\\proj-gated" });
+  assert.equal(rows.filter((r) => r.reason === "session-gated").length, 1, JSON.stringify(rows));
+  assert.equal(rows.filter((r) => r.reason === "no-material").length, 0, JSON.stringify(rows));
+});
+
 // #745：经 DS Bot / 群聊中继进来的人话是 kind:"bot"，旧判据把它当成机器注入整条
 // 丢掉——日记里于是只有 agent 自己的独白，读起来像「今天用户什么都没说」。
 test("#745：中继进来的人话算素材，白名单 kind 上的机器 form 仍然不算", () => {
