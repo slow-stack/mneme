@@ -3095,11 +3095,13 @@ test("connection 放行后策略照旧：open 直接过，token 仍要 token", a
     .handler(req("/api/dsh-mneme/memory/provenance?id=x"), noAuth);
   assert.equal(noAuth.statusCode, 401, "访问检查不等于鉴权：token 策略还要 token");
 
+  // 放行 token 的那一半必须在**要 token 的路由**上验：拿 policy=open 的 /info
+  // 带 token 是自证——就算受门控路由错误地拒掉所有 token，那条断言照样绿。
   const authed = new FakeRes();
-  const r = req("/api/dsh-mneme/info");
+  const r = req("/api/dsh-mneme/vector-config");
   r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
-  await findHandler(routes, "/api/dsh-mneme/info").handler(r, authed);
-  assert.equal(authed.statusCode, 200);
+  await findHandler(routes, "/api/dsh-mneme/vector-config").handler(r, authed);
+  assert.equal(authed.statusCode, 200, "带正确 token 时受门控路由要放行");
 });
 
 test("宿主没提供 connection 时不加检查，行为与加这层之前逐字一致", async () => {
