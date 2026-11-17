@@ -34,6 +34,49 @@ function visibleSeqsOf(session) {
   }
 }
 
+// #745：什么样的 source 才算「人提问」。
+//
+// 旧实现只认 `source.kind === "user"`，而宿主 0.2.x 里人类输入并不都叫这个名字：
+// 经 DS Bot / 群聊中继进来的消息是 `{ kind: "bot", form: "relay" }`（本机 853 个
+// 会话、40,584 条 user/message 实测：`user` 5051 条、`bot|relay` 4986 条）。
+// 于是中继会话里 `lastUserMessageInfo()` 一路回溯到上一条 kind:"user" 的消息（或
+// 空串），`inboxMessageQuery()` 直接返回 ""，票据一次都不会被写入——注入查询恒为
+// 空串，检索退化成「按重要度固定取几条」，Step 1 拿上一轮文本的观感也由此而来。
+//
+// 判据因此改成**白名单 + 明确的来源**，而不是「不是 user 就丢」：
+//   - `user`：GUI 直输；
+//   - `bot` ：DS Bot / 群聊中继（form:"relay"）；
+//   - `plugin:dsh-onebot`：QQ 桥中继的人类消息（`<user_message ...>`）。
+// 但白名单只回答「谁发的」，还要看「以什么形态进来的」：form 属于
+// snapshot/catalog/notice/instructions 的一律排除（见 NON_HUMAN_FORMS），
+// 否则将来某个插件用 `{kind:"bot", form:"notice"}` 推机器通知会被当成提问。
+// 其余一律不算人提问：`runtime-context`/`time-context`/`skill-catalog`/
+// `agent-instructions` 是宿主快照，`plugin:dsh-mneme` 是我们自己的 continuity
+// 注入，`coordinator`/`agent-message`/`subagent-report`/`team-message` 是 Bot 之间
+// 的投递（不是「当前用户想干什么」），`schedule` 是提醒不是提问。
+// 没列进来的新传输方式退回旧行为（查询为空串，即不回归、但也没修好）——要支持
+// 新传输，在这里加一行，两处消费点会一起跟上。
+const HUMAN_INPUT_KINDS = new Set(["user", "bot", "plugin:dsh-onebot"]);
+
+// `form` 说的是「这条消息以什么形态进来」。snapshot / catalog / notice /
+// instructions 全是宿主或插件自己塞的机器上下文，即便 `kind` 落在白名单里也不能
+// 当提问——`kind:"bot"` 现在只靠 kind 放行，将来哪个插件用
+// `{kind:"bot", form:"notice"}` 推机器通知，就会被误认成用户在说话。
+const NON_HUMAN_FORMS = new Set(["snapshot", "catalog", "notice", "instructions"]);
+
+function isHumanInputSource(source) {
+  if (source === undefined || source === null) return true; // 旧事件没有 source
+  if (typeof source !== "object") return false;
+  // form 的排除排在 kind 之前：`{ form: "snapshot" }` 这种没带 kind 的机器注入
+  // 若先撞上「没有 kind 就当旧事件放行」，就会绕过上面那条一律排除的约定，
+  // 把快照正文当成最近一次人类提问（认领路径还会把它写进票据）。
+  const form = source.form;
+  if (typeof form === "string" && NON_HUMAN_FORMS.has(form)) return false;
+  const kind = source.kind;
+  if (kind === undefined) return true; // 更旧的事件：没有 kind
+  return HUMAN_INPUT_KINDS.has(kind);
+}
+
 // Best-effort extraction of the current user's latest message text from the
 // live session, for semantic-first injection (Bug4). The system-prompt
 // interpolator renders synchronously, so this walks the already-materialized
@@ -62,8 +105,8 @@ export function lastUserMessageInfo(ctx) {
       // 被撤回/被压缩遮蔽的事件不算「最近一条用户消息」（与 extractRounds 同口径）。
       if (visibleSeqs && !visibleSeqs.has(event?.seq)) continue;
       if (event?.type !== "user/message") continue;
-      const kind = event.data?.source?.kind;
-      if (kind !== undefined && kind !== "user") continue;
+      // #745：判据见 isHumanInputSource——中继而来的 `kind:"bot"` 同样是人提问。
+      if (!isHumanInputSource(event.data?.source)) continue;
       const parts = event.data?.content;
       if (!Array.isArray(parts) || parts.length === 0) continue;
       return {
@@ -92,8 +135,8 @@ function inboxMessageQuery(message) {
   try {
     const parts = message?.content ?? message?.data?.content;
     if (!Array.isArray(parts) || parts.length === 0) return "";
-    const kind = message?.source?.kind ?? message?.data?.source?.kind;
-    if (kind !== undefined && kind !== "user") return "";
+    // #745：与事件流同一条判据（isHumanInputSource），中继消息不再被当成插件注入。
+    if (!isHumanInputSource(message?.source ?? message?.data?.source)) return "";
     return safeSlice(
       parts
         .map((p) => (typeof p === "string" ? p : p?.text ?? ""))
@@ -437,25 +480,34 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
   // 追加一个事件都会让条数增长，按条数判会把「消息还没落盘」误判成「已落盘」，
   // 票据提前退休、Step 1 又退回空串（正是本 issue 要修的那一拍）。文本相等才是
   // 「这条消息真的进事件流了」的直接证据；连续两轮同一句话时两者相等，取哪个都对。
-  function liveStepQuery(ctx) {
+  // 返回 `{ text, source }`：source 是这次查询**从哪条路来**的，进注入快照供面板
+  // 诊断（#745）——`ticket` 票据、`events` 事件流、`none` 两处都没拿到。这次排查
+  // 花的时间几乎都用在「分不清是票据没写还是事件流没长」上，这个字段就是为了
+  // 下一次一眼看出来。
+  function resolveStepQuery(ctx) {
     const info = lastUserMessageInfo(ctx);
     let sessionId = null;
     try {
       const id = ctx?.agent?.session?.id;
       if (typeof id === "string" && id) sessionId = id;
     } catch { /* session internals unavailable */ }
-    if (!sessionId) return info.text;
+    const fromEvents = info.text ? { text: info.text, source: "events" } : { text: "", source: "none" };
+    if (!sessionId) return fromEvents;
     const ticket = pendingQueries.get(sessionId);
-    if (!ticket) return info.text;
+    if (!ticket) return fromEvents;
     if (info.text === ticket.text) {
       pendingQueries.delete(sessionId); // 已落盘，票据退休（顺带保证 Map 不被历史会话撑大）
-      return info.text;
+      return fromEvents;
     }
     if (Date.now() - ticket.at > PENDING_QUERY_TTL_MS) {
       pendingQueries.delete(sessionId); // 过期证据，不采信
-      return info.text;
+      return fromEvents;
     }
-    return ticket.text;
+    return { text: ticket.text, source: "ticket" };
+  }
+
+  function liveStepQuery(ctx) {
+    return resolveStepQuery(ctx).text;
   }
 
   // 会话身份解析（v1.2 人格寻址用）：读 session.header.agentPreset——冻结的
@@ -550,7 +602,8 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
         // render itself must stay synchronous.
         // #617：liveStepQuery 而不是 lastUserQuery——宿主在 step 末尾才 append
         // user/message，而注入在这之前求值，只看事件流会拿到上一轮的输入。
-        const query = liveStepQuery(ctx);
+        const stepQuery = resolveStepQuery(ctx);
+        const query = stepQuery.text;
         if (query) prefetchQueryVector(query);
         const queryVector = queryVectorCache.get(query);
         // v0.8.0 A3：scope 随请求解析（解析器恒返回对象，身份取不到时两维为
@@ -614,6 +667,9 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
           at: Date.now(),
           sessionId,
           query: query || "",
+          // #745：本次查询的来路（ticket / events / none）。面板与排查据此区分
+          // 「票据没写」与「事件流没长」，不必再靠标题序列反查。
+          querySource: stepQuery.source,
           maxItems,
           threshold,
           adaptive: config.injectUncertaintyAdaptive === true,

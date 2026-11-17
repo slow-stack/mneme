@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
-import { createInjector } from "../src/inject.js";
+import { createInjector, getInjectionSnapshot } from "../src/inject.js";
 import { createSettings } from "../src/settings.js";
 import { createVectorIndex } from "../src/vector-index.js";
 import { createSessionGate } from "../src/session-gate.js";
@@ -111,6 +111,82 @@ test("#617-A: 卸载后摘掉 claimed 监听，不再写票据", () => {
   // 注入器已卸载，context 也不再生效；这里只确认没有票据泄漏到下一次装配
   assert.equal(queries.length, 0);
   void contexts;
+});
+
+// --- 组 1b：#745 中继会话的人提问识别 ---------------------------------------
+//
+// 旧判据是 `kind === undefined || kind === "user"`，而宿主 0.2.x 里经 DS Bot /
+// 群聊中继进来的真实输入是 `{ kind: "bot", form: "relay" }`（本机 853 个会话、
+// 40,584 条 user/message 实测）。旧判据把这类输入整批当插件注入丢掉：票据不写、
+// 事件流回溯到上一条 kind:"user" 的消息（通常就是上一轮），查询于是恒为空串或慢
+// 一拍——正是 #745 报的现象。以下四条锁住新判据，并各带一条反向对照。
+const relayedClaimed = (text) => ({ content: [{ type: "text", text }], source: { kind: "bot", form: "relay", senderName: "You" }, id: "m-relay" });
+const relayedUserMessage = (text) => ({ type: "user/message", data: { role: "user", source: { kind: "bot", form: "relay", senderName: "You" }, content: [{ type: "text", text }] } });
+
+test("#745: 中继消息（kind:bot + form:relay）也写票据，Step 1 拿到当轮输入", () => {
+  const { contexts, queries, fireClaim } = setupInjector();
+  const session = { id: "s-745a", events: [], snapshotEvents() { return this.events; } };
+  session.events.push(relayedUserMessage("上一轮的提问"));
+  fireClaim(relayedClaimed("这一轮的提问"), session);
+  contexts[0].text({ agent: { session } });
+  assert.equal(queries.at(-1), "这一轮的提问", "中继输入必须能写票据，Step 1 不得退回上一轮");
+});
+
+test("#745: 事件流里的中继消息被认成用户提问（无票据时不再得到空串）", () => {
+  const { contexts, queries } = setupInjector();
+  const session = { id: "s-745b", events: [], snapshotEvents() { return this.events; } };
+  session.events.push(relayedUserMessage("中继进来的真实问题"));
+  contexts[0].text({ agent: { session } });
+  assert.equal(queries.at(-1), "中继进来的真实问题", "kind:bot 的 human 输入必须有查询词");
+});
+
+test("#745: 宿主快照与 Bot 间投递仍不算提问（反向对照）", () => {
+  const { contexts, queries, fireClaim } = setupInjector();
+  const session = { id: "s-745c", events: [], snapshotEvents() { return this.events; } };
+  for (const source of [
+    { kind: "runtime-context", form: "snapshot" },
+    { kind: "time-context", form: "snapshot" },
+    { kind: "skill-catalog", form: "catalog" },
+    { kind: "plugin:dsh-mneme" },
+    { kind: "coordinator", form: "relay" },
+    { kind: "agent-message", form: "relay" },
+    // review 意见：白名单里的 kind 也可能带机器形态的 form，不能只看 kind
+    { kind: "bot", form: "notice" },
+    { kind: "bot", form: "snapshot" },
+    { kind: "user", form: "instructions" },
+    { kind: "plugin:dsh-onebot", form: "catalog" },
+    // review 意见：没有 kind、只有 form 的机器注入，不能借「没有 kind 就当旧事件」
+    // 这条兼容分支溜进来。
+    { form: "snapshot" },
+    { form: "notice" },
+    { form: "instructions" },
+    { kind: "system" }
+  ]) {
+    session.events.push({ type: "user/message", data: { source, content: [{ type: "text", text: "不该当查询的一段" }] } });
+  }
+  fireClaim({ content: [{ type: "text", text: "也不是提问" }], source: { kind: "skill-catalog", form: "catalog" } }, session);
+  contexts[0].text({ agent: { session } });
+  assert.equal(queries.at(-1), "", "注入上下文/Bot 投递不得被当成用户提问");
+});
+
+test("#745: 注入快照记录查询来路（ticket / events / none）", () => {
+  const { contexts, queries, fireClaim } = setupInjector();
+  const session = { id: "s-745d", events: [], snapshotEvents() { return this.events; } };
+  fireClaim(relayedClaimed("票据带来的问题"), session);
+  contexts[0].text({ agent: { session } });
+  assert.equal(getInjectionSnapshot().querySource, "ticket");
+
+  // 落盘后票据退休，改由事件流提供
+  session.events.push(relayedUserMessage("票据带来的问题"));
+  contexts[0].text({ agent: { session } });
+  assert.equal(getInjectionSnapshot().querySource, "events");
+
+  // 两处都没有：如实报 none，而不是让排查者靠标题序列反推
+  const empty = { id: "s-745e", events: [], snapshotEvents() { return this.events; } };
+  contexts[0].text({ agent: { session: empty } });
+  assert.equal(getInjectionSnapshot().query, "");
+  assert.equal(getInjectionSnapshot().querySource, "none");
+  void queries;
 });
 
 // --- 组 2：prefetch 去重与失败冷却（根因 B）-------------------------------
