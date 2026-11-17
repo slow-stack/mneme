@@ -160,7 +160,7 @@ test("#539/#745: hot memory never reads the log of an incognito session", () => 
   const { contexts } = injectionSetup();
   const memory = contexts.find((item) => item.name === "memory");
   const events = [
-    { seq: 1, type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text: "这句属于无痕会话" }] } },
+    { seq: 1, type: "user/message", data: { source: { kind: "bot", form: "relay" }, content: [{ type: "text", text: "这句属于无痕会话" }] } },
     { seq: 2, type: "assistant/message", data: { message: { content: [{ type: "text", text: "回答也不该出现" }] } } }
   ];
   let reads = 0;

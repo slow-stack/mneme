@@ -210,6 +210,28 @@ test("roundsFromEvents with an empty surface yields no rounds (model sees nothin
   assert.equal(roundsFromEvents(events, 5, new Set()).length, 0);
 });
 
+// #745：经 DS Bot / 群聊中继进来的真实提问是 kind:"bot" + form:"relay"。旧判据
+// 只看 kind 是不是 user，会把它当成机器注入整条丢掉——热记忆于是只剩 assistant
+// 的独白，甚至整块空白，而界面上看起来一切正常。
+test("#745: relayed human input becomes a round, machine forms still do not", () => {
+  const relay = { seq: 1, type: "user/message", data: { source: { kind: "bot", form: "relay", role: "room" }, content: [{ type: "text", text: "中继进来的提问" }] } };
+  const answer = assistantEvent(2, "回答");
+  const snapshot = { seq: 3, type: "user/message", data: { source: { kind: "runtime-context", form: "snapshot" }, content: [{ type: "text", text: "运行时上下文" }] } };
+  const notice = { seq: 4, type: "user/message", data: { source: { kind: "plugin:dsh-im", form: "notice" }, content: [{ type: "text", text: "插件通知" }] } };
+  // 白名单里的 kind 也可能挂着机器形态的 form（#747 review 补的那条反向对照）：
+  // 中继来的快照是这一路最容易混进来的东西。
+  const botSnapshot = { seq: 5, type: "user/message", data: { source: { kind: "bot", form: "snapshot" }, content: [{ type: "text", text: "中继形态的面板快照" }] } };
+
+  const rounds = roundsFromEvents([relay, answer, snapshot, notice, botSnapshot], 5);
+  assert.equal(rounds.length, 1, JSON.stringify(rounds));
+  assert.equal(rounds[0].query, "中继进来的提问");
+  assert.equal(rounds[0].response, "回答");
+  const all = JSON.stringify(rounds);
+  for (const banned of ["运行时上下文", "插件通知", "中继形态的面板快照"]) {
+    assert.ok(!all.includes(banned), `${banned} must not reach the rounds`);
+  }
+});
+
 // --- Issue #637：omitPendingRound —— 注入侧不回放「正在组装的这一轮」 ---
 
 test("omitPendingRound drops the trailing in-flight round (the #637 empty-A churn source)", () => {

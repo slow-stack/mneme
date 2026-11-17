@@ -1,6 +1,8 @@
 import { safeSlice } from "./safe-slice.js";
 // Issue #611：图片块改用占位文本，不再落进空串（见 roundsFromEvents 里的注释）。
 import { contentToText } from "./attachment-text.js";
+// #745：「谁算人提问」与注入侧共用同一份判据，不再各自写一遍 kind 比较。
+import { isHumanInputSource } from "./human-source.js";
 
 // Session-scoped hot memory (v0.5.0 召回率优化 1.3): a short-term buffer of
 // the latest dialogue rounds, kept strictly apart from the long-term memory
@@ -99,7 +101,10 @@ export function roundsFromEvents(events, maxRounds, visibleSeqs = null, { omitPe
     // 不参与配对。
     if (visibleSeqs && !visibleSeqs.has(event?.seq)) continue;
     const kind = event?.data?.source?.kind;
-    const isUser = event?.type === "user/message" && (kind === undefined || kind === "user");
+    // #745：判据从「kind 是不是 user」换成注入侧那份 isHumanInputSource —— 经
+    // DS Bot / 群聊中继进来的真实提问是 kind:"bot" + form:"relay"，旧判据会把它
+    // 当成机器注入整条丢掉，热记忆于是只剩 assistant 的独白、甚至整块空白。
+    const isUser = event?.type === "user/message" && isHumanInputSource(event?.data?.source);
     if (isUser) {
       if (pendingQuery) rounds.push({ query: pendingQuery, response: "" });
       pendingQuery = safeSlice(textOf(event), 500);

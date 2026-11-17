@@ -408,6 +408,22 @@ test("#539/#745：无痕会话的转录一条都不采，且是在读事件之�
   assert.deepEqual(normal.items.map((i) => i.text), ["这句不该被读出来"]);
 });
 
+// #745：经 DS Bot / 群聊中继进来的人话是 kind:"bot"，旧判据把它当成机器注入整条
+// 丢掉——日记里于是只有 agent 自己的独白，读起来像「今天用户什么都没说」。
+test("#745：中继进来的人话算素材，白名单 kind 上的机器 form 仍然不算", () => {
+  const at = new Date(2026, 10, 7, 10).getTime();
+  const session = sessionOf([
+    ev("user/message", at, { content: [{ type: "text", text: "中继进来的真实提问" }], source: { kind: "bot", form: "relay", role: "room" } }),
+    botEv(at, "回答"),
+    ev("user/message", at, { content: [{ type: "text", text: "中继形态的面板快照" }], source: { kind: "bot", form: "snapshot" } }),
+    ev("user/message", at, { content: [{ type: "text", text: "中继形态的插件通知" }], source: { kind: "bot", form: "notice" } })
+  ]);
+  const got = collectSessionTranscript({ session, dateLocal: "2026-11-07" });
+  assert.ok(!got.error, JSON.stringify(got));
+  assert.deepEqual(got.items.map((i) => i.text), ["中继进来的真实提问", "回答"]);
+  assert.deepEqual(got.items.map((i) => i.role), ["user", "assistant"]);
+});
+
 test("sessionAgentId：只认 session.header.agentPreset（不读 requestHeader）", () => {
   assert.equal(sessionAgentId({ header: { agentPreset: "Amarre" } }), "Amarre");
   assert.equal(sessionAgentId({ header: { agentPreset: "  " } }), null);
