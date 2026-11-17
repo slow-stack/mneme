@@ -155,6 +155,11 @@ test("#745: 宿主快照与 Bot 间投递仍不算提问（反向对照）", () 
     { kind: "bot", form: "snapshot" },
     { kind: "user", form: "instructions" },
     { kind: "plugin:dsh-onebot", form: "catalog" },
+    // review 意见：没有 kind、只有 form 的机器注入，不能借「没有 kind 就当旧事件」
+    // 这条兼容分支溜进来。
+    { form: "snapshot" },
+    { form: "notice" },
+    { form: "instructions" },
     { kind: "system" }
   ]) {
     session.events.push({ type: "user/message", data: { source, content: [{ type: "text", text: "不该当查询的一段" }] } });

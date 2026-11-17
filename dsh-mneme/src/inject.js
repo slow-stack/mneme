@@ -67,12 +67,14 @@ const NON_HUMAN_FORMS = new Set(["snapshot", "catalog", "notice", "instructions"
 function isHumanInputSource(source) {
   if (source === undefined || source === null) return true; // 旧事件没有 source
   if (typeof source !== "object") return false;
-  const kind = source.kind;
-  if (kind === undefined) return true; // 更旧的事件：没有 kind
-  if (!HUMAN_INPUT_KINDS.has(kind)) return false;
+  // form 的排除排在 kind 之前：`{ form: "snapshot" }` 这种没带 kind 的机器注入
+  // 若先撞上「没有 kind 就当旧事件放行」，就会绕过上面那条一律排除的约定，
+  // 把快照正文当成最近一次人类提问（认领路径还会把它写进票据）。
   const form = source.form;
   if (typeof form === "string" && NON_HUMAN_FORMS.has(form)) return false;
-  return true;
+  const kind = source.kind;
+  if (kind === undefined) return true; // 更旧的事件：没有 kind
+  return HUMAN_INPUT_KINDS.has(kind);
 }
 
 // Best-effort extraction of the current user's latest message text from the
