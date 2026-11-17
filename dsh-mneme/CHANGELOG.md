@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-11-18
+
 - **宿主 HTTP 路由从没问过宿主「这个请求该不该放行」：浏览器里打开的任意网页都能调记忆接口（awesome 市场的条目因此被 maintainer 补了一句安全说明）**。`createRouteRegistrar`（`dsh-mneme/src/api.js:166`）只做 apiToken 判定，而 `open` 策略的路由——`/api/dsh-mneme`、`/info`、`/version-check`、`/list`、`/recall-stats`、`/search`、`/profile` 等——按 `needsToken` 的定义**永不鉴权**，于是这两层之外再没有任何一处问过宿主「这个请求该不该放行」：同机任何进程、以及浏览器里打开的任意网页，都能直接读出这些路由返回的记忆数据。修法是在 handler 最开头、在 apiToken 判定**之前**先问一次 `ctx.connection.requestRejection(req)`——`403`（Host/Origin 围栏不过）或 `401`（未登录宿主）直接结束响应、一个字节记忆内容都不回，只有 `undefined` 才继续走原有的 policy 路径。门控收在 `createRouteRegistrar` 里一次（`gate(req, res)`），新增的每条路由自动带上，不靠各路由自己记得。
 
 - **为什么 `inject` 不加 `connection`（这一处别改回去）**。cordis 的 `_refresh()`（`node_modules/@deepseek-ai/cordis/src/fiber.ts:618-626`）是**全或无**：`inject` 里任一登记服务没绑上，整个 fiber 就不激活。把 `connection` 列进去，等于让插件在 headless、旧版宿主、以及任何没 provide connection 的环境上**整个起不来**——用一次可选的安全增强换掉插件本体，这个交换比不成立。所以改成请求时惰性读：`ctx.reflect?.get` 存在就用它取 `connection`，否则退回 `ctx.connection`（`ReflectService.get` 对未 provide 的服务返回 undefined，不抛），取出后还要确认它有 `requestRejection` 方法才用。宿主没提供、方法不存在、读取抛错——三种情况一律按「没有这道检查」处理，行为逐字退回改动之前：**缺一个宿主服务不能让面板 401**，否则还没跟上这一步的宿主会看见一个打不开的记忆面板。

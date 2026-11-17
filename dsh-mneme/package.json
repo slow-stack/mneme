@@ -1,7 +1,7 @@
 {
   "name": "@modusensus/dsh-mneme",
   "description": "Cross-session memory for DeepSeek Harness: a local SQLite store with human-editable Markdown mirrors, four-way recall (keyword, vector, BM25, entity graph), autoDream consolidation while idle, and a Web memory panel. 12 model tools, an MCP server, an HTTP API and a CLI; every memory traceable to its source session, optional affective, diary and image memory.",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "license": "MIT",
   "keywords": [
     "dsh",
