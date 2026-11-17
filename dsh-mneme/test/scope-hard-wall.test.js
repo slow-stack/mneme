@@ -18,6 +18,7 @@ import { createTools } from "../src/tools.js";
 import { createApi } from "../src/api.js";
 import { createSettings } from "../src/settings.js";
 import { createSummarizer } from "../src/summarize.js";
+import { createStandaloneApi } from "../src/api-standalone.js";
 import { normalizeExplicitScope, scopeKeyOf, isHardWallWorkspace, resolveScopeStamp } from "../src/scope.js";
 import { FAKE_API_TOKEN } from "./helpers/fake-auth-values.js";
 import { testConfig } from "./helpers/test-config.js";
@@ -328,6 +329,66 @@ test("hard wall: promote rejects a malformed request instead of silently doing n
   assert.equal(res.body.error, "too-many-ids");
 });
 
+// #743 评审 Minor：JSON `null` 体曾让 `.then` 回调里的 `body.ids` 抛 TypeError，
+// 而外层 try/catch 是同步作用域、捕不到它——请求既不回包也不落 500，一直挂着。
+// 现在体在 `parseBody` 之后先挡一道，回 400 且一行都不动。
+test("hard wall: a JSON null body is rejected before any row is touched", async () => {
+  const { store, service, routes } = setupApi(testConfig({ scopeEnabled: true, scopeHardWallWorkspaces: [IMPORTS] }));
+  const row = store.save({
+    type: "preference", title: "墙里的一条", content: "别动我",
+    workspace_scope: IMPORTS, workspace_scope_source: "explicit"
+  });
+
+  let updateCalls = 0;
+  const realUpdate = service.update;
+  service.update = (...args) => { updateCalls += 1; return realUpdate.apply(service, args); };
+
+  const handler = findHandler(routes, "/api/dsh-mneme/scope/promote");
+  const res = fakeRes();
+  await handler.handler(req("/api/dsh-mneme/scope/promote", "POST", null), res);
+
+  assert.equal(res.statusCode, 400, "非对象体应被挡在业务逻辑之前");
+  assert.equal(res.body.error, "invalid-body");
+  assert.equal(updateCalls, 0, "被挡下的请求不许碰到 service.update");
+
+  const after = store.getById(row.id);
+  assert.equal(after.workspace_scope, IMPORTS, "行没被搬走");
+  assert.equal(after.workspace_scope_source, "explicit", "章也没被动过");
+});
+
+// #743 评审 Major：工作区标签的比较口径必须与名单判定同口径。原来的字面比较
+// 让「名单命中、章也盖了」的行在另一种写法（大小写、末尾分隔符）下不可见，
+// 而且不报错——这类静默不可见正是硬墙最该防的。
+test("hard wall: the same workspace written two ways still sees its own explicit row", async () => {
+  const { store, service } = harness({ scopeHardWallWorkspaces: [IMPORTS] });
+  const saved = store.save({
+    type: "preference", title: "本区私事", content: "只该本区看见",
+    workspace_scope: IMPORTS, workspace_scope_source: "explicit"
+  });
+
+  // 同一块地，另一种写法：全小写 + 末尾反斜杠。
+  const sameAreaAnotherSpelling = {
+    agent_scope: null,
+    workspace_scope: `${IMPORTS.toLowerCase()}\\`
+  };
+  assert.notEqual(sameAreaAnotherSpelling.workspace_scope, IMPORTS, "夹具必须真的是另一种写法，否则断言在考空");
+
+  // 面 1：谓词（同一把钥匙）
+  assert.equal(service.isVisibleInScope(store.getById(saved.id), sameAreaAnotherSpelling), true);
+  // 面 2：list 的 SQL 过滤
+  const listed = service.list({ visibility: { workspaceScope: sameAreaAnotherSpelling.workspace_scope } });
+  assert.ok(listed.some((m) => m.id === saved.id), "列表面：另一种写法也要看见自己的行");
+  // 面 3：计数与行数必须同口径（曾经 SQL 侧字面比较让 total 和行数对不上）
+  const counted = service.count("preference", { visibility: { workspaceScope: sameAreaAnotherSpelling.workspace_scope } });
+  assert.equal(counted, listed.length, "total 必须与行数一致");
+
+  // 反向对照：真的另一个区，仍然看不见——口径统一不是把墙拆了。
+  const trulyOther = { agent_scope: null, workspace_scope: OTHER };
+  assert.equal(service.isVisibleInScope(store.getById(saved.id), trulyOther), false);
+  const otherListed = service.list({ visibility: { workspaceScope: OTHER } });
+  assert.equal(otherListed.some((m) => m.id === saved.id), false, "别区不能因为口径放宽就看见");
+});
+
 // ---------------------------------------------------------------------------
 // 蒸馏路径：只改工具侧会留一个洞
 // ---------------------------------------------------------------------------
@@ -392,4 +453,82 @@ test("hard wall: distillation outside the list keeps the auto stamp", async () =
   assert.ok(distilled);
   assert.equal(distilled.workspace_scope, OTHER);
   assert.equal(distilled.workspace_scope_source, "auto", "未命中名单的蒸馏必须保持 auto（老行为逐字节不变）");
+});
+
+// ---------------------------------------------------------------------------
+// 独立 HTTP 面：/memories 也得是墙，不能靠「换一张口子」绕过去
+// ---------------------------------------------------------------------------
+// #743 评审 Major：strictScope 开着时，`GET /memories` 只把 workspace_scope 当
+// 选料清单、从不传 visibility——他区的 explicit 行照样出现在列表与计数里。
+// 硬墙只要有一条口子是通的，它就不叫墙。
+async function standaloneHarness(config) {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config });
+  const settings = createSettings(store.db);
+  const api = createStandaloneApi({ service, store, config, settings, logger: null, port: 0 });
+  await api.ready;
+  const base = `http://127.0.0.1:${api.port}`;
+  const auth = { authorization: `Bearer ${api.token}` };
+  return {
+    store,
+    service,
+    base,
+    auth,
+    close: () => {
+      api.server.closeIdleConnections?.();
+      api.server.close();
+      store.close();
+    }
+  };
+}
+
+test("hard wall: GET /memories does not leak other workspaces' explicit rows", async () => {
+  const config = testConfig({ scopeEnabled: true, strictScope: true, scopeHardWallWorkspaces: [IMPORTS] });
+  const { store, base, auth, close } = await standaloneHarness(config);
+  try {
+    const mine = store.save({
+      type: "preference", title: "导入区的私事", content: "只该导入区看见",
+      workspace_scope: IMPORTS, workspace_scope_source: "explicit"
+    });
+    const theirs = store.save({
+      type: "preference", title: "别区的私事", content: "只该别区看见",
+      workspace_scope: OTHER, workspace_scope_source: "explicit"
+    });
+    const global = store.save({ type: "preference", title: "全局的事", content: "谁都看得见" });
+
+    const qs = new URLSearchParams({ workspace_scope: IMPORTS });
+    const res = await fetch(`${base}/memories?${qs}`, { headers: auth });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const ids = new Set(body.items.map((m) => m.id));
+    assert.ok(ids.has(mine.id), "本区的行必须看得见——闸门不是把自己也关外面");
+    assert.equal(ids.has(theirs.id), false, "他区的 explicit 行不许从这张口子漏出来");
+
+    // 计数三处必须同口径：漏一条比漏一行计数更容易被当成「本来就没有」。
+    // 这个请求同时带着选料清单（workspace_scope 只列这一格，未标注行按既有语义
+    // 不在清单内），所以可见行就是本区那一条。
+    assert.equal(body.total, 1, "total 与可见行数一致");
+    assert.equal(body.typeCounts.preference, 1, "typeCounts 同口径");
+
+    // 单条读不能当后门：按 id 直取也要 404，而且不许用 403 承认它存在。
+    const one = await fetch(`${base}/memories/${theirs.id}?${qs}`, { headers: auth });
+    assert.equal(one.status, 404, "不可见的单条按「不存在」处理");
+
+    // 只声明 agent 维（不给 workspace_scope）→ 没有选料清单，可见集是
+    // 「未标注 + 本 agent 维」，此时全局行必须照常可见，他区 explicit 仍被挡。
+    const agentOnly = new URLSearchParams({ agent_scope: "someone" });
+    const byAgent = await fetch(`${base}/memories?${agentOnly}`, { headers: auth });
+    assert.equal(byAgent.status, 200);
+    const byAgentIds = new Set((await byAgent.json()).items.map((m) => m.id));
+    assert.ok(byAgentIds.has(global.id), "未标注的行恒可见");
+    assert.equal(byAgentIds.has(theirs.id), false, "换了声明方式也不能看见他区的 explicit 行");
+
+    // 不声明身份 = 老调用方，逐字节不变（这条闸门只在 strictScope + 声明身份时生效）。
+    const noScope = await fetch(`${base}/memories`, { headers: auth });
+    assert.equal(noScope.status, 200);
+    const all = await noScope.json();
+    assert.ok(all.items.some((m) => m.id === theirs.id), "没声明身份的调用方行为不变");
+  } finally {
+    close();
+  }
 });

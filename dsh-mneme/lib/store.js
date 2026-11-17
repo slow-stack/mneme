@@ -15,6 +15,9 @@ import {
   normalizeScopeStateState,
   normalizeScopeStateValue
 } from "./scope-state.js";
+// 工作区维比较键（#743 评审）：写入盖章与读取比较必须是同一把钥匙。依赖方向
+// store → scope 单向（scope.js 不 import 任何本包模块），不构成环。
+import { workspaceLabelKey } from "./scope.js";
 // 外来行的**唯一**定义住在 memory-source.js，这里只取那个常量：store 的查询口径与
 // service/sleep 的 isImportedRow 必须是同一个字符串，自己再拼一份字面量就是第二个口径，
 // 而「本库不巩固别人导入的原文」这条契约正靠它只有一个人说得出口。
@@ -2005,8 +2008,11 @@ export function createStore(path) {
         clauses.push("(agent_scope IS NULL OR agent_scope_source IS NOT 'explicit')");
       }
       if (visibility.workspaceScope != null) {
-        clauses.push("(workspace_scope IS NULL OR workspace_scope_source IS NOT 'explicit' OR workspace_scope = ?)");
-        params.push(visibility.workspaceScope);
+        // #743 评审 Major：与 list() 同一把比较键（去末尾分隔符、不分大小写），
+        // 否则 total / typeCounts 会和行数对不上——列表放行、计数拦掉，或者
+        // 反过来。算法只写在 scope.js 的 workspaceLabelKey 里。
+        clauses.push("(workspace_scope IS NULL OR workspace_scope_source IS NOT 'explicit' OR lower(rtrim(workspace_scope, '\\/')) = ?)");
+        params.push(workspaceLabelKey(visibility.workspaceScope));
       } else {
         clauses.push("(workspace_scope IS NULL OR workspace_scope_source IS NOT 'explicit')");
       }
@@ -2641,8 +2647,13 @@ export function createStore(path) {
         clauses.push("(agent_scope IS NULL OR agent_scope_source IS NOT 'explicit')");
       }
       if (visibility.workspaceScope != null) {
-        clauses.push("(workspace_scope IS NULL OR workspace_scope_source IS NOT 'explicit' OR workspace_scope = ?)");
-        params.push(visibility.workspaceScope);
+        // #743 评审 Major：工作区标签的比较口径必须与名单判定（isHardWallWorkspace）
+        // 同口径——去末尾分隔符、不分大小写。此前这里按字面比较，于是「名单命中、
+        // 章也盖了」的行会被另一个写法（C:\Work vs c:\work\）的会话判成不可见，
+        // 且不报错。比较键的算法只写在 scope.js 的 workspaceLabelKey 里，SQL 侧
+        // 用等价的 lower(rtrim(x, 分隔符))；写入侧仍存原始标签，显示不变。
+        clauses.push("(workspace_scope IS NULL OR workspace_scope_source IS NOT 'explicit' OR lower(rtrim(workspace_scope, '\\/')) = ?)");
+        params.push(workspaceLabelKey(visibility.workspaceScope));
       } else {
         clauses.push("(workspace_scope IS NULL OR workspace_scope_source IS NOT 'explicit')");
       }

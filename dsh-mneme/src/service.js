@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { TYPE_FILE, MIRROR_READONLY_TYPES } from "./mirror.js";
 import { updatedAtBounds } from "./store.js";
-import { normalizeExplicitScope, scopeKeyOf } from "./scope.js";
+import { normalizeExplicitScope, scopeKeyOf, workspaceLabelKey } from "./scope.js";
 import { createScopeStateGate } from "./scope-state.js";
 import { STR, langOf } from "./lang.js";
 import { computeHeat } from "./heat.js";
@@ -108,9 +108,13 @@ function scopeMultiplier(m, current) {
   const agentForeign = scopeKeyOf(m.agent_scope) !== null
     && current.agent_scope !== null
     && scopeKeyOf(m.agent_scope) !== current.agent_scope;
-  const workspaceForeign = scopeKeyOf(m.workspace_scope) !== null
-    && current.workspace_scope !== null
-    && scopeKeyOf(m.workspace_scope) !== current.workspace_scope;
+  // #743 评审：工作区维与硬墙判定、SQL 过滤共用 workspaceLabelKey，
+  // 否则同一条记忆在「硬墙放不放行」与「软加权算不算外来」上会给出两套答案。
+  const wsKey = workspaceLabelKey(m.workspace_scope);
+  const curWsKey = workspaceLabelKey(current.workspace_scope);
+  const workspaceForeign = wsKey !== null
+    && curWsKey !== null
+    && wsKey !== curWsKey;
   return (agentForeign || workspaceForeign) ? SCOPE_FOREIGN_PENALTY : SCOPE_MATCH_BOOST;
 }
 
@@ -145,8 +149,12 @@ function isVisibleInScope(m, current) {
     if (agent !== null && (current.agent_scope === null || agent !== current.agent_scope)) return false;
   }
   if (m.workspace_scope_source === "explicit") {
-    const ws = scopeKeyOf(m.workspace_scope);
-    if (ws !== null && (current.workspace_scope === null || ws !== current.workspace_scope)) return false;
+    // #743 评审：工作区维的比较键必须与硬墙名单判定、store 的 SQL 过滤同一把
+    // 钥匙（去末尾分隔符、不分大小写）。此前这里字面比较，名单命中、章也盖了
+    // 的行会被另一种写法（C:\Work vs c:\work\）的会话判成不可见。
+    const ws = workspaceLabelKey(m.workspace_scope);
+    const cur = workspaceLabelKey(current.workspace_scope);
+    if (ws !== null && (cur === null || ws !== cur)) return false;
   }
   return true;
 }

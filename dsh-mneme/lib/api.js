@@ -1235,6 +1235,14 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         return readBody(req, res).then((text) => {
           if (text === null) return;
           const body = parseBody(text);
+          // 请求体是 JSON `null` 时 parseBody 返回 null（`JSON.parse("null")` 恒
+          // 成功），下面读 body.ids 会抛 TypeError；而外层 try/catch 是同步作用域，
+          // 捕不到 .then 回调里的抛错——这个请求就既不回包也不落 500。读字段之前
+          // 先挡掉非对象（同 api.js 的 features 路由那一处）。
+          if (body === null || typeof body !== "object" || Array.isArray(body)) {
+            sendJson(res, 400, { error: "invalid-body" });
+            return;
+          }
           const ids = Array.isArray(body.ids)
             ? [...new Set(body.ids.filter((v) => typeof v === "string" && v.trim()).map((v) => v.trim()))]
             : [];
@@ -1278,6 +1286,11 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           }
           const applied = results.filter((r) => r.ok).length;
           sendJson(res, 200, { applied, requested: ids.length, to, from, results });
+        }).catch((e) => {
+          // 同一类问题：readBody 之后任何一步抛错都发生在 Promise 链里，外层那个
+          // 同步 catch 拦不住，请求会一直挂着。兜住并明确回 500。
+          ctx.logger?.warn?.(`[dsh-mneme] scope/promote failed: ${String(e)}`);
+          if (!res.headersSent) sendJson(res, 500, { error: "internal" });
         });
       } catch {
         sendJson(res, 500, { error: "internal" });

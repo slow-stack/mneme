@@ -187,6 +187,27 @@ export function scopeKeyOf(v) {
 }
 
 /**
+ * 工作区维的**比较键**（#743 评审 Major）：去掉末尾分隔符后不分大小写。
+ *
+ * 为什么需要它：同一个工作区标签有两条来源（registry 的 realpath、header.cwd），
+ * 同一台机器上大小写与末尾斜杠都可能与另一条路写出来的不一致。此前
+ * `isHardWallWorkspace` 按这个口径判名单命中，写入盖章却存原始 trim 值，读取
+ * 又按字面比较——结果是「名单命中了、章也盖了，但另一个会话就是看不见这条」，
+ * 而这种失效不报错。写入的章与读取的比较必须用同一把钥匙，所以两端都走这里。
+ *
+ * 只用于 workspace 维：agent_scope 是人给的标识符，没有「路径大小写」这回事，
+ * 不动它（改了会扩大影响面而换不来正确性）。
+ *
+ * @param {unknown} v scope 标注原值
+ * @returns {string|null} 比较键（null=未标注）
+ */
+export function workspaceLabelKey(v) {
+  const key = scopeKeyOf(v);
+  if (key === null) return null;
+  return key.replace(/[\\/]+$/, "").toLowerCase();
+}
+
+/**
  * 硬墙名单命中判定（2026-11-15）。名单来自 config.scopeHardWallWorkspaces，
  * 命中的工作区写入时盖 explicit 章而不是 auto——strictScope 的硬墙只认 explicit
  * （issue #170 4.3），这是让「圈一块地」真的立起来的地方。
