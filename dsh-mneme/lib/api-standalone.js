@@ -581,7 +581,27 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
         const includeArchived = url.searchParams.get("include_archived") === "true";
         const occurredFrom = url.searchParams.get("occurred_from") ?? undefined;
         const occurredTo = url.searchParams.get("occurred_to") ?? undefined;
-        const listFilters = { includeArchived, ...(occurredFrom ? { occurredFrom } : {}), ...(occurredTo ? { occurredTo } : {}) };
+        // workspace_scope：选料清单（就列这一格），不是可见性闸门——与宿主内
+        // /list 同口径，只做等值匹配、不看 scope source、不碰 NULL 行。
+        const workspaceScope = (url.searchParams.get("workspace_scope") ?? "").trim() || undefined;
+        // strictScope 可见性闸门（#743 评审）：此前这张面只把 workspace_scope 当
+        // 选料清单，strictScope 开着时他区的 explicit 行照样出现在列表/计数里，
+        // 与宿主内 /list 成了两张皮。判据与 src/tools.js 的 strictVisibility 同
+        // 口径：flag 关或没声明身份 → 空对象不过滤（老调用方逐字节不变）；声明
+        // 了身份（哪怕某一维是 null）就照传，store 侧 fail-closed 只放行未标注行。
+        // 身份只认 agent_scope / workspace_scope 两个查询参数——与 /search、
+        // /context 同一条 scopeFromSearchParams，不另造第二种声明方式。
+        const scope = scopeFromSearchParams(url);
+        const visibility = config?.strictScope === true && scope
+          ? { visibility: { agentScope: scope.agent_scope, workspaceScope: scope.workspace_scope } }
+          : {};
+        const listFilters = {
+          includeArchived,
+          ...(occurredFrom ? { occurredFrom } : {}),
+          ...(occurredTo ? { occurredTo } : {}),
+          ...(workspaceScope ? { workspaceScope } : {}),
+          ...visibility
+        };
         const items = service.toApiList(service.list({ type, limit, offset, order, minImportance, source, ...listFilters }));
         // Total honors the same filters so pager math stays correct.
         // #597：typeCounts 与宿主内 /list 同口径（同一份筛选、不带 type 的全库分布），
@@ -636,12 +656,27 @@ export function createStandaloneApi({ service, store, config = {}, logger, setti
             sendJson(res, 404, { error: "not-found" });
             return;
           }
+          // 单条读走同一个可见性闸门（#743 评审）：列表已挡住的 explicit 他区
+          // 行，不能靠「直接按 id 取」绕过去。不可见一律回 404 而不是 403——
+          // 403 等于承认这条存在，硬墙要在「有没有」这一层也是墙。
+          const idScope = scopeFromSearchParams(url);
+          if (config?.strictScope === true && idScope && !service.isVisibleInScope(row, idScope)) {
+            sendJson(res, 404, { error: "not-found" });
+            return;
+          }
           sendJson(res, 200, service.toApiList([row])[0]);
           return;
         }
         if (req.method === "DELETE") {
           // store.remove deletes silently — precheck for a distinguishable 404.
-          if (!service.getById(id)) {
+          const existing = service.getById(id);
+          if (!existing) {
+            sendJson(res, 404, { error: "not-found" });
+            return;
+          }
+          // 与单条读同一道墙（#743 评审）：看不见的行不能靠按 id 删掉。同回 404。
+          const deleteScope = scopeFromSearchParams(url);
+          if (config?.strictScope === true && deleteScope && !service.isVisibleInScope(existing, deleteScope)) {
             sendJson(res, 404, { error: "not-found" });
             return;
           }

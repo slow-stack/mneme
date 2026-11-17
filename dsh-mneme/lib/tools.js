@@ -1,5 +1,5 @@
 import { defineTool } from "@deepseek-ai/dsh-tools";
-import { createScopeResolver, normalizeExplicitScope, sessionKeyOf, sessionOf } from "./scope.js";
+import { createScopeResolver, isHardWallWorkspace, normalizeExplicitScope, resolveScopeStamp, sessionKeyOf, sessionOf } from "./scope.js";
 import { describeLocalRuntime, resolveRuntimeEntry } from "./runtime/loader.js";
 import { defaultRuntimeDir } from "./runtime/layout.js";
 import { hostModulesDir, loadRuntimeManifest, provisionRuntime } from "./runtime/provision.js";
@@ -155,6 +155,35 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
     return text;
   };
 
+  // 硬墙名单（2026-11-15）：命中的工作区写入时盖 explicit 章，让 strictScope
+  // 的硬墙真的立起来（auto 只吃软加权，圈不住）。判定与盖章的口径都在 scope.js，
+  // 三处写入点（memory_save / register_document / memory_organize）共用这一份，
+  // 免得哪天有人只改了其中一处。
+  const stampScope = (scope, args) => {
+    // autoStamping 关掉时不该有自动标注：adapter 在这一层就把 autoValue 清掉，
+    // 别指望 scope.js 知道 flag 的存在（它不该知道）。
+    const autoOn = config?.scopeEnabled === true;
+    const autoValue = autoOn ? scope : null;
+    const hardWall = autoOn
+      && isHardWallWorkspace(autoValue?.workspace_scope, config?.scopeHardWallWorkspaces);
+    const warn = (msg) => ctx.logger?.warn?.(msg);
+    // 硬墙按工作区圈地：agent 维不跟着翻 explicit（那会把同一 agent 在别的
+    // 工作区的记忆一起圈进来）。
+    const agentLabel = resolveScopeStamp({
+      explicitValue: args.agent_scope,
+      autoValue: autoValue?.agent_scope,
+      hardWall: false,
+      warn
+    });
+    const workspaceLabel = resolveScopeStamp({
+      explicitValue: args.workspace_scope,
+      autoValue: autoValue?.workspace_scope,
+      hardWall,
+      warn
+    });
+    return { agentLabel, workspaceLabel, hardWall };
+  };
+
   // 复核项 4（issue #170）：strictScope 下他 scope（explicit）的行对工具侧按
   // 「不存在」处理——update/delete 与 memory_get 同款无存在性泄漏。strictScope
   // 关、或会话身份取不到（scope 为 null）时恒可见（与 get 的短路语义一致）。
@@ -225,13 +254,9 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
         // （存储 NULL，由 source 列与「从未标注」区分）。非字符串参数在工具
         // 入参 schema 层即被拒（type: "string"）——脏值到不了归一化，无静默放宽。
         const scope = resolveSessionScope(exec);
-        const autoStamping = config?.scopeEnabled === true;
-        const agentLabel = args.agent_scope !== undefined
-          ? { value: normalizeExplicitScope(args.agent_scope), source: "explicit" }
-          : autoStamping && scope ? { value: scope.agent_scope, source: "auto" } : null;
-        const workspaceLabel = args.workspace_scope !== undefined
-          ? { value: normalizeExplicitScope(args.workspace_scope), source: "explicit" }
-          : autoStamping && scope ? { value: scope.workspace_scope, source: "auto" } : null;
+        // 硬墙（2026-11-15）：命中 config.scopeHardWallWorkspaces 的工作区，
+        // 自动标注改盖 explicit 章——auto 只吃软加权，圈不住（见 stampScope）。
+        const { agentLabel, workspaceLabel } = stampScope(scope, args);
         const result = service.saveWithDedupe({
           // #254 写入准入的计数单位：会话键作为瞬时字段随写入传递（与 _mergeInto /
           // _overwrite 同款约定，不落库）。缺会话身份的宿主返回 null = 这次写入不进
@@ -323,7 +348,8 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
         offset: { type: "integer", description: "Page offset (default 0)" },
         include_archived: { type: "boolean", description: "Include archived (hidden) entries so they can be found and restored (default false)" },
         occurred_from: { type: "string", description: "Optional ISO date/timestamp lower bound on when the remembered event happened (occurred_at, falling back to created_at). Date-only values are inclusive from that day's 00:00Z." },
-        occurred_to: { type: "string", description: "Optional ISO date/timestamp upper bound on occurred_at. Date-only values are inclusive through that day's 23:59:59.999Z." }
+        occurred_to: { type: "string", description: "Optional ISO date/timestamp upper bound on occurred_at. Date-only values are inclusive through that day's 23:59:59.999Z." },
+        workspace_scope: { type: "string", description: "Optional: list only entries belonging to exactly this workspace label (exact match, any scope source). This is a picker filter, not a visibility gate — it does NOT widen what strictScope hides." }
       },
       output: {
         schema: {
@@ -348,17 +374,31 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
       },
       async execute(args) {
         const includeArchived = args.include_archived === true;
+        // 选料视图（2026-11-15）：按工作区精确列出，供人挑着搬到别处。
+        // 它与下面那行 visibility 是两件事：visibility 决定「看得见什么」，
+        // 这个决定「列的是哪一格」。两者叠加（AND）——所以给一个他区的标签
+        // 也不会把 strictScope 挡住的行翻出来。
+        const pickScope = typeof args.workspace_scope === "string" ? args.workspace_scope : null;
         const rows = service.toApiList(service.list({
           type: args.type,
           limit: args.limit ?? 50,
           offset: args.offset ?? 0,
           includeArchived,
+          ...(pickScope ? { workspaceScope: pickScope } : {}),
           ...occurredWindow(args),
           // A3：strict 开启时按会话 scope 硬过滤（宿主按 (args, runContext) 调用，
           // 从 arguments 取第二参）。
           ...strictVisibility(config, resolveSessionScope(arguments[1]))
         }));
-        return { items: rows, total: service.count(args.type, { includeArchived, ...occurredWindow(args), ...strictVisibility(config, resolveSessionScope(arguments[1])) }) };
+        return {
+          items: rows,
+          total: service.count(args.type, {
+            includeArchived,
+            ...(pickScope ? { workspaceScope: pickScope } : {}),
+            ...occurredWindow(args),
+            ...strictVisibility(config, resolveSessionScope(arguments[1]))
+          })
+        };
       }
     }),
 
@@ -836,13 +876,9 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
         // scope 标注与 memory_save 同款（#170）：默认会话身份自动标注，显式
         // 参数逐维覆盖。校验/去重/supersede 全在 service.registerDocument。
         const scope = resolveSessionScope(exec);
-        const autoStamping = config?.scopeEnabled === true;
-        const agentLabel = args.agent_scope !== undefined
-          ? { value: normalizeExplicitScope(args.agent_scope), source: "explicit" }
-          : autoStamping && scope ? { value: scope.agent_scope, source: "auto" } : null;
-        const workspaceLabel = args.workspace_scope !== undefined
-          ? { value: normalizeExplicitScope(args.workspace_scope), source: "explicit" }
-          : autoStamping && scope ? { value: scope.workspace_scope, source: "auto" } : null;
+        // 硬墙（2026-11-15）：命中 config.scopeHardWallWorkspaces 的工作区，
+        // 自动标注改盖 explicit 章——auto 只吃软加权，圈不住（见 stampScope）。
+        const { agentLabel, workspaceLabel } = stampScope(scope, args);
         // strictScope（#170 复核项 4 同款无存在性泄漏）：他 scope 的 evidence id
         // 按「不存在」处理——注册器用全局 getById 求交，看不见的行在这里先标出，
         // 与 unknown/archived 同落 dropped，不进持久化 evidence（不得为跨 scope
@@ -1030,16 +1066,11 @@ export function createTools(ctx, service, config, embedder, sessionGate = null, 
       async execute(args, exec) {
         const mode = String(args?.mode ?? "dryRun").trim();
         const scope = resolveSessionScope(exec);
-        const autoStamping = config?.scopeEnabled === true;
         // 载荷级缺省与 memory_save 同源：显式参数盖 explicit 章，否则吃会话自动标注
         // 盖 auto 章。少了这一步，整理接口就成了第二条「写进库却不带 scope」的通道
         // ——candidates 会全部落在未标注（全局可见）那一档。
-        const agentLabel = args.agent_scope !== undefined
-          ? { value: normalizeExplicitScope(args.agent_scope), source: "explicit" }
-          : autoStamping && scope ? { value: scope.agent_scope, source: "auto" } : null;
-        const workspaceLabel = args.workspace_scope !== undefined
-          ? { value: normalizeExplicitScope(args.workspace_scope), source: "explicit" }
-          : autoStamping && scope ? { value: scope.workspace_scope, source: "auto" } : null;
+        // 硬墙（2026-11-15）：命中名单同样升级成 explicit（stampScope 三处共用）。
+        const { agentLabel, workspaceLabel } = stampScope(scope, args);
         const hiddenIds = [];
         if (mode === "apply" && config?.strictScope === true && scope && Array.isArray(args.decisions)) {
           // #170 复核项 4 的口径延伸（register_document 的 hiddenEvidenceIds 同形）：

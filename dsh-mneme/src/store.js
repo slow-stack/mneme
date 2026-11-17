@@ -15,6 +15,9 @@ import {
   normalizeScopeStateState,
   normalizeScopeStateValue
 } from "./scope-state.js";
+// 工作区维比较键（#743 评审）：写入盖章与读取比较必须是同一把钥匙。依赖方向
+// store → scope 单向（scope.js 不 import 任何本包模块），不构成环。
+import { workspaceLabelKey } from "./scope.js";
 // 外来行的**唯一**定义住在 memory-source.js，这里只取那个常量：store 的查询口径与
 // service/sleep 的 isImportedRow 必须是同一个字符串，自己再拼一份字面量就是第二个口径，
 // 而「本库不巩固别人导入的原文」这条契约正靠它只有一个人说得出口。
@@ -1960,7 +1963,7 @@ export function createStore(path) {
   // type 刻意不在这里：count() 按调用方带，countByType() 刻意不带（它要的就是
   // 同一份筛选下、**不带类型**的全库分布——面板分类栏被 type 筛过的页上数不出它）。
   function pushCountFilters(opts, clauses, params) {
-    const { minImportance = null, source = null, includeForgotten = false, includeArchived = false, onlyArchived = false, depositedOnly = false, updatedFrom = null, updatedTo = null, occurredFrom = null, occurredTo = null, visibility = null } = opts ?? {};
+    const { minImportance = null, source = null, includeForgotten = false, includeArchived = false, onlyArchived = false, depositedOnly = false, updatedFrom = null, updatedTo = null, occurredFrom = null, occurredTo = null, visibility = null, workspaceScope = null } = opts ?? {};
     // Same filters as list() so a paged caller's total matches its rows.
     if (minImportance != null) {
       clauses.push("importance >= ?");
@@ -2005,11 +2008,20 @@ export function createStore(path) {
         clauses.push("(agent_scope IS NULL OR agent_scope_source IS NOT 'explicit')");
       }
       if (visibility.workspaceScope != null) {
-        clauses.push("(workspace_scope IS NULL OR workspace_scope_source IS NOT 'explicit' OR workspace_scope = ?)");
-        params.push(visibility.workspaceScope);
+        // #743 评审 Major：与 list() 同一把比较键（去末尾分隔符、不分大小写），
+        // 否则 total / typeCounts 会和行数对不上——列表放行、计数拦掉，或者
+        // 反过来。算法只写在 scope.js 的 workspaceLabelKey 里。
+        clauses.push("(workspace_scope IS NULL OR workspace_scope_source IS NOT 'explicit' OR lower(rtrim(workspace_scope, '\\/')) = ?)");
+        params.push(workspaceLabelKey(visibility.workspaceScope));
       } else {
         clauses.push("(workspace_scope IS NULL OR workspace_scope_source IS NOT 'explicit')");
       }
+    }
+    // workspaceScope：选料视图的精确过滤（与 list() 同口径、同理由——它不是
+    // 可见性闸门，所以不看 source、不看 NULL）。total 必须与行数同过滤。
+    if (typeof workspaceScope === "string" && workspaceScope.trim()) {
+      clauses.push("workspace_scope = ?");
+      params.push(workspaceScope.trim());
     }
     if (!includeForgotten) {
       clauses.push("forgotten = 0");
@@ -2561,7 +2573,7 @@ export function createStore(path) {
     return rows.map(toRow);
   }
 
-  function list({ type, excludeTypes = null, excludeImported = false, limit = 50, offset = 0, order = "importance", includeForgotten = false, includeArchived = false, onlyArchived = false, depositedOnly = false, minImportance = null, source = null, updatedFrom = null, updatedTo = null, occurredFrom = null, occurredTo = null, visibility = null } = {}) {
+  function list({ type, excludeTypes = null, excludeImported = false, limit = 50, offset = 0, order = "importance", includeForgotten = false, includeArchived = false, onlyArchived = false, depositedOnly = false, minImportance = null, source = null, updatedFrom = null, updatedTo = null, occurredFrom = null, occurredTo = null, visibility = null, workspaceScope = null } = {}) {
     const clauses = [];
     const params = [];
     if (type) {
@@ -2635,11 +2647,27 @@ export function createStore(path) {
         clauses.push("(agent_scope IS NULL OR agent_scope_source IS NOT 'explicit')");
       }
       if (visibility.workspaceScope != null) {
-        clauses.push("(workspace_scope IS NULL OR workspace_scope_source IS NOT 'explicit' OR workspace_scope = ?)");
-        params.push(visibility.workspaceScope);
+        // #743 评审 Major：工作区标签的比较口径必须与名单判定（isHardWallWorkspace）
+        // 同口径——去末尾分隔符、不分大小写。此前这里按字面比较，于是「名单命中、
+        // 章也盖了」的行会被另一个写法（C:\Work vs c:\work\）的会话判成不可见，
+        // 且不报错。比较键的算法只写在 scope.js 的 workspaceLabelKey 里，SQL 侧
+        // 用等价的 lower(rtrim(x, 分隔符))；写入侧仍存原始标签，显示不变。
+        clauses.push("(workspace_scope IS NULL OR workspace_scope_source IS NOT 'explicit' OR lower(rtrim(workspace_scope, '\\/')) = ?)");
+        params.push(workspaceLabelKey(visibility.workspaceScope));
       } else {
         clauses.push("(workspace_scope IS NULL OR workspace_scope_source IS NOT 'explicit')");
       }
+    }
+    // workspaceScope（2026-11-15）：**精确列出某个工作区的行**，供面板「挑着搬」
+    // 的选料视图用。它与上面的 visibility 是两种东西，不能混：
+    //   · visibility 是可见性闸门（未标注恒可见、只拦 explicit）；
+    //   · 这个是选料清单（就要这一区、不管来源、不放进来的别的区）。
+    // 因此不看 source、不看 NULL，只做等值匹配——面板要把这一区的行一条条列给
+    // 人挑，多列一条会让人误搬别人的记忆，少列一条会让人以为这里没东西。
+    // 空值 = 不加这个过滤（老调用方逐字节不变）。
+    if (typeof workspaceScope === "string" && workspaceScope.trim()) {
+      clauses.push("workspace_scope = ?");
+      params.push(workspaceScope.trim());
     }
     if (!includeForgotten) {
       clauses.push("forgotten = 0");
