@@ -70,6 +70,11 @@ export const name = "dsh-mneme";
 // property without inject" 崩溃）。守卫用 ctx.reflect.get（免 inject 读取，
 // 未提供返回 undefined）而非 if (ctx.webServer)：直接访问未注入属性在 cordis
 // Proxy 下会抛错而非返回 undefined。
+// 故意**不**把 connection 列进来：cordis 的 inject 是全或无的（_refresh 见到任一
+// 登记服务没有绑上就把整个 fiber 判 inactive），列进来会让 headless / 旧宿主上
+// 整个插件起不来——而访问检查是锦上添花，不是开机前提。改成请求时用
+// ctx.reflect.get("connection") 惰性读（见 api.js 的 connectionOf）：
+// 有就过 DSH 的 Host/Origin 围栏，没有就退回加这层之前的行为。
 export const inject = ["tools", "systemPrompt", "llm", "agentDefaultModel", "commands", "webServer"];
 export { Config };
 

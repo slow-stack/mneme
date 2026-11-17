@@ -163,8 +163,23 @@ function needsToken(req, policy, apiToken) {
  * 唯一的登记入口：校验 policy、拒绝重复路径、把 handler 包上鉴权。
  * 返回的 count() 供 createApi 汇报真实路由数（此前的字面量 36 已经和现实脱节）。
  */
-export function createRouteRegistrar(webServer, apiToken, disposers) {
+export function createRouteRegistrar(webServer, apiToken, disposers, connectionOf = () => undefined) {
   const seen = new Set();
+  // DSH 的访问检查（Host/Origin 围栏 + 宿主登录 cookie）。浏览器里随便一个网页
+  // 都能向 127.0.0.1 发请求，所以「谁能问」不能只靠 apiToken——policy=open 的
+  // 路由（信息、列表、检索）同样要过这道门。
+  //
+  // connectionOf 是取值函数而不是取值结果：宿主服务的存续会变，每次请求都重问
+  // 一次，才不会把 createApi 那一刻的快照（可能还是 undefined）冻死在这里。
+  const gate = (req, res) => {
+    const connection = connectionOf();
+    if (!connection || typeof connection.requestRejection !== "function") return false;
+    const rejection = connection.requestRejection(req);
+    if (rejection === undefined) return false;
+    res.statusCode = rejection;
+    res.end();
+    return true;
+  };
   const register = (route) => {
     if (!ROUTE_POLICIES.includes(route.policy)) {
       throw new Error(
@@ -177,6 +192,7 @@ export function createRouteRegistrar(webServer, apiToken, disposers) {
     seen.add(key);
     const inner = route.handler;
     const handler = (req, res) => {
+      if (gate(req, res)) return undefined;
       if (!needsToken(req, route.policy, apiToken)) return inner(req, res);
       sendJson(res, 401, { error: "unauthorized" });
       return undefined;
@@ -284,6 +300,18 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   // reflect，退回直接属性访问。createApi 只在有 webServer 时被调用（index.js
   // 守卫 + 测试 mock），故下方 register 用之非空。
   const webServer = typeof ctx.reflect?.get === "function" ? ctx.reflect.get("webServer") : ctx.webServer;
+  // connection 同上（inject 声明的宿主服务），但**每次请求时才读**：它有可能是
+  // 本插件 apply 之后才挂上的，读一次存下来就会永远是 undefined。反射读取本身
+  // 也可能在宿主卸载过程中抛错，那种时候按「没提供」处理——缺一道访问检查，
+  // 好过让面板整体 500。
+  const connectionOf = () => {
+    try {
+      if (typeof ctx.reflect?.get === "function") return ctx.reflect.get("connection");
+      return ctx.connection;
+    } catch {
+      return undefined;
+    }
+  };
 
   // feature flags 快照（GET/PUT 共用）：overrides 是持久化的用户显式覆盖；
   // effective 是启动配置在白名单键上被 overrides 覆盖后的最终值。config 缺席
@@ -377,7 +405,7 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
   }
 
   // 所有路由都经这一处登记：policy 必填、鉴权在这里统一判定（见 createRouteRegistrar）。
-  const { register, count: countRoutes } = createRouteRegistrar(webServer, apiToken, disposers);
+  const { register, count: countRoutes } = createRouteRegistrar(webServer, apiToken, disposers, connectionOf);
 
   // /api/dsh-mneme prefix fallback → 404 JSON for unknown sub-paths
   register({
