@@ -197,3 +197,42 @@ test("a write without the token is rejected and leaves the store alone", async (
   assert.equal(authorized.json.source, "bySession");
   store.close();
 });
+
+// 「default」是兜底档位自己的名字，settings 层拿它当键会直接返回 false。路由若
+// 不先挡，就会回一个 200 让调用方以为绑上了——绑定其实没发生。
+test('a reserved "default" session id is rejected instead of a silent no-op', async () => {
+  const { store, settings, route } = setup();
+  seed(settings);
+
+  const reserved = await call(route, `${PATH}?session=default`, "PUT",
+    { sessionId: "default", card: "ptc" });
+  assert.equal(reserved.status, 400);
+  assert.equal(reserved.json.error, "sessionId");
+
+  const spaced = await call(route, `${PATH}?session=default`, "PUT",
+    { sessionId: "  default  ", card: "ptc" });
+  assert.equal(spaced.status, 400);
+  assert.equal(spaced.json.error, "sessionId");
+
+  // 也没落进 bySession：否则注入侧会多出一格永远不会被读到的卡。
+  assert.deepEqual(settings.listPersonaSessions(), []);
+  store.close();
+});
+
+// readBody 是真异步：回调里抛的异常落不进外层 try/catch。不兜住的话请求会挂着
+// 不响应——所以这条锁「设置层抛错 → 500 internal，而不是吊死」。
+test("a settings failure inside the write answers 500 instead of hanging", async () => {
+  const { store, settings, route } = setup();
+  seed(settings);
+  const original = settings.setPersonaForSession;
+  settings.setPersonaForSession = () => { throw new Error("disk on fire"); };
+  try {
+    const res = await call(route, `${PATH}?session=s1`, "PUT", { sessionId: "s1", card: "ptc" });
+    assert.equal(res.status, 500);
+    assert.equal(res.json.error, "internal");
+  } finally {
+    settings.setPersonaForSession = original;
+  }
+  assert.deepEqual(settings.listPersonaSessions(), []);
+  store.close();
+});

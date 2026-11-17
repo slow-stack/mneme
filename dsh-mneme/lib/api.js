@@ -735,6 +735,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
       try {
         const url = new URL(req.url, "http://localhost");
         if (req.method === "PUT" || req.method === "POST") {
+          // readBody 是真异步：它 resolve 之后抛出的异常（SQLite 读写失败等）落不进
+          // 外层 try/catch，只会变成没人接的 rejection，请求挂着不响应。所以写面
+          // 自己兜一层——回调体 try/catch 回 500，链尾再加一道 catch 兜住 readBody
+          // 自身的拒绝。
           return readBody(req, res).then((text) => {
             if (text === null) return undefined; // 超限已在 readBody 里回过 413
             let body = {};
@@ -744,26 +748,37 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             } catch {
               jsonOk = false;
             }
-            const sessionId =
-              jsonOk && body && typeof body.sessionId === "string" ? body.sessionId.trim() : "";
-            if (!sessionId) return sendJson(res, 400, { error: "sessionId" });
-            if (typeof body.card !== "string") return sendJson(res, 400, { error: "card" });
-            const key = body.card.trim();
-            const agentId = url.searchParams.get("agent");
-            const parentSessionId = url.searchParams.get("parent");
-            if (!key) {
-              // 空串 = 解绑：删掉这一格，寻址自然落回父会话 / 身份卡 / 默认卡。
-              settings.removePersonaForSession(sessionId);
+            try {
+              const sessionId =
+                jsonOk && body && typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+              // "default" 是兜底档位自己的名字，settings 层拒绝拿它当键（见
+              // settings.setPersonaForSession 的第一行）。这里必须先挡：否则
+              // settings 返回 false、路由照样回 200，调用方以为绑上了。
+              if (!sessionId || sessionId === "default") return sendJson(res, 400, { error: "sessionId" });
+              if (typeof body.card !== "string") return sendJson(res, 400, { error: "card" });
+              const key = body.card.trim();
+              const agentId = url.searchParams.get("agent");
+              const parentSessionId = url.searchParams.get("parent");
+              if (!key) {
+                // 空串 = 解绑：删掉这一格，寻址自然落回父会话 / 身份卡 / 默认卡。
+                // removePersonaForSession 返回 false 是「本来就没绑」，属正常，不当错误。
+                settings.removePersonaForSession(sessionId);
+                return reply(sessionId, agentId, parentSessionId);
+              }
+              // 卡集合只认已有的身份卡（byAgent）：不接受「报个名字就建一张空卡」，
+              // 否则库里会多出谁都说不清来历的会话卡。停用的卡也不收——绑上去也不会
+              // 生效（resolvePersonaCard 要求 enabled === true），那是「绑了却没用」。
+              const card = settings.getPersona().byAgent?.[key] ?? null;
+              if (!card) return sendJson(res, 400, { error: "unknown-card" });
+              if (card.enabled !== true) return sendJson(res, 400, { error: "card-disabled" });
+              settings.setPersonaForSession(sessionId, card);
               return reply(sessionId, agentId, parentSessionId);
+            } catch {
+              return sendJson(res, 500, { error: "internal" });
             }
-            // 卡集合只认已有的身份卡（byAgent）：不接受「报个名字就建一张空卡」，
-            // 否则库里会多出谁都说不清来历的会话卡。停用的卡也不收——绑上去也不会
-            // 生效（resolvePersonaCard 要求 enabled === true），那是「绑了却没用」。
-            const card = settings.getPersona().byAgent?.[key] ?? null;
-            if (!card) return sendJson(res, 400, { error: "unknown-card" });
-            if (card.enabled !== true) return sendJson(res, 400, { error: "card-disabled" });
-            settings.setPersonaForSession(sessionId, card);
-            return reply(sessionId, agentId, parentSessionId);
+          }).catch(() => {
+            if (!res.headersSent) sendJson(res, 500, { error: "internal" });
+            return undefined;
           });
         }
         if (req.method === "GET") {

@@ -510,6 +510,7 @@ window.__ModuleLoader__.load({
         "memory.personaEntry.unbind": "解绑（跟随上层）",
         "memory.personaEntry.loading": "读取中…",
         "memory.personaEntry.empty": "还没有可绑的身份卡，先到「人格设计」里建一张",
+"memory.personaEntry.cardsFailed": "读取身份卡失败，再点一次重试",
         "memory.personaEntry.failed": "保存失败，请重试",
         "memory.persona.hint": "一个身份一张卡。卡上写了名字、性格、回复要求、场景与示例对话，保存后，这个身份说话时就用它，写日记时也只用这张卡的口吻——日记页按身份分开看，就是这里的分区在日记侧的样子。",
         "memory.persona.strictBefore": "严格寻址已开：还没有任何身份卡，所有人暂时都用默认卡。建出第一张卡后规则立刻变严——没建卡的会话将不再注入人格，主会话也一样。要保留谁的人格，先给谁建卡。子 agent 会继承父会话的卡，不必单独建。",
@@ -1720,6 +1721,7 @@ window.__ModuleLoader__.load({
         "memory.personaEntry.unbind": "Unbind (follow the layers above)",
         "memory.personaEntry.loading": "Loading…",
         "memory.personaEntry.empty": "No identity card to bind yet — create one in Persona first",
+"memory.personaEntry.cardsFailed": "Couldn't load identity cards — click to retry",
         "memory.personaEntry.failed": "Save failed, try again",
         "memory.persona.hint": "One card per identity. Each card carries a name, personality, reply style, scenario and example dialogue. Once saved, that identity speaks from it — and writes its diary in that voice too: the diary page is split by identity because this is where those partitions live.",
         "memory.persona.strictBefore": "Strict addressing is on, and there are no cards yet — everyone uses the default card for now. The first card you create flips the rule: sessions without a card stop receiving a persona, including this one. Create cards for the identities you want to keep. Subagents inherit their parent session's card, so they need none of their own.",
@@ -11951,6 +11953,205 @@ window.__ModuleLoader__.load({
     // 是两个不同的名字——类型/引导挂 sidebarRightTabs，打开走
     // ctx.get("sidebarRight").openTab。无右栏服务时不注册 pane（浮层 +
     // 居中 sheet 退化已在 PipelineHeaderEntry 内）。
+    function PersonaSessionEntry(props) {
+      const { t } = props;
+      const sessionId = typeof props.sessionId === "string" ? props.sessionId : "";
+      const [state, setState] = useState(null);
+      const [cards, setCards] = useState(null);
+      // 读卡清单失败的独立标记：失败时 cards 仍留 null（= 还没读到），下次点开会重试；
+      // 空清单才是 []。两种结局不能混成一个值，理由见下面那个 effect 的注释。
+      const [cardsErr, setCardsErr] = useState(false);
+      const [open, setOpen] = useState(false);
+      const [pos, setPos] = useState(null);
+      const [busy, setBusy] = useState(false);
+      const [failed, setFailed] = useState(false);
+      const rootRef = useRef(null);
+  
+      const reload = useCallback(() => {
+        if (!sessionId) return undefined;
+        let alive = true;
+        apiFetch(`/api/dsh-mneme/persona/session?session=${encodeURIComponent(sessionId)}`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((body) => { if (alive && body) setState(body); })
+          .catch(() => { /* 读不到就不显示，不猜 */ });
+        return () => { alive = false; };
+      }, [sessionId]);
+      useEffect(reload, [reload]);
+  
+      // 点开时才取身份卡清单：多数会话不换卡，别为每个会话头多打一次请求。
+      // 读失败与「一张卡都没有」必须分开：失败存 null（下次点开重试），成功空表存 []
+      // ——否则一次 500 就把菜单永久钉在「还没有可绑的身份卡」，服务恢复了也出不来。
+      useEffect(() => {
+        if (!open || cards || !sessionId) return undefined;
+        let alive = true;
+        setCardsErr(false);
+        apiFetch("/api/dsh-mneme/persona")
+          .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+          .then((body) => {
+            if (!alive) return;
+            const byAgent = (body && body.persona && body.persona.byAgent) || {};
+            setCards(Object.keys(byAgent).map((key) => ({ key, ...byAgent[key] })));
+          })
+          .catch(() => { if (alive) { setCards(null); setCardsErr(true); } });
+        return () => { alive = false; };
+      }, [open, cards, sessionId]);
+  
+      useEffect(() => {
+        if (!open) return undefined;
+        const onDown = (event) => {
+          if (rootRef.current && !rootRef.current.contains(event.target)) setOpen(false);
+        };
+        const onKey = (event) => { if (event.key === "Escape") setOpen(false); };
+        document.addEventListener("mousedown", onDown);
+        document.addEventListener("keydown", onKey);
+        return () => {
+          document.removeEventListener("mousedown", onDown);
+          document.removeEventListener("keydown", onKey);
+        };
+      }, [open]);
+  
+      const bind = (card) => {
+        if (!sessionId || busy) return;
+        setBusy(true);
+        setFailed(false);
+        apiFetch(`/api/dsh-mneme/persona/session?session=${encodeURIComponent(sessionId)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, card })
+        })
+          .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+          .then((body) => {
+            setState(body);
+            setOpen(false);
+            // 不发 mneme:store-changed：绑的是 user_settings 里的会话卡，记忆库一个字节没动，
+            // 广播只会让 7 个数据视图白重取一次；人格面板每次挂载自己重读。
+          })
+          .catch(() => setFailed(true))
+          .finally(() => setBusy(false));
+      };
+  
+      const toggle = () => {
+        if (open) {
+          setOpen(false);
+          return;
+        }
+        const rect = rootRef.current ? rootRef.current.getBoundingClientRect() : null;
+        // 菜单贴着按钮下沿展开；能用的高度是「窗口底边留 8px」减去按钮下沿，菜单按
+        // 这个值封顶并内部滚动——卡多时不再把末尾几张顶到屏幕外点不到。
+        const vh = window.innerHeight || 0;
+        const top = rect ? Math.min(rect.bottom + 6, Math.max(8, vh - 300)) : 8;
+        setPos(rect ? {
+          top,
+          left: Math.max(8, rect.right - 210),
+          maxHeight: Math.max(120, vh - top - 8)
+        } : null);
+        setFailed(false);
+        setOpen(true);
+      };
+  
+      // 总闸关 / 还读不到真值：不占位。
+      if (!state || state.enabled !== true) return null;
+  
+      const source = state.source;
+      const name = source === "bySession" || source === "byAgent" ? (state.card || state.key || "") : "";
+      const suffix = name
+        ? name
+        : source === "parentSession"
+          ? t("memory.personaEntry.inherited")
+          : source === "default"
+            ? t("memory.personaEntry.default")
+            : t("memory.personaEntry.none");
+  
+      const buttonStyle = {
+        display: "inline-flex", alignItems: "center", gap: 4, height: 24,
+        padding: "0 8px", borderRadius: 6, border: "1px solid rgba(127,127,127,0.28)",
+        background: "transparent", color: "inherit", font: "inherit", cursor: "pointer"
+      };
+      const itemStyle = (current, disabled) => ({
+        display: "block", width: "100%", textAlign: "left", padding: "5px 8px",
+        borderRadius: 5, border: "none", background: current ? "rgba(127,127,127,0.16)" : "transparent",
+        color: "inherit", font: "inherit", cursor: disabled || busy ? "default" : "pointer",
+        opacity: disabled ? 0.45 : 1
+      });
+  
+      return h("span", { ref: rootRef, style: { position: "relative", display: "inline-flex" } },
+        h("button", {
+          type: "button",
+          style: buttonStyle,
+          "aria-haspopup": "menu",
+          "aria-expanded": open ? "true" : "false",
+          title: t("memory.personaEntry.title"),
+          onClick: toggle
+        },
+          h(PersonaGlyph, { size: 13 }),
+          h("span", null, `${t("memory.personaEntry.label")}：${suffix}`)
+        ),
+        open && pos ? h("div", {
+          // 不用 role="dialog"：记忆库那扇窗就是被它换掉的，库里现在有一条
+          // 「client bundle 里不许再出现 dialog 面」的守卫（tab 时代收的尾）。
+          // 这里是挂在按钮下的选单，menu 才是它真正的语义。
+          role: "menu",
+          "aria-label": t("memory.personaEntry.title"),
+          style: {
+            position: "fixed", top: pos.top, left: pos.left, zIndex: 3200, width: 210,
+            // 卡多时菜单会顶出视口、末尾几张点不到：高度吃 pos 里算剩下的可用空间，
+            // 超出就内部滚动。maxHeight 同时兜住「窗口中途被拉小」的情况。
+            maxHeight: pos.maxHeight, overflowY: "auto",
+            padding: 6, borderRadius: 8, border: "1px solid rgba(127,127,127,0.28)",
+            background: "var(--mneme-card-bg, #ffffff)", color: "inherit",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.18)"
+          }
+        },
+          h("div", { style: { padding: "4px 8px 6px", opacity: 0.7, fontSize: 12 } },
+            t("memory.personaEntry.title")),
+          source === "bySession"
+            ? h("button", {
+              type: "button", style: itemStyle(false, false), disabled: busy,
+              onClick: () => bind("")
+            }, t("memory.personaEntry.unbind"))
+            : null,
+          cards === null
+            ? h("div", { style: { padding: "4px 8px", opacity: 0.7, fontSize: 12 } },
+              t(cardsErr ? "memory.personaEntry.cardsFailed" : "memory.personaEntry.loading"))
+            : cards.length === 0
+              ? h("div", { style: { padding: "4px 8px", opacity: 0.7, fontSize: 12 } },
+                t("memory.personaEntry.empty"))
+              : cards.map((card) => {
+                const current = source === "byAgent"
+                  ? state.key === card.key
+                  : source === "bySession" && !!name && name === (card.name || "");
+                return h("button", {
+                  key: card.key,
+                  type: "button",
+                  style: itemStyle(current, card.enabled !== true),
+                  disabled: busy || card.enabled !== true,
+                  onClick: () => bind(card.key)
+                }, card.name || card.key);
+              }),
+          failed
+            ? h("div", { style: { padding: "4px 8px", color: "#c0392b", fontSize: 12 } },
+              t("memory.personaEntry.failed"))
+            : null
+        ) : null
+      );
+    }
+
+    // 人格入口自己的座位注册（#606）：与 M.O. 的 registerPipelineSeats 刻意分开，
+    // 因为两者的旗标毫无关系——早先共用一个函数，结果「开人格、没开 M.O.」的人
+    // 根本看不到入口（M.O. 默认关，面板上连开关都撤了）。座位是列表型，同一个
+    // `conversation.session.header.actions` 允许多条注册，id 不同即可。
+    function registerPersonaSessionSeat(ctx, t) {
+      ctx.slots.inject("conversation.session.header.actions", () => {
+        return ctx.slots.register({
+          name: "conversation.session.header.actions",
+          id: "dsh-mneme:persona-session",
+          // order 20 排在 M.O. 的 30 之前：人格比你这次用哪套工作法更靠前。
+          order: 20,
+          inject: (sessionId) => ({ sessionId })
+        }, (props) => h(PersonaSessionEntry, { t, sessionId: props && props.sessionId }));
+      });
+    }
+
     function registerPipelineSeats(ctx, t) {
       let hasPane = false;
       try {
@@ -11979,189 +12180,12 @@ window.__ModuleLoader__.load({
     //
     // 总闸 personanEnabled 关着时整条入口不渲染（桉桉定的纪律：开关关掉，入口也关）。
     // 判定用服务端回的 enabled 字段，客户端不自己去读配置——免得两份口径分叉。
-    function PersonaSessionEntry(props) {
-      const { t } = props;
-      const sessionId = typeof props.sessionId === "string" ? props.sessionId : "";
-      const [state, setState] = useState(null);
-      const [cards, setCards] = useState(null);
-      const [open, setOpen] = useState(false);
-      const [pos, setPos] = useState(null);
-      const [busy, setBusy] = useState(false);
-      const [failed, setFailed] = useState(false);
-      const rootRef = useRef(null);
-
-      const reload = useCallback(() => {
-        if (!sessionId) return undefined;
-        let alive = true;
-        apiFetch(`/api/dsh-mneme/persona/session?session=${encodeURIComponent(sessionId)}`)
-          .then((res) => (res.ok ? res.json() : null))
-          .then((body) => { if (alive && body) setState(body); })
-          .catch(() => { /* 读不到就不显示，不猜 */ });
-        return () => { alive = false; };
-      }, [sessionId]);
-      useEffect(reload, [reload]);
-
-      // 点开时才取身份卡清单：多数会话不换卡，别为每个会话头多打一次请求。
-      useEffect(() => {
-        if (!open || cards || !sessionId) return undefined;
-        let alive = true;
-        apiFetch("/api/dsh-mneme/persona")
-          .then((res) => (res.ok ? res.json() : null))
-          .then((body) => {
-            if (!alive) return;
-            const byAgent = (body && body.persona && body.persona.byAgent) || {};
-            setCards(Object.keys(byAgent).map((key) => ({ key, ...byAgent[key] })));
-          })
-          .catch(() => { if (alive) setCards([]); });
-        return () => { alive = false; };
-      }, [open, cards, sessionId]);
-
-      useEffect(() => {
-        if (!open) return undefined;
-        const onDown = (event) => {
-          if (rootRef.current && !rootRef.current.contains(event.target)) setOpen(false);
-        };
-        const onKey = (event) => { if (event.key === "Escape") setOpen(false); };
-        document.addEventListener("mousedown", onDown);
-        document.addEventListener("keydown", onKey);
-        return () => {
-          document.removeEventListener("mousedown", onDown);
-          document.removeEventListener("keydown", onKey);
-        };
-      }, [open]);
-
-      const bind = (card) => {
-        if (!sessionId || busy) return;
-        setBusy(true);
-        setFailed(false);
-        apiFetch(`/api/dsh-mneme/persona/session?session=${encodeURIComponent(sessionId)}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId, card })
-        })
-          .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
-          .then((body) => {
-            setState(body);
-            setOpen(false);
-            // 不发 mneme:store-changed：绑的是 user_settings 里的会话卡，记忆库一个字节没动，
-            // 广播只会让 7 个数据视图白重取一次；人格面板每次挂载自己重读。
-          })
-          .catch(() => setFailed(true))
-          .finally(() => setBusy(false));
-      };
-
-      const toggle = () => {
-        if (open) {
-          setOpen(false);
-          return;
-        }
-        const rect = rootRef.current ? rootRef.current.getBoundingClientRect() : null;
-        setPos(rect ? {
-          top: Math.min(rect.bottom + 6, Math.max(8, (window.innerHeight || 0) - 300)),
-          left: Math.max(8, rect.right - 210)
-        } : null);
-        setFailed(false);
-        setOpen(true);
-      };
-
-      // 总闸关 / 还读不到真值：不占位。
-      if (!state || state.enabled !== true) return null;
-
-      const source = state.source;
-      const name = source === "bySession" || source === "byAgent" ? (state.card || state.key || "") : "";
-      const suffix = name
-        ? name
-        : source === "parentSession"
-          ? t("memory.personaEntry.inherited")
-          : source === "default"
-            ? t("memory.personaEntry.default")
-            : t("memory.personaEntry.none");
-
-      const buttonStyle = {
-        display: "inline-flex", alignItems: "center", gap: 4, height: 24,
-        padding: "0 8px", borderRadius: 6, border: "1px solid rgba(127,127,127,0.28)",
-        background: "transparent", color: "inherit", font: "inherit", cursor: "pointer"
-      };
-      const itemStyle = (current, disabled) => ({
-        display: "block", width: "100%", textAlign: "left", padding: "5px 8px",
-        borderRadius: 5, border: "none", background: current ? "rgba(127,127,127,0.16)" : "transparent",
-        color: "inherit", font: "inherit", cursor: disabled || busy ? "default" : "pointer",
-        opacity: disabled ? 0.45 : 1
-      });
-
-      return h("span", { ref: rootRef, style: { position: "relative", display: "inline-flex" } },
-        h("button", {
-          type: "button",
-          style: buttonStyle,
-          "aria-haspopup": "menu",
-          "aria-expanded": open ? "true" : "false",
-          title: t("memory.personaEntry.title"),
-          onClick: toggle
-        },
-          h(PersonaGlyph, { size: 13 }),
-          h("span", null, `${t("memory.personaEntry.label")}：${suffix}`)
-        ),
-        open && pos ? h("div", {
-          // 不用 role="dialog"：记忆库那扇窗就是被它换掉的，库里现在有一条
-          // 「client bundle 里不许再出现 dialog 面」的守卫（tab 时代收的尾）。
-          // 这里是挂在按钮下的选单，menu 才是它真正的语义。
-          role: "menu",
-          "aria-label": t("memory.personaEntry.title"),
-          style: {
-            position: "fixed", top: pos.top, left: pos.left, zIndex: 3200, width: 210,
-            padding: 6, borderRadius: 8, border: "1px solid rgba(127,127,127,0.28)",
-            background: "var(--mneme-card-bg, #ffffff)", color: "inherit",
-            boxShadow: "0 8px 24px rgba(0,0,0,0.18)"
-          }
-        },
-          h("div", { style: { padding: "4px 8px 6px", opacity: 0.7, fontSize: 12 } },
-            t("memory.personaEntry.title")),
-          source === "bySession"
-            ? h("button", {
-              type: "button", style: itemStyle(false, false), disabled: busy,
-              onClick: () => bind("")
-            }, t("memory.personaEntry.unbind"))
-            : null,
-          cards === null
-            ? h("div", { style: { padding: "4px 8px", opacity: 0.7, fontSize: 12 } },
-              t("memory.personaEntry.loading"))
-            : cards.length === 0
-              ? h("div", { style: { padding: "4px 8px", opacity: 0.7, fontSize: 12 } },
-                t("memory.personaEntry.empty"))
-              : cards.map((card) => {
-                const current = source === "byAgent"
-                  ? state.key === card.key
-                  : source === "bySession" && !!name && name === (card.name || "");
-                return h("button", {
-                  key: card.key,
-                  type: "button",
-                  style: itemStyle(current, card.enabled !== true),
-                  disabled: busy || card.enabled !== true,
-                  onClick: () => bind(card.key)
-                }, card.name || card.key);
-              }),
-          failed
-            ? h("div", { style: { padding: "4px 8px", color: "#c0392b", fontSize: 12 } },
-              t("memory.personaEntry.failed"))
-            : null
-        ) : null
-      );
-    }
 
       // 会话头入口：.actions 座位（.corner 被原生侧栏展开键占用，别用）。
       // 会话工作目录只有客户端拿得到，而「当前是哪个会话」只在座位注入里给——所以
       // 每个座位都要 inject: (sessionId) => ({ sessionId })，否则读到的永远是全局层。
       // 宿主若不吃这个选项，project 就是 null，面板如实说「项目未知」，不假装成功。
       ctx.slots.inject("conversation.session.header.actions", () => {
-        // #606：同一座位挂第二条入口（id 不同、order 20 排在 pipeline 前）。座位是
-        // 列表型，一个 slot 允许多条注册——别为它另找座位，.corner 被宿主的侧栏
-        // 展开键占着，挪过去会抢按钮。
-        ctx.slots.register({
-          name: "conversation.session.header.actions",
-          id: "dsh-mneme:persona-session",
-          order: 20,
-          inject: (sessionId) => ({ sessionId })
-        }, (props) => h(PersonaSessionEntry, { t, sessionId: props && props.sessionId }));
         return ctx.slots.register({
           name: "conversation.session.header.actions",
           id: "dsh-mneme:pipeline",
@@ -15204,6 +15228,28 @@ window.__ModuleLoader__.load({
           });
         return () => { dead = true; };
       }, "dsh-mneme: diary gate");
+
+      // --- v0.17 人格会话入口（#606）：独立旗标门控 ---
+      // 与日记同一条理由：这条入口读的是 personaEnabled，与 M.O. 的
+      // actionPipelineEnabled 毫无关系。早先它被塞进 registerPipelineSeats 里注册，
+      // 于是「开了人格、没开 M.O.」（M.O. 默认关、面板上也已撤掉开关）的人一辈子
+      // 看不到这个入口。注册归注册、显示归显示：这里只看 personaEnabled，真正的
+      // 「总闸关着就不占位」由组件读服务端回的 enabled 判定。
+      ctx.effect(() => {
+        let dead = false;
+        apiFetch("/api/dsh-mneme/features")
+          .then((res) => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
+          .then((j) => {
+            if (dead) return;
+            const eff = (j && j.effective) || {};
+            if (!eff.personaEnabled) return;
+            registerPersonaSessionSeat(ctx, t);
+          })
+          .catch((err) => {
+            console.warn("[dsh-mneme] features fetch failed, persona entry stays off:", err);
+          });
+        return () => { dead = true; };
+      }, "dsh-mneme: persona-session gate");
 
       // --- chorography 侧栏座位闸（#598）：与 M.O.（v0.9.0）/日记（v0.13）
       // 同一形态——features 拉一次、fail-closed（读不到就不注册，不猜）、开关
