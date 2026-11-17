@@ -1137,6 +1137,45 @@ test("distills full transcript (tool calls, results, code output) with atomic-me
   assert.ok(calls[0].messages[0].content[0].text.includes("原子记忆"));
 });
 
+test("#745：中继进来的人话进转录，面板快照与通知不进", async () => {
+  // 宿主 0.2.x 里经 DS Bot / 群聊中继的人类输入是 kind:"bot" + form:"relay"。
+  // 旧判据只认 kind:"user"，中继会话的整个对话在转录里是空的——蒸馏出来的是
+  // 一段没有提问的记忆。反向那一半同样要钉住：面板快照/通知不是人说的话，
+  // 放进转录会让蒸馏把工具上下文当成用户意图。
+  const { events, calls } = setup({ distillRateLimitIntervalMs: 0 });
+  const handler = events.find((e) => e.name === "session/event").fn;
+  const relay = {
+    seq: 1,
+    type: "user/message",
+    data: {
+      source: { kind: "bot", form: "relay", role: "room", senderName: "You" },
+      content: [{ type: "text", text: "中继进来的真实提问" }]
+    }
+  };
+  const runtimeSnapshot = {
+    seq: 2,
+    type: "user/message",
+    data: { source: { kind: "runtime-context", form: "snapshot" }, content: [{ type: "text", text: "运行时上下文不该进转录" }] }
+  };
+  const notice = {
+    seq: 3,
+    type: "user/message",
+    data: { source: { kind: "plugin:dsh-im", form: "notice" }, content: [{ type: "text", text: "插件通知不该进转录" }] }
+  };
+  const session = {
+    id: "s745-transcript",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    events: [relay, runtimeSnapshot, notice, { seq: 4, type: "turn/end" }]
+  };
+
+  await handler(session, { seq: 4, type: "turn/end" });
+  const transcript = JSON.stringify(calls[0].messages);
+  assert.ok(transcript.includes("中继进来的真实提问"), "中继的人话必须进转录");
+  assert.ok(!transcript.includes("运行时上下文不该进转录"), "面板快照不是用户说的话");
+  assert.ok(!transcript.includes("子代理结算通知不该进转录"), "通知不是用户说的话");
+  assert.ok(!transcript.includes("插件通知不该进转录"), "插件通知不是用户说的话");
+});
+
 test("collects real tool result and code dispatch payloads with failure status", async () => {
   const { events, calls } = setup({ distillRateLimitIntervalMs: 0 });
   const handler = events.find((e) => e.name === "session/event").fn;

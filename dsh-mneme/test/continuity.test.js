@@ -90,6 +90,29 @@ test("#249 N3：抽取口径——最后一句话的指令取头、最后一段�
   assert.equal(fields.openQuestions, null, "确定性抽取判不出未决问题，字段留空而不编造");
 });
 
+test("#745：中继消息（kind:bot）同样是「当前指令」，机器形态的 form 仍被挡", () => {
+  // 宿主 0.2.x 里经 DS Bot / 群聊中继的人类输入是 kind:"bot" + form:"relay"。
+  // 旧判据只认 kind:"user"，中继会话的连续性快照因此永远停在最后一条 GUI 直输
+  // 消息上（或整块为空）——抢救出来的「正在做什么」是几天前的活。
+  const viaRelay = deriveContinuity(
+    fakeSession("s745", [
+      userEvent(1, "几轮前的 GUI 直输"),
+      userEvent(2, "中继进来的最新指令", { kind: "bot", form: "relay", role: "room", senderName: "You" })
+    ])
+  );
+  assert.equal(viaRelay.currentWork, "中继进来的最新指令", "中继消息要算人说的");
+
+  // 反向对照：kind 在白名单里、form 是机器形态的，仍不算用户指令。
+  const machine = deriveContinuity(
+    fakeSession("s745b", [
+      userEvent(1, "真实指令"),
+      userEvent(2, "面板快照的一行", { kind: "bot", form: "snapshot" }),
+      userEvent(3, "机器通知的一行", { kind: "bot", form: "notice" })
+    ])
+  );
+  assert.equal(machine.currentWork, "真实指令", "form 是 snapshot/notice 的不算提问");
+});
+
 test("#249 N3：渲染——统一前缀 + 三字段单行 + 空字段如实标 none", () => {
   const text = renderContinuityNotice({ currentWork: "改 注入\n第二行", nextStep: null, openQuestions: "要不要开 PR？" });
   assert.ok(text.startsWith(CONTINUITY_NOTICE_PREFIX), "统一前缀是剥离与判重的锚");
@@ -264,18 +287,21 @@ test("#249 N3：队列满的丢弃必须留痕（§8 触发率口径）", async 
   assert.ok(ctx.warnings.some((w) => w.includes("queue full")), "丢弃是静默失效的那一类，必须报出来");
   rescue.dispose();
 });
-
 test("#249 N3：门控不调模型（静态锁）与挂载点的父开关在前", () => {
   // §11「门控不调 LLM」：本模块只 import 消息工厂。静态锁而不是运行时断言——真去调模型的
   // 回归不会从返回值露出来，只会让这一步变慢、变贵。
   //
   // #611 起多了 src/attachment-text.js：它同样**不调模型**（纯字符串函数、自己不
-  // import 任何东西），只是把图片块读成占位文本。所以锁的口径从「恰好一行 import」
-  // 改成「import 清单恰是这两项」——新增一行仍然转红，仍然要人来看一眼它是不是纯的。
+  // import 任何东西），只是把图片块读成占位文本。
+  // #745 又多了 src/human-source.js：同样**不调模型**（两个 Set 加一个纯判定函数、
+  // 自己不 import 任何模块）。
+  // 所以锁的口径从「恰好一行 import」改成「import 清单恰是这三项」——新增一行仍然
+  // 转红，仍然要人来看一眼它是不是纯的。
   const src = readFileSync(new URL("../src/continuity.js", import.meta.url), "utf8");
   assert.deepEqual(src.match(/^import .*$/gm), [
     'import { createUserMessage } from "@deepseek-ai/dsh-llm";',
-    'import { contentToText } from "./attachment-text.js";'
+    'import { contentToText } from "./attachment-text.js";',
+    'import { isHumanInputSource } from "./human-source.js";'
   ]);
   // 挂载点（`src/index.js`）是本功能唯一的生产入口：父开关必须在前、子项在后，否则「默认关」
   // 只剩 Config 里的默认值撑着，接线漏一次没人发现。

@@ -21,6 +21,8 @@ import { appendDescriptions, describeImages, imageBlocks, canSeeImages, DESCRIPT
 // 同一族阈值），不另造第二套度量——两套度量会给出两套「像不像」的答案，而这一条
 // 判据只该有一个。
 import { textSimilarity } from "./quality-filter.js";
+// #745：下面的 isHumanInputSource 是四处共用的「谁算人提问」判据（见 human-source.js）。
+import { isHumanInputSource } from "./human-source.js";
 // #512：每轮蒸馏一个 run id（归因主体）。store 侧也能铸造，但这里必须知道它——
 // 写记忆时要把它一路带到 saveMemoryProvenance / 落 run 行，拿回来再写就是两次往返。
 import { randomUUID } from "node:crypto";
@@ -483,7 +485,9 @@ function publicTranscriptParts(event) {
   };
   switch (event?.type) {
     case "user/message": {
-      if (kind !== undefined && kind !== "user" && !SUBAGENT_MESSAGE_KINDS.has(kind)) break;
+      // #745：人提问的判据见 human-source.js（中继消息 `kind:"bot"` 也是人说的）。
+      // 子会话交付是另一类可公开正文，继续走 pushAgentMessage 那条路。
+      if (!isHumanInputSource(data?.source) && !SUBAGENT_MESSAGE_KINDS.has(kind)) break;
       const text = textOf(data?.content);
       if (!text.trim()) break;
       if (SUBAGENT_MESSAGE_KINDS.has(kind)) pushAgentMessage(data);
