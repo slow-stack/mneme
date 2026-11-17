@@ -52,7 +52,10 @@ Environment (runtime provisioning, local provider only):
 /** 第一个非空值。环境变量别名共用（MNEME_* 做主，DSH_MNEME_* 兼容）。 */
 function firstNonEmpty(...values) {
   for (const v of values) {
-    if (typeof v === "string" && v.trim()) return v;
+    // 返回值必须是去过空白的：下面 startsWith("~") 与 resolve() 都拿它当输入，
+    // 原值带前导空白时波浪号判断失效、相对路径会被当成当前目录下的新位置，
+    // 于是 daemon 不声不响开出一张空库（#744 review）。
+    if (typeof v === "string" && v.trim()) return v.trim();
   }
   return undefined;
 }

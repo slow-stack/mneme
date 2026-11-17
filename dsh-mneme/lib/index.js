@@ -786,11 +786,16 @@ export const apply = (ctx, config) => {
     // panel's `data.embeddings` was permanently null on a real install — the
     // typeof guard in api.js fell through every time, and no test noticed
     // because none asserted on `data.embeddings`.
+    // `memoryDir` 一并钉进给的 config：cfg.memoryDir 是**原始**配置（没配置就是
+    // 空串），而真正选中的目录是上面 resolveMemoryDir 的结论。api.js 的
+    // /pipeline、/candidates、/nudge 会自己再调 memoryBase(config.memoryDir)，
+    // 两边都有库时那个函数按体积重算，旧库涨过 10 倍就会翻到另一本——store 却
+    // 还开着这本，旁挂数据写到别人家去。这里钉死，api.js 一律用启动时的结论。
     const api = createApi(ctx, service, settings, commands ?? {
       add: () => { throw new Error("commands unavailable"); },
       remove: () => false,
       list: () => []
-    }, embedder, { ...semantic, vectorIndex, reranker }, cfg.apiToken, cfg, maintenance, extractProfileDraft, choro, profileFacts, kb, diary);
+    }, embedder, { ...semantic, vectorIndex, reranker }, cfg.apiToken, { ...cfg, memoryDir }, maintenance, extractProfileDraft, choro, profileFacts, kb, diary);
     disposers.push(api.dispose);
 
     // dsh-go 原生面板：只有宿主提供 dshGo 服务（dsh-go 手机 App）时才挂载。

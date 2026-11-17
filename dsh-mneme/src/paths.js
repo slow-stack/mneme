@@ -93,6 +93,22 @@ export function legacyMemoryDir(opts = {}) {
   return join(legacyHome(opts), "memory");
 }
 
+/**
+ * 所有可能的旧库目录，按优先级排列（#744 review）。
+ *
+ * `DSH_HOME` 与 `~/.dsh` 不一定是同一个地方：宿主声明了 `DSH_HOME=/srv/dsh` 却没把
+ * `~/.dsh` 指过去时，存量库仍可能躺在 `~/.dsh/memory`（本 PR 之前 `memoryDir` 的默认值
+ * 就是它，而那段启动逻辑只展开 `~`、不看 `DSH_HOME`）。只认 `legacyHome()` 会在这种机器上
+ * 宣布「旧库不存在」，升级后安静地开一张新空库——正是这个 PR 最不能犯的错。
+ *
+ * 顺序 = 先看宿主自己声明的家，再看写死的 `~/.dsh`；两个路径相同时只留一份。
+ */
+export function legacyMemoryDirs(opts = {}) {
+  const { home = homedir() } = opts;
+  const candidates = [legacyMemoryDir(opts), join(home, LEGACY_HOME_DIR, "memory")];
+  return candidates.filter((dir, i) => candidates.indexOf(dir) === i);
+}
+
 /** 这个目录里真的有库吗？（只看 memory.db，不猜） */
 export function hasDb(dir) {
   if (typeof dir !== "string" || dir.trim() === "") return false;
@@ -103,14 +119,26 @@ export function hasDb(dir) {
   }
 }
 
-/** 库文件字节数。没有库或读不到都给 0——调用方只做量级比较，不拿它当精确值。 */
+/**
+ * 库文件字节数。没有库或读不到都给 0——调用方只做量级比较，不拿它当精确值。
+ *
+ * 量的是**磁盘足迹**而不是主文件大小：`createStore` 开的是 WAL（`src/store.js`），
+ * 已提交的数据可能整段还留在 `-wal` 里没 checkpoint 回主文件。只量 `memory.db`
+ * 会在「旧进程还开着 / 上一次异常退出」时严重低估旧库，于是 1MB 主文件 + 3MB WAL
+ * 的旧库被判成比 200KB 的新库还小、静默选走新库（#744 review）。口径与
+ * `src/store.js` 的占用统计（主文件 + `-wal` + `-shm`）对齐。
+ */
 export function dbBytes(dir) {
   if (typeof dir !== "string" || dir.trim() === "") return 0;
-  try {
-    return statSync(join(dir, DB_FILE)).size;
-  } catch {
-    return 0;
-  }
+  const base = join(dir, DB_FILE);
+  const sizeOf = (p) => {
+    try {
+      return statSync(p).size;
+    } catch {
+      return 0; // 文件不存在/被锁/读不到都算 0，不让一个旁挂文件把整次判定打掉
+    }
+  };
+  return sizeOf(base) + sizeOf(`${base}-wal`) + sizeOf(`${base}-shm`);
 }
 
 /**
@@ -154,9 +182,11 @@ export function resolveMemoryDir(configured, opts = {}) {
   if (fromEnv) return { dir: expandHome(fromEnv, home), source: "env" };
 
   const nextDir = defaultMemoryDir({ env, home });
-  const oldDir = legacyMemoryDir({ env, home });
-
   const nextHas = hasDb(nextDir);
+
+  // 旧候选可能不止一个（见 legacyMemoryDirs）：取**第一个真的有库**的。
+  const oldDirs = legacyMemoryDirs({ env, home });
+  const oldDir = oldDirs.find((dir) => hasDb(dir)) ?? oldDirs[0];
   const oldHas = hasDb(oldDir);
 
   if (nextHas && oldHas) {
@@ -236,11 +266,16 @@ export function resolveRuntimeDir({ env = process.env, home = homedir() } = {}) 
   // legacyHome()，与库那边同一个真源。
   const next = join(mnemeHome({ env, home }), "runtime");
   const old = join(legacyHome({ env, home }), "mneme", "runtime");
-  return existsSync(old) && !existsSync(next) ? old : next;
+  // 判据是「旧目录在不在」，不是「新目录空不空」（#744 review）：中性根下的
+  // `runtime/` 只被建出来（下载前的 mkdir、一次 dashboard 探测）就会存在，
+  // 而这种空壳一旦算数，旧家那 200MB 就白扔了、下次启动重新下一遍。注释里
+  // 写的「旧目录存在就继续用它」本来就该是这个读法。
+  return existsSync(old) ? old : next;
 }
 
 export function resolveModelCacheDir({ env = process.env, home = homedir() } = {}) {
   const next = join(mnemeHome({ env, home }), "models");
   const old = join(legacyHome({ env, home }), "mneme", "models");
-  return existsSync(old) && !existsSync(next) ? old : next;
+  // 同 resolveRuntimeDir：旧目录在就用旧的，新目录是不是空壳不参与判定。
+  return existsSync(old) ? old : next;
 }

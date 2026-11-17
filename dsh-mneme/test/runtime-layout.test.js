@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -80,6 +80,30 @@ test("运行时根目录默认挂在中性家 ~/.mneme/runtime 下，不再是 .
   assert.equal(defaultRuntimeDir("/home/u", {}), join("/home/u", ".mneme", "runtime"));
   // 模型缓存同源：也要在中性家下，且与运行时同父目录。
   assert.equal(defaultModelCacheDir("/home/u", {}), join("/home/u", ".mneme", "models"));
+});
+
+test("旧缓存目录存在就用旧的，新目录是不是空壳不参与判定（#744 review）", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "mneme-layout-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const env = {};
+
+  // 两个旧目录都在，新目录也建出来（只是空壳）。
+  mkdirSync(join(home, ".dsh", "mneme", "runtime"), { recursive: true });
+  mkdirSync(join(home, ".dsh", "mneme", "models"), { recursive: true });
+  mkdirSync(join(home, ".mneme", "runtime"), { recursive: true });
+  mkdirSync(join(home, ".mneme", "models"), { recursive: true });
+
+  assert.equal(
+    defaultRuntimeDir(home, env),
+    join(home, ".dsh", "mneme", "runtime"),
+    "旧缓存存在就不该被空壳新目录顶掉，否则那 200MB 白重下"
+  );
+  assert.equal(defaultModelCacheDir(home, env), join(home, ".dsh", "mneme", "models"));
+
+  // 旧目录不在时才去新家。
+  rmSync(join(home, ".dsh"), { recursive: true, force: true });
+  assert.equal(defaultRuntimeDir(home, env), join(home, ".mneme", "runtime"));
+  assert.equal(defaultModelCacheDir(home, env), join(home, ".mneme", "models"));
 });
 
 test("transformersVersionOk 只认 >=4.2.0 <5", () => {

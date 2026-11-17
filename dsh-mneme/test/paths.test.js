@@ -205,6 +205,42 @@ test("旧缓存的位置跟着 DSH_HOME 走，别人把家指到别处也不会�
   assert.equal(resolveModelCacheDir({ env, home }), join(dshHome, "mneme", "models"));
 });
 
+test("DSH_HOME 与 ~/.dsh 不同时，写死的老位置仍作为兼容候选（#744 review）", (t) => {
+  const home = sandbox(t);
+  const dshHome = join(home, "srv", "dsh");
+  // 宿主声明了 DSH_HOME，但存量库还躺在写死的 ~/.dsh/memory 里（本 PR 之前的默认值）。
+  const hardCoded = join(home, ".dsh", "memory");
+  mkdirSync(hardCoded, { recursive: true });
+  writeFileSync(join(hardCoded, DB_FILE), "the-real-old-db");
+
+  const r = resolveMemoryDir("", { env: { DSH_HOME: dshHome }, home });
+  assert.equal(r.dir, hardCoded, "旧库在写死的位置时也要认出来，不能开新空库");
+  assert.equal(r.source, "legacy");
+  // 宿主声明的家优先：两边都有库时先看 DSH_HOME 那个。
+  const declaredDb = join(dshHome, "memory");
+  mkdirSync(declaredDb, { recursive: true });
+  writeFileSync(join(declaredDb, DB_FILE), "declared");
+  assert.equal(resolveMemoryDir("", { env: { DSH_HOME: dshHome }, home }).dir, declaredDb);
+});
+
+test("旧库体积算上 -wal / -shm，WAL 里的已提交数据不会被当成小库（#744 review）", (t) => {
+  const home = sandbox(t);
+  const old = join(home, ".dsh", "memory");
+  const next = join(home, MNEME_HOME_DIR, "memory");
+  mkdirSync(old, { recursive: true });
+  mkdirSync(next, { recursive: true });
+  // 旧库主文件只有 1KB，但 WAL/SHM 里还有 130KB；新库 8KB。
+  // 只量主文件的话 8KB > 1KB，会误判成「新库比旧库大」而搬走主库。
+  writeFileSync(join(old, DB_FILE), Buffer.alloc(1024, 0x61));
+  writeFileSync(join(old, `${DB_FILE}-wal`), Buffer.alloc(100 * 1024, 0x62));
+  writeFileSync(join(old, `${DB_FILE}-shm`), Buffer.alloc(32 * 1024, 0x63));
+  writeFileSync(join(next, DB_FILE), Buffer.alloc(8 * 1024, 0x64));
+
+  const r = resolveMemoryDir("", { env: cleanEnv(), home });
+  assert.equal(r.source, "legacy", "旧库足迹含 WAL，新库相对它小到像误建");
+  assert.equal(r.dir, old);
+});
+
 test("expandHome 口径与其它模块一致", () => {
   const home = "/home/u";
   assert.equal(expandHome("~", home), home);

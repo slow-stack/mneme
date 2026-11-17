@@ -13,7 +13,7 @@
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/v/@modusensus/dsh-mneme?style=flat-square&label=npm&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm version"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=EFE7D8&logoColor=1C1C1C"><img src="https://img.shields.io/npm/d18m/@modusensus/dsh-mneme?style=flat-square&label=downloads&labelColor=B03A2E&color=111111&logoColor=FFFFFF" alt="npm downloads"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=EFE7D8"><img src="https://img.shields.io/github/actions/workflow/status/slow-stack/mneme/ci.yml?style=flat-square&label=CI&labelColor=B03A2E&color=111111" alt="CI"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/tests-3599%20total-EFE7D8?style=flat-square"><img src="https://img.shields.io/badge/tests-3599%20total-111111?style=flat-square" alt="tests"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/tests-3620%20total-EFE7D8?style=flat-square"><img src="https://img.shields.io/badge/tests-3620%20total-111111?style=flat-square" alt="tests"></picture>
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/license-MIT-EFE7D8?style=flat-square&label=license&labelColor=B03A2E&logoColor=1C1C1C"><img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square&label=license&labelColor=B03A2E&logoColor=FFFFFF" alt="license"></picture>
 <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 </p>
@@ -62,7 +62,7 @@ dsh web
 dsh plugin --profile web remove @modusensus/dsh-mneme
 ```
 
-插件目录没了，记忆还在（默认 `~/.mneme/memory`，老用户是 `~/.dsh/memory`）——想清干净就自己删这个目录。三个目录名字很像，别认错：[目录说明](dsh-mneme/docs/DIRECTORIES.md)。
+插件目录没了，记忆还在（默认 `~/.mneme/memory`，老用户是 `~/.dsh/memory`）——想清干净就自己把**用过的每一个**记忆库目录都删掉，包括自定义 `memoryDir` / `MNEME_MEMORY_DIR` 指到的地方。新旧两个目录可能同时存着库：解析器两个都留在盘上，只删当前选中的那个，另一个还在，以后还可能被重新选中。三个目录名字很像，别认错：[目录说明](dsh-mneme/docs/DIRECTORIES.md)。
 
 ## 你会用到的
 
@@ -178,7 +178,7 @@ To remove it:
 dsh plugin --profile web remove @modusensus/dsh-mneme
 ```
 
-The plugin directory goes away, the memories stay (default `~/.mneme/memory`, or the legacy `~/.dsh/memory`) — delete that directory yourself if you want them gone. The three names are easy to mix up: [directories](dsh-mneme/docs/DIRECTORIES.md).
+The plugin directory goes away, the memories stay (default `~/.mneme/memory`, or the legacy `~/.dsh/memory`) — check **every** memory directory you have ever used, including a custom `memoryDir` / `MNEME_MEMORY_DIR`, and delete them yourself if you want them gone. Both the new and the legacy path can hold a database at once: the resolver keeps both on disk, so deleting only the currently selected one leaves the other behind and it may be picked up again later. The three names are easy to mix up: [directories](dsh-mneme/docs/DIRECTORIES.md).
 
 ## What you get
 

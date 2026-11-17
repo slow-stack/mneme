@@ -100,7 +100,7 @@ function expandHome(path) {
 
 function defaultDbPath() {
   // 与插件同一条解析：显式配置 > MNEME_MEMORY_DIR > 中性根默认，存量旧库继续用。
-  return join(resolveMemoryDir(""), "memory.db");
+  return join(resolveMemoryDir("").dir, "memory.db");
 }
 
 async function main() {

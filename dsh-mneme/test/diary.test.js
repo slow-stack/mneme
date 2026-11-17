@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { localDateString, shouldRollDay, dayGap, MAX_CATCH_UP_DAYS } from "../src/diary/rollover.js";
 import { diaryDir, diaryFilePath, expandHome, memoryBase } from "../src/diary/dir.js";
 import { resolveMemoryDir } from "../src/paths.js";
-import { collectQqInbox, inboxFiles, redactDigits, textOf, isEffective } from "../src/diary/qq-inbox.js";
+import { collectQqInbox, inboxFiles, redactDigits, resolveInboxDir, textOf, isEffective } from "../src/diary/qq-inbox.js";
 import { collectSessionTranscript, sessionAgentId } from "../src/diary/session-provider.js";
 import { validateBody, latestDiaryDate, createDiaryComposer } from "../src/diary/compose.js";
 import { createDiaryAutoRun, DIARY_MIN_INTERVAL_MS } from "../src/diary/auto.js";
@@ -120,6 +120,34 @@ test("inboxFiles：新一代在前；目录读不到返回 null（与「有目�
   writeInbox(dir, [], 2);
   writeInbox(dir, []);
   assert.deepEqual(inboxFiles(dir), ["qq-inbox.jsonl", "qq-inbox.2.jsonl"]);
+});
+
+test("resolveInboxDir：显式配置 > 库旁边的老位置 > 宿主家下的正式位置（#744 review）", () => {
+  const saved = { DSH_HOME: process.env.DSH_HOME, DSH_MNEME_MEMORY_DIR: process.env.DSH_MNEME_MEMORY_DIR };
+  const root = fresh("inbox-resolve");
+  const hostHome = join(root, "host");
+  const memDir = join(root, "mneme-home", "memory");
+  mkdirSync(memDir, { recursive: true });
+  process.env.DSH_HOME = hostHome;
+  delete process.env.DSH_MNEME_MEMORY_DIR;
+  try {
+    // 什么都没建：落到宿主家下的正式位置（onebot 实际写的地方），
+    // 而不是 memoryDir 的兄弟目录（那是新默认库才有的错位）。
+    assert.equal(resolveInboxDir({ memoryDir: memDir }), join(hostHome, "media", "onebot"));
+
+    // 显式配置永远赢。
+    assert.equal(resolveInboxDir({ memoryDir: memDir, configured: "/custom/inbox" }), "/custom/inbox");
+
+    // 老安装的现场位置（库旁边 ../media/onebot）存在时继续用它，升级后不断流。
+    const beside = join(root, "mneme-home", "media", "onebot");
+    mkdirSync(beside, { recursive: true });
+    assert.equal(resolveInboxDir({ memoryDir: memDir }), beside);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 });
 
 test("isEffective / textOf：只认 dispatch+ok，只认 text 段", () => {

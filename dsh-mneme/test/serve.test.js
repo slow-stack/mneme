@@ -338,10 +338,21 @@ test("serve: 新家只有空库时不搬走旧库，并在 daemon 日志里喊�
   makeDb(join(oldDir, "memory.db"), 100 * 1024);
   makeDb(join(nextDir, "memory.db"), 1024);
 
-  const saved = { MNEME_HOME: process.env.MNEME_HOME, DSH_HOME: process.env.DSH_HOME, DSH_MNEME_HOME: process.env.DSH_MNEME_HOME };
+  // 两个记忆目录变量都得隔离（#744 review）：只要有一个非空，resolveMemoryDir()
+  // 就直接采用它、根本不进双库判断，于是这里既不会告警，写进去的记录还会落到
+  // 开发者自己的真库上。
+  const saved = {
+    MNEME_HOME: process.env.MNEME_HOME,
+    DSH_HOME: process.env.DSH_HOME,
+    DSH_MNEME_HOME: process.env.DSH_MNEME_HOME,
+    MNEME_MEMORY_DIR: process.env.MNEME_MEMORY_DIR,
+    DSH_MNEME_MEMORY_DIR: process.env.DSH_MNEME_MEMORY_DIR
+  };
   process.env.MNEME_HOME = join(root, "mneme");
   process.env.DSH_HOME = join(root, "dsh");
   delete process.env.DSH_MNEME_HOME;
+  delete process.env.MNEME_MEMORY_DIR;
+  delete process.env.DSH_MNEME_MEMORY_DIR;
 
   const warns = [];
   let rt = null;
@@ -368,7 +379,7 @@ test("serve: 新家只有空库时不搬走旧库，并在 daemon 日志里喊�
       probe.close();
     }
   } finally {
-    if (rt) rt.dispose();
+    if (rt) await rt.dispose();
     for (const [k, v] of Object.entries(saved)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
