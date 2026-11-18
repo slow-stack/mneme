@@ -123,6 +123,13 @@ function serializePersonaStore(store) {
 // 3. 写入是逐键校验的合并写：未知键/类型/范围不符抛 TypeError（消息含键名，
 //    供 API 透传给前端定位），校验不通过不落库，坏值永远进不了 kv。
 const FEATURE_FLAG_BOOLEANS = [
+  // #688 保护层：导入会话/排除项目的蒸馏门卫。面板可关、默认挡——
+  // 导入会话无游标，继续说话会把整段历史当新窗口烧一次蒸馏；要进库走
+  // backfill 显式路径（POST /maintenance/backfill，bypassImported 旁路）。
+  "distillSkipImportedSessions",
+  // 项目排除名单（相对目录/绝对路径均可，前缀命中整线挡在库外）。
+  "distillExcludeProjects",
+
   "autoInject",
   "autoSummarize",
   "hotMemoryEnabled",

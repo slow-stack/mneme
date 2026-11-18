@@ -882,7 +882,7 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // #718 注入前判定判官专用路由新增两个键：preInjectGateProvider /
   // preInjectGateModel（顶层字符串键，走 FEATURE_FLAG_STRINGS 表，成对生效）
   // = +2，故 138 + 2 = 140。
-  assert.equal(Object.keys(data.effective).length, 140);
+  assert.equal(Object.keys(data.effective).length, 142);
   // #718 判官路由默认值单独钉：默认空串 = 回落 agentDefaultModel（entity
   // 同款成对语义，计数锁钉不住空串缺省被翻转）。
   assert.equal(data.effective.preInjectGateProvider, "");

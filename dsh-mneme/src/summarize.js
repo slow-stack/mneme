@@ -9,6 +9,8 @@ import { injectChildEnabled } from "./config.js";
 import { withEffortFallback, describeStreamFailure, EFFORT_REJECT_RE } from "./dream.js";
 // v0.9.0（M.O. 项目记忆）：蒸馏写入复用工具路径那把作用域解析器，见 createSummarizer。
 import { createScopeResolver, isHardWallWorkspace, resolveScopeStamp } from "./scope.js";
+import { isImportedSession } from "./imported-session.js";
+import { isExcludedProject } from "./distill-guard.js";
 // #493 补充 §③：断链与巩固侧同一份实现（src/fence.js）。转录里出现闭合标记时
 // 原先能提前闭合围栏——那是把用户消息升格成指令最短的一条路。
 import { breakFenceMarkers } from "./fence.js";
@@ -692,6 +694,9 @@ async function collectMessages(session, maxChars = 8000, language = "zh", afterS
       : [],
     hasEvents: events.length > 0,
     lastSeq,
+    // #688 保护层复用：门卫要判「这是不是导入会话」，直接拿这份已读好的窗口，
+    // 不再单独 snapshot 一遍（每轮 turn/end 多一次全量读）。
+    events,
     // Issue #611：这一窗折成占位的图片张数。调用方把它写进审计 metadata，
     // 让「图进来了几张」成为可对账的事实而不是推断。
     imageCount,
@@ -949,6 +954,27 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         ? { provider: header.provider, model: header.model }
         : undefined;
 
+    // 2026-11-18（#688 续，保护层）：两道确定性门卫，放在间隔门之前——被挡的会话
+    // 连「刚刚跑过」的间隔点都不该占，也不该进入后面任何一条链。
+    //
+    // ① 项目排除（distillExcludeProjects，默认 []）：cwd 只读 session.header
+    // （创建时冻结的那份）。前缀命中即整条项目线挡在库外。
+    //
+    // ② 导入会话隔离（distillSkipImportedSessions，默认 true）。为什么判事件不判
+    // header：导入器不留 header 标记，唯一信号在消息 source 上（src/imported-
+    // session.js）。判定成本是一次快照读取，比一次 LLM 调用便宜三个数量级。
+    // opts.bypassImported 由回填（backfill.js）显式传：喂给 summarizeNow 的恰恰
+    // 是导入会话，保护层不能挡自己的合法调用方（与 bypassPeak 同形）。
+    if (Array.isArray(config.distillExcludeProjects) && config.distillExcludeProjects.length > 0
+      && isExcludedProject(session.header?.cwd, config.distillExcludeProjects)) {
+      writeAudit({
+        timestamp: new Date(now()).toISOString(),
+        model_id: route ? route.provider + ":" + route.model : "unknown",
+        status: "skipped",
+        error_message: "excluded-project"
+      });
+      return;
+    }
     // Issue #127 间隔门：同一会话两次蒸馏之间的最小间隔（0 = 现状，不限）。进入
     // 即打点——失败/degraded 的 run 也占用间隔，与 dreamMinIntervalMinutes 语义
     // 一致，防止失败连发。被挡下的 turn/end 静默跳过，但留一行 status='skipped'
@@ -1082,6 +1108,25 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       const hasNewEvents = collected.hasEvents
         || (triggerSeq !== undefined && (previousSeq === undefined || triggerSeq > previousSeq));
       if (!hasNewEvents) return;
+
+      // #688 保护层②：导入会话隔离（distillSkipImportedSessions，默认 true）。
+      // 放在窗口读之后而不是门卫区：判定直接复用 collectMessages 刚读好的那份
+      // 事件（collected.events），不给每轮 turn/end 增加第二次全量快照。判定读
+      // 事件不判 header——导入器不留 header 标记，唯一信号在消息 source 上
+      // （src/imported-session.js）。游标刻意不消费：与 peak/max-runs 同口径，
+      // 「这个会话先不再蒸馏了」，窗口留在原地；要进库走回填（backfill.js 显式
+      // 点名会话并透传 opts.bypassImported，与 bypassPeak 同形）。
+      if (config.distillSkipImportedSessions !== false
+        && opts.bypassImported !== true
+        && isImportedSession(collected.events)) {
+        writeAudit({
+          timestamp: new Date(now()).toISOString(),
+          model_id: route ? route.provider + ":" + route.model : "unknown",
+          status: "skipped",
+          error_message: "imported-session"
+        });
+        return;
+      }
 
       const nextSeq = Math.max(collected.lastSeq ?? Number.NEGATIVE_INFINITY, triggerSeq ?? Number.NEGATIVE_INFINITY);
       if (!collected.messages.length) {

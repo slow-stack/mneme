@@ -21,46 +21,17 @@
 import { readFile } from "node:fs/promises";
 
 import { findSessionFiles, forEachFrame, resolveSessionDir } from "./session-usage.js";
+// 判据本身住在 imported-session.js：蒸馏（src/summarize.js）也要用它，而那条路径
+// 每轮 turn/end 都会走一次，不该为了一个纯函数把本文件的 fs 扫描链拖进热路径。
+// 这里保留 export 是为了不打断既有调用方与测试的 import 路径。
+import { IMPORT_ERROR_PREFIX, IMPORT_PROVIDER, isImportedSession } from "./imported-session.js";
 
-/** 导入器给每条 assistant 消息盖的 provider 戳（插件 lib/index.js:181-185、621-633）。 */
-export const IMPORT_PROVIDER = "deepseek-chat-export";
-/** 导入器给「这条回复进不了模型历史」的会话留的错误码前缀（插件 lib/index.js:191-195）。 */
-export const IMPORT_ERROR_PREFIX = "DEEPSEEK_EXPORT_";
+export { IMPORT_ERROR_PREFIX, IMPORT_PROVIDER, isImportedSession };
 
 export const DEFAULT_LIMIT = 50;
 export const DEFAULT_DAYS = 90;
 export const DEFAULT_ROUNDS = 20;
 export const DEFAULT_MAX_ENTRIES = 5;
-
-/**
- * 这一组事件是不是导入器写的会话。
- *
- * **纯函数**：输入事件数组，输出 bool，不读盘、不看状态。以后 DSH 改了戳法，
- * 只改这一个函数（与它的一条测试），不用翻扫描循环。
- *
- * 两条信号取并集，主判据是消息 source（DSH 自己从不产生这个 provider 字符串）；
- * `turn/end` 的错误码只用来兜「整条会话的回复全被排除、一条 assistant/message
- * 都没有」的那种会话（TEMPLATE_RESPONSE / EMPTY_REPLY / NO_REPLY / WIP /
- * FAILED / TIMEOUT / CONTEXT_LENGTH_EXCEEDED / INCOMPLETE）。
- *
- * 不用 header、不用 session/title：前者没有标记，后者正常会话同样有。
- */
-export function isImportedSession(events) {
-  if (!Array.isArray(events)) return false;
-  for (const event of events) {
-    if (!event || typeof event !== "object") continue;
-    if (event.type === "assistant/message") {
-      const provider = event.data?.message?.source?.provider;
-      if (provider === IMPORT_PROVIDER) return true;
-      continue;
-    }
-    if (event.type === "turn/end") {
-      const code = event.data?.reason?.error?.code;
-      if (typeof code === "string" && code.startsWith(IMPORT_ERROR_PREFIX)) return true;
-    }
-  }
-  return false;
-}
 
 /**
  * 只保留最近 `maxTurns` 轮（`turn/start` 起算），更早的事件整段丢掉。
@@ -273,7 +244,9 @@ export async function runBackfill({
       await summarizer.summarizeNow(
         { id: candidate.sessionId, events: windowed },
         trigger,
-        { bypassPeak: true, maxEntries }
+        // bypassImported：回填喂的正是导入会话，必须显式旁路保护层
+        // （src/summarize.js 的 imported-session 门卫），否则被自己的墙挡死。
+        { bypassPeak: true, bypassImported: true, maxEntries }
       );
       results.push({ sessionId: candidate.sessionId, status: "ran", events: windowed.length });
     } catch (error) {
