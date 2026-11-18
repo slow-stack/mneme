@@ -80,13 +80,15 @@ test("部分丢弃：有一半条目被拒时仍要留下拒绝计数，而不�
 test("零丢弃的成功轮不产出 rejects 键（metadata 与旧版逐字节一致）", () => {
   const r = parseSummaryJsonResult(JSON.stringify([GOOD]));
   assert.equal(r.ok, true);
-  assert.equal(r.rejects, undefined, "没丢条目就不该多出这个键");
+  // 用 hasOwn 而不是断言 undefined：扩展开来时若写成 `{ rejects: undefined }`，
+  // 键其实已经存在了，只是值为 undefined——deepEqual 与 === 都看不出来。
+  assert.equal(Object.hasOwn(r, "rejects"), false, "没丢条目就不该多出这个键");
 });
 
 test("空数组成功轮同样不产出 rejects", () => {
   const r = parseSummaryJsonResult("[]");
   assert.equal(r.ok, true);
-  assert.equal(r.rejects, undefined);
+  assert.equal(Object.hasOwn(r, "rejects"), false);
 });
 
 // prompt 与闸门对齐（报告者的第 3 条，零行为变更）：菜单给全 7 个值、并写明不许自造。
@@ -101,6 +103,23 @@ test("summary 提示词的枚举与 VALID 对齐，且中英两份都写明不�
   }
   // codingSummary 本来就列全了，确认没被这次批量替换改坏（它多出的说明句还在）
   assert.ok(STR.prompts.codingSummary.zh.includes("rejected_solution") && STR.prompts.codingSummary.zh.includes("pitfall"));
+});
+
+// #712：编码类三类（rejected_solution / pitfall / constraint）是「可提取」，不是「必须提取」。
+// 英文版原来写成 `additionally extract`，等于要求必填；而 rejected_solution 的字段说明里
+// 带着 "what was adopted instead"，转录只说「这个方案废了」、没说新方案时，模型只能编。
+// 中英两份都要写成可选、并明确依据不足就整条不提取。
+test("编码类记忆是可选提取：中英两份都写明依据不足就整条不提取", () => {
+  const zh = STR.prompts.codingSummary.zh;
+  assert.ok(zh.includes("可额外提取"), "中文要说「可」额外提取，不是必须");
+  assert.match(zh, /依据不足[\s\S]{0,80}整条不提取/, "中文要写明依据不足就整条不提取");
+
+  const en = STR.prompts.codingSummary.en;
+  assert.ok(en.includes("you may additionally extract"), "英文要说 may，不是祈使的 extract");
+  // 否定式要卡住「整句陈述句开头」的那种老写法，不能只查子串——「you may additionally
+  // extract」本身就含「additionally extract」，用子串会把自己判红。
+  assert.ok(!/coding\/debugging,\s*additionally extract/.test(en), "英文不许再写成必提取");
+  assert.match(en, /do not extract that entry at all/, "英文要写明依据不足就整条不提取");
 });
 
 // #712：枚举过去埋在 JSON 模板的键值里（`{"type":"preference|project|..."`那一串），

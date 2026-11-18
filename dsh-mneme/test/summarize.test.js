@@ -822,6 +822,49 @@ test("a JSON-crashed window with salvageable objects is recovered, consumed once
   assert.equal(service.count(), 2, "no duplicate writes on the second turn/end");
 });
 
+// #712：成功轮里被丢弃的条目必须能在审计里看见。此前只有整窗全丢才写诊断
+// （describeParseFailure 的 `if (entries.length > 0) return null;` 早退），只要还剩
+// 一条能入库，拒绝计数就整个消失——库里 summarize_compress 的成功行带
+// reject_reasons 的记录是 0 条，「部分丢弃多少」从来没有数据。
+test("#712 部分丢弃的成功轮在审计里留下拒绝总数与按原因分项", async (t) => {
+  const mixed = `[
+    {"type":"constraint","title":"预算","content":"总额 $12,400","importance":4},
+    {"type":"环境/版本","title":"自造分类","content":"枚举外的 type"},
+    {"type":"decision","name":"键名被顶掉","url":"https://example.invalid"}
+  ]`;
+  const { events, service, store, calls, summarizer } = setup({ distillRateLimitIntervalMs: 0 }, {
+    stream() {
+      return (async function* () {
+        yield { type: "block-start", block: { type: "text" } };
+        yield { type: "text-delta", delta: mixed };
+        yield { type: "finish", kind: "ok" };
+      })();
+    }
+  });
+  t.after(() => { summarizer.dispose(); store.close(); });
+  const handler = events.find((e) => e.name === "session/event").fn;
+  const session = {
+    id: "s-partial-rejects",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    events: [userMessage("部分条目被拒的蒸馏窗口", 1), { seq: 2, type: "turn/end" }]
+  };
+
+  await handler(session, { seq: 2, type: "turn/end" });
+  assert.equal(service.count(), 1, "还剩一条能入库就是成功轮，判定不变");
+  const audit = service.listLlmAudits({ source: "autoSummarize" }).find((r) => r.status === "success");
+  assert.ok(audit, "部分丢弃仍记成成功");
+  // metadata 读回来可能是串也可能是对象，两种形状都归一（同 filtered-empty 那条锁的写法）
+  const meta = typeof audit.metadata === "string" ? JSON.parse(audit.metadata) : audit.metadata;
+  assert.equal(meta.rejected, 2, "三条里丢了两条，总数要落账");
+  assert.deepEqual(meta.partial_rejects, { not_object: 0, bad_type: 1, bad_title: 1, bad_content: 0 },
+    "按原因分开记，才看得出是自造分类还是键名顶掉");
+  assert.equal(meta.failure_kind, undefined, "成功轮不许被失败诊断的键名污染");
+  assert.equal(meta.reject_reasons, undefined);
+  // parsed 记的是「解析后活下来的条数」（= 去重/截断前的可用条目），不是模型给出的原始
+  // 条数。这里是 1 不是 3——别把它误读成「模型只写了 1 条」，原始条数看 rejected 加它。
+  assert.equal(meta.parsed, 1, "parsed 仍是存活条数，不被新增字段改变");
+});
+
 test("a JSON-crashed window with nothing salvageable stays retryable (issue #339)", async (t) => {
   const hopeless = `[
     { " "type": "history", "title": "坏", "content": "语法错误" }
