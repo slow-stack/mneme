@@ -4761,22 +4761,35 @@ test("affective rows consume the #729/#732 fields the server already returns", (
   const end = clientSource.indexOf("function StatusPanel({ t, onBrowse })", start);
   const body = clientSource.slice(start, end);
 
-  assert.ok(/it\.why \? h\("div", \{ className: "mneme-affective-why", title: it\.why \}/.test(body),
-    "why 必须上行（截断展示 + title 带全文），不能只躺在响应里");
+  // 截断展示 + title 带全文，且要能打开全文——只靠 title 的话键盘与触屏都摸不到。
+  assert.ok(/it\.why \? h\("div", \{ className: "mneme-affective-why", title: it\.why, tabIndex: 0 \}/.test(body),
+    "why 必须上行（截断展示 + title 带全文 + 可聚焦展开），不能只躺在响应里");
+  assert.ok(/\.mneme-affective-why:focus\{-webkit-line-clamp:unset/.test(clientSource),
+    "聚焦态要解除截断，否则「可聚焦」也只是把鼠标提示换成键盘提示");
   assert.ok(/it\.downgradedFrom === "trait"\s*\?/.test(body) && body.includes("mneme-affective-flag"),
     "降级留痕要摆到明面上（曾按倾向记后降回场合）");
   assert.ok(/it\.valence/.test(body) && /valencePositive|valenceNegative|valenceNeutral/.test(body),
     "向性要进 meta（词表外的词 valence=null，不渲染就是了）");
-  assert.ok(/it\.originals\.length > 1/.test(body),
-    "归一组出现过的原词要可见，措辞漂移不能静默发生");
+  // 判据不是「多于一个」：只有「高兴」、主词是「开心」时也漏了信息。
+  assert.ok(/it\.originals\.some\(\(w\) => w !== it\.emotion\)/.test(body),
+    "归一组出现过的原词要可见——唯一原词不同于主词时同样要露出来");
   assert.ok(/it\.firstSeen && it\.firstSeen !== it\.lastSeen/.test(body),
     "首现只在与最近不同时说");
   // 首页就带 cursor 恒参：不带 cursor 的请求边帽=limit（200），组数永远到不了帽，
   // 服务端永远不发 next——翻页按钮就永远长不出来。
   assert.ok(/cursor: opts\.cursor \?\? ""/.test(body),
     "首页必须按游标模式取（cursor 空串=从头翻第一页），否则 next 永远是 null");
-  assert.ok(body.includes("loadMoreMain") && body.includes("mneme-affective-more"),
-    "下一页要真有按钮，不能只留截断提示");
+  // 只认名字的话，把 onClick 改成空操作照样绿。这里锁三件事：按钮真的把
+  // loadMoreMain 挂在 onClick 上、追加用的是响应里的新游标、末页按钮消失。
+  assert.ok(/onClick: loadMoreMain/.test(body),
+    "「加载更多」按钮的 onClick 必须真的接 loadMoreMain（改成空操作就是假绿）");
+  assert.ok(/next: page\.next/.test(body),
+    "追加后游标要取响应里的新 next——沿用旧 next 会在原地打转");
+  assert.ok(/items: s\.items\.concat\(page\.items\)/.test(body),
+    "第二页要追加到现有列表，不是整体替换");
+  assert.ok(/\bstate\.next\s*\n?\s*\?\s*h\("div", \{ className: "mneme-affective-more" \}/.test(body)
+    || /\bstate\.next[\s\S]{0,120}mneme-affective-more/.test(body),
+    "没有游标时不该再长出「加载更多」按钮（末页要收掉）");
 });
 
 // 过滤下的空 ≠ 没记过：两句话混用一句，用户会以为整条情绪线是空的。
@@ -4786,8 +4799,14 @@ test("affective filters hit the server params and keep filtered-empty apart from
   const end = clientSource.indexOf("function StatusPanel({ t, onBrowse })", start);
   const body = clientSource.slice(start, end);
 
+  // 只看调用处对象的话，删掉 affectiveUrl 里设 emotion 的分支仍能过——请求串
+  // 里其实没有 emotion。这里锁 URL 构造函数本身的两个 set。
+  assert.ok(/q\.set\("person", opts\.person\)/.test(body),
+    "affectiveUrl 必须真的把 person 写进查询串");
+  assert.ok(/q\.set\("emotion", opts\.emotion\)/.test(body),
+    "affectiveUrl 必须真的把 emotion 写进查询串（删掉这行过滤就形同虚设）");
   assert.ok(/person: filters\.person, emotion: filters\.emotion/.test(body),
-    "过滤参数要真的进请求（服务端支持 person/emotion，#729）");
+    "两参数要一起交给 affectiveUrl，不能只传一个");
   assert.ok(/setFilters\(\{ person: "", emotion: "" \}\)/.test(body),
     "清除过滤要一键回到全量，不是让用户逐格删字");
   assert.ok(body.includes("memory.affective.emptyFiltered"),
@@ -4801,12 +4820,45 @@ test("affective journal rows surface the before/after delta", () => {
   const end = clientSource.indexOf("function StatusPanel({ t, onBrowse })", start);
   const body = clientSource.slice(start, end);
 
-  assert.ok(/const journalDelta = \(j\) =>/.test(body), "delta 派生函数要存在");
-  assert.ok(/j\.op === "rename" && before\?\.emotion && after\?\.emotion/.test(body),
-    "改词要显示词面变化（旧词 → 新词）");
-  assert.ok(/if \(j\.op === "promote"\) return/.test(body) && /if \(j\.op === "restore"\) return/.test(body)
-    && /j\.op === "archive"/.test(body) && /j\.op === "demote"/.test(body),
-    "归档/恢复/升格/降格都要显示状态迁移（活跃 ↔ 已归档、场合 ↔ 倾向）");
+  // 原先只匹配调用的形状，删掉渲染节点、甚至箭头写反都照样绿。这里把
+  // journalDelta 整段抠出来真跑：输入是服务端真实写下的 before/after 形态。
+  const from = body.indexOf("const journalDelta = (j) => {");
+  assert.ok(from > -1, "delta 派生函数要存在");
+  const to = body.indexOf("\n      };", from);
+  assert.ok(to > from, "journalDelta 必须能整段取出");
+  const fnSrc = body.slice(from, to + 10).split("\n")
+    .filter((line) => !line.trim().startsWith("//")).join("\n");
+  const labels = {
+    oc: "场合", tr: "倾向", act: "活跃", arc: "已归档"
+  };
+  const t = (k) => ({
+    "memory.affective.occasion": labels.oc,
+    "memory.affective.trait": labels.tr,
+    "memory.affective.journalActive": labels.act,
+    "memory.affective.journalArchived": labels.arc
+  }[k] ?? k);
+  const journalDelta = new Function("t", `${fnSrc}\nreturn journalDelta;`)(t);
+
+  // 改词：词面真的变了才画箭头。
+  assert.equal(journalDelta({ op: "rename", before: '{"emotion":"高兴"}', after: '{"emotion":"开心"}' }), "高兴 → 开心");
+  assert.equal(journalDelta({ op: "rename", before: '{"emotion":"开心"}', after: '{"emotion":"开心"}' }), "");
+
+  // 升格/降格：只在真的发生迁移时画。幂等复用（before 已 promoted）不许画假箭头。
+  assert.equal(journalDelta({ op: "promote", before: '{"promotedToTrait":false}', after: '{"promotedToTrait":true}' }), "场合 → 倾向");
+  assert.equal(journalDelta({ op: "promote", before: '{"promotedToTrait":true}', after: '{"promotedToTrait":true}' }), "",
+    "promote 幂等复用时前后都是 true，画箭头就是把没发生的事写进审计面");
+  assert.equal(journalDelta({ op: "demote", before: '{"promotedToTrait":true}', after: '{"promotedToTrait":false}' }), "倾向 → 场合");
+
+  // 归档/恢复：看 archivedAt 的前后值，不看 op 字面。
+  assert.equal(journalDelta({ op: "archive", before: '{"archivedAt":null}', after: '{"archivedAt":"2026-11-18T00:00:00.000Z"}' }), "活跃 → 已归档");
+  assert.equal(journalDelta({ op: "archive", before: '{"archivedAt":"2026-11-18T00:00:00.000Z"}', after: '{"archivedAt":"2026-11-18T00:00:00.000Z"}' }), "",
+    "重复归档不该再画一次「活跃 → 已归档」");
+  assert.equal(journalDelta({ op: "restore", before: '{"archivedAt":"2026-11-18T00:00:00.000Z"}', after: '{"archivedAt":null}' }), "已归档 → 活跃");
+  assert.equal(journalDelta({ op: "restore", before: '{"archivedAt":null}', after: '{"archivedAt":null}' }), "",
+    "重复恢复（null → null）不该画「已归档 → 活跃」");
+
+  // 坏 JSON 退回空串：账本宁可少说，不错说。
+  assert.equal(journalDelta({ op: "promote", before: "not json", after: "{}" }), "");
 });
 
 // formatRelativeTime(value, t) 的 t 是必填的：它内部要 t("memory.time.now")

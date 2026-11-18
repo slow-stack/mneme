@@ -715,7 +715,9 @@ window.__ModuleLoader__.load({
         "memory.affective.journalTitle": "最近变更",
         "memory.affective.journalEmpty": "还没有人工修正记录。",
         "memory.affective.whyHint": "记下这条的缘由（取最新一次）",
-        "memory.affective.downgraded": "曾按稳定倾向记，后降回场合",
+        "memory.affective.downgraded": "倾向判断未通过校验，按场合记录",
+        "memory.affective.retry": "重试",
+        "memory.affective.archiveTruncated": "归档区只扫到上限，可能还有更早的没显示",
         "memory.affective.valence": "向性 {v}",
         "memory.affective.valencePositive": "正",
         "memory.affective.valenceNegative": "负",
@@ -1958,7 +1960,9 @@ window.__ModuleLoader__.load({
         "memory.affective.journalTitle": "Recent changes",
         "memory.affective.journalEmpty": "No manual corrections yet.",
         "memory.affective.whyHint": "Why this was recorded (latest entry)",
-        "memory.affective.downgraded": "Once recorded as a lasting tendency, later downgraded to occasion",
+        "memory.affective.downgraded": "Tendency claim failed validation; recorded as occasion",
+        "memory.affective.retry": "Retry",
+        "memory.affective.archiveTruncated": "The archive scan hit its cap; older entries may be missing",
         "memory.affective.valence": "valence {v}",
         "memory.affective.valencePositive": "positive",
         "memory.affective.valenceNegative": "negative",
@@ -3134,6 +3138,9 @@ window.__ModuleLoader__.load({
       // #726/#723/#724 的字段落页面：why 引文（两行截断、全文在 title）、降级徽标、
       // 过滤栏、加载更多。几何全走刻度，不进 px 棘轮。
       ".mneme-affective-why{font-size:var(--mneme-type-12);color:var(--mneme-fg-dim);margin-top:var(--mneme-space-4);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}",
+      // 两行截断只靠 title 的话，键盘与触屏都打不开全文：可聚焦，聚焦时解除截断。
+      // 不加新尺寸、不动滚动容器，只在聚焦态改显示方式。
+      ".mneme-affective-why:focus{-webkit-line-clamp:unset;display:block;overflow:visible}",
       ".mneme-affective-flag{font-size:var(--mneme-type-12);font-weight:400;color:var(--mneme-fg-dim)}",
       ".mneme-affective-filterbar{display:flex;align-items:center;gap:var(--mneme-space-6);flex-wrap:wrap;margin-top:var(--mneme-space-8)}",
       ".mneme-affective-filterbar .mneme-set-input{flex:1;min-width:0;margin-bottom:0}",
@@ -8608,6 +8615,11 @@ window.__ModuleLoader__.load({
       const [reloadTick, setReloadTick] = useState(0);
       const [moreBusy, setMoreBusy] = useState(false);
       const [moreError, setMoreError] = useState("");
+      // #750 复审 ②：查询代次。翻页响应回来时筛选可能已经换了——旧的一页不能
+      // 追加到新结果上，更不能拿旧 next 覆盖新游标。每次重取自增，响应侧对不上
+      // 就整个丢掉（连同错误与忙碌态）。
+      const mainGen = useRef(0);
+      const archGen = useRef(0);
       // 请求串。cursor 恒参（空串=从头翻第一页）：#729 的游标模式把边帽放宽到
       // 4×limit，首页就按这个模式取，超过一页的组才有 next 可翻；旧客户端不带的
       // 请求边帽=limit，组数永远到不了帽，next 永远是 null——那是翻不出第二页的。
@@ -8630,6 +8642,7 @@ window.__ModuleLoader__.load({
       });
       useEffect(() => {
         let cancelled = false;
+        const gen = ++mainGen.current;
         setState((s) => ({ ...s, loading: true, error: false }));
         apiFetch(affectiveUrl({ person: filters.person, emotion: filters.emotion }))
           .then((res) => {
@@ -8637,12 +8650,12 @@ window.__ModuleLoader__.load({
             return res.json();
           })
           .then((j) => {
-            if (!cancelled) setState(pickState(j));
+            if (!cancelled && gen === mainGen.current) setState(pickState(j));
           })
           .catch(() => {
             // 失败就报失败。这里绝不能退化成空 items —— 那会让「上游挂了」
             // 长得和「你还没记过情绪」一模一样，用户会以为功能没用。
-            if (!cancelled) setState({ loading: true, error: true, items: [], totalEdges: 0, skippedEdges: 0, truncated: false, archivedEdges: 0, next: null });
+            if (!cancelled && gen === mainGen.current) setState({ loading: true, error: true, items: [], totalEdges: 0, skippedEdges: 0, truncated: false, archivedEdges: 0, next: null });
           });
         return () => { cancelled = true; };
       }, [reloadTick, filters]);
@@ -8651,10 +8664,23 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (!archOpen) return;
         let cancelled = false;
+        const gen = ++archGen.current;
+        // 重取开始就把上一份连同游标一起作废：留着旧 next，用户点的还是上一轮
+        // 的位置，翻出来的是上一轮的续页。
+        setArchived(null);
         apiFetch(affectiveUrl({ archived: true }))
           .then((res) => { if (!res.ok) throw new Error(`http ${res.status}`); return res.json(); })
-          .then((j) => { if (!cancelled) setArchived({ items: Array.isArray(j.items) ? j.items : [], next: typeof j.next === "string" && j.next ? j.next : null }); })
-          .catch(() => { if (!cancelled) setArchived({ items: [], next: null }); });
+          .then((j) => {
+            if (cancelled || gen !== archGen.current) return;
+            setArchived({
+              items: Array.isArray(j.items) ? j.items : [],
+              next: typeof j.next === "string" && j.next ? j.next : null,
+              // #750 复审 ⑨：服务端扫到上限会回 items:[] + next:null + truncated:true，
+              // 丢掉这个标志就变成「归档区是空的」——两件事含义相反。
+              truncated: j.truncated === true
+            });
+          })
+          .catch(() => { if (!cancelled && gen === archGen.current) setArchived({ items: [], next: null, truncated: false }); });
         return () => { cancelled = true; };
       }, [archOpen, reloadTick]);
       useEffect(() => {
@@ -8696,16 +8722,19 @@ window.__ModuleLoader__.load({
       // next 取响应里的新游标；失败如实报出（列表没变），绝不把失败装成「没了」。
       const loadMoreMain = async () => {
         if (!state.next || moreBusy) return;
+        const gen = mainGen.current;
         setMoreBusy(true);
         setMoreError("");
         try {
           const res = await apiFetch(affectiveUrl({ cursor: state.next, person: filters.person, emotion: filters.emotion }));
           const body = await res.json().catch(() => null);
           if (!res.ok) throw new Error(body?.error || `http ${res.status}`);
+          // 代次变了（筛选换过 / 重取过）就把这一页连同游标一起丢掉，绝不追加。
+          if (gen !== mainGen.current) return;
           const page = pickState(body);
           setState((s) => ({ ...s, items: s.items.concat(page.items), totalEdges: page.totalEdges, truncated: page.truncated, next: page.next }));
         } catch (err) {
-          setMoreError(t("memory.affective.moreFailed").replace("{error}", String(err?.message ?? err)));
+          if (gen === mainGen.current) setMoreError(t("memory.affective.moreFailed").replace("{error}", String(err?.message ?? err)));
         } finally {
           setMoreBusy(false);
         }
@@ -8714,19 +8743,26 @@ window.__ModuleLoader__.load({
       const [archMoreError, setArchMoreError] = useState("");
       const loadMoreArchived = async () => {
         if (!archived?.next || archMoreBusy) return;
+        const gen = archGen.current;
         setArchMoreBusy(true);
         setArchMoreError("");
         try {
           const res = await apiFetch(affectiveUrl({ archived: true, cursor: archived.next }));
-          const body = await res.json().catch(() => null);
+          // #750 复审 ⑩：正文坏了必须走 catch。原先 .catch(() => null) 把坏正文
+          // 当成空页，next 一并变成 null——游标丢了，重试都没得重试。
+          const text = await res.text();
+          let body = null;
+          try { body = text ? JSON.parse(text) : null; } catch { body = null; }
           if (!res.ok) throw new Error(body?.error || `http ${res.status}`);
+          if (!body || typeof body !== "object") throw new Error("invalid body");
+          if (gen !== archGen.current) return;
           const page = {
-            items: Array.isArray(body?.items) ? body.items : [],
-            next: typeof body?.next === "string" && body.next ? body.next : null
+            items: Array.isArray(body.items) ? body.items : [],
+            next: typeof body.next === "string" && body.next ? body.next : null
           };
-          setArchived((a) => ({ items: (a?.items ?? []).concat(page.items), next: page.next }));
+          setArchived((a) => ({ items: (a?.items ?? []).concat(page.items), next: page.next, truncated: a?.truncated === true }));
         } catch (err) {
-          setArchMoreError(t("memory.affective.moreFailed").replace("{error}", String(err?.message ?? err)));
+          if (gen === archGen.current) setArchMoreError(t("memory.affective.moreFailed").replace("{error}", String(err?.message ?? err)));
         } finally {
           setArchMoreBusy(false);
         }
@@ -8736,12 +8772,9 @@ window.__ModuleLoader__.load({
         return h("div", { className: "mneme-set" },
           h("div", { className: "mneme-set-inner" }, h("div", { className: "mneme-affective-empty", role: "status" }, t("memory.affective.loading"))));
       }
-      if (state.error) {
-        // role=alert：这是需要用户知道的一次失败，不是背景噪声。
-        return h("div", { className: "mneme-set" },
-          h("div", { className: "mneme-set-inner" },
-            h("div", { className: "mneme-affective-empty mneme-affective-empty--error", role: "alert" }, t("memory.affective.error"))));
-      }
+      // #750 复审 ①：读取失败不再整页早退。早退会把筛选输入框和「清除过滤」
+      // 一起藏掉——用户带着一个生效中的过滤读崩了，除了离开页签没有别的出路。
+      // 错误改在结果区摆，筛选栏照常可用，另给一个就地重试。
 
       const buildRow = (it, i) => {
         const isTrait = it.attribution === "trait";
@@ -8765,7 +8798,7 @@ window.__ModuleLoader__.load({
         if (valenceKey) bits.push(t("memory.affective.valence").replace("{v}", t("memory.affective." + valenceKey)));
         // #723：归一组里出现过的全部原词。措辞漂移被归并这件事要可见，不然
         // 「为什么这组叫『开心』而我记得写的是『高兴』」没有答案。
-        if (Array.isArray(it.originals) && it.originals.length > 1) bits.push(t("memory.affective.originals").replace("{names}", it.originals.join(" · ")));
+        if (Array.isArray(it.originals) && it.originals.some((w) => w !== it.emotion)) bits.push(t("memory.affective.originals").replace("{names}", it.originals.join(" · ")));
         // #725：行级操作。对象是组（edgeIds 全量）。按钮的可见性就是操作的前提：
         // 升格只在场合档、降格只在已升格的组——不可用的操作不渲染，而不是渲染了
         // 再报错。改词是行内输入，Enter 或 ✓ 提交、Esc 取消。
@@ -8778,11 +8811,13 @@ window.__ModuleLoader__.load({
               placeholder: t("memory.affective.renamePlaceholder"),
               onChange: (e) => setRenaming({ key: rowKey, value: e.target.value }),
               onKeyDown: (e) => {
-                if (e.key === "Enter") {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
                   const v = renaming.value.trim();
                   if (v) applyAffective("rename", groupEdgeIds, rowKey, { emotion: v }).then(() => setRenaming(null));
                 }
-                if (e.key === "Escape") setRenaming(null);
+                // 两个分支都要 stopPropagation：继续冒泡会走到 MemoryOverlay 的
+                // window 监听器，把整个面板一起关掉——用户只想取消一次改词。
+                if (e.key === "Escape") { e.stopPropagation(); setRenaming(null); }
               }
             }),
             h("button", {
@@ -8823,7 +8858,7 @@ window.__ModuleLoader__.load({
           bits.length ? h("div", { className: "mneme-affective-meta" }, bits.join(" · ")) : null,
           // #726：相位写的「为什么记下这条」。截在两行、全文进 title；模型写的
           // 一句话，不加引号不加工。
-          it.why ? h("div", { className: "mneme-affective-why", title: it.why }, it.why) : null,
+          it.why ? h("div", { className: "mneme-affective-why", title: it.why, tabIndex: 0 }, it.why) : null,
           actions
         );
       };
@@ -8874,6 +8909,10 @@ window.__ModuleLoader__.load({
         const parse = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
         const before = parse(j.before);
         const after = parse(j.after);
+        // 有原文却解析不出来 = 不知道迁移前是什么。这时画箭头就是把没核实的
+        // 事写进审计面，所以宁可留空。服务端写下的 before/after 都是合法 JSON，
+        // 这条只管损坏的历史行。
+        if ((j.before && before === null) || (j.after && after === null)) return "";
         if (j.op === "rename" && before?.emotion && after?.emotion && before.emotion !== after.emotion) {
           return `${before.emotion} → ${after.emotion}`;
         }
@@ -8881,10 +8920,13 @@ window.__ModuleLoader__.load({
         const T = t("memory.affective.trait");
         const act = t("memory.affective.journalActive");
         const arc = t("memory.affective.journalArchived");
-        if (j.op === "promote") return `${A} → ${T}`;
-        if (j.op === "demote") return `${T} → ${A}`;
-        if (j.op === "archive") return `${act} → ${arc}`;
-        if (j.op === "restore") return `${arc} → ${act}`;
+        // 前后值一致时不画箭头：promote 命中同题行会幂等复用（before 已是
+        // promotedToTrait:true），archive 对已归档的边再来一次也一样。照 op 一律
+        // 画「场合 → 倾向」「活跃 → 归档」就是把没发生的事写进审计面。
+        if (j.op === "promote") return before?.promotedToTrait === true ? "" : `${A} → ${T}`;
+        if (j.op === "demote") return before?.promotedToTrait === true ? `${T} → ${A}` : "";
+        if (j.op === "archive") return before?.archivedAt ? "" : `${act} → ${arc}`;
+        if (j.op === "restore") return before?.archivedAt ? `${arc} → ${act}` : "";
         return "";
       };
 
@@ -8902,8 +8944,8 @@ window.__ModuleLoader__.load({
               value: filterDraft.person,
               onChange: (e) => setFilterDraft((d) => ({ ...d, person: e.target.value })),
               onKeyDown: (e) => {
-                if (e.key === "Enter") setFilters({ person: filterDraft.person.trim(), emotion: filterDraft.emotion.trim() });
-                if (e.key === "Escape") setFilterDraft({ person: "", emotion: "" });
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) setFilters({ person: filterDraft.person.trim(), emotion: filterDraft.emotion.trim() });
+                if (e.key === "Escape") { e.stopPropagation(); setFilterDraft({ person: "", emotion: "" }); }
               }
             }),
             h("input", {
@@ -8911,8 +8953,8 @@ window.__ModuleLoader__.load({
               value: filterDraft.emotion,
               onChange: (e) => setFilterDraft((d) => ({ ...d, emotion: e.target.value })),
               onKeyDown: (e) => {
-                if (e.key === "Enter") setFilters({ person: filterDraft.person.trim(), emotion: filterDraft.emotion.trim() });
-                if (e.key === "Escape") setFilterDraft({ person: "", emotion: "" });
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) setFilters({ person: filterDraft.person.trim(), emotion: filterDraft.emotion.trim() });
+                if (e.key === "Escape") { e.stopPropagation(); setFilterDraft({ person: "", emotion: "" }); }
               }
             }),
             (filters.person || filters.emotion)
@@ -8928,7 +8970,17 @@ window.__ModuleLoader__.load({
                 [filters.person ? `person=${filters.person}` : "", filters.emotion ? `emotion=${filters.emotion}` : ""].filter(Boolean).join(" · ")))
             : null,
           applyError ? h("div", { className: "mneme-affective-empty mneme-affective-empty--error", role: "alert" }, applyError) : null,
-          state.items.length === 0
+          // role=alert：这是需要用户知道的一次失败，不是背景噪声。重试与清除
+          // 过滤都留在原地——读失败时用户最可能想做的两件事。
+          state.error
+            ? h("div", { className: "mneme-affective-empty mneme-affective-empty--error", role: "alert" },
+              t("memory.affective.error"),
+              h("div", { className: "mneme-affective-actions" },
+                h("button", { type: "button", className: "mneme-btn", onClick: () => setReloadTick((n) => n + 1) }, t("memory.affective.retry")),
+                (filters.person || filters.emotion)
+                  ? h("button", { type: "button", className: "mneme-btn", onClick: () => { setFilters({ person: "", emotion: "" }); setFilterDraft({ person: "", emotion: "" }); } }, t("memory.affective.filterClear"))
+                  : null))
+            : state.items.length === 0
             ? h("div", { className: "mneme-affective-empty mneme-affective-empty--hero", role: "status" },
               h(Icon, { name: "heart", size: 20 }),
               // 过滤下的空和「一条都没记过」是两句话：前者清掉过滤就能看到数据，
@@ -8961,8 +9013,13 @@ window.__ModuleLoader__.load({
               ? (archived === null
                 ? h("div", { className: "mneme-affective-note" }, t("memory.affective.loading"))
                 : archived.items.length === 0 && !archived.next
-                  ? h("div", { className: "mneme-affective-note" }, t("memory.affective.archiveEmpty"))
-                  : h("div", { className: "mneme-affective-list mneme-affective-archlist" }, archived.items.map(archivedRow)))
+                  ? h("div", { className: "mneme-affective-note" },
+                    archived.truncated ? t("memory.affective.archiveTruncated") : t("memory.affective.archiveEmpty"))
+                  : h(react.Fragment, null,
+                    h("div", { className: "mneme-affective-list mneme-affective-archlist" }, archived.items.map(archivedRow)),
+                    archived.truncated && !archived.next
+                      ? h("div", { className: "mneme-affective-note" }, t("memory.affective.archiveTruncated"))
+                      : null))
               : null,
             archOpen && archived?.next
               ? h("div", { className: "mneme-affective-more" },
