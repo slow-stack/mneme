@@ -135,6 +135,8 @@
 | `summarizeParseFailureMaxRetries` | `0` | 连续解析失败几次后放弃当前窗口（0–10，0 = 关，#493） | 达到阈值强制消费游标跳过该窗口；失败行 metadata 恒带 `raw_head`/`raw_has_bracket`/`streak` |
 | `summarizePeakHours` | `""` | 高峰时段串（`"09:00-18:00"` / `"mon-fri 08:00-12:00,14:00-18:00"`，支持跨零点；全角逗号/冒号/数字自动归一，#424） | 命中高峰不调 LLM、顺延补跑；任一写法非法整串按未配置处理。**非法不静默（#622）**：非空且解析失败时启动日志 warn 一条（带键名与原串）、面板该键输入行下出红色提示（`/features` 的 `invalidPeakHours`）；空串是合法的未配置，不告警 |
 | `summarizePeakMaxDeferMinutes` | `120` | 高峰顺延上限（分钟，≤1440） | 0 = 不设上限；到点仍处高峰照跑（bypassPeak） |
+| `distillSkipImportedSessions` | `true` | 导入的 DeepSeek 会话（`source.provider === "deepseek-chat-export"`）不进自动蒸馏 | 导入会话没有蒸馏游标，继续说话会把整段历史当新窗口烧一次蒸馏——默认挡掉；判定读事件（[backfill](../dsh-mneme/) 同源的 `isImportedSession`），窗口保留、游标不消费、留 `skipped/imported-session` 审计。要进库走显式回填 `POST /api/dsh-mneme/maintenance/backfill`（回填自带 `bypassImported` 旁路） |
+| `distillExcludeProjects` | `[]` | 按项目目录排除自动蒸馏：会话 `cwd` 前缀命中（含同一目录与子路径）即不进库 | 覆盖该目录之后新建的会话，不用逐条加 id；留 `skipped/excluded-project` 审计。与 `sessionGateEnabled`（逐会话无痕，连注入都不给）分层：这里只管「蒸馏进不进库」 |
 | `summarizeDedupeMode` | `off` | 落库前去重档位：`off` / `title`（拦完全同名）/ `vector`（同会话语义近邻） | `vector` 复用已有 embedding 列，无 LLM 调用 |
 | `summarizeDedupeMinSim` | `0.92` | `vector` 档并入阈值（0.5–0.99） | 仅 `vector` 档生效 |
 | `summarizeDedupeWindowHours` | `24` | `vector` 档回看窗口（小时，≤168） | 仅 `vector` 档生效 |

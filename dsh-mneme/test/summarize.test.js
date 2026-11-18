@@ -2411,3 +2411,234 @@ test("#687 batch dedupe supersedes the weaker twin without rewriting its text", 
   summarizer.dispose();
   store.close();
 });
+
+
+// --- #688 保护层：导入会话隔离 + 项目排除（蒸馏门卫） ---------------------------
+// 背景：导入会话没有蒸馏游标，继续说话时 snapshotSessionEvents(afterSeq=undefined)
+// 会把整段历史当新窗口拿去蒸馏（尾部 distillMaxChars 24000 字）——烧一次 API。
+// 「先导进去、以后再说」这个中间态并不安全，所以默认挡掉（distillSkipImportedSessions
+// 默认 true）；要进库走回填（backfill.js 显式点名 + bypassImported 旁路）。
+// 项目排除（distillExcludeProjects）按 session.header.cwd 前缀整线挡在外面。
+
+// 导入会话的典型事件形状：assistant 消息带 source.provider 戳（lib/index.js:181-185）。
+function importedUserMessage(text, seq) {
+  return { seq, type: "user/message", data: { source: { kind: "user" }, content: [{ type: "text", text }] } };
+}
+function importedAssistantMessage(text, seq) {
+  return {
+    seq,
+    type: "assistant/message",
+    data: { message: { source: { kind: "assistant", provider: "deepseek-chat-export" }, content: [{ type: "text", text }] } }
+  };
+}
+
+test("#688 默认挡：导入会话不蒸馏，skip 审计写明原因，游标不动", async () => {
+  const { events, calls, service, store } = setup();
+  const handler = eventHandler(events);
+  const session = {
+    id: "s-import",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    events: [
+      importedUserMessage("导入来的第一问", 1),
+      importedAssistantMessage("导入来的回复", 2),
+      { seq: 3, type: "turn/end" }
+    ]
+  };
+  await handler(session, { seq: 3, type: "turn/end" });
+  assert.equal(calls.length, 0, "导入会话不得发起任何 LLM 调用");
+  assert.equal(store.count(), 0, "不得写入记忆");
+  const rows = service.listLlmAudits();
+  assert.equal(rows[0].status, "skipped");
+  assert.equal(rows[0].error_message, "imported-session", "skip 原因必须可观测");
+});
+
+test("#688 关掉放行：distillSkipImportedSessions=false 恢复老行为", async () => {
+  const { events, calls, store } = setup({ distillSkipImportedSessions: false });
+  const handler = eventHandler(events);
+  const session = {
+    id: "s-import-off",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    events: [
+      importedUserMessage("导入来的第一问", 1),
+      importedAssistantMessage("导入来的回复", 2),
+      { seq: 3, type: "turn/end" }
+    ]
+  };
+  await handler(session, { seq: 3, type: "turn/end" });
+  assert.equal(calls.length, 1, "关掉保护层后照常蒸馏");
+  assert.ok(store.count() > 0, "照常写入记忆");
+});
+
+test("#688 旁路：bypassImported=true 只给回填走，正常会话不受影响", async () => {
+  const { events, calls, store, summarizer } = setup();
+  // 直接打 summarizeNow（回填的调用形状，backfill.js:244-247 透传 bypassImported）。
+  const session = {
+    id: "s-import-bypass",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    events: [
+      importedUserMessage("导入来的第一问", 1),
+      importedAssistantMessage("导入来的回复", 2),
+      { seq: 3, type: "turn/end" }
+    ]
+  };
+  await summarizer.summarizeNow(session, { seq: 3, type: "turn/end" }, { bypassImported: true });
+  assert.equal(calls.length, 1, "显式旁路必须放行");
+  assert.ok(store.count() > 0, "回填路径照常写入");
+  summarizer.dispose();
+});
+
+test("#688 正常会话不受导入门影响：无 provider 戳照常蒸馏", async () => {
+  const { events, calls, store } = setup();
+  const handler = eventHandler(events);
+  const session = {
+    id: "s-normal",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    events: [userMessage("正常会话的提问", 1), { seq: 2, type: "turn/end" }]
+  };
+  await handler(session, { seq: 2, type: "turn/end" });
+  assert.equal(calls.length, 1, "正常会话一次调用照旧");
+  assert.ok(store.count() > 0);
+});
+
+test("#688 项目排除：cwd 前缀命中不蒸馏，审计写 excluded-project", async () => {
+  const { events, calls, service, store } = setup({ distillExcludeProjects: ["C:/work/private"] });
+  const handler = eventHandler(events);
+  const session = {
+    id: "s-excluded",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    header: { cwd: "C:\\work\\private\\sub\\app" },
+    events: [userMessage("私有项目的提问", 1), { seq: 2, type: "turn/end" }]
+  };
+  await handler(session, { seq: 2, type: "turn/end" });
+  assert.equal(calls.length, 0, "排除项目不得调模型");
+  assert.equal(store.count(), 0);
+  const rows = service.listLlmAudits();
+  assert.equal(rows[0].status, "skipped");
+  assert.equal(rows[0].error_message, "excluded-project");
+});
+
+test("#688 项目排除只挡子路径：兄弟目录照常蒸馏", async () => {
+  const { events, calls, store } = setup({ distillExcludeProjects: ["C:/work/private"] });
+  const handler = eventHandler(events);
+  const session = {
+    id: "s-sibling",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    header: { cwd: "C:\\work\\private-public" },
+    events: [userMessage("兄弟目录的提问", 1), { seq: 2, type: "turn/end" }]
+  };
+  await handler(session, { seq: 2, type: "turn/end" });
+  // "private-public" 以 "private-" 开头但不是 "private/" 的子路径，必须放行。
+  assert.equal(calls.length, 1, "前缀必须按目录边界比较，不能按纯字符串");
+  assert.ok(store.count() > 0);
+});
+
+test("#688 排除名单不挡导入门：两个门卫独立生效", async () => {
+  // 名单为空时导入门仍挡；名单命中时即使关掉导入也挡——两道门互不替代。
+  const { events, calls, service } = setup({ distillExcludeProjects: ["C:/work/private"] });
+  const handler = eventHandler(events);
+  const session = {
+    id: "s-both",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    header: { cwd: "C:/work/private" },
+    events: [
+      importedUserMessage("导入且被排除", 1),
+      importedAssistantMessage("两道门都该拦", 2),
+      { seq: 3, type: "turn/end" }
+    ]
+  };
+  await handler(session, { seq: 3, type: "turn/end" });
+  assert.equal(calls.length, 0);
+  const rows = service.listLlmAudits();
+  assert.equal(rows[0].error_message, "excluded-project", "项目门在前，先记它的账");
+});
+
+test("#755 复审：被导入门挡下的会话不白烧一轮图片描述", async () => {
+  // 描述档开着、路由也配了，模型声称能看图——只要窗口里真有图，就会逐图调一次
+  // 视觉模型。导入门在 collectMessages 之后才判，这条测试钉住「挡下 = 一个视觉
+  // 调用都不发」（CodeRabbit #755 第 7 条）。
+  const describeCalls = [];
+  const { events, calls } = setup(
+    {
+      imageDescribeEnabled: true,
+      imageDescribeProvider: "vp",
+      imageDescribeModel: "vm"
+    },
+    {
+      stream(options) {
+        // 描述调用与蒸馏调用走同一个 ctx.llm.stream，靠 purpose 分开记账。
+        if (options?.purpose === "image-description") {
+          describeCalls.push(options);
+          return (async function* () {
+            yield { type: "text-delta", delta: "一张截图" };
+            yield { type: "finish", kind: "ok" };
+          })();
+        }
+        calls.push(options);
+        return (async function* () {
+          yield { type: "finish", kind: "ok" };
+        })();
+      }
+    }
+  );
+  const handler = eventHandler(events);
+  const withImage = importedUserMessage("导入来的带图提问", 1);
+  withImage.data.content.push({
+    type: "image",
+    attachment: { attachmentId: "att-1", mediaType: "image/png", name: "a.png" }
+  });
+  const session = {
+    id: "s-import-image",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    events: [withImage, importedAssistantMessage("导入来的回复", 2), { seq: 3, type: "turn/end" }]
+  };
+  await handler(session, { seq: 3, type: "turn/end" });
+  assert.equal(calls.length, 0, "导入会话本来就不蒸馏");
+  assert.equal(describeCalls.length, 0, "被挡下的会话不该先付一轮视觉调用");
+});
+
+test("#755 复审：描述档开着时，正常会话照常出图描述", async () => {
+  // 反向对照：同一条路径，非导入会话的图必须真的被描述——否则上一条测试
+  // 可能在「描述档压根没生效」的情况下也绿。
+  const describeCalls = [];
+  const { events, calls } = setup(
+    {
+      imageDescribeEnabled: true,
+      imageDescribeProvider: "vp",
+      imageDescribeModel: "vm"
+    },
+    {
+      stream(options) {
+        if (options?.purpose === "image-description") {
+          describeCalls.push(options);
+          return (async function* () {
+            yield { type: "text-delta", delta: "一张截图" };
+            yield { type: "finish", kind: "ok" };
+          })();
+        }
+        calls.push(options);
+        const json = JSON.stringify([
+          { type: "decision", title: "看图", content: "用户贴了一张截图", importance: 3 },
+          { type: "preference", title: "偏好", content: "用户喜欢中文交流", importance: 4 }
+        ]);
+        return (async function* () {
+          yield { type: "text-delta", delta: json };
+          yield { type: "finish", kind: "ok" };
+        })();
+      }
+    }
+  );
+  const handler = eventHandler(events);
+  const prompt = userMessage("看看这张图", 1);
+  prompt.data.content.push({
+    type: "image",
+    attachment: { attachmentId: "att-2", mediaType: "image/png", name: "b.png" }
+  });
+  const session = {
+    id: "s-normal-image",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    events: [prompt, { seq: 2, type: "turn/end" }]
+  };
+  await handler(session, { seq: 2, type: "turn/end" });
+  assert.equal(describeCalls.length, 1, "正常会话的图要真的描述一次");
+  assert.ok(calls.length >= 1, "然后照常蒸馏");
+});

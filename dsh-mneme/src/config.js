@@ -31,6 +31,25 @@ export const Config = z.object({
   // 蒸馏把完整对话上下文交给 LLM 提炼，不硬裁到 8000 字就截断语义；默认
   // 24000 字符（约覆盖一整轮中等对话），需要更完整可调大。
   distillMaxChars: z.natural().min(1000).max(200000).default(24000),
+  // 隔离（不入库）：默认不让**导入器写的会话**进记忆库。
+  //
+  // 为什么需要它：导入器（@deepseek-ai/dsh-deepseek-chat-import）把 APP 导出的
+  // 会话写成普通 DSH 会话，不压缩、不摘要、header 也不留标记，只在每条 assistant
+  // 消息上盖 provider 戳。蒸馏只在新 `turn/end` 唤醒，所以「导进来」本身不进库——
+  // 但用户哪天在那种会话里继续说话，那个会话没有蒸馏游标（previousSeq 为空），
+  // snapshotSessionEvents 在 afterSeq 为空时只按 throughSeq 截断，**整段历史会被
+  // 当成新窗口**（尾部 distillMaxChars）拿去蒸馏。「先导进去、以后再说」这个中间
+  // 态因此并不安全，默认挡掉正是为了它。
+  //
+  // 要进库走回填（src/backfill.js，显式点名会话，不经过这条路径）。
+  distillSkipImportedSessions: z.boolean().default(true),
+  // 按项目目录排除蒸馏：cwd 前缀命中即不进库，整条项目线（含之后新建的会话）一次
+  // 挡在外面，不用逐条会话加 id。前缀按 `/` 归一后比较，命中含等号（同一目录）与
+  // 目录下所有子路径。空数组 = 不排除任何项目（默认行为不变）。
+  //
+  // 与上面的导入排除、与 sessionGateEnabled（逐会话无痕）分层：无痕是「这条会话对
+  // 记忆系统整个不可见」（注入也不给），这里只管「蒸馏进不进库」。
+  distillExcludeProjects: z.array(z.string()).default([]),
   // 图像描述档（docs/DISTILL.md:346）：蒸馏前先用一个**多模态模型**给窗口里的
   // 每张图写一段描述，并把描述并进转录——图本身仍然只是 `[图: …]` 占位，原图
   // 不落库、不读字节（#611 的口径不变，这里只补「图里是什么」这段文字）。

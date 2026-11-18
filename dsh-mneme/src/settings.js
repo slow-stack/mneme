@@ -123,6 +123,17 @@ function serializePersonaStore(store) {
 // 3. 写入是逐键校验的合并写：未知键/类型/范围不符抛 TypeError（消息含键名，
 //    供 API 透传给前端定位），校验不通过不落库，坏值永远进不了 kv。
 const FEATURE_FLAG_BOOLEANS = [
+  // #688 保护层：导入会话的蒸馏门卫。面板可关、默认挡——导入会话无游标，
+  // 继续说话会把整段历史当新窗口烧一次蒸馏；要进库走 backfill 显式路径
+  // （POST /maintenance/backfill，bypassImported 旁路）。
+  //
+  // 同一层的 `distillExcludeProjects`（项目排除名单）**刻意不在这张表**：
+  // 它是字符串数组，而本表只收 boolean（validateFlag 见到非布尔直接抛）。
+  // 硬塞进来会被读成「开关」——写 ["/x"] 抛 TypeError、写 false 却存得下，
+  // 重启后名单变成一个假的关闭状态。它走「仅配置文件」那条路（config.js
+  // 声明、面板改不到），与 codingKeywords / sessionGateSessions 同口径。
+  "distillSkipImportedSessions",
+
   "autoInject",
   "autoSummarize",
   "hotMemoryEnabled",

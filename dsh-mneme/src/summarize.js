@@ -9,6 +9,8 @@ import { injectChildEnabled } from "./config.js";
 import { withEffortFallback, describeStreamFailure, EFFORT_REJECT_RE } from "./dream.js";
 // v0.9.0（M.O. 项目记忆）：蒸馏写入复用工具路径那把作用域解析器，见 createSummarizer。
 import { createScopeResolver, isHardWallWorkspace, resolveScopeStamp } from "./scope.js";
+import { isImportedSession } from "./imported-session.js";
+import { isExcludedProject } from "./distill-guard.js";
 // #493 补充 §③：断链与巩固侧同一份实现（src/fence.js）。转录里出现闭合标记时
 // 原先能提前闭合围栏——那是把用户消息升格成指令最短的一条路。
 import { breakFenceMarkers } from "./fence.js";
@@ -560,8 +562,13 @@ function describeAuditPatch(stats) {
   return out;
 }
 
-async function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, throughSeq, describePart) {
+async function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, throughSeq, describePart, mutesDescribe = false) {
   const events = snapshotSessionEvents(session, afterSeq, throughSeq);
+  // #755 复审（CodeRabbit 第 7 条）：图像描述是逐 part 真的调一次模型。被导入门挡下
+  // 的会话在门卫之前就要走完整个 collectMessages，于是「挡掉蒸馏」反而先付了一轮
+  // 视觉调用。判定就地复用刚读好的 events（不再 snapshot 第二次），命中就让
+  // describePart 这一段不跑，转录退回纯文本——与「describePart 缺席」逐字节一致。
+  const describeMuted = mutesDescribe === true && isImportedSession(events);
   const lines = [];
   const seenSubagentMessages = new Set();
   // Issue #611：这一窗里被折成占位的图片张数。占位本身不丢信息，但「折了几张」
@@ -624,7 +631,7 @@ async function collectMessages(session, maxChars = 8000, language = "zh", afterS
       // 图像描述档（docs/DISTILL.md:346）：开关开着且这一 part 真的带图时，才
       // 去出描述。describePart 由调用方注入（默认 undefined）——本函数不认识
       // 任何路由配置，只负责「文本最后长什么样」，这样单测可以只塞一个桩进去。
-      const described = typeof describePart === "function" && part.blocks?.length
+      const described = !describeMuted && typeof describePart === "function" && part.blocks?.length
         ? await describePart(part)
         : part.text;
       if (part.role === "user") {
@@ -692,6 +699,9 @@ async function collectMessages(session, maxChars = 8000, language = "zh", afterS
       : [],
     hasEvents: events.length > 0,
     lastSeq,
+    // #688 保护层复用：门卫要判「这是不是导入会话」，直接拿这份已读好的窗口，
+    // 不再单独 snapshot 一遍（每轮 turn/end 多一次全量读）。
+    events,
     // Issue #611：这一窗折成占位的图片张数。调用方把它写进审计 metadata，
     // 让「图进来了几张」成为可对账的事实而不是推断。
     imageCount,
@@ -797,7 +807,6 @@ function enqueueDistill(task, intervalMs = 0) {
 import { parsePeakSpec, isInPeakWindow, nextOffPeakAt } from "./peak-hours.js";
 export { parsePeakSpec, isInPeakWindow, nextOffPeakAt };
 export function createSummarizer(ctx, service, config, deps = {}, sessionGate = null) {
-  if (!config.autoSummarize) return { dispose: () => {} };
 
   // Issue #239（第 4 项）：时钟与定时器可注入——排程不绑死真实时钟，测试才能确定性
   // 覆盖「高峰顺延 → 非高峰补跑」。房型同 dream/sleep.js 的注入参数。
@@ -949,6 +958,27 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         ? { provider: header.provider, model: header.model }
         : undefined;
 
+    // 2026-11-18（#688 续，保护层）：两道确定性门卫，放在间隔门之前——被挡的会话
+    // 连「刚刚跑过」的间隔点都不该占，也不该进入后面任何一条链。
+    //
+    // ① 项目排除（distillExcludeProjects，默认 []）：cwd 只读 session.header
+    // （创建时冻结的那份）。前缀命中即整条项目线挡在库外。
+    //
+    // ② 导入会话隔离（distillSkipImportedSessions，默认 true）。为什么判事件不判
+    // header：导入器不留 header 标记，唯一信号在消息 source 上（src/imported-
+    // session.js）。判定成本是一次快照读取，比一次 LLM 调用便宜三个数量级。
+    // opts.bypassImported 由回填（backfill.js）显式传：喂给 summarizeNow 的恰恰
+    // 是导入会话，保护层不能挡自己的合法调用方（与 bypassPeak 同形）。
+    if (Array.isArray(config.distillExcludeProjects) && config.distillExcludeProjects.length > 0
+      && isExcludedProject(session.header?.cwd, config.distillExcludeProjects)) {
+      writeAudit({
+        timestamp: new Date(now()).toISOString(),
+        model_id: route ? route.provider + ":" + route.model : "unknown",
+        status: "skipped",
+        error_message: "excluded-project"
+      });
+      return;
+    }
     // Issue #127 间隔门：同一会话两次蒸馏之间的最小间隔（0 = 现状，不限）。进入
     // 即打点——失败/degraded 的 run 也占用间隔，与 dreamMinIntervalMinutes 语义
     // 一致，防止失败连发。被挡下的 turn/end 静默跳过，但留一行 status='skipped'
@@ -1077,11 +1107,32 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         langOf(config),
         previousSeq,
         triggerSeq,
-        describePart
+        describePart,
+        // 与下面那道导入门同一个条件：门会挡下的会话，这里就不该先花一轮描述。
+        config.distillSkipImportedSessions !== false && opts.bypassImported !== true
       );
       const hasNewEvents = collected.hasEvents
         || (triggerSeq !== undefined && (previousSeq === undefined || triggerSeq > previousSeq));
       if (!hasNewEvents) return;
+
+      // #688 保护层②：导入会话隔离（distillSkipImportedSessions，默认 true）。
+      // 放在窗口读之后而不是门卫区：判定直接复用 collectMessages 刚读好的那份
+      // 事件（collected.events），不给每轮 turn/end 增加第二次全量快照。判定读
+      // 事件不判 header——导入器不留 header 标记，唯一信号在消息 source 上
+      // （src/imported-session.js）。游标刻意不消费：与 peak/max-runs 同口径，
+      // 「这个会话先不再蒸馏了」，窗口留在原地；要进库走回填（backfill.js 显式
+      // 点名会话并透传 opts.bypassImported，与 bypassPeak 同形）。
+      if (config.distillSkipImportedSessions !== false
+        && opts.bypassImported !== true
+        && isImportedSession(collected.events)) {
+        writeAudit({
+          timestamp: new Date(now()).toISOString(),
+          model_id: route ? route.provider + ":" + route.model : "unknown",
+          status: "skipped",
+          error_message: "imported-session"
+        });
+        return;
+      }
 
       const nextSeq = Math.max(collected.lastSeq ?? Number.NEGATIVE_INFINITY, triggerSeq ?? Number.NEGATIVE_INFINITY);
       if (!collected.messages.length) {
@@ -1354,7 +1405,10 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       const parsed = parsedResult.entries;
       // Issue #127 条数上限：0 = 不限（现状）。被截断的条数与去重命中数一并进
       // 审计 metadata——此前产出条数完全由模型输出决定，用户无从自查。
-      const cap = config.summarizeMaxEntriesPerRun ?? 0;
+      // `opts.maxEntries` 是给「导入会话批量回填」用的单窗覆盖（src/backfill.js）：
+      // 回填要的是「一个会话最多留几笔」，不该改全局配置、更不该造第二套抽取语义，
+      // 所以复用同一条上限闸门、只换这一次的数值。不传时逐字等于旧行为。
+      const cap = opts.maxEntries ?? config.summarizeMaxEntriesPerRun ?? 0;
       const entries = cap > 0 ? parsed.slice(0, cap) : parsed;
       const capped = parsed.length - entries.length;
       const dedupeMode = config.summarizeDedupeMode ?? "off";
@@ -1679,7 +1733,11 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
     }
   }
 
-  const unsubscribe = ctx.on("session/event", (session, event) => {
+  // CodeRabbit（#755）：autoSummarize 关掉时只关掉**自动**订阅，不再整个函数早退。
+  // 早退会让 summarizeNow 一起消失，而回填（backfill.js）正是靠它手动跑——
+  // 「关掉自动蒸馏」不该等于「导入会话永远补不上记忆」。
+  const autoEnabled = config.autoSummarize !== false;
+  const unsubscribe = !autoEnabled ? null : ctx.on("session/event", (session, event) => {
     if (disposed || event.type !== "turn/end") return;
     // Return the summarization promise so awaiters observe the writes; the
     // catch keeps listener dispatch from rejecting. Dispose-initiated aborts
@@ -1691,6 +1749,18 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
   });
 
   return {
+    /**
+     * 手动跑一次蒸馏——导入会话批量回填的唯一入口（src/backfill.js 调它）。
+     *
+     * 方法体刻意只有一行：**这里不复制任何蒸馏逻辑**，就是把一个「有 id 和 events
+     * 的会话样对象」喂进同一条 summarize。session 只需要 `id` 与带 `seq` 的 `events`
+     * （`snapshotSessionEvents` 对没有 `snapshotEvents` 的对象直接读 `.events`），
+     * `triggerEvent` 也只被用来取 `seq` 当窗口右界；`opts` 透传（`bypassPeak`、
+     * `maxEntries`）。
+     */
+    summarizeNow(session, triggerEvent, opts = {}) {
+      return summarize(session, triggerEvent, opts);
+    },
     dispose() {
       if (disposed) return;
       disposed = true;

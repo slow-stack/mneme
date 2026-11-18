@@ -255,7 +255,7 @@ function parseBody(text) {
 // 不传时日记路由一律 503 diary-unavailable（装配缺件），而不是伪装成「用户没开」。
 // 与 choro 同一套 503/409 分叉：#497 定下「503 = 环境缺件，409 = 用户没开」。
 // 顺序是刻意的：kb 先占第 13 位（它先合进 main），diary 追加在其后，谁先合谁靠前。
-export function createApi(ctx, service, settings, commands, embedder, semantic = null, apiToken = "", config = null, maintenance = null, profileExtract = null, choro = null, facts = null, kb = null, diary = null) {
+export function createApi(ctx, service, settings, commands, embedder, semantic = null, apiToken = "", config = null, maintenance = null, profileExtract = null, choro = null, facts = null, kb = null, diary = null, backfill = null) {
   const disposers = [];
 
   // #182 注入状态探测：面板状态页的「极简模式下注入按宿主设计关闭」提示需要
@@ -1480,6 +1480,66 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             warn: (msg) => ctx.logger?.warn?.(msg)
           });
           sendJson(res, status, body);
+        });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  // --- maintenance/backfill（导入会话批量回填，第一期只有手动入口）----------
+  // 为什么是手动入口：一次几百条会话、每条一次 LLM 调用，绝不能在插件加载或面板
+  // 挂载时自己跑起来。为什么 **默认 dryRun=true**：dry-run 一个 token 都不花，只回
+  // 「扫到多少条导入会话、多少条超窗、要跑几次调用」——先看数字是这类批量任务唯一
+  // 安全的开场（与 #275 的回收同一口径：手动 + dry-run + receipt）。
+  //
+  // 真跑也走同一条路由（body `{"dryRun": false}`）：写入口径（每窗最多 5 条、同一套
+  // 去重、同一个游标）与 dry-run 的筛选是同一份代码，不会出现「预估 50 实跑 500」。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/maintenance/backfill",
+    // `token` 而不是 `token-write`：这条路径没有读分支（非 POST 直接 404），
+    // 而 `token-write` 会让 GET/HEAD 免 token——那在这里只是给文档制造一句
+    // 「唯一开放的是 405/404」的废话。与 `/profile-facts/run` 同一类：一次
+    // 花模型额度的维护轮，无读可开放。
+    policy: "token",
+    handler(req, res) {
+      try {
+        if (req.method !== "POST") {
+          sendJson(res, 404, { error: "not-found" });
+          return;
+        }
+        return readBody(req, res).then(async (text) => {
+          if (text === null) return;
+          const body = parseBody(text);
+          if (!backfill || typeof backfill.run !== "function") {
+            sendJson(res, 503, { error: "backfill-unavailable" });
+            return;
+          }
+          // 先 floor 再判：0.5 这类小数 floor 成 0，而 0 在 planBackfill 里是
+          // 「不限制」（slice(0, 0) 的语义相反），一次手滑就能把 dry-run 变成全量跑。
+          // 下界因此钉在 1，宁可多跑一条也不放行 0。
+          const positive = (value, fallback) => {
+            if (!Number.isFinite(value)) return fallback;
+            const floored = Math.floor(value);
+            return floored >= 1 ? floored : fallback;
+          };
+          try {
+            const result = await backfill.run({
+              dryRun: body.dryRun !== false,
+              limit: positive(body.limit, 50),
+              days: positive(body.days, 90),
+              rounds: positive(body.rounds, 20),
+              maxEntries: positive(body.maxEntries, 5)
+            });
+            // 「一条都没跑」不该是 200：no-distill-route / summarizer-unavailable
+            // 都是「服务端现在干不了这活」，调用方按 200 记成功会以为回填过。
+            const refused = result?.error === "no-distill-route" || result?.error === "summarizer-unavailable";
+            sendJson(res, refused ? 503 : 200, result);
+          } catch (error) {
+            ctx.logger?.warn?.(`dsh-mneme: backfill failed: ${String(error)}`);
+            sendJson(res, 500, { error: "internal" });
+          }
         });
       } catch {
         sendJson(res, 500, { error: "internal" });

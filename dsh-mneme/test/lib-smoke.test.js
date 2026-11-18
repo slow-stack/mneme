@@ -94,6 +94,11 @@ test("lib summarize constructs with autoSummarize disabled", async () => {
   const { createSummarizer } = await import("../lib/summarize.js");
   const summarizer = createSummarizer({}, {}, { autoSummarize: false });
   assert.equal(typeof summarizer.dispose, "function");
+  // #755 复审：关掉自动蒸馏只该关掉**自动**订阅，summarizeNow 必须还在——
+  // 回填（backfill）靠它手动跑，否则「关掉自动蒸馏」等于「导入会话永远补不上
+  // 记忆」（CodeRabbit #755 第 2 条）。
+  assert.equal(typeof summarizer.summarizeNow, "function");
+  assert.equal(summarizer.summarizeNow.length >= 1, true);
   summarizer.dispose();
 });
 
