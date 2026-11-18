@@ -514,6 +514,10 @@ export const apply = (ctx, config) => {
   // closure sees the assigned scheduler; the null guard keeps a run safe even
   // if the hook fires before assignment or after dispose.
   let dream = null;
+  // 巩固轮之后的「画像事实维护 → 摘要重蒸馏」这条链。它刻意不并进 onRun 的
+  // promise（失败不能计入 dream 的退避），但卸载时必须等它走完再 store.close()：
+  // 否则 composeFor 可能在数据库关闭后写库，摘要停在旧内容直到下一轮（评审）。
+  let profileChain = Promise.resolve();
   if (cfg.autoDream) {
     dream = createDreamScheduler({
       thresholdCount: cfg.dreamThresholdCount,
@@ -592,22 +596,27 @@ export const apply = (ctx, config) => {
         // promise——profileFacts 的失败不能被计入 dream 的失败退避
         // （autoDreamFailureBackoff 的口径是巩固轮自身）；逐卡经 service.enqueue
         // 串行，不与 sleep/下一轮巩固抢模型。单卡失败只 warn，账本已有 failed 回执。
-        run.then(async (rep) => {
-          if (cfg.profileFactsEnabled !== true || (rep && rep.ok === false)) return;
-          for (const key of profileFacts.autoPassCandidates()) {
-            try {
-              const receipt = await service.enqueue(() => profileFacts.runFor(key, { trigger: "auto" }));
-              // 摘要跟着事实变更走：维护轮真的落了 op 才重蒸馏（noop 说明事实没变，
-              // 旧摘要仍然有效——白蒸一次只是烧 token，不产生任何信息）。
-              // 失败只 warn：摘要缺失有过期提示兜底，不能计入 dream 的失败退避。
-              if (cfg.profileDigestEnabled === true && receipt && receipt.status === "ok" && receipt.opsApplied > 0) {
-                await service.enqueue(() => profileDigest.composeFor(key, { trigger: "auto" }));
+        // 串在上一轮之后：两轮链不会交叉写同一批卡，卸载时也只需等最后一条。
+        profileChain = profileChain
+          .catch(() => { /* 上一轮的失败不影响这一轮 */ })
+          .then(() => run)
+          .then(async (rep) => {
+            if (cfg.profileFactsEnabled !== true || (rep && rep.ok === false)) return;
+            for (const key of profileFacts.autoPassCandidates()) {
+              try {
+                const receipt = await service.enqueue(() => profileFacts.runFor(key, { trigger: "auto" }));
+                // 摘要跟着事实变更走：维护轮真的落了 op 才重蒸馏（noop 说明事实没变，
+                // 旧摘要仍然有效——白蒸一次只是烧 token，不产生任何信息）。
+                // 失败只 warn：摘要缺失有过期提示兜底，不能计入 dream 的失败退避。
+                if (cfg.profileDigestEnabled === true && receipt && receipt.status === "ok" && receipt.opsApplied > 0) {
+                  await service.enqueue(() => profileDigest.composeFor(key, { trigger: "auto" }));
+                }
+              } catch (error) {
+                ctx.logger?.warn?.(`[dsh-mneme] profile-facts auto pass failed for card "${key || "default"}": ${error?.message ?? error}`);
               }
-            } catch (error) {
-              ctx.logger?.warn?.(`[dsh-mneme] profile-facts auto pass failed for card "${key || "default"}": ${error?.message ?? error}`);
             }
-          }
-        }).catch(() => { /* dream 自身失败走调度器退避，这里不做第二遍日志 */ });
+          })
+          .catch(() => { /* dream 自身失败走调度器退避，这里不做第二遍日志 */ });
         return run;
       }
     });
@@ -936,6 +945,9 @@ export const apply = (ctx, config) => {
     commands?.dispose();
     recorder?.dispose();
     if (dream) await dream.dispose();
+    // 巩固轮结束后才入队的画像/摘要链还没走完：等它，否则 store.close() 之后
+    // composeFor 落库失败，摘要停在旧修订号上——面板会说它是新的。
+    await profileChain.catch(() => { /* 单卡失败已逐条 warn，卸载不再重复 */ });
     if (sleep) sleep.dispose();
     store.close();
   };

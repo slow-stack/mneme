@@ -50,7 +50,7 @@ function isValidSection(s) {
 /**
  * 摘要输出解析：与 parseFactOps 同款抗噪（剥 markdown 围栏、找 JSON 首尾），
  * 形状硬校验 {sections: [{heading, text}]}，逐节截到上限、整体截到 MAX_SECTIONS。
- * 一个合格节都没有就返回 null（= unparseable，调 failed，不冒充成功）。
+ * 任一节不合格就整份返回 null（= unparseable，调 failed，不冒充成功）。
  */
 export function parseDigest(text) {
   if (typeof text !== "string" || !text.trim()) return null;
@@ -71,13 +71,15 @@ export function parseDigest(text) {
     }
     const raw = value && typeof value === "object" && Array.isArray(value.sections) ? value.sections : null;
     if (!raw) continue;
-    const sections = raw
-      .filter(isValidSection)
-      .map((s) => ({
-        heading: s.heading.trim().slice(0, MAX_HEADING_CHARS),
-        text: s.text.trim().slice(0, MAX_SECTION_CHARS)
-      }))
-      .filter((s) => s.heading && s.text);
+    // 全或无：任一节不合格就整份拒收（评审）。原来逐节 filter 会把坏节摘掉、
+    // 拿剩下的当成功——「模型少写一个字段」于是变成「摘要悄悄少了一节」，而且
+    // 落库后修订号是新的，面板还会说它是最新的。宁可这一轮判 unparseable、
+    // 保留旧摘要等下一次重蒸馏。
+    if (!raw.length || !raw.every(isValidSection)) continue;
+    const sections = raw.map((s) => ({
+      heading: s.heading.trim().slice(0, MAX_HEADING_CHARS),
+      text: s.text.trim().slice(0, MAX_SECTION_CHARS)
+    }));
     if (sections.length) return sections.slice(0, MAX_SECTIONS);
   }
   return null;

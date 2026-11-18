@@ -987,6 +987,13 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
       return readBody(req, res).then((text) => {
         if (text === null) return undefined;
         const body = parseBody(text);
+        // parseBody 对 JSON `null` 是原样返回 null（不是 {}）：不做形状校验就在
+        // 下一行读 body.agent 会抛 TypeError，而且抛在 queued.then 建立之前，
+        // 下面的错误映射接不住（评审指出的缺口）——请求挂在那里等宿主超时。
+        // 与 /profile-facts/apply 同款守卫；合法的 {} 仍然走默认卡。
+        if (body === null || typeof body !== "object" || Array.isArray(body)) {
+          return sendJson(res, 400, { error: "invalid-body" });
+        }
         const agent = typeof body.agent === "string" ? body.agent.trim() : "";
         const queued = service?.enqueue
           ? service.enqueue(() => profileDigest.composeFor(agent, { trigger: "manual" }))

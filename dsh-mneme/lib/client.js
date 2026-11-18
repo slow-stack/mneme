@@ -13251,6 +13251,13 @@ window.__ModuleLoader__.load({
       const [factsJournal, setFactsJournal] = react.useState([]);
       const [factsRuns, setFactsRuns] = react.useState([]);
       const [factsAgent, setFactsAgent] = react.useState(""); // "" = default 卡
+      // 迟到响应的卡片归属守卫：loadDigest / loadFacts 是 useCallback([])，闭包里
+      // 没有最新的 factsAgent，只有序号守卫（digestSeq）——序号只挡同一张卡内的
+      // 乱序，挡不住切卡后旧卡的迟到响应：A 卡生成期间切到 B，A 的 loadDigest 回来
+      // 时序号是新的，会把 B 的摘要盖成 A 的（评审实测的路径）。响应回来时比对
+      // 「这趟请求属于的卡还是不是当前卡」，不是就整个丢弃。
+      const factsAgentRef = react.useRef("");
+      react.useEffect(() => { factsAgentRef.current = factsAgent; }, [factsAgent]);
       const [factsEditId, setFactsEditId] = react.useState(null);
       const [factsEditDraft, setFactsEditDraft] = react.useState("");
       const [factsNew, setFactsNew] = react.useState("");
@@ -13284,14 +13291,14 @@ window.__ModuleLoader__.load({
         try {
           const res = await apiFetch(`/api/dsh-mneme/profile-digest?agent=${encodeURIComponent(agentKey)}`);
           const body = await res.json().catch(() => null);
-          if (seq !== digestSeq.current) return;
+          if (seq !== digestSeq.current || factsAgentRef.current !== agentKey) return;
           // 后端过旧没有 /profile-digest 路由 → 404/503：按「读不到」处理——
           // 不冒充「没有摘要」，也不让读失败堵死这张卡。
           setFactsDigest(res.ok && body && (body.digest === null || body.digest && typeof body.digest === "object")
             ? { digest: body.digest, stale: body.stale === true }
             : { error: true });
         } catch {
-          if (seq === digestSeq.current) setFactsDigest({ error: true });
+          if (seq === digestSeq.current && factsAgentRef.current === agentKey) setFactsDigest({ error: true });
         }
       }, []);
       const loadFacts = react.useCallback(async (agentKey) => {
@@ -13299,7 +13306,7 @@ window.__ModuleLoader__.load({
         try {
           const res = await apiFetch(`/api/dsh-mneme/profile-facts?agent=${encodeURIComponent(agentKey)}`);
           const body = await res.json().catch(() => null);
-          if (seq !== factsSeq.current) return;
+          if (seq !== factsSeq.current || factsAgentRef.current !== agentKey) return;
           if (res.ok && body && Array.isArray(body.facts)) {
             setFactsCards(Array.isArray(body.cards) ? body.cards.filter((k) => typeof k === "string") : []);
             setFactsRows(body.facts);
@@ -13313,7 +13320,7 @@ window.__ModuleLoader__.load({
             setFactsRuns([]);
           }
         } catch {
-          if (seq === factsSeq.current) {
+          if (seq === factsSeq.current && factsAgentRef.current === agentKey) {
             setFactsRows(null);
             setFactsJournal([]);
             setFactsRuns([]);
@@ -13335,6 +13342,15 @@ window.__ModuleLoader__.load({
         loadFacts(factsAgent);
         loadDigest(factsAgent);
       }, [factsAgent, loadFacts, loadDigest]);
+      // 页头「重试」也要把摘要读回来（评审）：首次 GET 失败时 factsDigest 停在
+      // error，而「重试」原来只推 tick / previewTick，重试的是画像、功能开关和
+      // 日记，摘要这条不会重跑——默认卡且生成闸关着时，页面上没有任何地方能把
+      // 摘要读回来。摘要已经是这张卡的第一阅读面，读不回来等于这页坏了。
+      // 只依赖 tick：切卡的读取由上面那个 effect 负责，这里不重复触发。
+      react.useEffect(() => {
+        if (!tick) return;
+        loadDigest(factsAgentRef.current);
+      }, [tick]);
       // 总闸快照：features 由功能开关卡管写，这里只读不写、失败不猜。功能开关卡
       // 即改即存并广播 mneme:features-changed——不监听的话，按提示开了「自动事实」
       // 还得关面板重开才解禁（正是广播工作项要消灭的那类体验）。
@@ -13431,6 +13447,7 @@ window.__ModuleLoader__.load({
       // 可重试、disabled 是闸没开，三种话不能混。跑完重取 GET 并刷新预览。
       async function runFacts() {
         if (factsRunning || factsBusy) return;
+        const key = factsAgent;
         setFactsRunning(true);
         setFactsRunEnd(null);
         try {
@@ -13440,6 +13457,7 @@ window.__ModuleLoader__.load({
             body: JSON.stringify({ agent: factsAgent })
           });
           const body = await res.json().catch(() => null);
+          if (factsAgentRef.current !== key) return;
           if (res.ok && body && typeof body.status === "string") {
             const n = Number(body.opsApplied) || 0;
             setFactsRunEnd(body.status === "noop" ? { kind: "noop" } : { kind: "ok", n });
@@ -13465,6 +13483,7 @@ window.__ModuleLoader__.load({
       // 成功与否都重取摘要与过期标记，让「由 n 条事实提炼」跟着后端走。
       async function generateDigest() {
         if (digestBusy) return;
+        const key = factsAgent;
         setDigestBusy(true);
         setDigestEnd(null);
         try {
@@ -13474,6 +13493,7 @@ window.__ModuleLoader__.load({
             body: JSON.stringify({ agent: factsAgent })
           });
           const body = await res.json().catch(() => null);
+          if (factsAgentRef.current !== key) return;
           if (res.ok && body && typeof body.status === "string") {
             setDigestEnd({ kind: body.status === "noop" ? "noop" : "ok" });
             announce(t(body.status === "noop" ? "memory.settings.digestRunNoop" : "memory.settings.digestRunOk"));

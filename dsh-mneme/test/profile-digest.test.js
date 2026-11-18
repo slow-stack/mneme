@@ -9,6 +9,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { createStore } from "../src/store.js";
 import { createService } from "../src/service.js";
 import { createSettings } from "../src/settings.js";
@@ -68,6 +69,13 @@ test("解析器：围栏 JSON 可取；缺 heading/text、空节集、非 JSON �
   assert.equal(parseDigest('{"sections":[{"heading":"x"}]}'), null, "缺 text 不合格");
   assert.equal(parseDigest('{"sections":[{"text":"y"}]}'), null, "缺 heading 不合格");
   assert.equal(parseDigest('{"sections":[{"heading":"a","text":"b","extra":1}]}'), null, "多余键拒收（形状漂移当场红）");
+  // 全或无（评审）：一好一坏必须整份拒收。逐节 filter 会把坏节悄悄摘掉、剩下的当
+  // 成功落库，摘要少一节而修订号是新的——面板还会说它是最新的。
+  assert.equal(
+    parseDigest('{"sections":[{"heading":"好","text":"完整"},{"heading":"坏"}]}'),
+    null,
+    "任一小节不合格就整份拒收，不许拿剩下一半冒充成功"
+  );
   // 超限截断：第 7 节整体丢弃（宁可少一节，不静默截半句）；长 heading/text 截到上限。
   const many = Array.from({ length: 7 }, (_, i) => ({ heading: `节${i}`, text: `正文${i}` }));
   assert.equal(parseDigest(JSON.stringify({ sections: many })).length, 6, "最多 6 节");
@@ -282,6 +290,33 @@ test("GET digest：无装配 503；有装配回 digest+stale，无摘要时 dige
   store.close();
 });
 
+test("generate：JSON null 请求体回 400，不把 TypeError 抛进 .then 黑洞", async () => {
+  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }]));
+  let called = 0;
+  const stub = { ...digest, composeFor: async () => { called += 1; return { status: "ok" }; } };
+  const { getRoute } = setupApi({ facts, profileDigest: stub, config: testConfig({ profileDigestEnabled: true }) });
+  const gen = getRoute("/api/dsh-mneme/profile-digest/generate");
+  // parseBody 对 `null` 是原样返回 null（JSON.parse("null") 恒成功），读 body.agent
+  // 会抛 TypeError，而抛点在 queued.then 之前、错误映射接不住——请求既不回包也不落 500。
+  for (const raw of ["null", "[]", '"str"', "42"]) {
+    const res = new FakeRes();
+    const r = new EventEmitter();
+    r.method = "POST";
+    r.url = "/api/dsh-mneme/profile-digest/generate";
+    r.headers = {};
+    process.nextTick(() => { r.emit("data", Buffer.from(raw)); r.emit("end"); });
+    await gen.handler(r, res);
+    assert.equal(res.statusCode, 400, `${raw} 必须 400`);
+    assert.equal(JSON.parse(res.body).error, "invalid-body", `${raw} 的错误码要能认`);
+  }
+  // 合法 {} 仍走默认卡（不能把空对象也判成坏体）。
+  const ok = new FakeRes();
+  await gen.handler(httpReq("POST", {}, "/api/dsh-mneme/profile-digest/generate"), ok);
+  assert.equal(ok.statusCode, 200, "合法 {} 走默认卡，200");
+  assert.equal(called, 1);
+  store.close();
+});
+
 test("generate：405 / 409（flag 关）/ noop 200；错误码映射 no-route→503、unparseable→502", async () => {
   const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }]));
   const { getRoute } = setupApi({ facts, profileDigest: digest, config: testConfig({ profileDigestEnabled: false }) });
@@ -312,6 +347,24 @@ test("generate：405 / 409（flag 关）/ noop 200；错误码映射 no-route→
     assert.equal(JSON.parse(r.body).error, code);
   }
   store.close();
+});
+
+// 卸载时序（评审）：画像事实维护与摘要重蒸馏挂在巩固轮结束后的后续链上，当初是
+// fire-and-forget。dispose 只等 dream，store.close() 就跟着跑了——链上还没落的
+// composeFor 会在关库之后写、写失败，摘要停在旧修订号上，面板还会说它是最新的。
+// 判据两条：① 后续链要串成一条（否则卸载时只能等到最后一条，前面的仍在飞）；
+// ② 卸载必须等这条链，再关库。
+test("plugin unload waits for the profile chain before closing the store", () => {
+  const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  assert.ok(src.includes("let profileChain = Promise.resolve();"),
+    "the post-run chain needs one handle to await");
+  assert.ok(/profileChain = profileChain\s*\n?\s*\.catch\(\(\) => \{/.test(src),
+    "each round must be chained onto the previous one, not fired independently");
+  const unload = src.slice(src.indexOf("return async () => {"));
+  const waitAt = unload.indexOf("await profileChain.catch(");
+  const closeAt = unload.indexOf("store.close();");
+  assert.ok(waitAt > 0, "unload must await the profile chain");
+  assert.ok(closeAt > waitAt, "the store must close only after the chain settles");
 });
 
 test("generate 的 policy 是 token：配了 token 又不带 token 的 POST 被挡在蒸馏之前", async () => {

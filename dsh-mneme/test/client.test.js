@@ -3641,6 +3641,34 @@ test("profile digest ships a reading surface over the fact list, journal intact"
     "the digest must never enter the injection path (facts remain the injected surface)");
 });
 
+// 切卡的竞态（CodeRabbit #752）：摘要与事实的读取都是 useCallback([])，闭包里的
+// factsAgent 永远是首次挂载那一个；只靠 digestSeq/factsSeq 序号能挡同卡内乱序，
+// 挡不住切卡——A 卡在生成时切到 B，A 的响应回来序号是新的，会把 B 的摘要盖成 A 的。
+// 判据：认卡用 ref（读当前值），序号只用来挡同卡乱序，两者缺一不可。
+test("facts/digest reads are keyed by card, so a late response cannot paint another card", () => {
+  const src = clientSource;
+  assert.ok(src.includes('const factsAgentRef = react.useRef("")'),
+    "the read path needs a ref: the callbacks are useCallback([]) and would otherwise read a stale closure");
+  assert.ok(src.includes("factsAgentRef.current = factsAgent"),
+    "the ref must be kept in sync with the selected card");
+  // loadDigest / loadFacts 的成功与失败分支都要判卡：只判成功分支，失败分支照样会污染。
+  assert.ok(src.includes("if (seq !== digestSeq.current || factsAgentRef.current !== agentKey) return;"),
+    "loadDigest must drop a response that belongs to another card");
+  assert.ok(src.includes("if (seq === digestSeq.current && factsAgentRef.current === agentKey) setFactsDigest({ error: true });"),
+    "loadDigest must not paint an error onto another card either");
+  assert.ok(src.includes("if (seq !== factsSeq.current || factsAgentRef.current !== agentKey) return;"),
+    "loadFacts must drop a response that belongs to another card");
+  // 两条写路径（手动蒸馏、生成摘要）的迟到回执同样要判卡，否则「已更新 N 条」
+  // 「摘要已重蒸馏」会写到别的卡上。各取自己的 key，回来先比再写。
+  assert.equal((src.match(/const key = factsAgent;/g) || []).length >= 2, true,
+    "both write paths must capture the card they started on");
+  assert.equal((src.match(/if \(factsAgentRef\.current !== key\) return;/g) || []).length >= 2, true,
+    "both write paths must drop their receipt when the card changed");
+  // 页头「重试」要能重读摘要：首发失败后面板停在 error 态、生成闸关着时没有别的入口。
+  assert.ok(/useEffect\(\(\) => \{\s*if \(!tick\) return;\s*loadDigest\(factsAgentRef\.current\);/.test(src),
+    "the header retry must also re-read the digest");
+});
+
 // 复制的竞态（CodeRabbit #559 第二轮）：剪贴板是异步的，回调属于哪一份草稿必须能认出来。
 // 复制 A 还没落地时又提取出草稿 B，A 的回调就会在 B 上打勾或报错——B 一个字都没被复制过，
 // 而「已复制」会挂 1.5 秒，于是同一屏上可能出现「已复制」和「复制没成功」两句相反的话。
