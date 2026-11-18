@@ -293,6 +293,9 @@ test("runBackfill: 真跑把最近 20 轮与 maxEntries 传下去，并逐条记
     assert.equal(calls[0].session.events[0].data.turn, 6);
     assert.equal(calls[0].session.events.length, 80);
     assert.equal(calls[0].trigger.type, "turn/end");
+    // 项目排除门卫读的是 session.header.cwd：只带 id + events 的话，回填路径上
+    // distillExcludeProjects 永远不生效（CodeRabbit #755 第 3 条）。
+    assert.equal(calls[0].session.header?.cwd, "/workspace");
     assert.equal(calls[0].opts.bypassPeak, true);
     assert.equal(calls[0].opts.maxEntries, DEFAULT_MAX_ENTRIES);
     assert.equal(result.results[0].status, "ran");

@@ -882,7 +882,11 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // #718 注入前判定判官专用路由新增两个键：preInjectGateProvider /
   // preInjectGateModel（顶层字符串键，走 FEATURE_FLAG_STRINGS 表，成对生效）
   // = +2，故 138 + 2 = 140。
-  assert.equal(Object.keys(data.effective).length, 142);
+  // #688 续（自动蒸馏保护层）新增 distillSkipImportedSessions（顶层布尔键，走
+  // BOOLEANS 表）= +1，故 140 + 1 = 141。同批的 distillExcludeProjects 是字符串
+  // 数组，按既有口径**不进**白名单（数组键一律走 fileOnly，与 codingKeywords /
+  // sessionGateSessions 同表），所以它不在这笔账里。
+  assert.equal(Object.keys(data.effective).length, 141);
   // #718 判官路由默认值单独钉：默认空串 = 回落 agentDefaultModel（entity
   // 同款成对语义，计数锁钉不住空串缺省被翻转）。
   assert.equal(data.effective.preInjectGateProvider, "");
@@ -3166,4 +3170,69 @@ test("读 connection 抛错时按未提供处理，不让面板 500", async () =
   const res = new FakeRes();
   await findHandler(routes, "/api/dsh-mneme/info").handler(req("/api/dsh-mneme/info"), res);
   assert.equal(res.statusCode, 200, "宿主卸载中的抛错不能变成面板 500");
+});
+
+// --- #755 复审：回填路由的入参下限与「一条都没跑」的状态码 -------------------
+function backfillRouteFor(run) {
+  const store = createStore(":memory:");
+  const service = createService({ store, mirror: null, config: testConfig({}) });
+  const settings = createSettings(store.db);
+  const routes = [];
+  const ctx = { webServer: { register(route) { routes.push(route); return () => {}; } } };
+  createApi(
+    ctx, service, settings, { add() {}, remove() {}, list() { return []; } },
+    undefined, undefined, FAKE_API_TOKEN, null,
+    null, null, null, null, null, null,
+    { run }
+  );
+  return routes.find((r) => r.path === "/api/dsh-mneme/maintenance/backfill");
+}
+
+// policy=token：请求要带 Bearer，否则先撞 401、测不到入参校验。
+function authedReq(path, method = "POST", body = null) {
+  const r = req(path, method, body);
+  r.headers = { authorization: `Bearer ${FAKE_API_TOKEN}` };
+  return r;
+}
+
+test("#755 复审：小数 limit 不许被 floor 成 0 变成「不限制」", async () => {
+  const calls = [];
+  const route = backfillRouteFor((options) => {
+    calls.push(options);
+    return { dryRun: true, plan: { candidates: [] } };
+  });
+  const res = new FakeRes();
+  await route.handler(authedReq("/api/dsh-mneme/maintenance/backfill", "POST", { limit: 0.5 }), res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(calls.length, 1);
+  // planBackfill 里 limit=0 的语义是「不限制」，一次手滑（0.5）就能把 dry-run
+  // 变成全量跑。下界钉在 1：宁可取默认 50，也不放行 0。
+  assert.equal(calls[0].limit, 50, "0.5 不能 floor 成 0，回退到默认值");
+});
+
+test("#755 复审：limit 传 1 就真的用 1（下界不误伤合法输入）", async () => {
+  const calls = [];
+  const route = backfillRouteFor((options) => {
+    calls.push(options);
+    return { dryRun: true, plan: { candidates: [] } };
+  });
+  await route.handler(authedReq("/api/dsh-mneme/maintenance/backfill", "POST", { limit: 1 }), new FakeRes());
+  assert.equal(calls[0].limit, 1);
+});
+
+test("#755 复审：一条都没跑时回 503，不伪装成 200", async () => {
+  for (const error of ["no-distill-route", "summarizer-unavailable"]) {
+    const route = backfillRouteFor(() => ({ dryRun: false, plan: {}, error, ran: 0, results: [] }));
+    const res = new FakeRes();
+    await route.handler(authedReq("/api/dsh-mneme/maintenance/backfill", "POST", {}), res);
+    assert.equal(res.statusCode, 503, `${error} 必须报 503`);
+    assert.equal(JSON.parse(res.body).error, error);
+  }
+});
+
+test("#755 复审：真跑了若干条仍是 200", async () => {
+  const route = backfillRouteFor(() => ({ dryRun: false, plan: {}, ran: 2, failed: 0, results: [] }));
+  const res = new FakeRes();
+  await route.handler(authedReq("/api/dsh-mneme/maintenance/backfill", "POST", {}), res);
+  assert.equal(res.statusCode, 200);
 });

@@ -562,8 +562,13 @@ function describeAuditPatch(stats) {
   return out;
 }
 
-async function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, throughSeq, describePart) {
+async function collectMessages(session, maxChars = 8000, language = "zh", afterSeq, throughSeq, describePart, mutesDescribe = false) {
   const events = snapshotSessionEvents(session, afterSeq, throughSeq);
+  // #755 复审（CodeRabbit 第 7 条）：图像描述是逐 part 真的调一次模型。被导入门挡下
+  // 的会话在门卫之前就要走完整个 collectMessages，于是「挡掉蒸馏」反而先付了一轮
+  // 视觉调用。判定就地复用刚读好的 events（不再 snapshot 第二次），命中就让
+  // describePart 这一段不跑，转录退回纯文本——与「describePart 缺席」逐字节一致。
+  const describeMuted = mutesDescribe === true && isImportedSession(events);
   const lines = [];
   const seenSubagentMessages = new Set();
   // Issue #611：这一窗里被折成占位的图片张数。占位本身不丢信息，但「折了几张」
@@ -626,7 +631,7 @@ async function collectMessages(session, maxChars = 8000, language = "zh", afterS
       // 图像描述档（docs/DISTILL.md:346）：开关开着且这一 part 真的带图时，才
       // 去出描述。describePart 由调用方注入（默认 undefined）——本函数不认识
       // 任何路由配置，只负责「文本最后长什么样」，这样单测可以只塞一个桩进去。
-      const described = typeof describePart === "function" && part.blocks?.length
+      const described = !describeMuted && typeof describePart === "function" && part.blocks?.length
         ? await describePart(part)
         : part.text;
       if (part.role === "user") {
@@ -802,7 +807,6 @@ function enqueueDistill(task, intervalMs = 0) {
 import { parsePeakSpec, isInPeakWindow, nextOffPeakAt } from "./peak-hours.js";
 export { parsePeakSpec, isInPeakWindow, nextOffPeakAt };
 export function createSummarizer(ctx, service, config, deps = {}, sessionGate = null) {
-  if (!config.autoSummarize) return { dispose: () => {} };
 
   // Issue #239（第 4 项）：时钟与定时器可注入——排程不绑死真实时钟，测试才能确定性
   // 覆盖「高峰顺延 → 非高峰补跑」。房型同 dream/sleep.js 的注入参数。
@@ -1103,7 +1107,9 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
         langOf(config),
         previousSeq,
         triggerSeq,
-        describePart
+        describePart,
+        // 与下面那道导入门同一个条件：门会挡下的会话，这里就不该先花一轮描述。
+        config.distillSkipImportedSessions !== false && opts.bypassImported !== true
       );
       const hasNewEvents = collected.hasEvents
         || (triggerSeq !== undefined && (previousSeq === undefined || triggerSeq > previousSeq));
@@ -1727,7 +1733,11 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
     }
   }
 
-  const unsubscribe = ctx.on("session/event", (session, event) => {
+  // CodeRabbit（#755）：autoSummarize 关掉时只关掉**自动**订阅，不再整个函数早退。
+  // 早退会让 summarizeNow 一起消失，而回填（backfill.js）正是靠它手动跑——
+  // 「关掉自动蒸馏」不该等于「导入会话永远补不上记忆」。
+  const autoEnabled = config.autoSummarize !== false;
+  const unsubscribe = !autoEnabled ? null : ctx.on("session/event", (session, event) => {
     if (disposed || event.type !== "turn/end") return;
     // Return the summarization promise so awaiters observe the writes; the
     // catch keeps listener dispatch from rejecting. Dispose-initiated aborts

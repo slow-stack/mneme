@@ -2551,3 +2551,94 @@ test("#688 排除名单不挡导入门：两个门卫独立生效", async () => 
   const rows = service.listLlmAudits();
   assert.equal(rows[0].error_message, "excluded-project", "项目门在前，先记它的账");
 });
+
+test("#755 复审：被导入门挡下的会话不白烧一轮图片描述", async () => {
+  // 描述档开着、路由也配了，模型声称能看图——只要窗口里真有图，就会逐图调一次
+  // 视觉模型。导入门在 collectMessages 之后才判，这条测试钉住「挡下 = 一个视觉
+  // 调用都不发」（CodeRabbit #755 第 7 条）。
+  const describeCalls = [];
+  const { events, calls } = setup(
+    {
+      imageDescribeEnabled: true,
+      imageDescribeProvider: "vp",
+      imageDescribeModel: "vm"
+    },
+    {
+      stream(options) {
+        // 描述调用与蒸馏调用走同一个 ctx.llm.stream，靠 purpose 分开记账。
+        if (options?.purpose === "image-description") {
+          describeCalls.push(options);
+          return (async function* () {
+            yield { type: "text-delta", delta: "一张截图" };
+            yield { type: "finish", kind: "ok" };
+          })();
+        }
+        calls.push(options);
+        return (async function* () {
+          yield { type: "finish", kind: "ok" };
+        })();
+      }
+    }
+  );
+  const handler = eventHandler(events);
+  const withImage = importedUserMessage("导入来的带图提问", 1);
+  withImage.data.content.push({
+    type: "image",
+    attachment: { attachmentId: "att-1", mediaType: "image/png", name: "a.png" }
+  });
+  const session = {
+    id: "s-import-image",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    events: [withImage, importedAssistantMessage("导入来的回复", 2), { seq: 3, type: "turn/end" }]
+  };
+  await handler(session, { seq: 3, type: "turn/end" });
+  assert.equal(calls.length, 0, "导入会话本来就不蒸馏");
+  assert.equal(describeCalls.length, 0, "被挡下的会话不该先付一轮视觉调用");
+});
+
+test("#755 复审：描述档开着时，正常会话照常出图描述", async () => {
+  // 反向对照：同一条路径，非导入会话的图必须真的被描述——否则上一条测试
+  // 可能在「描述档压根没生效」的情况下也绿。
+  const describeCalls = [];
+  const { events, calls } = setup(
+    {
+      imageDescribeEnabled: true,
+      imageDescribeProvider: "vp",
+      imageDescribeModel: "vm"
+    },
+    {
+      stream(options) {
+        if (options?.purpose === "image-description") {
+          describeCalls.push(options);
+          return (async function* () {
+            yield { type: "text-delta", delta: "一张截图" };
+            yield { type: "finish", kind: "ok" };
+          })();
+        }
+        calls.push(options);
+        const json = JSON.stringify([
+          { type: "decision", title: "看图", content: "用户贴了一张截图", importance: 3 },
+          { type: "preference", title: "偏好", content: "用户喜欢中文交流", importance: 4 }
+        ]);
+        return (async function* () {
+          yield { type: "text-delta", delta: json };
+          yield { type: "finish", kind: "ok" };
+        })();
+      }
+    }
+  );
+  const handler = eventHandler(events);
+  const prompt = userMessage("看看这张图", 1);
+  prompt.data.content.push({
+    type: "image",
+    attachment: { attachmentId: "att-2", mediaType: "image/png", name: "b.png" }
+  });
+  const session = {
+    id: "s-normal-image",
+    requestHeader: () => ({ config: testConfig({ provider: "deepseek", model: "deepseek-chat" }) }),
+    events: [prompt, { seq: 2, type: "turn/end" }]
+  };
+  await handler(session, { seq: 2, type: "turn/end" });
+  assert.equal(describeCalls.length, 1, "正常会话的图要真的描述一次");
+  assert.ok(calls.length >= 1, "然后照常蒸馏");
+});

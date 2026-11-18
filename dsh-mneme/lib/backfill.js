@@ -242,7 +242,10 @@ export async function runBackfill({
     }
     try {
       await summarizer.summarizeNow(
-        { id: candidate.sessionId, events: windowed },
+        // header 必须一起给：项目排除门卫读的是 session.header.cwd（创建时冻结
+        // 的那份），只带 id + events 的话回填路径上 distillExcludeProjects 永远
+        // 不生效——那正是「导入会话不该进库」最该守的一条。
+        { id: candidate.sessionId, header: reading.header, events: windowed },
         trigger,
         // bypassImported：回填喂的正是导入会话，必须显式旁路保护层
         // （src/summarize.js 的 imported-session 门卫），否则被自己的墙挡死。

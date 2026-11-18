@@ -1516,7 +1516,14 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             sendJson(res, 503, { error: "backfill-unavailable" });
             return;
           }
-          const positive = (value, fallback) => (Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback);
+          // 先 floor 再判：0.5 这类小数 floor 成 0，而 0 在 planBackfill 里是
+          // 「不限制」（slice(0, 0) 的语义相反），一次手滑就能把 dry-run 变成全量跑。
+          // 下界因此钉在 1，宁可多跑一条也不放行 0。
+          const positive = (value, fallback) => {
+            if (!Number.isFinite(value)) return fallback;
+            const floored = Math.floor(value);
+            return floored >= 1 ? floored : fallback;
+          };
           try {
             const result = await backfill.run({
               dryRun: body.dryRun !== false,
@@ -1525,7 +1532,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
               rounds: positive(body.rounds, 20),
               maxEntries: positive(body.maxEntries, 5)
             });
-            sendJson(res, 200, result);
+            // 「一条都没跑」不该是 200：no-distill-route / summarizer-unavailable
+            // 都是「服务端现在干不了这活」，调用方按 200 记成功会以为回填过。
+            const refused = result?.error === "no-distill-route" || result?.error === "summarizer-unavailable";
+            sendJson(res, refused ? 503 : 200, result);
           } catch (error) {
             ctx.logger?.warn?.(`dsh-mneme: backfill failed: ${String(error)}`);
             sendJson(res, 500, { error: "internal" });
