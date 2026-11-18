@@ -433,6 +433,42 @@ test("#726 affective overview filters by person, emotion and attribution", async
   assert.equal(byAttr.items[0].person, "乙");
 });
 
+// #750 复审 ⑥：过滤只比归一主词时，用户照着自己写的原词过滤会得零结果——
+// 「库里那组的主词是「开心」」这件事面板上看不出来。归一库里出现过的原词一并比。
+test("#750 affective emotion filter matches a non-canonical original word", async () => {
+  const { routes, service } = setup();
+  const a = service.createEntity({ name: "桉桉", type: "person" });
+  const thing = service.createEntity({ name: "答辩", type: "concept" });
+  // 同一条边两次记录：主词归一成「开心」，原词分别「开心」与「高兴」。
+  // normalize_key 指向主词，emotion 是各自写下的原词——这正是 #723 的存法。
+  const add = (emotion, normalizeKey) => service.saveRelation({
+    from_entity: a.id, to_entity: thing.id, relation_type: "affective_context",
+    memory_id: "m-" + emotion + normalizeKey, source: "llm",
+    metadata: { emotion, normalize_key: normalizeKey, attribution: "occasion", evidence: ["x"] }
+  });
+  add("开心", "开心");
+  add("高兴", "开心");
+  const route = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective");
+  const call = async (qs) => {
+    const r = new FakeRes();
+    await route.handler(req("/api/dsh-mneme/semantic/graph/affective" + qs), r);
+    return JSON.parse(r.body);
+  };
+
+  const byCanonical = await call("?emotion=开心");
+  assert.equal(byCanonical.items.length, 1, "主词照常命中");
+  assert.equal(byCanonical.items[0].emotion, "开心", "显示主词，不是原词");
+  // 原词的顺序取决于边序（同毫秒创建时不稳定），比集合不比次序。
+  assert.deepEqual([...byCanonical.items[0].originals].sort(), ["开心", "高兴"], "组内原词全量保留");
+
+  const byOriginal = await call("?emotion=高兴");
+  assert.equal(byOriginal.items.length, 1, "填原词也要能命中——否则用户按自己写过的词过滤会得零结果");
+  assert.equal(byOriginal.items[0].edgeIds.length, 2, "命中就是整组，不是只回那一条原词的边");
+
+  const byOther = await call("?emotion=焦虑");
+  assert.equal(byOther.items.length, 0, "不在组里的词仍然不命中（别把判据放宽成恒真）");
+});
+
 // #726：cursor 分页。组数超过一页时 next 给出游标、翻页接着走；解不开的游标 400。
 // 第一页也要带 cursor 参数（空串=从头翻）——分页模式下边帽才放宽，组才翻得出去。
 test("#726 affective overview paginates by cursor", async () => {
@@ -586,6 +622,23 @@ test("#725 affective apply renames, archives, restores — and writes the journa
 
   const bad = await call({ op: "rename", edgeIds: ["no-such-edge"], emotion: "平静" });
   assert.equal(bad.status, 404, "组内全部边失效时 404，不假装成功");
+
+  // #750 复审 ⑧：51 条边时原先静默截到 50，被丢的边不进 failures，
+  // 面板看到 applied:50 + failures:[] 就当整组做完了。宁可整组拒，不许半做。
+  const tooMany = await call({ op: "archive", edgeIds: Array.from({ length: 51 }, (_, i) => e1.id + "-synthetic-" + i) });
+  assert.equal(tooMany.status, 400, "超上限整组拒，不静默截断");
+  assert.equal(tooMany.body.error, "too-many-edges");
+  assert.equal(tooMany.body.limit, 50);
+  assert.equal(tooMany.body.got, 51, "报出实际条数，调用方才知道该拆不拆");
+
+  // 反向对照：正好 50 条不被拒（上限是 50，不是 49）。这些 id 都不存在，
+  // 所以走完校验仍是 404「一条都没成」，但那是另一条路径，不是超限拒。
+  const atLimit = await call({ op: "archive", edgeIds: Array.from({ length: 50 }, (_, i) => "nope-" + i) });
+  assert.equal(atLimit.status, 404, "50 条正好在上限内，不该被超限拒掉");
+
+  // 拒绝在写任何一条边之前发生：上面那次超限调用不许留下归档痕迹。
+  const untouched = service.relationById(e1.id);
+  assert.equal(untouched.metadata.archivedAt, undefined, "超限拒不能先把边写脏再报错");
 
   const jr = graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective/journal");
   const jres = new FakeRes();

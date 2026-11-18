@@ -2240,7 +2240,10 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         if (personF) {
           view = view.filter((g) => String(g.person ?? "").toLowerCase() === personF || String(g.personId ?? "") === personF);
         }
-        if (emotionF) view = view.filter((g) => g.emotion.toLowerCase() === emotionF);
+        // #750 复审 ⑥：只比归一主词时，用户照着自己写的原词（「高兴」）过滤会得
+        // 零结果——库里那组的主词是「开心」。归一库里出现过的原词一并比。
+        if (emotionF) view = view.filter((g) => g.emotion.toLowerCase() === emotionF
+          || (Array.isArray(g.originals) && g.originals.some((w) => String(w).toLowerCase() === emotionF)));
         if (attributionF === "trait" || attributionF === "occasion") {
           view = view.filter((g) => g.attribution === attributionF);
         }
@@ -2341,8 +2344,15 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           return sendJson(res, 400, { error: "unknown op" });
         }
         const edgeIds = Array.isArray(body.edgeIds)
-          ? body.edgeIds.filter((id) => typeof id === "string" && id).slice(0, 50)
+          ? body.edgeIds.filter((id) => typeof id === "string" && id)
           : [];
+        // #750 复审 ⑧：此前 slice(0, 50) 静默丢弃第 51 条起，被丢的边不进
+        // failures，51 条的组回 applied:50 + failures:[]，面板把它当整组成功——
+        // 升格/归档只做了一半，账本却写「做完了」。宁可整组拒，也不许半做：
+        // 写任何一条边之前就退出去。
+        if (edgeIds.length > 50) {
+          return sendJson(res, 400, { error: "too-many-edges", limit: 50, got: edgeIds.length });
+        }
         if (!edgeIds.length) return sendJson(res, 400, { error: "edgeIds required" });
         if (op === "rename" && (typeof body.emotion !== "string" || !body.emotion.trim())) {
           return sendJson(res, 400, { error: "emotion required" });
