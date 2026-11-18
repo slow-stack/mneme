@@ -60,6 +60,35 @@ test("raw_tail 只在正文确实长于头部窗口时给（短输出不重复�
   assert.ok(meta.raw_head.length <= 300);
 });
 
+// #712：部分丢弃。整窗全丢才会产出 failure，只要还剩一条能入库，过去拒绝计数就
+// 整个消失（ok:true、failure:undefined）——库里 summarize_compress 的成功行带
+// reject_reasons 的记录是 0 条，于是「部分丢弃了多少」从来没有数据可查。
+test("部分丢弃：有一半条目被拒时仍要留下拒绝计数，而不是只在整窗全丢时才有", () => {
+  const mixed = [
+    GOOD,
+    { id: 2, type: "环境/版本", content: "自造分类" },
+    { type: "decision", name: "键名被顶掉", url: "https://example.invalid" }
+  ];
+  const r = parseSummaryJsonResult(JSON.stringify(mixed));
+  assert.equal(r.ok, true, "有合法条目就是成功轮——判定不变");
+  assert.equal(r.failure, undefined, "失败诊断仍不许污染成功路径");
+  assert.equal(r.entries.length, 1);
+  assert.deepEqual(r.rejects.reasons, { not_object: 0, bad_type: 1, bad_title: 1, bad_content: 0 },
+    "丢了三减一=两条，按原因分开记");
+});
+
+test("零丢弃的成功轮不产出 rejects 键（metadata 与旧版逐字节一致）", () => {
+  const r = parseSummaryJsonResult(JSON.stringify([GOOD]));
+  assert.equal(r.ok, true);
+  assert.equal(r.rejects, undefined, "没丢条目就不该多出这个键");
+});
+
+test("空数组成功轮同样不产出 rejects", () => {
+  const r = parseSummaryJsonResult("[]");
+  assert.equal(r.ok, true);
+  assert.equal(r.rejects, undefined);
+});
+
 // prompt 与闸门对齐（报告者的第 3 条，零行为变更）：菜单给全 7 个值、并写明不许自造。
 // 中英两份都要锁——只改一种语言，另一种语言的窗口照样被滤空，而守卫看不见「两边一起过期」。
 test("summary 提示词的枚举与 VALID 对齐，且中英两份都写明不许自造分类", () => {
@@ -72,6 +101,24 @@ test("summary 提示词的枚举与 VALID 对齐，且中英两份都写明不�
   }
   // codingSummary 本来就列全了，确认没被这次批量替换改坏（它多出的说明句还在）
   assert.ok(STR.prompts.codingSummary.zh.includes("rejected_solution") && STR.prompts.codingSummary.zh.includes("pitfall"));
+});
+
+// #712：枚举过去埋在 JSON 模板的键值里（`{"type":"preference|project|..."`那一串），
+// 夹在十几个字段和 occurred_at 规则之间。模型写歪不是没看到枚举，是看到的位置太靠后。
+// 现在枚举独立成段、且在模板之前；模板里只用「上段取值之一」指回去。
+test("枚举独立成段并排在 JSON 模板之前，模板里不再内联枚举", () => {
+  for (const [lang, marker, enumHead, tpl] of [
+    ["zh", "只能取这七个值", "preference / project / decision / history / rejected_solution / pitfall / constraint", "上段七个取值之一"],
+    ["en", "may only be one of these seven values", "preference / project / decision / history / rejected_solution / pitfall / constraint", "one of the seven values above"]
+  ]) {
+    const p = STR.prompts.summary[lang];
+    const enumAt = p.indexOf(enumHead);
+    const tplAt = p.indexOf(tpl);
+    assert.ok(enumAt > -1, `summary(${lang}) 缺独立枚举段`);
+    assert.ok(p.includes(marker), `summary(${lang}) 枚举段缺「不许自造」的措辞`);
+    assert.ok(tplAt > enumAt, `summary(${lang}) 模板必须在枚举段之后`);
+    assert.ok(!p.includes(`"type":"preference|project|decision`), `summary(${lang}) 模板里不许再内联整串枚举`);
+  }
 });
 
 // #712：过滤空窗的第二种成因——type 合法，但 title/content 被 name/url/notes 这类

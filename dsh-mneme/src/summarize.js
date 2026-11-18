@@ -270,10 +270,19 @@ export function parseSummaryJsonResult(raw) {
   // 则不能消费窗口，否则无效输出会永久推进 seq 游标。salvage 路径
   // 没有「显式空数组」可言——ok 只看是否救回了条目。
   const ok = salvaged ? entries.length > 0 : (arr.length === 0 || entries.length > 0);
+  // #712：`describeParseFailure` 在「有合法条目」时直接返回 null（entries.length > 0
+  // 那个早退），于是**部分丢弃**这一型在审计里完全没有痕迹——一窗 10 条丢 4 条，行
+  // 上仍是 ok:true、failure 为 undefined。整窗全丢才看得见，部分丢多少没人知道，
+  // 而后者才是日常形态。这里的计数与失败路径共用同一份 rejectReasons，只是不再
+  // 依附于 failure 存在与否。纯审计：不改变 ok 判定、不改变 entries。
+  const rejectedTotal = rejectReasons.not_object + rejectReasons.bad_type
+    + rejectReasons.bad_title + rejectReasons.bad_content;
   return {
     ok,
     entries,
     salvaged,
+    // 与 failure_kind 分开命名：那个说「哪种失败」，这个说「成功轮里丢了几条、为什么」。
+    ...(rejectedTotal > 0 ? { rejects } : {}),
     // #502：失败时要能说出**是哪一种**失败。「压根没写数组」与「写了合法数组、但条目
     // type 全不在枚举里」过去共用一句 invalid summary JSON，而两者要修的地方完全不同
     // ——后者是菜单与闸门不一致（summary prompt 只列 4 个类型、VALID 吃 7 个），且失败
@@ -1403,6 +1412,18 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       }
       clearParseFailureStreak(session.id);
       const parsed = parsedResult.entries;
+      // #712：成功轮里被丢弃的条目（部分丢弃）——整窗全丢才走 failure 路径，只要还
+      // 剩一条能入库，拒绝计数过去就整个消失。这里把它取出来，供下面的 audit.metadata
+      // 落账。纯审计，不参与任何判定。
+      const rejectedSummary = parsedResult.rejects && parsedResult.rejects.reasons
+        ? {
+            total: parsedResult.rejects.reasons.not_object
+              + parsedResult.rejects.reasons.bad_type
+              + parsedResult.rejects.reasons.bad_title
+              + parsedResult.rejects.reasons.bad_content,
+            reasons: parsedResult.rejects.reasons
+          }
+        : null;
       // Issue #127 条数上限：0 = 不限（现状）。被截断的条数与去重命中数一并进
       // 审计 metadata——此前产出条数完全由模型输出决定，用户无从自查。
       // `opts.maxEntries` 是给「导入会话批量回填」用的单窗覆盖（src/backfill.js）：
@@ -1645,6 +1666,11 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           ...describeAuditPatch(describeStats),
           ...(imageSourcesWritten > 0 ? { imageSources: imageSourcesWritten } : {}),
           parsed: parsed.length,
+          // #712：成功行也要留下「丢了几条、为什么」。这里刻意不复用 failure_kind /
+          // reject_reasons 这两个键名——那两个属于失败路径，读法完全不同（一个说整窗
+          // 没了，一个说这轮成了但丢了几条）。partial_rejects 只在确实丢过条目时出现，
+          // 没有丢条目的成功行 metadata 逐字节与旧版一致。
+          ...(rejectedSummary ? { rejected: rejectedSummary.total, partial_rejects: rejectedSummary.reasons } : {}),
           ...(parsedResult.salvaged ? { json_salvaged: true } : {}),
           ...(capped > 0 ? { capped } : {}),
           ...(deduped > 0 ? { deduped, mode: dedupeMode, maxSim: Number(dedupeMaxSim.toFixed(4)) } : {}),
