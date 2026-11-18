@@ -255,7 +255,7 @@ function parseBody(text) {
 // 不传时日记路由一律 503 diary-unavailable（装配缺件），而不是伪装成「用户没开」。
 // 与 choro 同一套 503/409 分叉：#497 定下「503 = 环境缺件，409 = 用户没开」。
 // 顺序是刻意的：kb 先占第 13 位（它先合进 main），diary 追加在其后，谁先合谁靠前。
-export function createApi(ctx, service, settings, commands, embedder, semantic = null, apiToken = "", config = null, maintenance = null, profileExtract = null, choro = null, facts = null, kb = null, diary = null, backfill = null) {
+export function createApi(ctx, service, settings, commands, embedder, semantic = null, apiToken = "", config = null, maintenance = null, profileExtract = null, choro = null, facts = null, kb = null, diary = null, backfill = null, profileDigest = null) {
   const disposers = [];
 
   // #182 注入状态探测：面板状态页的「极简模式下注入按宿主设计关闭」提示需要
@@ -940,6 +940,77 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
             if (code === "no-route") return sendJson(res, 503, { error: code });
             if (code === "unparseable" || code === "stream-failed") return sendJson(res, 502, { error: code });
             ctx.logger?.warn?.(`dsh-mneme: profile facts run failed: ${String(error?.message ?? error)}`);
+            return sendJson(res, 500, { error: "internal" });
+          }
+        );
+      });
+    }
+  });
+
+  // 「Agent 眼中的你」阅读面摘要（2026-11-18）：profile_digests 单表 + 蒸馏轮。
+  // 摘要是事实清单的投影，**只给面板看，注入不读**——注入段仍由 factsProvider
+  // 从事实行渲染。三条纪律落在路由形状上：
+  // - GET 的 stale 由读侧现算（生成时的修订号 vs 当前事实修订号 = journal MAX(id)），
+  //   面板不自己比；用修订号而不是 updated_at，是因为毫秒精度会在同毫秒写入时漏判；
+  // - generate 走 /run 同款 policy `token`：无读分支 + 一次 LLM 调用（与 facts/run
+  //   一致——声明成 token-write 会让开放读清单按「GET 开放」把它算进去）；
+  // - 蒸馏经 service.enqueue 与巩固/蒸馏串行，错误码映射同 facts/run。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/profile-digest",
+    policy: "token-write",
+    handler(req, res) {
+      try {
+        if (typeof profileDigest?.digestFor !== "function") return sendJson(res, 503, { error: "unavailable" });
+        const url = new URL(req.url, "http://localhost");
+        const raw = url.searchParams.get("agent");
+        const agent = typeof raw === "string" ? raw.trim() : "";
+        sendJson(res, 200, { agent, ...profileDigest.digestFor(agent) });
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/profile-digest/generate",
+    policy: "token",
+    handler(req, res) {
+      if (req.method !== "POST") {
+        res.writeHead(405, { Allow: "POST" });
+        res.end("");
+        return undefined;
+      }
+      if (config?.profileDigestEnabled !== true) return sendJson(res, 409, { error: "disabled" });
+      if (typeof profileDigest?.composeFor !== "function") return sendJson(res, 503, { error: "unavailable" });
+      return readBody(req, res).then((text) => {
+        if (text === null) return undefined;
+        const body = parseBody(text);
+        // parseBody 对 JSON `null` 是原样返回 null（不是 {}）：不做形状校验就在
+        // 下一行读 body.agent 会抛 TypeError，而且抛在 queued.then 建立之前，
+        // 下面的错误映射接不住（评审指出的缺口）——请求挂在那里等宿主超时。
+        // 与 /profile-facts/apply 同款守卫；合法的 {} 仍然走默认卡。
+        if (body === null || typeof body !== "object" || Array.isArray(body)) {
+          return sendJson(res, 400, { error: "invalid-body" });
+        }
+        // agent 存在但不是字符串（`{"agent":42}`）不能静默落回默认卡：默认卡有事实
+        // 时，这次请求会拿默认卡去蒸馏、把它的摘要盖掉，而调用方以为自己操作的是
+        // 42 那张卡。缺省与空串仍然走默认卡（面板的默认卡就是 ""）。
+        if (body.agent !== undefined && typeof body.agent !== "string") {
+          return sendJson(res, 400, { error: "invalid-agent" });
+        }
+        const agent = typeof body.agent === "string" ? body.agent.trim() : "";
+        const queued = service?.enqueue
+          ? service.enqueue(() => profileDigest.composeFor(agent, { trigger: "manual" }))
+          : profileDigest.composeFor(agent, { trigger: "manual" });
+        return queued.then(
+          (receipt) => sendJson(res, 200, receipt),
+          (error) => {
+            const code = typeof error?.code === "string" ? error.code : "";
+            if (code === "no-route") return sendJson(res, 503, { error: code });
+            if (code === "unparseable" || code === "stream-failed") return sendJson(res, 502, { error: code });
+            ctx.logger?.warn?.(`dsh-mneme: profile digest generate failed: ${String(error?.message ?? error)}`);
             return sendJson(res, 500, { error: "internal" });
           }
         );

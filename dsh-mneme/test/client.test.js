@@ -3591,6 +3591,108 @@ test("profile facts card ships management UI, run outcomes and never touches the
     "the facts card must re-read its flag snapshot when features change");
 });
 
+// 摘要（2026-11-18）面板面：事实卡的阅读面投影。锁四件事——①摘要是「读」的：
+// GET /profile-digest 进面板、POST /generate 是唯一写路径；②账本（最近变更）保留
+// 在折叠区外，摘要改造不许吃掉审计面（用户的原话：「更新倒是可以保留」）；③过期
+// 提示是后端现算的 stale 字段，前端只读不自己比时间戳（锚点口径一份皮，在 store）；
+// ④摘要是投影——面板不许把它送进任何注入路径。
+test("profile digest ships a reading surface over the fact list, journal intact", () => {
+  const apiSource = readFileSync(join(root, "src/api.js"), "utf8");
+  for (const pathLiteral of [
+    'path: "/api/dsh-mneme/profile-digest"',
+    'path: "/api/dsh-mneme/profile-digest/generate"'
+  ]) {
+    assert.ok(apiSource.includes(pathLiteral), `the backend must register ${pathLiteral}`);
+  }
+  assert.ok(clientSource.includes("apiFetch(`/api/dsh-mneme/profile-digest?agent="),
+    "the panel must load the digest per card");
+  assert.ok(clientSource.includes('"/api/dsh-mneme/profile-digest/generate"'),
+    "manual generation must go through the generate route");
+  // 双语键成对（摘要区五句结局 + 锚点行 + 过期提示 + 折叠标签）。
+  for (const key of [
+    "memory.settings.digestSection",
+    "memory.settings.digestGenerate",
+    "memory.settings.digestMeta",
+    "memory.settings.digestStale",
+    "memory.settings.digestRunOk",
+    "memory.settings.digestRunNoop",
+    "memory.settings.digestRunDisabled",
+    "memory.settings.digestRunNoRoute",
+    "memory.settings.digestRunFailed",
+    "memory.settings.digestFactsFold",
+    "memory.features.profileDigestEnabled",
+    "memory.features.profileDigestEnabled.hint"
+  ]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+  // 开关要真有可勾的座位：FEATURE_GROUPS group.persona 必须带上 profileDigestEnabled。
+  assert.ok(/group\.persona[\s\S]{0,1200}"profileDigestEnabled"/.test(clientSource),
+    "FEATURE_GROUPS group.persona must carry profileDigestEnabled");
+  // 账本保留：最近变更的渲染仍在事实卡里（在折叠区外），没有随摘要改造被删。
+  assert.ok(clientSource.includes('t("memory.settings.factsJournalTitle")'),
+    "the journal must stay on the facts card");
+  // 过期判定不在前端比时间戳：面板只读 stale 布尔（锚点口径一份皮，在 store）。
+  assert.ok(/factsDigest\?\.stale/.test(clientSource),
+    "the panel must read the server-computed stale flag, not re-derive it");
+  // 注入面零接触：摘要段不得出现在 user-settings.js 的注入渲染里（摘要是阅读面）。
+  const userSettingsSource = readFileSync(join(root, "src/user-settings.js"), "utf8");
+  assert.ok(!userSettingsSource.includes("profile_digest") && !userSettingsSource.includes("getProfileDigest"),
+    "the digest must never enter the injection path (facts remain the injected surface)");
+});
+
+// 切卡的竞态（CodeRabbit #752）：摘要与事实的读取都是 useCallback([])，闭包里的
+// factsAgent 永远是首次挂载那一个；只靠 digestSeq/factsSeq 序号能挡同卡内乱序，
+// 挡不住切卡——A 卡在生成时切到 B，A 的响应回来序号是新的，会把 B 的摘要盖成 A 的。
+// 判据：认卡用 ref（读当前值），序号只用来挡同卡乱序，两者缺一不可。
+test("facts/digest reads are keyed by card, so a late response cannot paint another card", () => {
+  const src = clientSource;
+  assert.ok(src.includes('const factsAgentRef = react.useRef("")'),
+    "the read path needs a ref: the callbacks are useCallback([]) and would otherwise read a stale closure");
+  assert.ok(src.includes("factsAgentRef.current = factsAgent"),
+    "the ref must be kept in sync with the selected card");
+  // loadDigest / loadFacts 的成功与失败分支都要判卡：只判成功分支，失败分支照样会污染。
+  assert.ok(src.includes("if (seq !== digestSeq.current || factsAgentRef.current !== agentKey) return;"),
+    "loadDigest must drop a response that belongs to another card");
+  assert.ok(src.includes("if (seq === digestSeq.current && factsAgentRef.current === agentKey) setFactsDigest({ error: true });"),
+    "loadDigest must not paint an error onto another card either");
+  assert.ok(src.includes("if (seq !== factsSeq.current || factsAgentRef.current !== agentKey) return;"),
+    "loadFacts must drop a response that belongs to another card");
+  // 两条写路径（手动蒸馏、生成摘要）的迟到回执同样要判卡，否则「已更新 N 条」
+  // 「摘要已重蒸馏」会写到别的卡上。各取自己的 key，回来先比再写。
+  assert.equal((src.match(/const key = factsAgent;/g) || []).length >= 2, true,
+    "both write paths must capture the card they started on");
+  assert.equal((src.match(/if \(factsAgentRef\.current !== key\) return;/g) || []).length >= 2, true,
+    "both write paths must drop their receipt when the card changed");
+  // 页头「重试」要能重读摘要：首发失败后面板停在 error 态、生成闸关着时没有别的入口。
+  assert.ok(/useEffect\(\(\) => \{\s*if \(!tick\) return;\s*loadDigest\(factsAgentRef\.current\);/.test(src),
+    "the header retry must also re-read the digest");
+  // 序号是两张卡共享的：A 卡保存回执迟到触发刷新时若先 ++ 再判卡，会把 B 卡在飞的
+  // 响应判成过期丢掉——两张卡都白等，B 可能一直显示「读不到事实」。判卡必须在占
+  // 序号之前，两处都要。
+  for (const [fn, seqRef] of [["loadDigest", "digestSeq"], ["loadFacts", "factsSeq"]]) {
+    const head = src.slice(src.indexOf(`const ${fn} = react.useCallback(async (agentKey) => {`));
+    // 取到这个 useCallback 收尾为止：中间夹了注释，按固定字数截会截不到序号那一行。
+    const body = head.slice(0, head.indexOf("}, []);"));
+    const guardAt = body.indexOf("if (factsAgentRef.current !== agentKey) return;");
+    const seqAt = body.indexOf(`++${seqRef}.current`);
+    assert.ok(guardAt >= 0, `${fn} must bail before touching the shared sequence`);
+    assert.ok(seqAt > guardAt, `${fn} must check the card before taking the sequence, not after`);
+  }
+  // 两条写路径的失败分支同样要判卡：请求 reject 时这张卡可能已经被切走，迟到的一句
+  // 「维护失败」会挂在另一张卡的事实区上。成功分支的判卡上面已经锁过。
+  for (const [fnName, setter] of [["runFacts", "setFactsRunEnd"], ["generateDigest", "setDigestEnd"]]) {
+    const fnSrc = src.slice(src.indexOf(`async function ${fnName}(`));
+    const tail = fnSrc.slice(0, 4000);
+    const catchAt = tail.indexOf("} catch {");
+    const guardAt = tail.indexOf("if (factsAgentRef.current === key) {", catchAt);
+    const paintAt = tail.indexOf(`${setter}({ kind: "failed" })`, catchAt);
+    assert.ok(catchAt >= 0, `${fnName}: the failure branch must stay a catch`);
+    assert.ok(guardAt > catchAt && paintAt > guardAt,
+      `${fnName}: a rejected request must not paint its failure onto a card it no longer owns`);
+  }
+});
+
 // 复制的竞态（CodeRabbit #559 第二轮）：剪贴板是异步的，回调属于哪一份草稿必须能认出来。
 // 复制 A 还没落地时又提取出草稿 B，A 的回调就会在 B 上打勾或报错——B 一个字都没被复制过，
 // 而「已复制」会挂 1.5 秒，于是同一屏上可能出现「已复制」和「复制没成功」两句相反的话。

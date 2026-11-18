@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+- **切卡竞态、卸载时序、请求体形状、半份摘要：评审提的五处，全属实（#752 复审）**。CodeRabbit 在 #752 上留了 5 条，逐条核到代码里都成立，不是风格挑刺——
+  ① `lib/client.js` 的 `loadDigest` / `loadFacts` 都是 `useCallback([])`，闭包里的卡名永远是首挂那一个，只有 `digestSeq` / `factsSeq` 序号挡着。序号只治同卡内乱序，治不了**切卡**：A 卡生成期间切到 B，A 的响应回来序号是新的，把 B 的摘要盖成 A 的。现在改用 `factsAgentRef` 认卡（成功与失败两条分支都判），手动蒸馏与生成摘要两条写路径也各自先取 `const key = factsAgent`，回执对不上就丢。
+  ② 页头「重试」只重读画像/persona/features/diary，**没重读摘要**——首次 GET 失败后摘要停在 error 态，生成闸关着时页面上再没有别的入口。现在 `tick` 的 effect 里补一次 `loadDigest`。
+  ③ `POST /profile-digest/generate` 在 `parseBody` 之后直接读 `body.agent`。`JSON.parse("null")` 恒成功返回 `null`，下一行就抛 TypeError，而抛点在 `queued.then` 之前、外层同步 catch 接不住——请求既不回包也不落 500。补上与 `/ids` 路由同款的形状守卫，错误码沿用 `invalid-body`。
+  ④ 卸载只 `await dream.dispose()` 就 `store.close()`，而画像维护与摘要重蒸馏挂在巩固轮之后的 fire-and-forget 链上：还在飞的 `composeFor` 会在关库之后写、写失败，摘要停在旧修订号上、面板仍说它是最新的。现在这条链串成 `profileChain`（一轮接一轮，不交叉写同一批卡），卸载时 `await profileChain` 之后再关库。
+  ⑤ `parseDigest` 逐节 `filter` 掉不合格的小节、拿剩下的当成功落库——摘要悄悄少一节而修订号是新的。改成全或无：`raw.every(isValidSection)` 不成立就整份 `null`（= unparseable → failed），与本文件开头「绝不拿残缺输出冒充摘要」的口径对齐。
+
+  **测试** +4：切卡的判卡守卫（含两条写路径与各自的失败分支）、卸载等链再关库、`null`/`[]`/`"str"`/`42` 四种坏体一律 400 且合法 `{}` 仍走默认卡；`parseDigest` 一好一坏必须整份拒收。变异自证：删掉形状守卫 → 坏体用例立刻红（12 pass / 1 fail），恢复后全绿。
+
+- **第三轮又四条：agent 类型静默降级、单节冒充摘要、序号被抢（#752 第三轮）**。CodeRabbit 第三轮提 4 条，3 条属实、1 条是测试质量问题，都已处理——
+  ① `POST /profile-digest/generate` 的 `{"agent":42}` 是合法 JSON，也能过形状校验，原代码把数字静默转成默认卡 `""`：默认卡有事实时，这次请求会拿默认卡去蒸馏、把它的摘要盖掉，而调用方以为自己操作的是 42 那张卡。现在 `agent` 存在但不是字符串一律 400 `invalid-agent`，缺省与空串仍走默认卡。
+  ② `parseDigest` 的节数下限原来只卡「非空」，而 prompt 和本文档写的都是「2—6 个小节」：模型只吐一节时照样落库并报成功。补 `MIN_SECTIONS = 2`，与 prompt 对齐；夹具里的单节摘要一并改成两节（只改断言会让这条约定在测试里继续隐身）。
+  ③ `loadDigest` / `loadFacts` 原先把 `++digestSeq.current` 放在函数最开头。A 卡保存回执迟到触发刷新时会先把共享序号推进，B 卡在飞的响应随即因序号不符被丢、A 卡的又因判卡被丢——**两张卡都白等**，B 可能一直显示「读不到事实」。改成入口先判卡、不属于当前卡的读取既不发也不占序号；响应侧的判卡保留（那是处理「请求发出后才切卡」）。
+  ④ 测试质量：原来的判卡断言只数源码里守卫字符串出现几次，没真跑跨卡加请求 reject 的路径。现在补上两条写路径的失败分支守卫（`runFacts` / `generateDigest` 的 catch 在写结局前先判卡），并把「先判卡再占序号」的顺序也锁进断言。
+
+- **过期判定拿毫秒精度的时间戳当锚点，同毫秒写入时永远判不出过期（#752）**。「Agent 眼中的你」摘要的 stale 原先用 `profile_facts.updated_at` 的 `MAX` 对比摘要里记的锚点。可 `updated_at` 只有毫秒精度，而生成摘要与修正事实完全可能落在同一毫秒里——锚点一字不变，`>` 判为 false，改过的事实不会提示过期，面板把旧摘要当新的显示。不是测试抖动：本机实测「添两条事实、立刻改一条」300 次，**221 次锚点根本没前移**。
+
+  修法是换锚点不换语义：改用该卡 `profile_fact_journal` 的 `MAX(id)` 作修订号。journal 的 `id` 是 `INTEGER PRIMARY KEY AUTOINCREMENT`，每次 add/update/archive 都在 `applyOps` 的同一事务里落一行；`pruneProfileFactJournal` 只按 `id DESC LIMIT keep` 裁最老的那批，`MAX(id)` **永不回退**——单调、免费、不需要新加一列计数器。表列从 `facts_max_updated_at TEXT` 改为 `facts_revision INTEGER NOT NULL DEFAULT 0`：`profile_digests` 是 #752 新增的整张表，上线库里连表都没有（实测 `no such table`），所以直接改列名、不留迁移代码。`updated_at` 的业务语义一字未动。
+
+  **测试** +2：新增一条**不依赖时钟**的用例——改完事实后把 `updated_at` 显式钉回生成时刻，先断言「时间戳确实一模一样」，再断言必须报过期；原来那条靠真实时钟碰运气、在 CI 上偶发红的用例现在稳定了。另一条锁住前提：把 journal 顶过 `keep=200` 的裁剪线后，修订号照常前进（否则用 journal id 当锚点就不成立）。变异自证：把 `isProfileDigestStale` 退回 `MAX(updated_at)` 对比 → 两条过期用例同时红。
+
 - **保护层复审：七处真问题，三处会让功能实际失效（#755 复审）**。CodeRabbit 在 PR #755 上提了 7 条，逐条核实**全部属实**，其中最要紧的三条不是风格问题——
   ① `distillExcludeProjects` 是字符串数组，却被我登记进了 `FEATURE_FLAG_BOOLEANS`。`validateFlag` 对这张表的成员只收 boolean，于是**写名单抛 TypeError、写 `false` 却通过并存下来**：用户以为自己关掉了「导入隔离」，重启后名单变成一个假的开关。核查既有 5 个数组型 schema 键（`codingKeywords`、`diaryMemoryExcludeTypes`、`externalApiAllowedOrigins`、`scopeHardWallWorkspaces`、`sessionGateSessions`）在 `settings.js` 里出现次数**全为 0**——数组键一律不进白名单、走 `fileOnly` 桶，这条口径原先就立着，是我自己撞上去的。现在把它移出白名单，只留 `distillSkipImportedSessions`（真布尔）。
   ② `createSummarizer` 第一行 `if (!config.autoSummarize) return { dispose }` —— 关掉自动蒸馏时**连 `summarizeNow` 一起消失**，而回填正是靠它手动跑，`runBackfill` 会直接返回 `error: "summarizer-unavailable"`。等于「关掉自动蒸馏」悄悄搭上了「导入会话永远补不上记忆」。改为只跳过 `session/event` 订阅，`summarizeNow` 照常提供。
