@@ -3667,6 +3667,30 @@ test("facts/digest reads are keyed by card, so a late response cannot paint anot
   // 页头「重试」要能重读摘要：首发失败后面板停在 error 态、生成闸关着时没有别的入口。
   assert.ok(/useEffect\(\(\) => \{\s*if \(!tick\) return;\s*loadDigest\(factsAgentRef\.current\);/.test(src),
     "the header retry must also re-read the digest");
+  // 序号是两张卡共享的：A 卡保存回执迟到触发刷新时若先 ++ 再判卡，会把 B 卡在飞的
+  // 响应判成过期丢掉——两张卡都白等，B 可能一直显示「读不到事实」。判卡必须在占
+  // 序号之前，两处都要。
+  for (const [fn, seqRef] of [["loadDigest", "digestSeq"], ["loadFacts", "factsSeq"]]) {
+    const head = src.slice(src.indexOf(`const ${fn} = react.useCallback(async (agentKey) => {`));
+    // 取到这个 useCallback 收尾为止：中间夹了注释，按固定字数截会截不到序号那一行。
+    const body = head.slice(0, head.indexOf("}, []);"));
+    const guardAt = body.indexOf("if (factsAgentRef.current !== agentKey) return;");
+    const seqAt = body.indexOf(`++${seqRef}.current`);
+    assert.ok(guardAt >= 0, `${fn} must bail before touching the shared sequence`);
+    assert.ok(seqAt > guardAt, `${fn} must check the card before taking the sequence, not after`);
+  }
+  // 两条写路径的失败分支同样要判卡：请求 reject 时这张卡可能已经被切走，迟到的一句
+  // 「维护失败」会挂在另一张卡的事实区上。成功分支的判卡上面已经锁过。
+  for (const [fnName, setter] of [["runFacts", "setFactsRunEnd"], ["generateDigest", "setDigestEnd"]]) {
+    const fnSrc = src.slice(src.indexOf(`async function ${fnName}(`));
+    const tail = fnSrc.slice(0, 4000);
+    const catchAt = tail.indexOf("} catch {");
+    const guardAt = tail.indexOf("if (factsAgentRef.current === key) {", catchAt);
+    const paintAt = tail.indexOf(`${setter}({ kind: "failed" })`, catchAt);
+    assert.ok(catchAt >= 0, `${fnName}: the failure branch must stay a catch`);
+    assert.ok(guardAt > catchAt && paintAt > guardAt,
+      `${fnName}: a rejected request must not paint its failure onto a card it no longer owns`);
+  }
 });
 
 // 复制的竞态（CodeRabbit #559 第二轮）：剪贴板是异步的，回调属于哪一份草稿必须能认出来。

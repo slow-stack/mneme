@@ -994,6 +994,12 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
         if (body === null || typeof body !== "object" || Array.isArray(body)) {
           return sendJson(res, 400, { error: "invalid-body" });
         }
+        // agent 存在但不是字符串（`{"agent":42}`）不能静默落回默认卡：默认卡有事实
+        // 时，这次请求会拿默认卡去蒸馏、把它的摘要盖掉，而调用方以为自己操作的是
+        // 42 那张卡。缺省与空串仍然走默认卡（面板的默认卡就是 ""）。
+        if (body.agent !== undefined && typeof body.agent !== "string") {
+          return sendJson(res, 400, { error: "invalid-agent" });
+        }
         const agent = typeof body.agent === "string" ? body.agent.trim() : "";
         const queued = service?.enqueue
           ? service.enqueue(() => profileDigest.composeFor(agent, { trigger: "manual" }))

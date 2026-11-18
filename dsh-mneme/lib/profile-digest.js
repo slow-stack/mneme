@@ -25,6 +25,9 @@ import { breakFenceMarkers } from "./fence.js";
 // 蒸馏的输出上限：节多/节长都会把「摘要」变回「清单的另一种排版」。prompt 与
 // 解析层同一个数——超限的节整体丢弃（宁可少一节，不静默截半句）。
 const MAX_SECTIONS = 6;
+// 下限与 prompt 的「2—6 个小节」对齐：只吐一节说明模型没在做归纳，而是把清单
+// 压成了一句话。原来只卡「非空」，单节照样落库还报成功，与 PR 约定不符。
+const MIN_SECTIONS = 2;
 const MAX_HEADING_CHARS = 40;
 const MAX_SECTION_CHARS = 900;
 // 输入侧兜底：事实清单极端膨胀时截在输入窗，超出的部分本轮不进摘要（锚点照记，
@@ -50,7 +53,8 @@ function isValidSection(s) {
 /**
  * 摘要输出解析：与 parseFactOps 同款抗噪（剥 markdown 围栏、找 JSON 首尾），
  * 形状硬校验 {sections: [{heading, text}]}，逐节截到上限、整体截到 MAX_SECTIONS。
- * 任一节不合格就整份返回 null（= unparseable，调 failed，不冒充成功）。
+ * 任一节不合格、或节数少于 MIN_SECTIONS，就整份返回 null（= unparseable，调
+ * failed，不冒充成功）。
  */
 export function parseDigest(text) {
   if (typeof text !== "string" || !text.trim()) return null;
@@ -75,7 +79,7 @@ export function parseDigest(text) {
     // 拿剩下的当成功——「模型少写一个字段」于是变成「摘要悄悄少了一节」，而且
     // 落库后修订号是新的，面板还会说它是最新的。宁可这一轮判 unparseable、
     // 保留旧摘要等下一次重蒸馏。
-    if (!raw.length || !raw.every(isValidSection)) continue;
+    if (raw.length < MIN_SECTIONS || !raw.every(isValidSection)) continue;
     const sections = raw.map((s) => ({
       heading: s.heading.trim().slice(0, MAX_HEADING_CHARS),
       text: s.text.trim().slice(0, MAX_SECTION_CHARS)

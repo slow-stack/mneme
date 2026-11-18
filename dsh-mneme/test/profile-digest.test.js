@@ -61,8 +61,15 @@ function seedFacts(facts, contents) {
 
 test("解析器：围栏 JSON 可取；缺 heading/text、空节集、非 JSON 一律 null，绝不冒充成功", () => {
   assert.deepEqual(
+    parseDigest('{"sections":[{"heading":"概览","text":"你是……"},{"heading":"习惯","text":"你常熬夜"}]}'),
+    [{ heading: "概览", text: "你是……" }, { heading: "习惯", text: "你常熬夜" }]
+  );
+  // 节数下限与 prompt 的「2—6 个小节」对齐（评审）：只吐一节说明模型没在归纳，
+  // 而是把清单压成一句话。原来只卡「非空」，单节照样落库还报成功。
+  assert.equal(
     parseDigest('{"sections":[{"heading":"概览","text":"你是……"}]}'),
-    [{ heading: "概览", text: "你是……" }]
+    null,
+    "单节拒收：低于 2 节按解析失败走，不许把一句话当摘要落库"
   );
   assert.equal(parseDigest("我觉得你很好。"), null, "散文正文不是 JSON，拒绝");
   assert.equal(parseDigest('{"sections":[]}'), null, "空节集没有可展示的东西，按解析失败走");
@@ -79,7 +86,10 @@ test("解析器：围栏 JSON 可取；缺 heading/text、空节集、非 JSON �
   // 超限截断：第 7 节整体丢弃（宁可少一节，不静默截半句）；长 heading/text 截到上限。
   const many = Array.from({ length: 7 }, (_, i) => ({ heading: `节${i}`, text: `正文${i}` }));
   assert.equal(parseDigest(JSON.stringify({ sections: many })).length, 6, "最多 6 节");
-  const long = parseDigest(JSON.stringify({ sections: [{ heading: "h".repeat(99), text: "t".repeat(9999) }] }));
+  const long = parseDigest(JSON.stringify({ sections: [
+    { heading: "h".repeat(99), text: "t".repeat(9999) },
+    { heading: "h2", text: "t2" }
+  ] }));
   assert.equal(long[0].heading.length, 40);
   assert.equal(long[0].text.length, 900);
 });
@@ -104,7 +114,7 @@ test("no-route：有事实但没配模型时抛错、零模型调用", async () 
 });
 
 test("空卡：删旧摘要 + noop 回执 + 零模型调用", async () => {
-  const { store, digest, fake } = setup(okDigest([{ heading: "x", text: "y" }]));
+  const { store, digest, fake } = setup(okDigest([{ heading: "x", text: "y" }, { heading: "x2", text: "y2" }]));
   store.upsertProfileDigest({
     agentKey: "", sections: [{ heading: "旧", text: "摘要" }],
     factCount: 3, factsRevision: 99,
@@ -141,7 +151,7 @@ test("ok 轮：sections 落库、锚点取 journal 修订号、回执带 factCou
 });
 
 test("过期判定：事实在生成后又变过（update/archive）→ stale；重蒸馏后归零", async () => {
-  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }]));
+  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }, { heading: "h2", text: "t2" }]));
   const seeded = seedFacts(facts, ["事实甲", "事实乙"]);
   await digest.composeFor("", { trigger: "manual" });
   assert.equal(store.isProfileDigestStale(""), false);
@@ -155,7 +165,7 @@ test("过期判定：事实在生成后又变过（update/archive）→ stale；
 });
 
 test("过期判定不依赖毫秒精度：updated_at 与生成时刻同一毫秒也必须报过期", async () => {
-  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }]));
+  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }, { heading: "h2", text: "t2" }]));
   const seeded = seedFacts(facts, ["事实甲", "事实乙"]);
   const before = store.getProfileDigest("");
   assert.equal(before, null);
@@ -185,7 +195,7 @@ test("过期判定不依赖毫秒精度：updated_at 与生成时刻同一毫秒
 });
 
 test("修订号在 journal 被裁剪后仍然单调：prune 只裁最老的行，MAX(id) 不回退", async () => {
-  const { store, facts } = setup(okDigest([{ heading: "h", text: "t" }]));
+  const { store, facts } = setup(okDigest([{ heading: "h", text: "t" }, { heading: "h2", text: "t2" }]));
   const seeded = seedFacts(facts, ["事实甲"]);
   // 反复写同一条事实，把 journal 顶过 keep=200 的裁剪线。prune 只在 runFor（自动轮）
   // 收尾调用，人工修正不裁，所以这里显式触发一次，模拟自动轮跑过之后的现场。
@@ -224,7 +234,7 @@ test("unparseable：模型吐散文时抛错，绝不拿残缺输出落一份空
 });
 
 test("摘要不动事实、不写 user_settings：蒸馏后事实清单与账本原样", async () => {
-  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }]));
+  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }, { heading: "h2", text: "t2" }]));
   const before = facts.listFacts("", { includeArchived: false });
   await digest.composeFor("", { trigger: "manual" });
   const after = facts.listFacts("", { includeArchived: false });
@@ -277,7 +287,7 @@ test("GET digest：无装配 503；有装配回 digest+stale，无摘要时 dige
   await route.handler(httpReq("GET"), res503);
   assert.equal(res503.statusCode, 503);
 
-  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }]));
+  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }, { heading: "h2", text: "t2" }]));
   seedFacts(facts, ["事实甲"]);
   await digest.composeFor("", { trigger: "manual" });
   const { getRoute } = setupApi({ facts, profileDigest: digest, config: testConfig({}) });
@@ -285,13 +295,13 @@ test("GET digest：无装配 503；有装配回 digest+stale，无摘要时 dige
   await getRoute("/api/dsh-mneme/profile-digest").handler(httpReq("GET", null, "/api/dsh-mneme/profile-digest?agent="), res);
   assert.equal(res.statusCode, 200);
   const body = JSON.parse(res.body);
-  assert.equal(body.digest.sections.length, 1);
+  assert.equal(body.digest.sections.length, 2);
   assert.equal(body.stale, false);
   store.close();
 });
 
 test("generate：JSON null 请求体回 400，不把 TypeError 抛进 .then 黑洞", async () => {
-  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }]));
+  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }, { heading: "h2", text: "t2" }]));
   let called = 0;
   const stub = { ...digest, composeFor: async () => { called += 1; return { status: "ok" }; } };
   const { getRoute } = setupApi({ facts, profileDigest: stub, config: testConfig({ profileDigestEnabled: true }) });
@@ -317,8 +327,33 @@ test("generate：JSON null 请求体回 400，不把 TypeError 抛进 .then 黑�
   store.close();
 });
 
+test("generate：agent 存在但不是字符串 → 400，不静默落回默认卡", async () => {
+  // `{"agent":42}` 是合法 JSON、也过得去形状校验。若这里落回默认卡，默认卡有事实
+  // 时这次请求会拿默认卡去蒸馏、把它的摘要盖掉，而调用方以为自己操作的是 42 那张卡。
+  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }, { heading: "h2", text: "t2" }]));
+  const seen = [];
+  const stub = { ...digest, composeFor: async (agent) => { seen.push(agent); return { status: "noop" }; } };
+  const { getRoute } = setupApi({ facts, profileDigest: stub, config: testConfig({ profileDigestEnabled: true }) });
+  const gen = getRoute("/api/dsh-mneme/profile-digest/generate");
+  for (const agent of [42, true, ["a"], { k: 1 }]) {
+    const res = new FakeRes();
+    await gen.handler(httpReq("POST", { agent }, "/api/dsh-mneme/profile-digest/generate"), res);
+    assert.equal(res.statusCode, 400, `${JSON.stringify(agent)} 必须 400`);
+    assert.equal(JSON.parse(res.body).error, "invalid-agent");
+  }
+  assert.deepEqual(seen, [], "坏 agent 不得进蒸馏——尤其不能拿默认卡顶替");
+  // 缺省与空串仍然走默认卡（面板的默认卡就是 ""），这条不能被上面的守卫顺手挡掉。
+  for (const payload of [{}, { agent: "" }]) {
+    const res = new FakeRes();
+    await gen.handler(httpReq("POST", payload, "/api/dsh-mneme/profile-digest/generate"), res);
+    assert.equal(res.statusCode, 200, `${JSON.stringify(payload)} 走默认卡`);
+  }
+  assert.deepEqual(seen, ["", ""], "缺省与空串都蒸馏默认卡");
+  store.close();
+});
+
 test("generate：405 / 409（flag 关）/ noop 200；错误码映射 no-route→503、unparseable→502", async () => {
-  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }]));
+  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }, { heading: "h2", text: "t2" }]));
   const { getRoute } = setupApi({ facts, profileDigest: digest, config: testConfig({ profileDigestEnabled: false }) });
   let res = new FakeRes();
   await getRoute("/api/dsh-mneme/profile-digest/generate").handler(
@@ -368,7 +403,7 @@ test("plugin unload waits for the profile chain before closing the store", () =>
 });
 
 test("generate 的 policy 是 token：配了 token 又不带 token 的 POST 被挡在蒸馏之前", async () => {
-  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }]));
+  const { store, facts, digest } = setup(okDigest([{ heading: "h", text: "t" }, { heading: "h2", text: "t2" }]));
   let called = 0;
   const stub = { ...digest, composeFor: async () => { called += 1; return { status: "ok" }; } };
   const { getRoute } = setupApi({ facts, profileDigest: stub, config: testConfig({ profileDigestEnabled: true }), apiToken: "sekret" });

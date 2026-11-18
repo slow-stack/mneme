@@ -13287,6 +13287,10 @@ window.__ModuleLoader__.load({
       const factsSeq = react.useRef(0);
       const digestSeq = react.useRef(0);
       const loadDigest = react.useCallback(async (agentKey) => {
+        // 先判卡再占序号（评审）：序号是两张卡共享的，A 卡的迟到回执触发刷新时
+        // 若先 ++，会把 B 卡在飞的响应判成过期丢掉——两张卡都白等。判卡放在最前，
+        // 不属于当前卡的读取根本不发、也不推序号。
+        if (factsAgentRef.current !== agentKey) return;
         const seq = ++digestSeq.current;
         try {
           const res = await apiFetch(`/api/dsh-mneme/profile-digest?agent=${encodeURIComponent(agentKey)}`);
@@ -13302,6 +13306,7 @@ window.__ModuleLoader__.load({
         }
       }, []);
       const loadFacts = react.useCallback(async (agentKey) => {
+        if (factsAgentRef.current !== agentKey) return;
         const seq = ++factsSeq.current;
         try {
           const res = await apiFetch(`/api/dsh-mneme/profile-facts?agent=${encodeURIComponent(agentKey)}`);
@@ -13472,8 +13477,12 @@ window.__ModuleLoader__.load({
           }
           await loadFacts(factsAgent);
         } catch {
-          setFactsRunEnd({ kind: "failed" });
-          announce(t("memory.settings.factsRunFailed"));
+          // 失败结局同样要判卡（评审）：请求 reject 时这张卡可能已经被切走，
+          // 迟到的一句「维护失败」会挂在另一张卡的事实区上。
+          if (factsAgentRef.current === key) {
+            setFactsRunEnd({ kind: "failed" });
+            announce(t("memory.settings.factsRunFailed"));
+          }
         } finally {
           setFactsRunning(false);
         }
@@ -13507,8 +13516,10 @@ window.__ModuleLoader__.load({
           }
           await loadDigest(factsAgent);
         } catch {
-          setDigestEnd({ kind: "failed" });
-          announce(t("memory.settings.digestRunFailed"));
+          if (factsAgentRef.current === key) {
+            setDigestEnd({ kind: "failed" });
+            announce(t("memory.settings.digestRunFailed"));
+          }
         } finally {
           setDigestBusy(false);
         }
