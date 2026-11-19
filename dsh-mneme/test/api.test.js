@@ -2984,6 +2984,46 @@ test("中文桶名：清单里列得出来就必须读得到（否则就是点�
   assert.match(JSON.parse(res.body).text, /旧的那篇/);
 });
 
+test("#758 agent 桶键 agents/<id>：清单列得出来就必须读得到", async (t) => {
+  // 现场故障：清单给 agent 桶的键是 `agents/standard`，而路由拿 isBucketName
+  // 直接校验——那把尺按「单层目录名」设计、显式禁 `/`，于是必然 400，面板永远
+  // 卡在「正在读…」。三处判据必须同源，这条钉住 api 层用的是解析口径而不是裸名校验。
+  const { memoryDir, root } = diaryFixture({ "proj-aaaa1111": { "2026-11-07": diaryPage("x") } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+  const agentDir = join(root, "agents", "standard");
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(join(agentDir, "2026-11-08.md"), diaryPage("standard", "agent 桶的那篇"), "utf8");
+
+  const { routes } = setupDiary({ memoryDir, diaryEnabled: true });
+
+  const list = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/diary/library").handler(req("/api/dsh-mneme/diary/library"), list);
+  assert.equal(list.statusCode, 200);
+  const keys = JSON.parse(list.body).buckets.map((b) => b.key);
+  assert.ok(keys.includes("agents/standard"), "清单里 agent 桶的键是 agents/<id>");
+
+  const res = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/diary/library/entry")
+    .handler(req(`/api/dsh-mneme/diary/library/entry?bucket=${encodeURIComponent("agents/standard")}&date=2026-11-08`), res);
+  assert.equal(res.statusCode, 200, "清单里列得出来的 agent 桶，点进去必须读得到");
+  assert.match(JSON.parse(res.body).text, /agent 桶的那篇/);
+});
+
+test("#758 agent 桶键：多级或越界的 agents/ 键仍然回 400", async (t) => {
+  // 放宽 `agents/` 前缀不能让 `agents/../x` 之类漏过去——剥完前缀剩下那段照样要过尺。
+  const { memoryDir } = diaryFixture({ "proj-aaaa1111": { "2026-11-07": diaryPage("x") } });
+  t.after(() => rmSync(memoryDir, { recursive: true, force: true }));
+
+  const { routes } = setupDiary({ memoryDir, diaryEnabled: true });
+  const route = findHandler(routes, "/api/dsh-mneme/diary/library/entry");
+  for (const bad of ["agents/", "agents/..", "agents/a/b", "agents/ok/../ok", "agents//x"]) {
+    const res = new FakeRes();
+    await route.handler(req(`/api/dsh-mneme/diary/library/entry?bucket=${encodeURIComponent(bad)}&date=2026-11-08`), res);
+    assert.equal(res.statusCode, 400, `桶名 ${JSON.stringify(bad)} 该回 400`);
+    assert.equal(JSON.parse(res.body).error, "bucket-required");
+  }
+});
+
 // --- 手动写日记必须带身份（「设定好人格的 agent 只以这个人格的口吻写日记」）-----
 // 自动轮（src/diary/auto.js:47）一直传 agentId，手动轮的 /diary/compose 却不传，
 // 于是永远落 default 人格卡：同一天从两个入口写，是两张卡的两种声音。

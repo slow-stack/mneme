@@ -53,9 +53,10 @@ import { projectKey } from "./candidates.js";
 import {
   diaryDir, listDiaries, readDiary, exportDiary,
   // 跨桶清单（左侧「ta 的日记」面板）：它拿不到当前会话的项目，只能整体读。
-  // isBucketName 也走同一处：清单与单篇读取必须用同一道判据，否则会出现
-  // 「列得出来、点进去 400」。
-  listDiaryLibrary, readLibraryEntry, isBucketName
+  // 桶键解析也走同一处：清单、单篇读取、路由白名单三层必须用同一道判据，否则会
+  // 出现「列得出来、点进去 400」——#758 就是这么坏的（`agents/<id>` 键过不了
+  // 按单层目录名设计的 isBucketName）。
+  listDiaryLibrary, readLibraryEntry, resolveBucketDir
 } from "./diary/index.js";
 import { readCandidateDoc } from "./candidates.js";
 // M.O. 自动沉淀：/nudge 是 pipeline-nudge.js 的第一个运行时消费者（此前它只有测试在用，
@@ -3929,11 +3930,19 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
       const bucket = params.get("bucket");
       const date = params.get("date");
       // 桶名与日期都要校验：这条路径直接拼文件系统路径，`..` 必须在这里挡住。
-      // 用的就是 library.js 那道 `isBucketName`——两层不能各写一份规则，否则
-      // 会出现「清单里列得出来、点进去 400」：历史上真有保留中文的桶
-      // （`QQ对话-4f061790`），ASCII 白名单会把它列出来却读不到，用户看到的是
-      // 点了没反应。真正的越界由 `readLibraryEntry` 里的真实路径解析兜底。
-      if (!bucket || !isBucketName(bucket)) {
+      // #758：校验必须走 `resolveBucketDir`，不能直接 `isBucketName`。
+      // `isBucketName` 是按「单层目录名」设计的、显式禁止 `/`，而清单给 agent 桶
+      // 的键是 `agents/<agentId>`——拿它直接判必然 false，于是「清单列得出来、
+      // 点进去 400」，面板永远卡在「正在读…」。解析口径现在只有这一处
+      // （library.js 的 resolveBucketDir）：剥 `agents/` 前缀后同一把尺量剩下的
+      // 那一段，清单、单篇读取、这里的白名单三层同一个判据。
+      // 真正的越界仍由 `readLibraryEntry` 里的真实路径解析兜底。
+      const resolved = resolveBucketDir({
+        memoryDir: config.memoryDir,
+        configured: config.diaryDir,
+        bucket
+      });
+      if (!resolved.ok) {
         sendJson(res, 400, { error: "bucket-required" });
         return;
       }

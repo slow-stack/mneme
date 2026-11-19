@@ -461,6 +461,54 @@ test("#613 compose agentMode：素材超限如实截断（红线5 的正文侧�
   store.close();
 });
 
+test("#758 knownAgents：桶还没建也要能从 sessions.json 映射出名单", async () => {
+  // 原来的实现只扫「已经写过日记的桶」，而建桶发生在写入时——于是第一天的名单是
+  // 空的，`Promise.all([])` 直接 resolve：不建桶、不写账本、不留痕迹，永远开不了张。
+  // 名单的权威来源必须是 sessions.json 的映射（settleAgent 在 turn/end 就写了）。
+  const memoryDir = fresh("known-agents-map-only");
+  writeAgentSessions(agentsRoot({ memoryDir }), {
+    s1: { agent: "standard", title: "A · 一", source: "user" },
+    s2: { agent: "standard", title: "A · 二", source: "user" },
+    s3: { agent: "Amarre", title: "M · 一", source: "user" }
+  });
+  // 刻意不建任何 agents/<id>/ 目录：这正是 issue 里的现场。
+  const composer = createDiaryComposer({
+    ctx: fakeBodyCtx().ctx,
+    config: { diaryEnabled: true, language: "zh", documentMemoryEnabled: false },
+    memoryDir,
+    service: { diaryMaterial: () => [] },
+    settings: null
+  });
+  const agents = composer.knownAgents();
+  assert.deepEqual([...agents].sort(), ["Amarre", "standard"], "映射里的 agent 都该在名单里");
+  assert.equal(agents.length, 2, "两个会话同一个 agent 只算一本");
+});
+
+test("#758 knownAgents：不在映射里但已有日记的旧桶仍要被巡检到", async () => {
+  // 并集而不是替换：手工建的桶、旧版本遗留的桶即便没进映射，收紧成「只看映射」
+  // 会让那些书从此不再更新，而界面上完全看不出来。
+  const memoryDir = fresh("known-agents-legacy-bucket");
+  writeAgentSessions(agentsRoot({ memoryDir }), { s1: { agent: "standard", title: "", source: "user" } });
+  const legacy = diaryAgentDir({ memoryDir, agentId: "Legacy" });
+  assert.ok(legacy, "夹具前提：agent 桶路径可解析");
+  mkdirSync(legacy, { recursive: true });
+  writeFileSync(join(legacy, "2026-11-01.md"), "---\ndate: 2026-11-01\npersona: settings (Legacy)\n---\n\n老的一篇\n", "utf8");
+  // 空目录（建了一半、被清空）不算：否则巡检每天白跑一趟。
+  mkdirSync(diaryAgentDir({ memoryDir, agentId: "Empty" }), { recursive: true });
+
+  const composer = createDiaryComposer({
+    ctx: fakeBodyCtx().ctx,
+    config: { diaryEnabled: true, language: "zh", documentMemoryEnabled: false },
+    memoryDir,
+    service: { diaryMaterial: () => [] },
+    settings: null
+  });
+  const agents = composer.knownAgents();
+  assert.ok(agents.includes("standard"), "映射里的在");
+  assert.ok(agents.includes("Legacy"), "有日记的旧桶也在");
+  assert.ok(!agents.includes("Empty"), "空桶不进名单");
+});
+
 // ---------------------------------------------------------------- 红线 10：
 // diaryEnabled=false 一个字不写（wiring 级：composer 压根不创建，路由回 409——
 // 由 api.test 的既有用例覆盖；这里钉 compose 侧的最后防线：sessionGate 关着的

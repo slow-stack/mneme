@@ -654,6 +654,37 @@ test("auto：turn/end 仍走 rollover，与定时器互不影响", () => {
   auto();
 });
 
+test("auto：agent 维度的定时唤醒把 agentId 传进 compose（#758）", async () => {
+  // #758 的根因就在这条链上：scheduleAgent 收下 agentId 却只把 payload 存进
+  // pending，runOne 从 payload.agentId 取身份——漏存就是一路 undefined，最后落
+  // agent-invalid，而 auditFile 也是 null（root 为空时不算），连 skip 都写不出。
+  // 现场表现是「桶建好了也毫无动静、runs.jsonl 一行没有」，所以这条必须钉在
+  // scheduleAgent → runOne 的传递上，不能只测 compose 本身。
+  const { ctx } = autoCtx();
+  const seen = [];
+  const auto = createDiaryAutoRun({
+    ctx,
+    composer: {
+      compose: async (input) => {
+        seen.push(input);
+        return { status: "written" };
+      }
+    },
+    everyMs: 60 * 60 * 1000,
+    agentResolver: () => null,
+    listAgents: () => ["standard", "Amarre"],
+    now: () => 1_000_000
+  });
+  await auto.tickNow();
+  await drain();
+  for (let i = 0; i < 100 && auto.pendingCount() > 0; i += 1) await drain();
+  assert.equal(seen.length, 2);
+  assert.deepEqual(seen.map((x) => x.agentMode), [true, true]);
+  assert.deepEqual(seen.map((x) => x.agentId), ["standard", "Amarre"], "agentId 不许在传递中丢掉");
+  assert.deepEqual(seen.map((x) => x.trigger), ["timer", "timer"]);
+  auto();
+});
+
 test("auto：同一项目在 minIntervalMs 内不重复判定", async () => {
   const { ctx } = autoCtx();
   const seen = [];

@@ -26,4 +26,4 @@ export { localDateString, shouldRollDay, dayGap, MAX_CATCH_UP_DAYS } from "./rol
 export { listDiaries, readDiary, exportDiary, EXPORT_SUBDIR } from "./export.js";
 // 左侧「ta 的日记」面板读的是**跨桶**清单（它拿不到当前会话的项目），
 // 与上面按 projectRoot 定位单个桶的 dir.js 是两件事。
-export { listDiaryLibrary, readLibraryEntry, isBucketName } from "./library.js";
+export { listDiaryLibrary, readLibraryEntry, isBucketName, resolveBucketDir } from "./library.js";
