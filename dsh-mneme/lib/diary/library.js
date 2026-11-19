@@ -56,6 +56,32 @@ function bucketDir(root, bucket) {
   return join(root, bucket);
 }
 
+/** agent 桶键的前缀。`agents` 是 #613 的命名空间，项目桶不许撞名（见 listDiaryLibrary）。 */
+export const AGENT_KEY_PREFIX = "agents/";
+
+/**
+ * #758：桶键 → 落点目录。**清单与单篇读取共用这一处**，不许各写一份判据。
+ *
+ * 键有两种形状：项目桶是单层目录名（`QQ对话-4f061790`），agent 桶是
+ * `agents/<agentId>`（#613 §3）。`isBucketName` 按「单层目录名」判、显式禁止 `/`——
+ * 拿它直接去校验 `agents/standard` 必然 false，于是清单列得出来、点进去 400，
+ * 面板永远卡在「正在读…」。所以先剥 `agents/` 前缀，剩下的那一段再过同一把尺。
+ *
+ * 返回 `{ ok, kind, dir }`：`ok=false` 是**参数不合法**（该回 400），`ok=true` 但
+ * `dir=null` 不存在这种组合；`dir` 为空只可能来自根路径不可用。
+ */
+export function resolveBucketDir({ memoryDir, configured = "", bucket } = {}) {
+  const name = String(bucket ?? "");
+  if (!name) return { ok: false, kind: "", dir: null };
+  if (name.startsWith(AGENT_KEY_PREFIX)) {
+    const agentId = name.slice(AGENT_KEY_PREFIX.length);
+    if (!isBucketName(agentId)) return { ok: false, kind: "", dir: null };
+    return { ok: true, kind: "agent", dir: join(agentsRoot({ memoryDir, configured }), agentId) };
+  }
+  if (!isBucketName(name)) return { ok: false, kind: "", dir: null };
+  return { ok: true, kind: "project", dir: bucketDir(diaryRoot({ memoryDir, configured }), name) };
+}
+
 function readFrontmatter(path) {
   let text;
   try {
@@ -309,16 +335,10 @@ export function listDiaryLibrary({ memoryDir, configured = "", log = null } = {}
  *  #613：`agents/<agentId>` 形状的桶读 agent 桶（isBucketName 挡路径语义后拼一层）。 */
 export function readLibraryEntry({ memoryDir, configured = "", bucket, date } = {}) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date ?? ""))) return null;
-  const root = diaryRoot({ memoryDir, configured });
-  const name = String(bucket ?? "");
-  let dir = null;
-  if (name.startsWith("agents/")) {
-    const agentId = name.slice("agents/".length);
-    dir = isBucketName(agentId) ? join(agentsRoot({ memoryDir, configured }), agentId) : null;
-  } else {
-    dir = bucketDir(root, bucket);
-  }
-  if (dir === null) return null;
+  // #758：与清单、与 api 的白名单校验共用 resolveBucketDir——三处同一把尺，
+  // 「列得出来点不进去」就不会再有第二次。
+  const { ok, dir } = resolveBucketDir({ memoryDir, configured, bucket });
+  if (!ok || dir === null) return null;
   try {
     return readFileSync(join(dir, `${date}.md`), "utf8");
   } catch {

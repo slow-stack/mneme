@@ -501,16 +501,42 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
   return {
     compose: (input) => enqueue(() => compose(input)),
     knownProjects,
-    /** #613：agents/ 下写过日记的 agent 名单（catchUp 与定时巡检的输入）。 */
+    /**
+     * #613：agent 名单（catchUp 与定时巡检的输入）。
+     *
+     * **#758 改口径**：原来只扫「已经写过日记的桶」，而 compose 建桶发生在写入时——
+     * 于是桶不存在 ⇒ 名单为空 ⇒ `Promise.all([])` 直接 resolve，不建桶、不写账本、
+     * 不留痕迹，第一天永远开不了张。名单的权威来源是 `agents/sessions.json` 的
+     * 映射值（settleAgent 在 turn/end 时就写下了），不是「谁写过日记」。
+     *
+     * 与已有桶取**并集**而不是替换：手工建的桶、旧版本遗留的桶即便不在映射里，
+     * 也该继续被巡检到——收紧成「只看映射」会让那些书从此不再更新，而界面上
+     * 看不出来。两边的元素同样要过 isBucketName，路径语义在入口处挡掉。
+     */
     knownAgents() {
       const root = agentsRoot({ memoryDir, configured: config?.diaryDir });
-      let names;
+      const out = new Set();
+      let bySession = {};
+      try {
+        bySession = readAgentSessions(root);
+      } catch {
+        bySession = {};
+      }
+      for (const row of Object.values(bySession)) {
+        const id = row && typeof row.agent === "string" ? row.agent.trim() : "";
+        if (id && isBucketName(id)) out.add(id);
+      }
+      let names = [];
       try {
         names = readdirSync(root);
       } catch {
-        return [];
+        names = [];
       }
-      return names.filter((n) => isBucketName(n) && latestDiaryDate(join(root, n)));
+      for (const n of names) {
+        // 只收「有日记的桶」：空目录（建了一半、被人清空）不该让巡检每天白跑一趟。
+        if (isBucketName(n) && latestDiaryDate(join(root, n))) out.add(n);
+      }
+      return [...out];
     },
     /** 只读一次账本：面板要回答「今天为什么没有日记」时必须读它，不能靠猜。 */
     readAudit({ projectRoot, limit = 50 } = {}) {

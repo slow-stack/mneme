@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **agent 日记桶第一天永远开不了张：名单来源、身份丢失、桶键三处（#758）**。现场是 `diaries/agents/` 下只有 `sessions.json`（3 条会话 → agent `standard`），一个 `<agentId>/` 桶都没有；此后 24 小时零写入，连 `runs.jsonl` 的 skip 记录都没有——素材经 SQL 复算完全够（11-17 58 条 / 11-18 71 条 / 11-19 44 条），模型一次没被叫。
+
+  三处各自独立，缺一条都还是哑的：① **名单来源错了**。`knownAgents()` 只扫「已经写过日记的桶」，而建桶发生在写入时，于是桶不存在 ⇒ 名单为空 ⇒ 定时巡检与启动补写都 `Promise.all([])` 直接 resolve，不建桶、不写账本、不留痕迹。权威来源改成 `agents/sessions.json` 的映射值（`settleAgent` 在 turn/end 时就写下了），并与已有桶取**并集**——手工建的桶、旧版遗留的桶即便不在映射里也该继续被巡检，收紧成「只看映射」会让那些书从此不再更新而界面上看不出来；空目录不进名单（建了一半的不该让巡检每天白跑）。② **身份在调度层就丢了**（这条不是「没建桶」，建桶治不了）。`scheduleAgent(agentId, …)` 把 `payload` 原样放进 `pending`，却没把 `agentId` 存进去，而 `runOne` 恰恰从 `payload.agentId` 取身份——一路 `undefined` 下去，`diaryAgentDir` 拿空 id 返回 null，`compose` 落 `agent-invalid`；更糟的是 root 为 null 时 `auditFile` 也是 null，连那条 skip 都写不出来。这就是「手工建好桶之后仍然毫无动静」的原因。③ **桶键两套口径**。清单给 agent 桶的键是 `agents/<agentId>`，而 `library/entry` 路由拿 `isBucketName` 直接校验——那把尺按「单层目录名」设计、显式禁 `/`，必然 400 `bucket-required`，面板永远卡在「正在读…」。桶键解析现在抽成 `resolveBucketDir` 一处：剥掉 `agents/` 前缀后同一把尺量剩下的那段，清单、单篇读取、路由白名单三层同一个判据，`agents/../x` 一类仍然照样 400。
+
+  **测试** 3,718 → **3,723**：`test/diary.test.js` 钉 `scheduleAgent → runOne` 的 `agentId` 传递（原来这条链完全没有用例，所以 bug 一直没被测出来）；`test/diary-agent.test.js` +2 钉 `knownAgents` 的两面（桶还没建时从映射出名单、有日记的旧桶仍被巡检而空桶不进）；`test/api.test.js` +2 钉 agent 桶键（清单列得出来就必须读得到、多级与越界键仍回 400）。变异自证三处各一次：还原 `pending.set` 丢 agentId → 第一条红；`knownAgents` 退回只扫已有桶 → 后两条红；路由退回裸 `isBucketName` → agent 桶键那条红。
+
 - **情绪页把后端早就给全的文字接上页面，评审提的十七处一并修掉（#750）**。`#729/#732/#733/#734` 合并后，聚合端点一直在给 `why`、`downgradedFrom`、`valence`、`originals`、`firstSeen`、`next` 游标与 `person`/`emotion` 过滤参数，账本行也带着 before/after 摘要——前端一个都没消费，「数据在、界面没显示」。本次全部上页面：`why` 两行截断、全文进 `title`（并补 `tabIndex`，否则键盘与触屏都拿不到全文）；`downgradedFrom` 降级徽标摆在主行；`valence` 与归一组原词进 meta；首页即按游标模式取（边帽放宽到 `4×limit`），主列表与归档区各自「加载更多」，有游标可翻时截断提示让位；`person`/`emotion` 过滤 Enter 生效、草稿与生效态分开、一键清除，过滤下的空态有自己的文案；账本行读 before/after，改词显示词面变化、其余四类显示档位与归档态迁移。
 
   CodeRabbit 随后提了 17 条（2 Major + 15 Minor），逐条核到代码里**全部属实**，没有一条是风格挑刺。三处会真出错的：① **筛选请求失败会整页早退**，把输入框与「清除过滤」一起藏掉，带着生效中的过滤读崩一次就只剩离开页签一条路——现在错误改在结果区摆，筛选栏照常可用，另给就地重试；② **翻页与重取没有代次**，旧筛选的续页在飞时提交新筛选，返回后仍往新结果上追加并用旧 `next` 覆盖新游标（归档区同病：恢复操作触发重取后，续页仍可拿恢复前的游标跳页）——加 `mainGen`/`archGen` 两个代次，重取即作废旧页并在写任何状态前校验；③ **`slice(0, 50)` 静默截断**（这是 `src/api.js` 里的存量代码，是本页的分页能力才让它可触发）：51 条边的组只做前 50 条，被丢的边不进 `failures`，回包是 `applied:50, failures:[]`，面板当整组成功——改成超限整组 `400 too-many-edges`（带 `limit`/`got`），在写任何一条边之前退出，宁可整组拒不半做。

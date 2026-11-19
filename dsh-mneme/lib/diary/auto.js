@@ -115,7 +115,12 @@ export function createDiaryAutoRun({
     const last = checkedAt.get(key);
     if (last !== undefined && now() - last < minIntervalMs) return;
     if (pending.has(key)) return;
-    pending.set(key, { ...payload, agentMode: true, trigger });
+    // #758：**agentId 必须进 pending**。flush 取出的 queued 对象就是 runOne 唯一的
+    // 输入，runOne 从 payload.agentId 取身份——这里漏了它就一路传 undefined 下去：
+    // diaryAgentDir 拿空 id 返回 null → compose 落 agent-invalid → 而 auditFile 也
+    // 是 null（root 为空时不算），连那条 skip 都写不出来。表现就是「桶建好了也
+    // 一样毫无动静、runs.jsonl 一行没有」，与 issue 里手工建桶后仍无产出的现象一致。
+    pending.set(key, { ...payload, agentId, agentMode: true, trigger });
     defer();
   };
 
