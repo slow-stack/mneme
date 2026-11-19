@@ -56,7 +56,9 @@ import {
   // 桶键解析也走同一处：清单、单篇读取、路由白名单三层必须用同一道判据，否则会
   // 出现「列得出来、点进去 400」——#758 就是这么坏的（`agents/<id>` 键过不了
   // 按单层目录名设计的 isBucketName）。
-  listDiaryLibrary, readLibraryEntry, resolveBucketDir
+  listDiaryLibrary, readLibraryEntry, resolveBucketDir,
+  // agent 诊断口按 agentId 校验：agent 身份是单层目录名，与桶名同一把尺。
+  isBucketName
 } from "./diary/index.js";
 import { readCandidateDoc } from "./candidates.js";
 // M.O. 自动沉淀：/nudge 是 pipeline-nudge.js 的第一个运行时消费者（此前它只有测试在用，
@@ -3760,8 +3762,12 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
       try {
         const dir = diaryDir({ memoryDir: config.memoryDir, projectRoot: project, configured: config.diaryDir });
         // 账本一起带走：面板要回答「今天为什么没有日记」时必须读它，不能靠猜。
+        // #760：两本都要——桶内那本记「落点算出来之后的失败」，总账记「连落点都
+        // 没算出来的那些」（compose 在落点之前抛掉）。只读前者，用户看到的仍是
+        // 「今天没写」，而真正的原因一直躺在总账里没人看。
         const audit = diary.readAudit({ projectRoot: project, limit: 20 });
-        sendJson(res, 200, { contract: "mneme.diary/v1", project, dir, diaries: listDiaries(dir), audit });
+        const rootAudit = typeof diary.readRootAudit === "function" ? diary.readRootAudit({ projectRoot: project, limit: 20 }) : [];
+        sendJson(res, 200, { contract: "mneme.diary/v1", project, dir, diaries: listDiaries(dir), audit, rootAudit });
       } catch (error) {
         sendJson(res, 500, { error: "diary-unreadable", detail: String((error && error.message) || error) });
       }
@@ -3790,6 +3796,41 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           return;
         }
         sendJson(res, 200, { contract: "mneme.diary/v1", date, path: `${dir}/${date}.md`, text });
+      } catch (error) {
+        sendJson(res, 500, { error: "diary-unreadable", detail: String((error && error.message) || error) });
+      }
+    }
+  });
+
+  // #760：agent 日记页的诊断口。
+  //
+  // 为什么不能复用 `GET /diary`：那条路由第一件事就是 `diaryProject` 要 `project`，
+  // 而 agent 桶**没有 projectRoot**（agentMode 的落点是 `agents/<agentId>/`）。
+  // 于是 agent 页要么传一个假 project（读到的全是别人的账），要么根本读不到——
+  // 而 #758 出事的恰恰就是 agent 桶第一天开不了张。按 agentId 单独给一个口，
+  // 页面才可能在「一篇都没有」的时候说清「一次都没跑起来」还是「跑了但没写」。
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/diary/agent-audit",
+    policy: "open",
+    handler(req, res) {
+      if (!diaryGate(req, res)) return;
+      const agentId = new URL(req.url, "http://localhost").searchParams.get("agent");
+      // 不给 agent 是**合法**的第三种问法：agent 桶一个都还没建起来时（#758 现场
+      // 就是 `diaries/agents/` 下只有 sessions.json），页面连一本书都列不出来，
+      // 也就拿不到 agentId。那时候要回答的正是「一次都没跑起来，为什么」。
+      if (agentId !== null && agentId !== "" && !isBucketName(agentId)) {
+        sendJson(res, 400, { error: "agent-invalid", detail: agentId });
+        return;
+      }
+      try {
+        const query = agentId === null || agentId === ""
+          ? { agentOnly: true, limit: 20 }
+          : { agentId, limit: 20 };
+        const rootAudit = typeof diary.readRootAudit === "function"
+          ? diary.readRootAudit(query)
+          : [];
+        sendJson(res, 200, { contract: "mneme.diary/v1", agent: agentId || null, rootAudit });
       } catch (error) {
         sendJson(res, 500, { error: "diary-unreadable", detail: String((error && error.message) || error) });
       }

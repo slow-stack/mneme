@@ -1062,6 +1062,7 @@ window.__ModuleLoader__.load({
         "memory.diary.skip.noMaterial": "今天这个项目没有可用的对话素材，所以没写。",
         "memory.diary.skip.other": "这一轮没有写成。",
         "memory.diary.auditTitle": "最近几轮",
+        "memory.diary.rootAuditTitle": "没写成的原因",
         "memory.diary.status.written": "写了",
         "memory.diary.status.skipped": "跳过",
         "memory.diary.status.failed": "失败",
@@ -2287,6 +2288,7 @@ window.__ModuleLoader__.load({
         "memory.diary.skip.noMaterial": "No usable conversation material in this project today, so nothing was written.",
         "memory.diary.skip.other": "Nothing was written this round.",
         "memory.diary.auditTitle": "Recent runs",
+        "memory.diary.rootAuditTitle": "Why it was not written",
         "memory.diary.status.written": "written",
         "memory.diary.status.skipped": "skipped",
         "memory.diary.status.failed": "failed",
@@ -12722,6 +12724,30 @@ window.__ModuleLoader__.load({
       return renderWikiMarkdown(lines.slice(i).join("\n"));
     }
 
+    // #760：账本行的日期。总账的行不一定带 date（触发侧在落点之前失败时没有
+    // 「今天」这个概念），但有 ts。**用本地时区拼**，不能用 toISOString——那是
+    // UTC，北京时间早上八点前会显示成前一天。
+    function diaryAuditDay(ts) {
+      const d = new Date(Number(ts));
+      if (Number.isNaN(d.getTime())) return "";
+      const p = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    }
+
+    // 两本账（桶内 runs.jsonl 与总账）的行形状一致，渲染也共用这一处：
+    // 「哪天 · 什么状态 · 为什么 · 详情」。项目页与 agent 页都用它。
+    /**
+     * 一条失败原因。`showAgent` 只在**聚合视图**用（没指定 agent、一次取回多本人格的
+     * 账）：那种时候不写是谁，alice 和 bob 同一天都没写成，用户分不清哪条是谁的。
+     * 单本视图本来就知道是谁，再重复一遍只是噪音。
+     */
+    function diaryAuditLine(h, t, a, i, showAgent = false) {
+      const who = showAgent && a && a.agentId ? String(a.agentId) : "";
+      return h("div", { key: "a" + i, className: "mneme-diary-auditrow" },
+        [a.date || diaryAuditDay(a.ts), t("memory.diary.status." + (a.status || "skipped")), who, a.reason || "", a.detail || a.error || ""]
+          .filter(Boolean).join(" · "));
+    }
+
     function DiaryPane(props) {
       const { t, project, agent, session } = props;
       const [doc, setDoc] = useState(undefined); // undefined=读中 null=读不出 对象=拿到
@@ -12805,7 +12831,9 @@ window.__ModuleLoader__.load({
           .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
           .then((r) => {
             const b = r.body || {};
-            if (!r.ok) { say("bad", t("memory.diary.composeFailed") + (b.error ? " (" + b.error + ")" : "")); return; }
+            // 失败更要刷新：服务端会把 compose-threw 记进总账，而诊断块只在 tick 变
+            // 的时候重取——不刷的话「为什么没写成」要等用户手动重读才出现，等于白记。
+            if (!r.ok) { say("bad", t("memory.diary.composeFailed") + (b.error ? " (" + b.error + ")" : "")); setTick((n) => n + 1); return; }
             // skip 也是 200——「今天写过 / 今天没聊」都是正常结果，必须说清是哪一种，
             // 否则用户看到的是一句「成功了」但什么都没变（假成功）。
             // 写成时不能借用「已存到」那句文案——写和入库是两件事，
@@ -12817,7 +12845,7 @@ window.__ModuleLoader__.load({
             else say("ok", t("memory.diary.skip.other"));
             setTick((n) => n + 1);
           })
-          .catch((err) => { console.warn("[dsh-mneme] diary compose failed:", err); say("bad", t("memory.diary.composeFailed")); })
+          .catch((err) => { console.warn("[dsh-mneme] diary compose failed:", err); say("bad", t("memory.diary.composeFailed")); setTick((n) => n + 1); })
           .finally(() => setBusy(""));
       };
 
@@ -12889,12 +12917,24 @@ window.__ModuleLoader__.load({
       }
 
       const audit = (doc && doc.audit) || [];
-      const foot = audit.length
-        ? h("div", { className: "mneme-diary-audit" },
-            h("div", { className: "mneme-diary-audithead" }, t("memory.diary.auditTitle")),
-            audit.slice(-6).reverse().map((a, i) => h("div", { key: "a" + i, className: "mneme-diary-auditrow" },
-              [a.date, t("memory.diary.status." + (a.status || "skipped")), a.reason || ""].filter(Boolean).join(" · "))))
-        : null;
+      // #760：总账那本。桶内账本只覆盖「落点已算出之后」的失败；compose 在落点之前
+      // 就炸掉的（模型、注入时钟）只留在总账里。面板若不显示它，用户看到的永远只有
+      // 「今天没写」四个字——而原因其实一直躺在磁盘上。
+      const rootAudit = (doc && doc.rootAudit) || [];
+      // 日期换算与行渲染都提到模块级（diaryAuditDay / diaryAuditLine）：agent 页
+      // 也要画同一本总账，两处各写一份的话迟早只有一处修得到。
+      const auditBlocks = [];
+      if (audit.length) {
+        auditBlocks.push(h("div", { className: "mneme-diary-audit" },
+          h("div", { className: "mneme-diary-audithead" }, t("memory.diary.auditTitle")),
+          audit.slice(-6).reverse().map((a, i) => diaryAuditLine(h, t, a, i))));
+      }
+      if (rootAudit.length) {
+        auditBlocks.push(h("div", { className: "mneme-diary-audit" },
+          h("div", { className: "mneme-diary-audithead" }, t("memory.diary.rootAuditTitle")),
+          rootAudit.slice(-6).reverse().map((a, i) => diaryAuditLine(h, t, a, i))));
+      }
+      const foot = auditBlocks.length ? h("div", null, auditBlocks) : null;
 
       return h("div", { className: "mneme-diary" },
         head,
@@ -13098,6 +13138,54 @@ window.__ModuleLoader__.load({
         return () => { dead = true; };
       }, [activeItem && activeItem.key]);
 
+      // #760：诊断面。agent 页**不读** `/diary`——那条路由第一件事就是要 `project`，
+      // 而 agent 桶没有 projectRoot（落点是 agents/<agentId>/）。于是 #758 那种
+      // 「桶第一天开不了张」在这页上永远只显示「还没写过」，原因（身份丢了、名单
+      // 空了）一直躺在总账里没人读。
+      //
+      // 三种问法各对不同的桶：
+      // - 选中的是 agent 桶 → 按 agentId 问那个人的失败；
+      // - 选中的是项目桶 → 按 projectRoot 问这个项目的失败（`/diary` 已经把它带出来）；
+      // - 一本都没选中/一本都没有 → 不带 agent 问 agent 域（#758 现场页面连 agentId
+      //   都拿不到，而「一次都没跑起来」正是要回答的）。
+      // 只走前一种会把项目级的失败藏起来：项目桶上摆一排人格的失败，比不显示更误导。
+      // 结果与**它对应的问法**一起存。只存结果是不够的：从 A 桶切到 B 桶时旧的一批
+      // 还躺在 state 里，`dead` 只挡迟到的响应，管不了已经存下来的那批——于是 B 的
+      // 响应回来之前，页脚会把 A 的失败当成 B 的失败摆出来。
+      const [rootAudit, setRootAudit] = useState({ key: "", rows: [] });
+      const activeBucketKey = (activeItem && activeItem.bucket) || "";
+      const activeBucketRoot = (() => {
+        const b = buckets.find((x) => x.key === activeBucketKey);
+        return (b && typeof b.projectRoot === "string" && b.projectRoot) || "";
+      })();
+      const auditKey = activeBucketKey.startsWith("agents/")
+        ? "agent:" + activeBucketKey.slice("agents/".length)
+        : activeBucketRoot
+          ? "project:" + activeBucketRoot
+          : "agent:*";
+      useEffect(() => {
+        let dead = false;
+        const url = auditKey.startsWith("agent:")
+          ? (auditKey === "agent:*"
+            ? "/api/dsh-mneme/diary/agent-audit"
+            : "/api/dsh-mneme/diary/agent-audit?agent=" + encodeURIComponent(auditKey.slice("agent:".length)))
+          : "/api/dsh-mneme/diary?project=" + encodeURIComponent(auditKey.slice("project:".length));
+        apiFetch(url)
+          .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+          .then((r) => {
+            if (dead) return;
+            const rows = r.ok && r.body && Array.isArray(r.body.rootAudit) ? r.body.rootAudit : [];
+            setRootAudit({ key: auditKey, rows });
+          })
+          .catch((err) => {
+            // 读不到就什么都不显示，不拿一条假的「没有失败」顶上——那句「一切正常」
+            // 会让人放弃去看真正的原因。
+            console.warn("[dsh-mneme] diary root audit failed:", err);
+            if (!dead) setRootAudit({ key: auditKey, rows: [] });
+          });
+        return () => { dead = true; };
+      }, [auditKey, tick]);
+
       // 当前这一篇属于哪个项目：桶是 projectKey(projectRoot) 的产物，反推不回路径，
       // 所以只能读 diaries/state.json 里 compose 自己记的账（library.js 已并进桶上）。
       const activeBucket = activeItem
@@ -13122,7 +13210,8 @@ window.__ModuleLoader__.load({
           .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
           .then((r) => {
             const b = r.body || {};
-            if (!r.ok) { say("bad", t("memory.diary.composeFailed") + (b.error ? " (" + b.error + ")" : "")); return; }
+            // #760：失败也刷新总账——服务端刚记下的那条 compose-threw 正等着被读出来。
+            if (!r.ok) { say("bad", t("memory.diary.composeFailed") + (b.error ? " (" + b.error + ")" : "")); setTick((n) => n + 1); return; }
             // skip 不是错：already-written / no-material 都是关于这本书的答案，
             // 说清楚比笼统报「没写成」有用。
             if (b.status === "written") say("ok", t("memory.diary.writtenOk").replace("{path}", String(b.path || "")));
@@ -13134,6 +13223,7 @@ window.__ModuleLoader__.load({
           .catch((err) => {
             console.warn("[dsh-mneme] diary compose failed:", err);
             say("bad", t("memory.diary.composeFailed"));
+            setTick((n) => n + 1);
           })
           .then(() => setBusy(""));
       };
@@ -13256,7 +13346,20 @@ window.__ModuleLoader__.load({
           }, notice.text)
         : null;
 
-      return h("div", { className: "mneme-diary" }, head, noticeRow, body);
+      // #760：库页的页底也画总账——问的是「当前这本为什么没写成」，跟着选中的桶走。
+      // 项目页画的是「这个项目的」失败；这里画的是「这一本/这个人格的」——两者选的
+      // 桶不同，问的就不是同一个问题，所以各画各的。
+      // 只画**问法与当前问法一致**的那批：不一致说明新的还没回来，宁可短暂空着，
+      // 也不把上一个桶的失败冒充成这一个桶的。
+      const auditRows = rootAudit.key === auditKey ? rootAudit.rows : [];
+      const auditShowAgent = auditKey === "agent:*";
+      const rootAuditFoot = auditRows.length
+        ? h("div", { className: "mneme-diary-audit" },
+            h("div", { className: "mneme-diary-audithead" }, t("memory.diary.rootAuditTitle")),
+            auditRows.slice(-6).reverse().map((a, i) => diaryAuditLine(h, t, a, i, auditShowAgent)))
+        : null;
+
+      return h("div", { className: "mneme-diary" }, head, noticeRow, body, rootAuditFoot);
     }
 
 

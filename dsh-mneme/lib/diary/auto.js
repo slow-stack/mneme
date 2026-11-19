@@ -33,6 +33,29 @@ export function createDiaryAutoRun({
   listAgents = null
 } = {}) {
   const log = logger || (ctx && ctx.logger) || null;
+  /**
+   * #760：把一处失败同时写进控制台与**磁盘总账**。
+   *
+   * 为什么要两条腿：`log?.warn` 在桌面端等于没写——app.asar 里的插件控制台没人
+   * 看得到，`%APPDATA%` 下只有 10 月的 crash 日志（#758 报告人的原话）。这次故障
+   * 的实际信号是「用户自己发现今天没日记」，而那一刻离出事已经隔了一天。
+   *
+   * 只用 composer.noteFailure 一个口子，不给 auto.js 拼账本路径的理由：账本格式
+   * （补换行、v/ts 字段）只该有一处实现。composer 缺席（旧接线/测试桩）就只剩 warn，
+   * 与改动前逐字节相同。
+   */
+  const record = (reason, detail, extra = {}, logText = null) => {
+    // 控制台那句沿用改动前的措辞（旧日志、旧测试都按它搜），账本里用 kebab 的
+    // reason——两个面服务两种读法，没必要为了统一把既有的 grep 习惯改掉。
+    log?.warn?.("[dsh-mneme] " + (logText || reason) + ": " + detail);
+    try {
+      if (composer && typeof composer.noteFailure === "function") {
+        composer.noteFailure({ reason, detail, ...extra });
+      }
+    } catch {
+      // 诊断面失败不许反过来打断派发链。
+    }
+  };
   let disposed = false;
   let timer = null;
   /** 定时写的钟。与 timer（setTimeout(0) 的派发器）是两回事：那个只把待判项目挪到下一帧。 */
@@ -77,6 +100,9 @@ export function createDiaryAutoRun({
     // compose 是异步的（要等模型），绝不能返回给 session/event 的派发方去 await——
     // 那会把回合收尾吊在模型延迟上（本机实测 p90 五十秒级）。
     return Promise.resolve(task).catch((error) => {
+      // 这里**不**再记总账：compose 自己的出口已经写了 compose-threw（#760），
+      // 同一次失败记两行会让「跑过几次」失去意义。控制台的 warn 保留——两条腿
+      // 各自服务不同的读法。
       log?.warn?.("[dsh-mneme] diary compose failed (" + key + "): " + String((error && error.message) || error));
       return null;
     });
@@ -136,7 +162,28 @@ export function createDiaryAutoRun({
       try {
         resolved = agentResolver(session);
       } catch (error) {
-        log?.warn?.("[dsh-mneme] diary agent resolve failed: " + String((error && error.message) || error));
+        // 这条失败发生在「还不知道身份」的时候，但它未必与项目无关：会话带着
+        // header.cwd 时，项目页应该看得到这一行（否则项目页永远只报自己的毛病，
+        // 而真正让今天没写的是身份解析这一下）。读取本身再包一层——诊断面不许
+        // 因为诊断自己抛错而丢掉整条记录。
+        let projectRoot = null;
+        try {
+          projectRoot = projectRootOf(session);
+        } catch { projectRoot = null; }
+        record(
+          "agent-resolve-failed",
+          String((error && error.message) || error),
+          {
+            trigger: "turn-end",
+            // 这一刻还不知道是谁，但**这次运行确实走的是 agent 维度**（解析器在场才会
+            // 进来）。不标 agentMode 的话，agent 页按 agentOnly 问总账永远问不到这一行
+            // ——而那正是「连桶都没有时用户最该看到的原因」。
+            agentMode: true,
+            sessionId: session && typeof session === "object" ? (session.id ?? null) : null,
+            ...(projectRoot ? { projectRoot } : {})
+          },
+          "diary agent resolve failed"
+        );
       }
       if (resolved && resolved.agentId) {
         scheduleAgent(resolved.agentId, { session });
@@ -189,7 +236,9 @@ export function createDiaryAutoRun({
         }
       }
     } catch (error) {
-      log?.warn?.("[dsh-mneme] diary timer scan failed: " + String((error && error.message) || error));
+      // 运行域跟着这一轮实际扫的名单走：扫的是 agent 名单就是 agent 域。不标的话
+      // agent 页按 agentOnly 问不到它，而「名单本身就炸了」恰恰是那次没写的正因。
+      record("timer-scan-failed", String((error && error.message) || error), { trigger: "timer", agentMode: !!agentResolver }, "diary timer scan failed");
     }
     arm();
   };
@@ -198,7 +247,7 @@ export function createDiaryAutoRun({
     if (disposed || everyMs <= 0 || ticker) return;
     ticker = setTimeout(() => {
       Promise.resolve(tick()).catch((error) => {
-        log?.warn?.("[dsh-mneme] diary timer tick failed: " + String((error && error.message) || error));
+        record("timer-tick-failed", String((error && error.message) || error), { trigger: "timer", agentMode: !!agentResolver }, "diary timer tick failed");
       });
     }, everyMs);
     // unref：不因为一根日记的钟让宿主退不出去。
@@ -225,6 +274,7 @@ export function createDiaryAutoRun({
       return Promise.all(
         list.map((agentId) =>
           Promise.resolve(composer.compose({ trigger: "startup", agentMode: true, agentId })).catch((error) => {
+            // 与 runOne 同理：compose 出口已经记过 compose-threw，这里只留控制台。
             log?.warn?.("[dsh-mneme] diary startup catch-up failed (" + agentId + "): " + String((error && error.message) || error));
             return null;
           })
@@ -235,6 +285,7 @@ export function createDiaryAutoRun({
     return Promise.all(
       list.map((projectRoot) =>
         Promise.resolve(composer.compose({ trigger: "startup", projectRoot })).catch((error) => {
+          // 同上：compose 出口已记 compose-threw。
           log?.warn?.("[dsh-mneme] diary startup catch-up failed (" + projectRoot + "): " + String((error && error.message) || error));
           return null;
         })
