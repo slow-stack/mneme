@@ -12,7 +12,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { localDateString, shouldRollDay, dayGap, MAX_CATCH_UP_DAYS } from "../src/diary/rollover.js";
-import { diaryDir, diaryFilePath, expandHome, memoryBase } from "../src/diary/dir.js";
+import { diaryDir, diaryFilePath, diaryRootAuditPath, expandHome, memoryBase } from "../src/diary/dir.js";
 import { resolveMemoryDir } from "../src/paths.js";
 import { collectQqInbox, inboxFiles, redactDigits, resolveInboxDir, textOf, isEffective } from "../src/diary/qq-inbox.js";
 import { collectSessionTranscript, sessionAgentId } from "../src/diary/session-provider.js";
@@ -28,6 +28,24 @@ function fresh(name) {
   const dir = join(tmp, name);
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+/**
+ * 读**总账**（`<root>/runs.jsonl`）：桶内账本的兜底，专门记「连桶都没有」的那些失败。
+ * 读不出来就当空账本——账本是诊断面，不该让测试因为文件不存在而报错。
+ */
+function readAuditFile(composer, memoryDir) {
+  const file = diaryRootAuditPath({ memoryDir });
+  let text = "";
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+  return text
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line));
 }
 
 test("localDateString 用本地时区，不是 UTC", () => {
@@ -235,15 +253,96 @@ function fakeCtx({ body = "今天聊了很久，她说想早点睡，还说明�
   };
 }
 
-test("compose：项目根为空 → skip project-unknown，一个文件都不写", async () => {
+test("compose：项目根为空 → skip project-unknown，不建任何桶，但总账要留一行", async () => {
   const memoryDir = fresh("compose-unknown");
   const { ctx } = fakeCtx();
   const composer = createDiaryComposer({ ctx, config: { diaryEnabled: true, language: "zh" }, memoryDir, settings: null, now: () => new Date(2026, 10, 7, 10) });
   const result = await composer.compose({ trigger: "rollover", projectRoot: "" });
   assert.equal(result.status, "skipped");
   assert.equal(result.reason, "project-unknown");
-  // 关键反向断言：memoryDir 下不该出现 diaries 目录之外的任何东西。
-  assert.deepEqual(readdirSync(memoryDir), []);
+  // 反向断言不变：不许有桶、不许有日记正文（项目未知时落盘就是泄漏）。
+  assert.deepEqual(readdirSync(memoryDir), ["diaries"]);
+  assert.deepEqual(readdirSync(join(memoryDir, "diaries")), ["runs.jsonl"]);
+  // #760：这一条以前**一个字节都不留**——桶不存在 ⇒ 桶内账本算不出来 ⇒ 连 skip
+  // 都无处写。现场表现就是「24 小时零写入、runs.jsonl 一行没有」，只能等用户
+  // 自己发现「今天怎么没日记」。总账与落点无关，所以它必须在这里有一行。
+  const rows = readAuditFile(composer, memoryDir);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, "skipped");
+  assert.equal(rows[0].reason, "project-unknown");
+  assert.equal(rows[0].trigger, "rollover");
+  assert.equal(rows[0].agentMode, false);
+});
+
+test("compose：agentId 不合法 → skip agent-invalid，同样在总账留痕", async () => {
+  const memoryDir = fresh("compose-agent-invalid");
+  const { ctx } = fakeCtx();
+  const composer = createDiaryComposer({ ctx, config: { diaryEnabled: true, language: "zh" }, memoryDir, settings: null, now: () => new Date(2026, 10, 7, 10) });
+  for (const bad of ["../escape", "a/b", "", "."]) {
+    const result = await composer.compose({ trigger: "rollover", projectRoot: "D:\\proj", agentMode: true, agentId: bad });
+    assert.equal(result.reason, "agent-invalid", "身份不合法必须是 agent-invalid，不许退成别的桶");
+  }
+  const rows = readAuditFile(composer, memoryDir);
+  assert.equal(rows.length, 4);
+  for (const row of rows) {
+    assert.equal(row.reason, "agent-invalid");
+    assert.equal(row.agentMode, true);
+  }
+  // 身份再怪也不许在 agents/ 下冒出目录。
+  assert.equal(existsSync(join(memoryDir, "diaries", "agents")), false);
+});
+
+test("compose：正常写入的一次不往总账重复记", async () => {
+  const memoryDir = fresh("compose-root-mirror");
+  const inboxDir = fresh("root-mirror-inbox");
+  writeInbox(inboxDir, [frameOf({ ts: new Date(2026, 10, 7, 9).getTime(), text: "早" })]);
+  const { ctx } = fakeCtx();
+  const composer = createDiaryComposer({
+    ctx,
+    config: { diaryEnabled: true, language: "zh", diaryInboxDir: inboxDir },
+    memoryDir,
+    settings: null,
+    now: () => new Date(2026, 10, 7, 20)
+  });
+  const done = await composer.compose({ trigger: "rollover", projectRoot: "D:\\proj-mirror" });
+  assert.equal(done.status, "written");
+  // 写成的那本账在桶里（就近可查），总账退回「桶那边够用」的定位——同一次运行
+  // 写两处会让「跑过」和「写过」混成一种信号。
+  assert.equal(existsSync(join(memoryDir, "diaries", "runs.jsonl")), false);
+  const audit = composer.readAudit({ projectRoot: "D:\\proj-mirror" });
+  assert.equal(audit.filter((r) => r.status === "written").length, 1);
+});
+
+test("compose：compose 自己抛异常 → 总账记 failed 再把异常原样抛出去", async () => {
+  const memoryDir = fresh("compose-throws");
+  const boom = new Error("clock exploded");
+  const composer = createDiaryComposer({
+    ctx: fakeCtx().ctx,
+    config: { diaryEnabled: true, language: "zh" },
+    memoryDir,
+    settings: null,
+    // 真实世界里能穿透 compose 的炸点很少（模型失败、素材读不到都在内部兜成 skip/
+    // failed 了），所以这里挑一个**确实会冒到调用方**的位置：入口第一行的 now()。
+    // 这正是那种「只进 log.warn、磁盘上一个字节都没有」的失败。
+    now: () => {
+      throw boom;
+    }
+  });
+  await assert.rejects(
+    () => composer.compose({ trigger: "rollover", projectRoot: "D:\\proj-throws" }),
+    (error) => {
+      assert.match(String(error && error.message), /clock exploded/);
+      return true;
+    }
+  );
+  const rows = readAuditFile(composer, memoryDir);
+  const failed = rows.filter((r) => r.status === "failed" && r.reason === "compose-threw");
+  assert.equal(failed.length, 1, "抛出过一次就必须在总账留一行");
+  assert.match(failed[0].error, /clock exploded/);
+  assert.equal(failed[0].trigger, "rollover");
+  assert.equal(failed[0].projectRoot, "D:\\proj-throws");
+  // now() 本身炸了也要有时间戳（否则这一行长什么样取决于哪个注入函数先坏）。
+  assert.equal(typeof failed[0].ts, "number");
 });
 
 test("compose：当天零条有效消息 → skip no-material，且绝不调模型", async () => {
@@ -639,6 +738,164 @@ test("auto：listProjects 抛错不冒泡到定时器（只 warn）", async () =
   assert.match(warns[0], /timer scan failed/);
   // 扫描失败之后钟要重新排上，否则一次异常就永久停摆。
   assert.equal(auto.timerArmed(), true);
+  auto();
+});
+
+test("auto：触发侧的失败除了 warn 还要进总账（#760）", async () => {
+  const { ctx } = autoCtx();
+  const notes = [];
+  const composer = {
+    compose: async () => ({ status: "written" }),
+    noteFailure: (row) => notes.push(row)
+  };
+  const auto = createDiaryAutoRun({
+    ctx,
+    composer,
+    everyMs: 60 * 60 * 1000,
+    listProjects: () => { throw new Error("state file gone"); }
+  });
+  await auto.tickNow();
+  assert.equal(notes.length, 1, "定时扫名单炸了必须留一行，不能只进控制台");
+  assert.equal(notes[0].reason, "timer-scan-failed");
+  assert.equal(notes[0].trigger, "timer");
+  assert.match(notes[0].detail, /state file gone/);
+  auto();
+
+  // 身份解析在 turn/end 里炸：这条以前只能 warn，桌面端等于没写。
+  const notes2 = [];
+  const ctx2 = autoCtx();
+  const auto2 = createDiaryAutoRun({
+    ctx: ctx2.ctx,
+    composer: { compose: async () => ({ status: "written" }), noteFailure: (row) => notes2.push(row) },
+    agentResolver: () => { throw new Error("persona card unreadable"); }
+  });
+  const fn = ctx2.handlers.get("session/event");
+  assert.ok(fn, "auto 必须注册 session/event");
+  fn({ id: "s-1" }, { type: "turn/end" });
+  assert.equal(notes2.length, 1);
+  assert.equal(notes2[0].reason, "agent-resolve-failed");
+  assert.equal(notes2[0].sessionId, "s-1");
+  assert.match(notes2[0].detail, /persona card unreadable/);
+  auto2();
+});
+
+test("auto：身份解析失败的那行也带上 projectRoot，项目页才找得到它", () => {
+  // 身份解析失败发生在「还不知道身份」的时候，但它未必与项目无关：会话带着
+  // header.cwd 时，真正让今天没写的就是这一下。不带 projectRoot，项目页按
+  // 路径过滤就永远看不见它。
+  const notes = [];
+  const { ctx, handlers } = autoCtx();
+  const auto = createDiaryAutoRun({
+    ctx,
+    composer: { compose: async () => ({ status: "written" }), noteFailure: (row) => notes.push(row) },
+    agentResolver: () => { throw new Error("persona card unreadable"); }
+  });
+  const fn = handlers.get("session/event");
+  fn({ id: "s-2", header: { cwd: "/work/a" } }, { type: "turn/end" });
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].reason, "agent-resolve-failed");
+  assert.equal(notes[0].projectRoot, "/work/a");
+  // 走的是 agent 维度（解析器在场才会进这个分支），运行域必须标上——否则 agent 页
+  // 按 agentOnly 问总账永远问不到这一行，而那正是「连桶都没有时最该看到的原因」。
+  assert.equal(notes[0].agentMode, true);
+
+  // 没有 cwd 的会话不许硬填一个假路径：宁缺，别把失败记到别人项目头上。
+  fn({ id: "s-3" }, { type: "turn/end" });
+  assert.equal(notes.length, 2);
+  assert.equal(Object.prototype.hasOwnProperty.call(notes[1], "projectRoot"), false);
+  auto();
+});
+
+test("auto：定时扫名单炸了时，若扫的是 agent 名单就标 agent 域", async () => {
+  const notes = [];
+  const { ctx } = autoCtx();
+  const auto = createDiaryAutoRun({
+    ctx,
+    composer: { compose: async () => ({ status: "written" }), noteFailure: (row) => notes.push(row) },
+    everyMs: 60 * 60 * 1000,
+    agentResolver: () => null,
+    listAgents: () => { throw new Error("sessions.json unreadable"); }
+  });
+  await auto.tickNow();
+  auto();
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].reason, "timer-scan-failed");
+  assert.equal(notes[0].agentMode, true, "扫的是 agent 名单，就得能让 agent 页问得到");
+});
+
+test("auto：真实触发失败能被 readRootAudit({ agentOnly }) 读回（#760 回归）", async () => {
+  // 桩 composer 验的是「传了什么」，这条验的是「落盘之后按 agent 域问得到」——
+  // #758 现场就是「页面问 agent 域，总账里那一行不在 agent 域里」。
+  const memoryDir = fresh("root-audit-agentonly");
+  const composer = createDiaryComposer({
+    ctx: fakeCtx().ctx,
+    config: { diaryEnabled: true, language: "zh" },
+    memoryDir,
+    settings: null,
+    now: () => new Date(2026, 10, 7, 10)
+  });
+  const { ctx, handlers } = autoCtx();
+  const auto = createDiaryAutoRun({
+    ctx,
+    composer,
+    agentResolver: () => { throw new Error("persona card unreadable"); }
+  });
+  handlers.get("session/event")({ id: "s-9" }, { type: "turn/end" });
+  auto();
+  // 会话没有任何 cwd：项目查询本来就不该命中它，agent 域必须命中。
+  assert.deepEqual(composer.readRootAudit({ projectRoot: "/work/a" }), []);
+  const rows = composer.readRootAudit({ agentOnly: true });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].reason, "agent-resolve-failed");
+  assert.equal(rows[0].sessionId, "s-9");
+});
+
+test("compose：readRootAudit 按 projectRoot 读得回身份解析那种失败", async () => {
+  const memoryDir = fresh("root-audit-projectroot");
+  const composer = createDiaryComposer({
+    ctx: fakeCtx().ctx,
+    config: { diaryEnabled: true, language: "zh" },
+    memoryDir,
+    settings: null,
+    now: () => new Date(2026, 10, 7, 10)
+  });
+  composer.noteFailure({
+    reason: "agent-resolve-failed",
+    detail: "persona card unreadable",
+    trigger: "turn-end",
+    agentMode: true,
+    projectRoot: "/work/a"
+  });
+  composer.noteFailure({
+    reason: "agent-resolve-failed",
+    detail: "another project",
+    trigger: "turn-end",
+    agentMode: true,
+    projectRoot: "/work/b"
+  });
+  const mine = composer.readRootAudit({ projectRoot: "/work/a" });
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].reason, "agent-resolve-failed");
+  assert.equal(mine[0].projectRoot, "/work/a");
+  // 别人的失败不该出现在我这个项目的页上。
+  assert.ok(mine.every((row) => row.projectRoot === "/work/a"));
+  // 什么都不问就是什么都不给：绝不退成「全库都给你看」。
+  assert.deepEqual(composer.readRootAudit(), []);
+});
+
+test("auto：composer 没有 noteFailure 时退回「只 warn」（旧接线不改行为）", async () => {
+  const { ctx } = autoCtx();
+  const warns = [];
+  ctx.logger.warn = (msg) => warns.push(String(msg));
+  // 桩 composer 只实现 compose：noteFailure 缺席是合法的（旧接线/纯测试）。
+  const auto = createDiaryAutoRun({
+    ctx,
+    composer: { compose: async () => ({ status: "written" }) },
+    everyMs: 60 * 60 * 1000,
+    listProjects: () => { throw new Error("state file gone"); }
+  });
+  await auto.tickNow();
+  assert.equal(warns.length, 1, "没有账本可写时仍要 warn，不许把失败吞掉");
   auto();
 });
 

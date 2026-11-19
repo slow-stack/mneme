@@ -27,7 +27,17 @@ import { collectQqInbox, resolveInboxDir } from "./qq-inbox.js";
 import { collectSessionTranscript } from "./session-provider.js";
 import { collectMemoryMaterial } from "./memory-provider.js";
 import { readAgentSessions, agentSessionIds, UNNAMED_AGENT } from "./agent-bucket.js";
-import { DIARY_FILE_RE, diaryAuditPath, diaryAgentDir, diaryDir, diaryFilePath, diaryRoot, agentsRoot, isBucketName } from "./dir.js";
+import {
+  DIARY_FILE_RE,
+  diaryAuditPath,
+  diaryRootAuditPath,
+  diaryAgentDir,
+  diaryDir,
+  diaryFilePath,
+  diaryRoot,
+  agentsRoot,
+  isBucketName,
+} from "./dir.js";
 import { localDateString, shouldRollDay } from "./rollover.js";
 
 /** 正文太短当失败：模型偶尔只回一句「今天聊了聊天」，那不是日记，落盘就是噪音。 */
@@ -66,6 +76,26 @@ function appendAudit(file, record) {
     }
   }
   appendFileSync(file, prefix + JSON.stringify(record) + "\n", "utf8");
+}
+
+/** 读一本账本（JSONL）。坏行跳过，一条坏行不拖死整份读取。读不到就是空账本。 */
+function readAuditFile(file, limit) {
+  let text = "";
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      // 坏行跳过。
+    }
+  }
+  return limit === undefined ? rows : rows.slice(-limit);
 }
 
 /** 目录里最新一篇的日期。用来在状态文件缺失时自愈（状态丢了不至于重写去年那篇）。 */
@@ -136,6 +166,34 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
     return run;
   };
 
+  /**
+   * 总账：与落点无关的那本（`<root>/runs.jsonl`，见 dir.js 的 diaryRootAuditPath）。
+   *
+   * 只在**桶内账本写不了**的地方补记：`root` 算不出来（agent-invalid /
+   * project-unknown）、以及 compose 自己抛异常（那条以前只进 log?.warn，而桌面端
+   * 读不到控制台，用户唯一的信号是「今天又没日记」）。正常写入与 skip 仍记在桶里
+   * 那本——就近可查，也避免同一次运行写两处。
+   *
+   * 写不进去就吞掉：诊断日志不许反过来把主流程搞挂。
+   */
+  function recordRoot(record) {
+    try {
+      // 时间戳单独兜一层：这条路径正是「主流程已经炸了」时才走的，而炸点可能是
+      // 注入的 now() 本身。诊断面不许因为同一个炸点一起消失。
+      let ts = Date.now();
+      try {
+        const at = now();
+        if (at && typeof at.getTime === "function") ts = at.getTime();
+      } catch {
+        // 退回墙钟。
+      }
+      const file = diaryRootAuditPath({ memoryDir, configured: config?.diaryDir });
+      appendAudit(file, { v: 1, ts, ...record });
+    } catch {
+      // 诊断面失败不改判主流程。
+    }
+  }
+
   async function readState(root) {
     const file = join(root, "state.json");
     try {
@@ -193,6 +251,20 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
       // 拒 project-not-absolute 同语义）。
       const reason = agentMode ? "agent-invalid" : "project-unknown";
       audit({ status: "skipped", reason });
+      // #760：这里以前是**唯一什么都不留**的失败——桶不存在 ⇒ 桶内账本也算不出来 ⇒
+      // audit() 静默 return。总账跟落点无关，所以这一条必须补上，否则「为什么没写」
+      // 在磁盘上没有任何痕迹，只能等用户问「今天怎么没日记」。
+      recordRoot({
+        status: "skipped",
+        reason,
+        date: today,
+        trigger,
+        agentMode,
+        agentId: agentMode ? (agentId ?? null) : null,
+        projectRoot: projectRoot ?? null,
+        chatId: chatId ?? null,
+        sessionId: session && typeof session === "object" ? (session.id ?? null) : null,
+      });
       return { ok: true, status: "skipped", reason, date: today };
     }
     // stateRoot 在 root 判空之后算：root 为 null 时 join(null, "..") 会 TypeError，
@@ -499,7 +571,27 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
   }
 
   return {
-    compose: (input) => enqueue(() => compose(input)),
+    compose: (input) =>
+      enqueue(() =>
+        Promise.resolve()
+          .then(() => compose(input))
+          .catch((error) => {
+            // #760：抛出来的失败以前只有调用方那行 `log?.warn`，而桌面端的
+            // app.asar 读不到控制台——用户在磁盘上找不到任何痕迹。总账是唯一
+            // 与落点无关的落点，所以在这里补一条再原样抛出去（不能吞：调用方
+            // 还要靠这次 reject 判失败）。
+            recordRoot({
+              status: "failed",
+              reason: "compose-threw",
+              trigger: (input && input.trigger) || "rollover",
+              agentMode: Boolean(input && input.agentMode),
+              agentId: (input && input.agentId) ?? null,
+              projectRoot: (input && input.projectRoot) ?? null,
+              error: String((error && error.message) || error),
+            });
+            throw error;
+          })
+      ),
     knownProjects,
     /**
      * #613：agent 名单（catchUp 与定时巡检的输入）。
@@ -542,23 +634,49 @@ export function createDiaryComposer({ ctx, config, logger, service = null, setti
     readAudit({ projectRoot, limit = 50 } = {}) {
       const root = diaryDir({ memoryDir, projectRoot, configured: config?.diaryDir });
       if (!root) return [];
-      const file = diaryAuditPath(root);
-      let text = "";
-      try {
-        text = readFileSync(file, "utf8");
-      } catch {
-        return [];
-      }
-      const rows = [];
-      for (const line of text.split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          rows.push(JSON.parse(line));
-        } catch {
-          // 坏行跳过（账本纪律：坏行不拖死整份读取）。
-        }
-      }
-      return rows.slice(-limit);
+      return readAuditFile(diaryAuditPath(root), limit);
+    },
+    /**
+     * 总账的对外写口（#760）。
+     *
+     * 触发侧（auto.js）有三处失败根本到不了 compose：身份解析抛错、定时扫名单抛错、
+     * 启动补写的 promise 被 reject。那些以前只进 `log?.warn`，而桌面端的 app.asar
+     * 读不到控制台——用户唯一的信号是「今天又没日记」。给一个方法而不是让 auto.js
+     * 自己去拼文件路径：账本格式（补换行、v/ts 字段）只该有一处实现。
+     */
+    noteFailure(record = {}) {
+      recordRoot({ status: "failed", ...record });
+    },
+    /**
+     * 只读总账里**属于这个项目**的那些行（#760）。
+     *
+     * 面板问的是「今天为什么没有日记」，而 bucket 账本只覆盖「落点已算出」之后
+     * 的失败。compose 在落点之前就抛掉的（模型炸了、注入的时钟炸了）只留在总账，
+     * 面板若不读它，用户看到的仍是「今天没写」四个字。
+     *
+     * 按 projectRoot 精确过滤，不回退成「全库都给你看」——那会把别的项目的失败
+     * 混进这一本的诊断里，比不显示更误导。
+     */
+    readRootAudit({ projectRoot, agentId, agentOnly = false, limit = 20 } = {}) {
+      const wantProject = String(projectRoot ?? "").trim();
+      const wantAgent = String(agentId ?? "").trim();
+      // 什么都不给 ⇒ 返回空，绝不退成「全库都给你看」：总账里混着所有项目与所有
+      // agent 的失败，整本端出去会把别的书的诊断混进这一本，比不显示更误导。
+      // `agentOnly` 是显式的第三种问法（给「我连桶都还没有」的 agent 页用）：
+      // 只要 agent 域的行，按 agentId 分组不归并，让页面自己说「是谁没跑起来」。
+      if (!wantProject && !wantAgent && !agentOnly) return [];
+      const file = diaryRootAuditPath({ memoryDir, configured: config?.diaryDir });
+      return readAuditFile(file)
+        .filter((row) => {
+          if (!row) return false;
+          if (wantAgent) return String(row.agentId ?? "").trim() === wantAgent;
+          // #760：agent 桶没有 projectRoot（agentMode 的落点是 agents/<id>），
+          // 所以 agent 页必须能按 agentId 查——否则 #758 那种「agent 桶第一天
+          // 开不了张」在面板上仍然是「今天没写」四个字。
+          if (agentOnly) return row.agentMode === true;
+          return String(row.projectRoot ?? "").trim() === wantProject;
+        })
+        .slice(-limit);
     }
   };
 }

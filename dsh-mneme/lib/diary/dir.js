@@ -96,3 +96,20 @@ export function diaryFilePath(dir, dateLocal) {
 export function diaryAuditPath(dir) {
   return join(dir, "runs.jsonl");
 }
+
+/**
+ * **总账**：`<root>/runs.jsonl`（与各桶内同名文件是两回事）。
+ *
+ * 为什么还要第二本账：桶内 `runs.jsonl` 的位置由落点决定，而 #758 的三处故障里
+ * 有两处**恰好是落点算不出来**——`agent-invalid`（身份丢了）与 `project-unknown`
+ * 时 root 为 null，于是 `auditFile` 也是 null，连那条 skip 都无处可写。现场表现
+ * 就是「24 小时零写入、runs.jsonl 一行没有」，只能等用户自己发现「今天没写日记」。
+ * 总账放在根上，与落点无关，所以**任何一次 compose 都至少能在这里留一行**：
+ * 「几点、哪次触发、因为什么没写、身份/项目是什么」。
+ *
+ * 它记的是「跑过」，不是「写过」——正常写成功的账仍记在桶里那本（就近可查），
+ * 总账只补上桶那边记不到的那部分。两本账都用同一个 appendAudit 形状。
+ */
+export function diaryRootAuditPath({ memoryDir, configured = "" } = {}) {
+  return join(diaryRoot({ memoryDir, configured }), "runs.jsonl");
+}

@@ -3024,6 +3024,86 @@ test("#758 agent 桶键：多级或越界的 agents/ 键仍然回 400", async (t
   }
 });
 
+// --- #760：面板要能看到「连落点都没算出来」的失败 ---------------------------
+// 桶内账本只覆盖「落点已算出之后」的失败。compose 在落点之前炸掉的那些（模型、
+// 注入的时钟、身份解析）只留在总账里；接口若不把它带出去，用户看到的仍是
+// 「今天没写」四个字，而原因一直躺在磁盘上没人读。
+
+test("#760 GET /diary 把总账一起带出去（rootAudit）", async () => {
+  const project = portableProjectRoot();
+  const rows = [{ v: 1, ts: 1_763_000_000_000, status: "failed", reason: "compose-threw", detail: "clock exploded" }];
+  const seen = [];
+  const diary = {
+    readAudit: (args) => { seen.push(["bucket", args]); return [{ date: "2026-11-08", status: "skipped", reason: "no-material" }]; },
+    readRootAudit: (args) => { seen.push(["root", args]); return rows; }
+  };
+  const { routes } = setupDiary({ diaryEnabled: true }, diary);
+  const res = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/diary").handler(req("/api/dsh-mneme/diary?project=" + encodeURIComponent(project)), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  assert.deepEqual(data.rootAudit, rows, "总账的行必须原样到面板");
+  assert.equal(data.audit.length, 1, "桶内账本照旧带一份");
+  // 两本账都按同一个项目问，且都带着 limit——不给项目就会退成「全库都给你看」。
+  assert.equal(seen.length, 2);
+  for (const [kind, args] of seen) {
+    assert.equal(args.projectRoot, project, `${kind} 账本必须按项目过滤`);
+    assert.equal(args.limit, 20);
+  }
+});
+
+test("#760 老 composer 没有 readRootAudit 时退回空数组，不 500", async () => {
+  const project = portableProjectRoot();
+  // 旧接线/桩只实现 readAudit：接口必须当「没有总账」处理，而不是炸成 500。
+  const { routes } = setupDiary({ diaryEnabled: true }, { readAudit: () => [] });
+  const res = new FakeRes();
+  await findHandler(routes, "/api/dsh-mneme/diary").handler(req("/api/dsh-mneme/diary?project=" + encodeURIComponent(project)), res);
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(JSON.parse(res.body).rootAudit, []);
+});
+
+test("#760 agent 日记页按 agentId 问总账，不给 agent 时问「agent 域全部」", async () => {
+  // agent 桶没有 projectRoot（落点是 agents/<agentId>/），所以它读不了 /diary
+  // ——那条路由第一件事就是要 project。#758 出事的正是这一页：书一本都没有，
+  // agentId 也就拿不到，页面连问都不知道问谁。所以「不带 agent」必须是合法问法。
+  const seen = [];
+  const diary = {
+    readAudit: () => [],
+    readRootAudit: (args) => { seen.push(args); return []; }
+  };
+  const { routes } = setupDiary({ diaryEnabled: true }, diary);
+  const route = findHandler(routes, "/api/dsh-mneme/diary/agent-audit");
+
+  const one = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/diary/agent-audit?agent=standard"), one);
+  assert.equal(one.statusCode, 200);
+  assert.equal(JSON.parse(one.body).agent, "standard");
+
+  const all = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/diary/agent-audit"), all);
+  assert.equal(all.statusCode, 200, "一本都没有时也要能问，那是「一次都没跑起来」");
+  assert.equal(JSON.parse(all.body).agent, null);
+
+  assert.deepEqual(seen[0], { agentId: "standard", limit: 20 });
+  assert.deepEqual(seen[1], { agentOnly: true, limit: 20 });
+});
+
+test("#760 agent-audit 拒绝路径语义的 agent 名，老 composer 退回空数组", async () => {
+  const { routes } = setupDiary({ diaryEnabled: true }, { readAudit: () => [] });
+  const route = findHandler(routes, "/api/dsh-mneme/diary/agent-audit");
+  // agent 名是单层目录名：带分隔符/上跳的一律 400，绝不让它拼进路径。
+  for (const bad of ["a/b", "..", "x/../y"]) {
+    const res = new FakeRes();
+    await route.handler(req("/api/dsh-mneme/diary/agent-audit?agent=" + encodeURIComponent(bad)), res);
+    assert.equal(res.statusCode, 400, `agent 名 ${JSON.stringify(bad)} 该回 400`);
+    assert.equal(JSON.parse(res.body).error, "agent-invalid");
+  }
+  const ok = new FakeRes();
+  await route.handler(req("/api/dsh-mneme/diary/agent-audit?agent=standard"), ok);
+  assert.equal(ok.statusCode, 200, "旧 composer 没有 readRootAudit 时不许 500");
+  assert.deepEqual(JSON.parse(ok.body).rootAudit, []);
+});
+
 // --- 手动写日记必须带身份（「设定好人格的 agent 只以这个人格的口吻写日记」）-----
 // 自动轮（src/diary/auto.js:47）一直传 agentId，手动轮的 /diary/compose 却不传，
 // 于是永远落 default 人格卡：同一天从两个入口写，是两张卡的两种声音。
