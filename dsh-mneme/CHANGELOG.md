@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-22
+
 - **情绪注释偶尔出现双句号：句点类收口、语气符让位（#764）**。开着 `sleepAffectiveEnabled` + `affectiveInjectEnabled` 时，注入里会冒出「…按 occasion 处理。。这是场合性的，不要当作一贯表现。」——两个句号黏在一起。原因在渲染层：`affectiveNote` 的中文模板在 `${why}` 后无条件接一个「。」，而 `why` 是 sleep 侧模型写的理由，天然自带句末标点；英文模板同构（`; reason at the time: ${why}` 后面恒跟 `". Occasion-bound…"`，于是 `..`）。**改的是拼接，不是存储**：`metadata.why` 一个字不动，面板、导出、账本读到的还是原文。
 
   第一版打算把所有句末标点（含 `！？…`）一并剥掉再统一补「。」，自查时否掉了——那会把「她怕吗？」改成陈述句、把「她怕…」抹成句号收尾，等于用标点偷偷改写模型说的意思；而且 `why` 只由标点组成时还会拼出「当时的原因：！」这种空标签。所以两种尾巴分开处理：**句点类**（`。．.`）只是分句符号，剥掉后由模板统一给一个，连串 `。。。` 也收成一个（正则用 `+` 不是单个）；**语气类**（`！!？?…`）带意思，保留原文，改成让模板的终止符**让位**——有语气符就不再补「。」，也不出现「！。」这类叠标点。中英各写一套判据，不共用一条正则（英文只有 `.` 算句点类）。`why` 为空或只剩标点、`undefined`/`null` 时，整段「当时的原因」不出现，退回与之前逐字节相同的文案。
@@ -63,6 +65,8 @@
   修法是换锚点不换语义：改用该卡 `profile_fact_journal` 的 `MAX(id)` 作修订号。journal 的 `id` 是 `INTEGER PRIMARY KEY AUTOINCREMENT`，每次 add/update/archive 都在 `applyOps` 的同一事务里落一行；`pruneProfileFactJournal` 只按 `id DESC LIMIT keep` 裁最老的那批，`MAX(id)` **永不回退**——单调、免费、不需要新加一列计数器。表列从 `facts_max_updated_at TEXT` 改为 `facts_revision INTEGER NOT NULL DEFAULT 0`：`profile_digests` 是 #752 新增的整张表，上线库里连表都没有（实测 `no such table`），所以直接改列名、不留迁移代码。`updated_at` 的业务语义一字未动。
 
   **测试** +2：新增一条**不依赖时钟**的用例——改完事实后把 `updated_at` 显式钉回生成时刻，先断言「时间戳确实一模一样」，再断言必须报过期；原来那条靠真实时钟碰运气、在 CI 上偶发红的用例现在稳定了。另一条锁住前提：把 journal 顶过 `keep=200` 的裁剪线后，修订号照常前进（否则用 journal id 当锚点就不成立）。变异自证：把 `isProfileDigestStale` 退回 `MAX(updated_at)` 对比 → 两条过期用例同时红。
+
+- **蒸馏提示词里的 `type` 枚举挪到模板之前，成功轮也开始记「丢了几条」（#712）**。两处都不改判定，只改读数与可读性。① 枚举原来内联在 JSON 模板的键值里（`{"type":"preference|project|..."}`），夹在十几个字段与 `occurred_at` 换算规则中间，位置太靠后——模型读到模板末尾时早忘了前面还列过分类；现在独立成段、排在模板之前，模板里只用「上段七个取值之一」指回去，`summary` 与 `codingSummary` 中英各一份同构改法。② `describeParseFailure` 里有一句 `if (entries.length > 0) return null;`，意味着只有整窗条目**全被拒**才写诊断；只要还剩一条能入库，拒绝计数就整个消失。库里 `summarize_compress` 的成功行带 `reject_reasons` 的记录是 0 条——「部分丢弃多少」这个日常形态从来没有数据。现在成功轮在有条目被拒时也往审计 `metadata` 写 `rejected`（总数）与 `partial_rejects`（按 `not_object`/`bad_type`/`bad_title`/`bad_content` 分项）。刻意**不复用** `failure_kind`/`reject_reasons` 两个键名：那两个属于失败路径，读法完全不同（整窗没了 vs 这轮成了但丢了几条），混用会让「这次失败了多少」和「这次成功但不完整」在同一个键上打架。零丢弃时两个键完全不出现，`metadata` 与旧版逐字节一致。**测试** +6：部分丢弃的成功轮留计数、零丢弃不出键、空数组同样不出键、`#712` 端到端审计断言、枚举独立成段且排在模板之前、`codingSummary` 中英都写明「依据不足就整条不提取」。
 
 - **保护层复审：七处真问题，三处会让功能实际失效（#755 复审）**。CodeRabbit 在 PR #755 上提了 7 条，逐条核实**全部属实**，其中最要紧的三条不是风格问题——
   ① `distillExcludeProjects` 是字符串数组，却被我登记进了 `FEATURE_FLAG_BOOLEANS`。`validateFlag` 对这张表的成员只收 boolean，于是**写名单抛 TypeError、写 `false` 却通过并存下来**：用户以为自己关掉了「导入隔离」，重启后名单变成一个假的开关。核查既有 5 个数组型 schema 键（`codingKeywords`、`diaryMemoryExcludeTypes`、`externalApiAllowedOrigins`、`scopeHardWallWorkspaces`、`sessionGateSessions`）在 `settings.js` 里出现次数**全为 0**——数组键一律不进白名单、走 `fileOnly` 桶，这条口径原先就立着，是我自己撞上去的。现在把它移出白名单，只留 `distillSkipImportedSessions`（真布尔）。
