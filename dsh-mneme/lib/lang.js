@@ -173,6 +173,30 @@ export function affectiveVocabText(language) {
     .join("、");
 }
 
+// #764：why 是 sleep 侧模型给的，本身常常自带句末标点，而 affectiveNote 模板又在
+// 它后面无条件补一个终止符——于是注入里出现「。。」（中文双句号、英文「..」）。
+// 收口只在**展示层**：metadata.why 的存储值一个字符都不动，归一化属于渲染。
+//
+// 两种尾巴分开处理，因为丢掉的语义不一样：
+//   ① 句点类（。．.）只是分句符号，剥掉由模板统一给一个，重复才算错；
+//   ② 语气类（！!？?…）带意思，剥掉会把问句改写成陈述、「她怕…」抹成句号收尾——
+//      所以不剥，改成让模板的终止符让位，模型写下的语气原样留在注入里。
+const WHY_PERIOD_TAIL = /[。．.]+$/;
+const WHY_TONE_TAIL = /[！!？?…]$/;
+
+/**
+ * 拆 why 供注释渲染：text 供拼接，tone 表示它自带语气终止符（模板不再补句点）。
+ * 只由标点组成的 why 收成空串，调用方按「没有 why」处理——否则会拼出
+ * 「当时的原因：！」这种只剩标点的空标签，比不写还糟。
+ */
+function whyForNote(why) {
+  const text = String(why ?? "").trim().replace(WHY_PERIOD_TAIL, "").trim();
+  const tone = text ? WHY_TONE_TAIL.test(text) : false;
+  // 语气符是唯一剩下的东西时，这条 why 没有内容可讲。
+  if (tone && !text.replace(WHY_TONE_TAIL, "").trim()) return { text: "", tone: false };
+  return { text, tone };
+}
+
 export const STR = {
   // --- summarize.js：蒸馏的时间锚点 ------------------------------------------
   // 追加在 summary/codingSummary 之后，值随触发时刻变（所以是构造器而不是
@@ -253,17 +277,29 @@ export const STR = {
   // 三个信息缺一不可——谁、什么心情、哪件事：只写「她不高兴」是没用的注入，
   // 模型会把一次场合的情绪当成稳定评价用；场合数说明了「这是一次，不是一贯」。
   // `why` 是 sleep 侧给的理由（可缺省），有就带上，没有不补空话。
+  // #764：why 自带终止符时不再补一个——句点类先剥（模板给），语气类让模板让位；
+  // 两条分支写清在 whyForNote 上，这里只决定「补不补」。
   affectiveNote: {
-    zh: (person, emotion, target, occasions, why) =>
-      `〔情绪记录·单次场合〕${person} 在「${target}」这件事上${emotion}` +
-      (occasions > 1 ? `（记了 ${occasions} 次，仍属同一场合）` : "") +
-      (why ? `；当时的原因：${why}` : "") +
-      "。这是场合性的，不要当作一贯表现。",
-    en: (person, emotion, target, occasions, why) =>
-      `[affect record · single occasion] ${person} was ${emotion} about "${target}"` +
-      (occasions > 1 ? ` (recorded ${occasions}× in the same occasion)` : "") +
-      (why ? `; reason at the time: ${why}` : "") +
-      ". Occasion-bound — do not read it as a standing disposition."
+    zh: (person, emotion, target, occasions, why) => {
+      const w = whyForNote(why);
+      return (
+        `〔情绪记录·单次场合〕${person} 在「${target}」这件事上${emotion}` +
+        (occasions > 1 ? `（记了 ${occasions} 次，仍属同一场合）` : "") +
+        (w.text ? `；当时的原因：${w.text}` : "") +
+        (w.tone ? "" : "。") +
+        "这是场合性的，不要当作一贯表现。"
+      );
+    },
+    en: (person, emotion, target, occasions, why) => {
+      const w = whyForNote(why);
+      return (
+        `[affect record · single occasion] ${person} was ${emotion} about "${target}"` +
+        (occasions > 1 ? ` (recorded ${occasions}× in the same occasion)` : "") +
+        (w.text ? `; reason at the time: ${w.text}` : "") +
+        (w.tone ? " " : ". ") +
+        "Occasion-bound — do not read it as a standing disposition."
+      );
+    }
   },
   affectiveTraitNote: {
     zh: (target, occasions) => `〔情绪记录·多次独立场合〕这一态度在 ${occasions} 个独立场合都出现过：「${target}」。`,

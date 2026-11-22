@@ -183,3 +183,22 @@ test("#619 补链：新配置键登记进面板白名单与轻量档", () => {
   assert.equal(settings.getFeatureFlags().affectiveInjectEnabled, true, "面板能写进 kv（否则点了只会拿到 400）");
   assert.equal(Config({ lightMode: true }).affectiveInjectEnabled, false, "轻量档必须关掉");
 });
+
+test("#764 补链：why 自带句号时注入里只有一个句号，且库里的 why 一字不改", () => {
+  // 端到端：sleep 侧写入的 why 天然带「。」，注释在 service 侧拼装、在 inject 侧渲染。
+  // 这里走真实链路（saveRelation → inject），只把 why 写成带句号的样子。
+  const why = "首场答辩前一晚，她熬到两点把稿子又过了一遍。";
+  const { store, service, contexts } = injectText({ affectiveInjectEnabled: true });
+  const mem = makeMemory(service, "答辩安排", "6 月 3 日首场");
+  const { edge } = makeAffect(store, service, mem.id, { why, target: "答辩", emotion: "焦虑" });
+
+  const text = bodyOf(contexts);
+  assert.ok(text.includes("情绪记录"), "注释必须进注入");
+  assert.ok(!text.includes("。。"), `注入里不许出现双句号：${text}`);
+  assert.ok(!text.includes("．。"), `注入里不许出现混排双终止符：${text}`);
+  assert.match(text, /当时的原因：首场答辩前一晚，她熬到两点把稿子又过了一遍。这是场合性的/, "应当是单句号接下文");
+
+  // 归一化只属于渲染：存储值必须与写入时逐字节相同，否则面板与导出会被悄悄改写。
+  const stored = service.relationById(edge.id).metadata.why;
+  assert.equal(stored, why, "metadata.why 的存储值不许被展示层顺手改掉");
+});

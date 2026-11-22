@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **情绪注释偶尔出现双句号：句点类收口、语气符让位（#764）**。开着 `sleepAffectiveEnabled` + `affectiveInjectEnabled` 时，注入里会冒出「…按 occasion 处理。。这是场合性的，不要当作一贯表现。」——两个句号黏在一起。原因在渲染层：`affectiveNote` 的中文模板在 `${why}` 后无条件接一个「。」，而 `why` 是 sleep 侧模型写的理由，天然自带句末标点；英文模板同构（`; reason at the time: ${why}` 后面恒跟 `". Occasion-bound…"`，于是 `..`）。**改的是拼接，不是存储**：`metadata.why` 一个字不动，面板、导出、账本读到的还是原文。
+
+  第一版打算把所有句末标点（含 `！？…`）一并剥掉再统一补「。」，自查时否掉了——那会把「她怕吗？」改成陈述句、把「她怕…」抹成句号收尾，等于用标点偷偷改写模型说的意思；而且 `why` 只由标点组成时还会拼出「当时的原因：！」这种空标签。所以两种尾巴分开处理：**句点类**（`。．.`）只是分句符号，剥掉后由模板统一给一个，连串 `。。。` 也收成一个（正则用 `+` 不是单个）；**语气类**（`！!？?…`）带意思，保留原文，改成让模板的终止符**让位**——有语气符就不再补「。」，也不出现「！。」这类叠标点。中英各写一套判据，不共用一条正则（英文只有 `.` 算句点类）。`why` 为空或只剩标点、`undefined`/`null` 时，整段「当时的原因」不出现，退回与之前逐字节相同的文案。
+
+  测试 3,736 → **3,738**：`test/lang.test.js` 锁四组形态（句点类五种含尾部空格都收成一个、语气类三种保留且后面不许跟句号、只剩标点或为空时与缺省渲染完全等价、英文同构且无 why 时文案逐字节不变）；`test/affective-inject.test.js` 补一条端到端——走真实 `saveRelation` → `inject` 链路，确认注入里没有 `。。`/`．。`，同时断言库里的 `why` 与写入值逐字节相同（防止归一化从展示层漏进存储层）。变异自证五处各红一次：why 完全不剥离（退回原 bug）、只剥一个句点（连串会漏）、语气符一并剥掉（问句变陈述）、去掉空标签兜底、英文模板不退让。
+
 - **日记静默失败现在会落盘：总账、触发侧失败、面板可见（#760）**。#758 复盘时发现一个比 bug 本身更麻烦的事：那 24 小时里日记一次没写，磁盘上**一个字节的痕迹都没有**——`runs.jsonl` 连一行 skip 都没有，报告人只能靠「今天怎么没日记」发现。根因是诊断面全挂在落点上：桶内账本的位置由「算出来的目录」决定，而最需要留痕的两种失败恰好是**目录算不出来**（`project-unknown` 项目标签缺失、`agent-invalid` 身份形状不合法）。`root` 为 null ⇒ `auditFile` 也是 null ⇒ `audit()` 直接 return。桌面端又没有控制台可看（`app.asar` 里读不到，`%APPDATA%` 下只有十月的 crash 日志），于是失败真正变成了静默。
 
   现在多加一本**总账**，落点固定在日记根目录（`<memoryDir>/diaries/runs.jsonl`），与落点算不算得出来无关。写入口收在一处：`compose.js` 的 `recordRoot(record)` 负责补 `v`/`ts` 与换行，`diaryRootAuditPath()` 负责算路径，三层（compose 自身、触发侧、接口）都走它，不各拼一份格式。三类此前无声的失败各自补上：① 落点算不出来时记 `skipped` + `agent-invalid`/`project-unknown`，带上 agentId、projectRoot、chatId/sessionId——**这条分支以前连 skip 都不写**；② compose 抛出未捕获异常时记 `failed` + `compose-threw`，然后**原样把异常抛回去**（不能吞，调用方还要靠这次 reject 判失败）；③ 触发侧的三种失败（`agent-resolve-failed`、`timer-scan-failed`、`timer-tick-failed`）走新增的 `composer.noteFailure()`——它们根本到不了 compose，以前只有一行 `log?.warn`。`auto.js` 里另三处（`runOne` 的 compose failed、`catchUp` 的 agent/project 两条）**故意保持只 warn**：compose 出口已经记了 `compose-threw`，同一次失败记两行会让「跑过几次」失去意义。
