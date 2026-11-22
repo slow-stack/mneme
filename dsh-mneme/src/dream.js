@@ -594,11 +594,11 @@ async function withMaxTokensFallback(ctx, maxTokens, attempt, getStreamError) {
 }
 
 /** 向量索引同步（总览与叙述条共用）：fail-safe，失败只 warn 不反噬主流程。 */
-async function reEmbedMemory(semantic, memory, logger) {
+export async function reEmbedMemory(semantic, memory, logger) {
   if (!semantic?.embedder || !semantic?.vectorIndex || !memory) return;
   try {
     const v = await semantic.embedder.embedSingle([memory.title, memory.content].filter(Boolean).join("\n"));
-    if (v?.length) semantic.vectorIndex.saveEmbedding(memory.id, v);
+    if (v?.length) semantic.vectorIndex.saveEmbedding(memory.id, v, semantic.embedder.modelHash);
     if (semantic.embedder.modelHash) semantic.vectorIndex.markModel?.(semantic.embedder.modelHash, semantic.embedder.dimension);
   } catch (error) {
     logger?.warn?.(`dsh-mneme dream: re-embed failed: ${String(error)}`);
@@ -809,7 +809,7 @@ async function collectVectors(memories, semantic) {
     missing.forEach((mi, j) => {
       if (rows[j]?.length) {
         vectors[mi] = rows[j];
-        vectorIndex.saveEmbedding(memories[mi].id, rows[j]);
+        vectorIndex.saveEmbedding(memories[mi].id, rows[j], embedder.modelHash);
       }
     });
   }
@@ -876,7 +876,7 @@ async function collectCandidateVectors(memories, semantic, logger) {
       missing.forEach((mi, j) => {
         if (rows[j]?.length) {
           vectors[mi] = rows[j];
-          vectorIndex.saveEmbedding?.(memories[mi].id, rows[j]);
+          vectorIndex.saveEmbedding?.(memories[mi].id, rows[j], embedder.modelHash);
         }
       });
     } catch (error) {
@@ -952,7 +952,7 @@ export async function maintainIndexAfterDream(decisions, service, semantic) {
         try {
           const text = [mem.title, mem.content].filter(Boolean).join("\n");
           const v = await embedder.embedSingle(text);
-          if (v?.length) vectorIndex.saveEmbedding(id, v);
+          if (v?.length) vectorIndex.saveEmbedding(id, v, embedder.modelHash);
         } catch { /* best-effort */ }
       }
     }
@@ -960,7 +960,7 @@ export async function maintainIndexAfterDream(decisions, service, semantic) {
   for (const [id, text] of rebuild) {
     try {
       const v = await embedder.embedSingle(text);
-      if (v?.length) vectorIndex.saveEmbedding(id, v);
+      if (v?.length) vectorIndex.saveEmbedding(id, v, embedder.modelHash);
     } catch { /* best-effort */ }
   }
   if (embedder.modelHash) vectorIndex.markModel?.(embedder.modelHash, embedder.dimension);

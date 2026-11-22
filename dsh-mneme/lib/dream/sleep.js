@@ -268,7 +268,7 @@ async function phaseConflicts(ctx, service, config, logger, runId, semantic = nu
       missing.forEach((mi, j) => {
         if (rows[j]?.length) {
           vectors[mi] = rows[j];
-          vectorIndex.saveEmbedding?.(memories[mi].id, rows[j]);
+          vectorIndex.saveEmbedding?.(memories[mi].id, rows[j], embedder.modelHash);
         }
       });
     } catch (error) {

@@ -300,11 +300,16 @@ export function createService({ store, mirror, config, onWrite, logger, document
         } else if (typeof embedder.embedSingle === "function") {
           const text = [memory.title, memory.content].filter(Boolean).join("\n");
           if (!text) continue;
+          // Issue #765：模型指纹必须在**发请求之前**取。embedSingle 是异步的，模型
+          // 在这段时间里换了（用户切 provider / 改 pooling）时，回来再读 embedder.modelHash
+          // 会把旧模型的向量盖上新模型的名字——那比留空更糟：留空只会被判 stale 重嵌，
+          // 标错则会让失配的索引看起来"已经对齐"，从此不再重建。
+          const model = embedder.modelHash;
           embedder
             .embedSingle(text)
             .then((vec) => {
               if (Array.isArray(vec) && vec.length) {
-                store.setEmbedding(memory.id, vec);
+                store.setEmbedding(memory.id, vec, model);
               }
             })
             .catch((err) => {
@@ -351,11 +356,13 @@ export function createService({ store, mirror, config, onWrite, logger, document
         const text = [memory.title, memory.content].filter(Boolean).join("\n");
         if (!text) return;
 
+        // Issue #765：与 flushEmbedPending 同理，指纹在发起前取（见那里的注释）。
+        const model = embedder.modelHash;
         embedder
           .embedSingle(text)
           .then((vec) => {
             if (Array.isArray(vec) && vec.length) {
-              store.setEmbedding(memory.id, vec);
+              store.setEmbedding(memory.id, vec, model);
             }
           })
           .catch((err) => {

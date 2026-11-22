@@ -45,8 +45,11 @@ export function createVectorIndex({ store, logger }) {
     },
 
     /** Store (or clear with null vector) one memory's embedding. */
-    saveEmbedding(id, vector) {
-      store.setEmbedding(id, vector);
+    saveEmbedding(id, vector, modelHash) {
+      // Issue #765：向量是哪个模型产出的，必须随向量一起记下来。这个入口只用来
+      // 写向量，调用点都握着自己的 embedder，指纹从外面传进来而不是在这里猜
+      // （猜就只能在模型切换的空窗里读到新值，等于替旧向量冒名）。
+      store.setEmbedding(id, vector, modelHash);
     },
 
     /** Drop one memory's embedding. */
