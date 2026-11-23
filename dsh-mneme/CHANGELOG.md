@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- **新开的会话里找不到人格入口：那一行在 blank 相位整段不渲染**。人格按钮注册在 `conversation.session.header.actions`，而宿主 `ConversationHeader` 对 blank 会话传 `hideChrome = blank`，`ConversationSessionHeader` 里 `titleCluster`（含 `headerActions`）与 `headerUtilities` 又整段包在 `{!hideChrome && …}` 里——于是会话一新建，这个入口就没地方落，得先发一条消息才出现。界面上表现为「绑定不了人格」，其实是控件不在。
+
+  修法是给同一个组件再挂一个相位。宿主 hero 相位渲染 `heroWorkspaceRow`，里面有一格 `conversation.hero.options`（`{sessionId === undefined ? null : <div className={css.heroOptions}>…}`，插槽声明 `kind: 'list', scope: 'session'`），空着时宿主用 `.heroOptions:empty{display:none}` 收起来。`registerPersonaSessionSeat` 因此在原注册之外再注册一条 `conversation.hero.options`（id `dsh-mneme:persona-session-hero`，与原 id 不同——两个插槽都是 list 型，同 id 会撞）。两个相位互斥：hero.options 只在 hero 渲染、header.actions 只在非 blank 渲染，所以不会出现两个入口。
+
+  hero 行跟工作区名、preset 控件并排，宽度紧，所以组件加了一个 `compact` 变体，只收尺寸（高 24→20、字号 12、图标 13→12、`maxWidth: 160` 且窄时省略号收尾），**文案一字不动**——「人格：<卡名>」缩成只剩图标，别人就得先点一次才知道这是什么。`title` 改成把完整标签拼上，省略时也能悬停看全。菜单不受影响：它已 portal 到 body（上一条 #769），不在这一行里。
+
+  **测试 3,751 → 3,753**。这一条不锁字符串，而是把 `registerPersonaSessionSeat` 抽出来真跑一遍，用假 `ctx.slots` 数它往哪几个插槽注册、注册的 id 与 render 传了什么——「`conversation.hero.options` 出现在源码里」这种断言挡不住「写了但 inject 到别处」。第二条锁 compact 只是收窄不是换一种入口：标签文本节点必须与图标紧邻且中间没有 `compact` 三元，否则「小屏把标签藏了」也能全绿。变异自证四次：删掉 hero 那条注册 → 只红第一条；去掉 `compact: true` → 只红第一条；把标签改成 `compact ? null : …` → 只红第二条（第一版这条变异**没红**，因为原断言是「标签只出现一次」，而 `compact ? null : h(…)` 恰好也只出现一次——补上结构性断言后才真正锁住）；**只删掉 hero 的 `inject: (sessionId) => ({ sessionId })`、保留注册本身 → 第一版也全绿（复核时抓到的，同样是「字符串断言挡不住功能缺失」）**。最后这条才是真正危险的坏法：座位注册了、`render` 里也照着写了 `props.sessionId`，但 inject 从没把值注进去，于是 `reload` 首行 `if (!sessionId) return undefined` 让 state 永远 null、`if (!state || state.enabled !== true) return null` 直接不占位——功能等于没修，而断言全绿。现在这条测试把两个座位的 `inject` 都真调一遍，用具体 sessionId 核对返回值，删掉 inject 必红（154 pass / 1 fail，只红第一条）。
+
+  **blank 会话的真像素证据**：用假 `__ModuleLoader__` 把 `client.js` 跑起来，只挂宿主 hero 那一格（blank 相位 header.actions 本来就不在树上）。修复前该页面的 inject 清单是 `sidebar.panellist | sidebar.footer.action | conversation.session.header.actions`，`hero.options registered: false`，hero 行里只有工作区名。修复后清单多出 `conversation.hero.options`，`heroOptions empty: false`、`display: flex`、按钮 125×20 落在行内、命中测试取到按钮自己、标签是「人格：冷静审计员」；点开菜单背景 `rgb(31, 32, 35)`、`parentElement: BODY`、命中在菜单内，选中「刻薄编辑」后标签即时变成「人格：刻薄编辑」且菜单关闭。截图前后各一张。
+
 - **会话头的人格菜单点开是零像素：底色引用了一个不存在的变量，菜单又被头顶栏裁掉（#769）**。issue 说「点开没反应」，其实是菜单已经渲染出来了，只是看不见也点不到。两个独立的成因叠在一起，修掉任何一个都还剩一半：① 菜单的 `background` 写的是 `var(--mneme-card-bg, #ffffff)`，而这个变量**全包只有这一处引用、从来没有定义过**，于是回落到白底；同一行的 `color` 却是 `inherit`，深色主题下继承到浅色文字——白底白字。② 菜单原本作为按钮的兄弟节点留在顶栏那一行里，而那一行有 `overflow: clip` 与 `mask-image`，菜单的 `top` 又是 `rect.bottom + 6`（必然落在行下边界之外），于是被裁成零像素：即便颜色改对，也仍然看不见、点不到。
 
   修法分两处。菜单改走 `reactDom.createPortal(..., document.body)`，与文件里既有的 `PipelineHeaderEntry` 同一条路子，从此不受顶栏的裁切影响；配色换成宿主 token（`--dsw-alias-bg-layer-1` / `--dsw-alias-label-primary` / `--dsw-alias-border-l2` / `--dsw-alias-state-error-primary`），深浅色主题都读得清。但 portal 一出去，`rootRef` 就不再包含菜单节点，原来那句「点在外面就关」会把点菜单项也判成点外面、`open` 先被关掉再执行选中——所以同步加了第二个 `menuRef`，`onDown` 里两个 `contains` 都算「在里面」，点触发按钮不误关、点菜单项能正常选中。Esc 关闭、选中后关闭并即时更新文案、`maxHeight` 内部滚动、停用的卡置灰、人格总闸关掉时整个入口 `return null`，这些行为一条没动。
