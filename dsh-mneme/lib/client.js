@@ -12237,6 +12237,11 @@ window.__ModuleLoader__.load({
     function PersonaSessionEntry(props) {
       const { t } = props;
       const sessionId = typeof props.sessionId === "string" ? props.sessionId : "";
+      // 同一份逻辑要挂两个相位：会话头那一行（有消息的会话）与新会话的 hero 行
+      // （blank 会话）。后者是 workspace 行里的一格，跟工作区名、preset 控件并排，
+      // 空间紧得多，所以只收尺寸与视觉重量，文案一字不改——缩写会让人认不出这是
+      // 人格入口，反而要再点开一次才知道。
+      const compact = props.compact === true;
       const [state, setState] = useState(null);
       const [cards, setCards] = useState(null);
       // 读卡清单失败的独立标记：失败时 cards 仍留 null（= 还没读到），下次点开会重试；
@@ -12351,11 +12356,18 @@ window.__ModuleLoader__.load({
             ? t("memory.personaEntry.default")
             : t("memory.personaEntry.none");
   
-      const buttonStyle = {
-        display: "inline-flex", alignItems: "center", gap: 4, height: 24,
-        padding: "0 8px", borderRadius: 6, border: "1px solid rgba(127,127,127,0.28)",
-        background: "transparent", color: "inherit", font: "inherit", cursor: "pointer"
-      };
+      const buttonStyle = compact
+        ? {
+          display: "inline-flex", alignItems: "center", gap: 3, height: 20,
+          padding: "0 6px", borderRadius: 5, border: "1px solid rgba(127,127,127,0.28)",
+          background: "transparent", color: "inherit", font: "inherit", fontSize: 12,
+          lineHeight: 1, cursor: "pointer", maxWidth: 160, minWidth: 0
+        }
+        : {
+          display: "inline-flex", alignItems: "center", gap: 4, height: 24,
+          padding: "0 8px", borderRadius: 6, border: "1px solid rgba(127,127,127,0.28)",
+          background: "transparent", color: "inherit", font: "inherit", cursor: "pointer"
+        };
       const itemStyle = (current, disabled) => ({
         display: "block", width: "100%", textAlign: "left", padding: "5px 8px",
         borderRadius: 5, border: "none", background: current ? "rgba(127,127,127,0.16)" : "transparent",
@@ -12363,17 +12375,24 @@ window.__ModuleLoader__.load({
         opacity: disabled ? 0.45 : 1
       });
   
-      return h("span", { ref: rootRef, style: { position: "relative", display: "inline-flex" } },
+      // 标签文案两个相位完全一致（「人格：<卡名>」）：hero 行里唯一能省的是尺寸，
+      // 省掉名字就该猜了。窄的时候用省略号收尾，完整值仍在 title 与菜单里。
+      const label = `${t("memory.personaEntry.label")}：${suffix}`;
+      const labelStyle = compact
+        ? { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }
+        : null;
+
+      return h("span", { ref: rootRef, style: { position: "relative", display: "inline-flex", minWidth: 0 } },
         h("button", {
           type: "button",
           style: buttonStyle,
           "aria-haspopup": "menu",
           "aria-expanded": open ? "true" : "false",
-          title: t("memory.personaEntry.title"),
+          title: `${t("memory.personaEntry.title")}（${label}）`,
           onClick: toggle
         },
-          h(PersonaGlyph, { size: 13 }),
-          h("span", null, `${t("memory.personaEntry.label")}：${suffix}`)
+          h(PersonaGlyph, { size: compact ? 12 : 13 }),
+          h("span", { style: labelStyle }, label)
         ),
         // 菜单 portal 到 body（#769）。之前它挂在按钮的 span 里，而这一格是会话头
         // 顶栏的一行——宿主那边有 mask-image 与 overflow:clip，菜单一旦越过容器
@@ -12450,6 +12469,24 @@ window.__ModuleLoader__.load({
           order: 20,
           inject: (sessionId) => ({ sessionId })
         }, (props) => h(PersonaSessionEntry, { t, sessionId: props && props.sessionId }));
+      });
+      // 新会话（blank 相位）里会话头根本没有 titleCluster：宿主把
+      // `titleCluster`（含 headerActions）与 headerUtilities 整段包在
+      // `{!hideChrome && …}` 里，而 ConversationHeader 对 blank 会话传
+      // hideChrome = blank。于是上面那条注册在有消息之后才出现，新开的会话里
+      // 找不到人格卡——这正是「新会话里没有人格入口」那个报障的成因。
+      // hero 相位另有插槽：host 在 heroWorkspaceRow 里渲染
+      // `{sessionId === undefined ? null : <div className={css.heroOptions}>…}`，
+      // 所以 blank 会话（已有 sessionId、还没内容）能落进去。两个插槽相位互斥
+      // （hero.options 只在 hero、header.actions 只在非 blank），同一组件挂两处
+      // 不会出现两个入口。
+      ctx.slots.inject("conversation.hero.options", () => {
+        return ctx.slots.register({
+          name: "conversation.hero.options",
+          id: "dsh-mneme:persona-session-hero",
+          order: 20,
+          inject: (sessionId) => ({ sessionId })
+        }, (props) => h(PersonaSessionEntry, { t, sessionId: props && props.sessionId, compact: true }));
       });
     }
 

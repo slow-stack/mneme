@@ -5275,3 +5275,114 @@ test("every var(--mneme-*) reference resolves to a defined token (#769)", () => 
     "these CSS variables are referenced but never defined, so their hard-coded fallback is the only value (white on white in dark themes)"
   );
 });
+
+// 新会话里找不到人格卡：#769 修的是「点开了看不见」，这一条是「新会话里根本
+// 没有入口」。宿主把 ConversationSessionHeader 的 titleCluster（含
+// headerActions）与 headerUtilities 整段包在 `{!hideChrome && …}` 里，而
+// ConversationHeader 对 blank 会话传 hideChrome = blank —— 于是
+// conversation.session.header.actions 这条注册在有消息之前根本不渲染。
+// blank 相位另有 conversation.hero.options（heroWorkspaceRow 里的 heroOptions
+// 一格），两个相位互斥，所以同一个组件要挂两处。
+//
+// 这里不只比字符串：把 registerPersonaSessionSeat 抽出来真跑一遍，数它到底往
+// 哪几个插槽注册了。只锁 "conversation.hero.options" 出现在源码里是挡不住
+// 「写了但 inject 到别处」的——#769 那次就吃过「测试全绿、东西没画出来」的亏。
+test("persona entry registers in the blank-session hero slot as well as the header", () => {
+  const start = clientSource.indexOf("function registerPersonaSessionSeat(ctx, t) {");
+  const end = clientSource.indexOf("function registerPipelineSeats(", start);
+  assert.ok(start > 0 && end > start, "registerPersonaSessionSeat must exist");
+
+  const body = clientSource.slice(start, end).split("\n")
+    .filter((line) => !line.trim().startsWith("//")).join("\n");
+  const registerPersonaSessionSeat = new Function(
+    "PersonaSessionEntry",
+    "h",
+    body + "\n return registerPersonaSessionSeat;"
+  )(() => null, () => null);
+
+  // 假 ctx：inject 收 key，register 收 meta 与 render，都不执行 render。
+  const injected = [];
+  const registered = [];
+  const ctx = {
+    slots: {
+      inject: (key, factory) => { injected.push(key); if (typeof factory === "function") factory(); },
+      register: (meta, render) => { registered.push({ meta, render }); }
+    }
+  };
+  registerPersonaSessionSeat(ctx, (key) => key);
+
+  assert.deepEqual(
+    injected.slice().sort(),
+    ["conversation.hero.options", "conversation.session.header.actions"],
+    "the entry must register in both phases — header.actions alone leaves blank sessions with no persona entry"
+  );
+
+  const hero = registered.find((r) => r.meta.name === "conversation.hero.options");
+  assert.ok(hero, "a registration on conversation.hero.options must be created for blank sessions");
+  assert.equal(hero.meta.id, "dsh-mneme:persona-session-hero",
+    "the two registrations need distinct ids: both slots are list-kind and a shared id would collide");
+  assert.notEqual(hero.meta.id, registered.find((r) => r.meta.name === "conversation.session.header.actions").meta.id,
+    "hero and header registrations must not share an id");
+
+  // 同一个组件、compact 收窄：hero 行跟工作区名与 preset 控件并排，尺寸要小，
+  // 但文案不能缩写——缩写了别人就认不出这是人格入口。
+  assert.ok(
+    /compact: true/.test(hero.render.toString()),
+    "the hero registration must pass compact:true so the tighter row gets the small variant"
+  );
+  assert.ok(
+    /sessionId: props && props\.sessionId/.test(hero.render.toString()),
+    "the hero registration must forward the session id — without it the entry cannot read or bind"
+  );
+
+  // 上面那条只管 render 闭包里「有没有写 props.sessionId」，管不住 inject 真的
+  // 往座位里注了东西没有。把 inject 整段删掉、只留注册本身，座位照 registro
+  // 但永远拿不到 sessionId：reload 首行 `if (!sessionId) return undefined` 让
+  // state 永远 null，`if (!state || state.enabled !== true) return null` 于是
+  // 直接不占位——功能等于没修，而字符串断言全绿。所以这里把两条 inject 都
+  // 真调一遍，用具体的 sessionId 核对返回值。
+  const probe = "session-abc123";
+  for (const meta of [hero.meta, registered.find((r) => r.meta.name === "conversation.session.header.actions").meta]) {
+    assert.equal(typeof meta.inject, "function",
+      `${meta.name} needs an inject function — a registration without one never receives its session id`);
+    const injectedArgs = meta.inject(probe);
+    assert.ok(injectedArgs && typeof injectedArgs === "object",
+      `${meta.name} inject must return the props object handed to render`);
+    assert.equal(injectedArgs.sessionId, probe,
+      `${meta.name} inject must pass the session id through — the entry reads state with it and returns null without it`);
+  }
+});
+
+// hero 行只是「小一号」，不是「另一种入口」：compact 只许动尺寸与间距，标签
+// 文案必须两个相位一致。缩成只剩图标等于让新会话里的人猜这按钮是干什么的，
+// 那和「没有入口」差不多坏。
+test("the compact hero variant shrinks only, never drops the persona label", () => {
+  const start = clientSource.indexOf("function PersonaSessionEntry(props) {");
+  const end = clientSource.indexOf("function registerPersonaSessionSeat", start);
+  assert.ok(start > 0 && end > start);
+  const region = clientSource.slice(start, end);
+
+  // 两条分支共用同一个 label 常量与同一个文本节点 —— compact 不能另起一份文案。
+  assert.equal(
+    (region.match(/const label = /g) || []).length,
+    1,
+    "the button label must be derived once and shared by both variants"
+  );
+  assert.equal(
+    (region.match(/h\("span", \{ style: labelStyle \}, label\)/g) || []).length,
+    1,
+    "the label text node must be rendered once, outside the compact/roomy branch"
+  );
+  // 「只出现一次」不够：`compact ? null : h("span", { style: labelStyle }, label)`
+  // 也只出现一次，却正好是「小屏把标签藏了」。这里锁结构性事实——图标与标签
+  // 是紧挨着的两个无条件子节点，中间不存在任何 compact 三元。
+  assert.ok(
+    /h\(PersonaGlyph, \{ size: compact \? 12 : 13 \}\),\s*\n\s*h\("span", \{ style: labelStyle \}, label\)/.test(region),
+    "the label must sit right after the glyph with no compact conditional between them — shrinking may not hide it"
+  );
+  // 尺寸差异只应出现在样式对象里。
+  assert.ok(/const buttonStyle = compact/.test(region),
+    "compact must only pick a smaller button style");
+  assert.ok(/const labelStyle = compact/.test(region),
+    "compact must only tighten the label's overflow handling");
+});
