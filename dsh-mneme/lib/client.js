@@ -12247,6 +12247,9 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState(false);
       const [failed, setFailed] = useState(false);
       const rootRef = useRef(null);
+      // 菜单已经 portal 到 body，不再是 rootRef 的子节点：判断「点在菜单里还是外面」
+      // 要两个 ref 都看，否则点菜单项会被当成点外面，open 先被关、click 落空。
+      const menuRef = useRef(null);
   
       const reload = useCallback(() => {
         if (!sessionId) return undefined;
@@ -12280,7 +12283,12 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (!open) return undefined;
         const onDown = (event) => {
-          if (rootRef.current && !rootRef.current.contains(event.target)) setOpen(false);
+          const root = rootRef.current;
+          const menu = menuRef.current;
+          // 两个 ref 都算「里面」：菜单 portal 在 body 下，不再随 rootRef 一起命中。
+          if (menu && menu.contains(event.target)) return;
+          if (root && root.contains(event.target)) return;
+          setOpen(false);
         };
         const onKey = (event) => { if (event.key === "Escape") setOpen(false); };
         document.addEventListener("mousedown", onDown);
@@ -12367,22 +12375,33 @@ window.__ModuleLoader__.load({
           h(PersonaGlyph, { size: 13 }),
           h("span", null, `${t("memory.personaEntry.label")}：${suffix}`)
         ),
-        open && pos ? h("div", {
-          // 不用 role="dialog"：记忆库那扇窗就是被它换掉的，库里现在有一条
-          // 「client bundle 里不许再出现 dialog 面」的守卫（tab 时代收的尾）。
-          // 这里是挂在按钮下的选单，menu 才是它真正的语义。
-          role: "menu",
-          "aria-label": t("memory.personaEntry.title"),
-          style: {
-            position: "fixed", top: pos.top, left: pos.left, zIndex: 3200, width: 210,
-            // 卡多时菜单会顶出视口、末尾几张点不到：高度吃 pos 里算剩下的可用空间，
-            // 超出就内部滚动。maxHeight 同时兜住「窗口中途被拉小」的情况。
-            maxHeight: pos.maxHeight, overflowY: "auto",
-            padding: 6, borderRadius: 8, border: "1px solid rgba(127,127,127,0.28)",
-            background: "var(--mneme-card-bg, #ffffff)", color: "inherit",
-            boxShadow: "0 8px 24px rgba(0,0,0,0.18)"
-          }
-        },
+        // 菜单 portal 到 body（#769）。之前它挂在按钮的 span 里，而这一格是会话头
+        // 顶栏的一行——宿主那边有 mask-image 与 overflow:clip，菜单一旦越过容器
+        // 下边界就被整块裁掉，点开是零像素。portal 之后它不再受任何祖先的裁剪与
+        // 层叠上下文影响，position:fixed 的坐标也就能真正落到视口上。
+        // 代价是「点外面关闭」不能只认 rootRef（见上面那个 effect 的两个 ref）。
+        // 不用 role="dialog"：记忆库那扇窗就是被它换掉的，库里现在有一条
+        // 「client bundle 里不许再出现 dialog 面」的守卫（tab 时代收的尾）。
+        // 这里是挂在按钮下的选单，menu 才是它真正的语义。
+        open && pos && reactDom && typeof document !== "undefined"
+          ? reactDom.createPortal(h("div", {
+            ref: menuRef,
+            role: "menu",
+            "aria-label": t("memory.personaEntry.title"),
+            style: {
+              position: "fixed", top: pos.top, left: pos.left, zIndex: 3200, width: 210,
+              // 卡多时菜单会顶出视口、末尾几张点不到：高度吃 pos 里算剩下的可用空间，
+              // 超出就内部滚动。maxHeight 同时兜住「窗口中途被拉小」的情况。
+              maxHeight: pos.maxHeight, overflowY: "auto",
+              padding: 6, borderRadius: 8, border: "1px solid var(--dsw-alias-border-l2)",
+              // portal 之后它不在 .mneme-x 子树里，--mneme-* 语义色层取不到，
+              // 而 color:"inherit" 会从 body 继承——深色主题下就是白底白字。
+              // 直接用宿主 token：与 .mneme-pipe-panel 同一套，深浅色都成立。
+              background: "var(--dsw-alias-bg-layer-1)",
+              color: "var(--dsw-alias-label-primary)",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.28)"
+            }
+          },
           h("div", { style: { padding: "4px 8px 6px", opacity: 0.7, fontSize: 12 } },
             t("memory.personaEntry.title")),
           source === "bySession"
@@ -12410,10 +12429,11 @@ window.__ModuleLoader__.load({
                 }, card.name || card.key);
               }),
           failed
-            ? h("div", { style: { padding: "4px 8px", color: "#c0392b", fontSize: 12 } },
+            ? h("div", { style: { padding: "4px 8px", color: "var(--dsw-alias-state-error-primary)", fontSize: 12 } },
               t("memory.personaEntry.failed"))
             : null
-        ) : null
+          ), document.body)
+          : null
       );
     }
 
