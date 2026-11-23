@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-11-24
+
 - **新开的会话里找不到人格入口：那一行在 blank 相位整段不渲染**。人格按钮注册在 `conversation.session.header.actions`，而宿主 `ConversationHeader` 对 blank 会话传 `hideChrome = blank`，`ConversationSessionHeader` 里 `titleCluster`（含 `headerActions`）与 `headerUtilities` 又整段包在 `{!hideChrome && …}` 里——于是会话一新建，这个入口就没地方落，得先发一条消息才出现。界面上表现为「绑定不了人格」，其实是控件不在。
 
   修法是给同一个组件再挂一个相位。宿主 hero 相位渲染 `heroWorkspaceRow`，里面有一格 `conversation.hero.options`（`{sessionId === undefined ? null : <div className={css.heroOptions}>…}`，插槽声明 `kind: 'list', scope: 'session'`），空着时宿主用 `.heroOptions:empty{display:none}` 收起来。`registerPersonaSessionSeat` 因此在原注册之外再注册一条 `conversation.hero.options`（id `dsh-mneme:persona-session-hero`，与原 id 不同——两个插槽都是 list 型，同 id 会撞）。两个相位互斥：hero.options 只在 hero 渲染、header.actions 只在非 blank 渲染，所以不会出现两个入口。
