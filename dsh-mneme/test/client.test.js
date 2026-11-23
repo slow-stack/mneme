@@ -5205,3 +5205,73 @@ test("wiki tree indents by parent_id, not by hyphen count (#582)", () => {
   // 兜底要接住走不到的模块：宁可用根层平铺也不能静默丢行（树少一页 = 入口没了）。
   assert.ok(region.includes("!depthById.has(mod.id)"), "unreached modules must fall back instead of vanishing");
 });
+
+// #769：会话头的「人格」菜单点开零像素。原因有两层，都要锁：
+// 1) 它挂在会话头顶栏那一行里，宿主给那一行加了 mask-image 与 overflow:clip，
+//    菜单一旦越过容器下边界就被整块裁掉 —— 必须 portal 到 body。
+// 2) portal 出去之后它不再是 rootRef 的子节点，原来「只认 rootRef」的外部点击
+//    判定会把点菜单项当成点外面，open 先被关掉、click 落空 —— 必须两个 ref 都判。
+test("persona menu portals to body so the session header cannot clip it (#769)", () => {
+  const start = clientSource.indexOf("function PersonaSessionEntry");
+  const end = clientSource.indexOf("function registerPersonaSessionSeat", start);
+  assert.ok(start > 0 && end > start, "PersonaSessionEntry must exist");
+  const region = clientSource.slice(start, end);
+
+  const menuAt = region.indexOf('role: "menu"');
+  assert.ok(menuAt > 0, "the menu element (role=menu) must exist");
+  const portalAt = region.lastIndexOf("createPortal", menuAt);
+  assert.ok(
+    portalAt > 0 && menuAt - portalAt < 240,
+    "the menu must be rendered through reactDom.createPortal, not inline under the button"
+  );
+  assert.ok(
+    region.slice(menuAt).includes("document.body"),
+    "the portal must target document.body (portaling into another clipped subtree would not help)"
+  );
+  // 坐标还是 fixed：portal 之后它相对视口定位，pos 里算出来的 top/left 才有意义。
+  assert.ok(
+    /position: "fixed", top: pos\.top, left: pos\.left/.test(region),
+    "the portaled menu must keep viewport-fixed coordinates"
+  );
+});
+
+test("persona menu dismissal accepts both the trigger and the portaled menu (#769)", () => {
+  const start = clientSource.indexOf("function PersonaSessionEntry");
+  const end = clientSource.indexOf("function registerPersonaSessionSeat", start);
+  const region = clientSource.slice(start, end);
+
+  // 只认 rootRef 的旧写法必须消失：portal 之后它对菜单点击一律判成「外面」。
+  assert.equal(
+    /rootRef\.current && !rootRef\.current\.contains\(event\.target\)/.test(region),
+    false,
+    "rootRef-only dismissal must be gone — it eats clicks on the portaled menu"
+  );
+
+  const onDownAt = region.indexOf("const onDown = (event) => {");
+  assert.ok(onDownAt > 0, "the outside-click handler must exist");
+  const onDown = region.slice(onDownAt, onDownAt + 520);
+  assert.ok(onDown.includes("rootRef.current"), "the trigger must still count as inside (clicking it toggles)");
+  assert.ok(onDown.includes("menuRef.current"), "the portaled menu must count as inside");
+
+  // ref 得真的挂到菜单根上，否则 MENU 那一半永远是 null、等于没判。
+  assert.ok(
+    /ref: menuRef,\s*\n\s*role: "menu"/.test(region),
+    "menuRef must be attached to the portaled menu root"
+  );
+});
+
+// 深色主题下白底白字那次(#769)根因不在这一处配色，而在「写了一个没人定义的
+// 变量名」这个类别：--mneme-card-bg 全包只被引用一次、从未定义，fallback 的
+// #ffffff 就成了唯一取值。逐个改配色治不了这一类，这里按类别锁死：
+// 任何 var(--mneme-*) 引用都必须能在注入的样式表里找到定义（图表六色是模板
+// 拼出来的 --mneme-chart-1..6，按前缀放行）。
+test("every var(--mneme-*) reference resolves to a defined token (#769)", () => {
+  const used = new Set([...clientSource.matchAll(/var\((--mneme-[a-z0-9-]+)/g)].map((m) => m[1]));
+  const defined = new Set([...clientSource.matchAll(/(--mneme-[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+  const undefinedVars = [...used].filter((v) => !defined.has(v) && !v.startsWith("--mneme-chart-"));
+  assert.deepEqual(
+    undefinedVars,
+    [],
+    "these CSS variables are referenced but never defined, so their hard-coded fallback is the only value (white on white in dark themes)"
+  );
+});

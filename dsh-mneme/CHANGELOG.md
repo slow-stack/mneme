@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- **会话头的人格菜单点开是零像素：底色引用了一个不存在的变量，菜单又被头顶栏裁掉（#769）**。issue 说「点开没反应」，其实是菜单已经渲染出来了，只是看不见也点不到。两个独立的成因叠在一起，修掉任何一个都还剩一半：① 菜单的 `background` 写的是 `var(--mneme-card-bg, #ffffff)`，而这个变量**全包只有这一处引用、从来没有定义过**，于是回落到白底；同一行的 `color` 却是 `inherit`，深色主题下继承到浅色文字——白底白字。② 菜单原本作为按钮的兄弟节点留在顶栏那一行里，而那一行有 `overflow: clip` 与 `mask-image`，菜单的 `top` 又是 `rect.bottom + 6`（必然落在行下边界之外），于是被裁成零像素：即便颜色改对，也仍然看不见、点不到。
+
+  修法分两处。菜单改走 `reactDom.createPortal(..., document.body)`，与文件里既有的 `PipelineHeaderEntry` 同一条路子，从此不受顶栏的裁切影响；配色换成宿主 token（`--dsw-alias-bg-layer-1` / `--dsw-alias-label-primary` / `--dsw-alias-border-l2` / `--dsw-alias-state-error-primary`），深浅色主题都读得清。但 portal 一出去，`rootRef` 就不再包含菜单节点，原来那句「点在外面就关」会把点菜单项也判成点外面、`open` 先被关掉再执行选中——所以同步加了第二个 `menuRef`，`onDown` 里两个 `contains` 都算「在里面」，点触发按钮不误关、点菜单项能正常选中。Esc 关闭、选中后关闭并即时更新文案、`maxHeight` 内部滚动、停用的卡置灰、人格总闸关掉时整个入口 `return null`，这些行为一条没动。
+
+  **测试 3,748 → 3,751**。三条各自钉一件事：菜单必须经 `createPortal` 挂到 `document.body`（同时断言 `position: fixed` 与 `top/left` 仍在，防止 portal 了却退回文档流）、外部点击的判定必须同时认 `rootRef` 与 `menuRef`（并断言旧的那句「只认 rootRef」写法必须不存在，否则等于没改）、以及全包 `var(--mneme-*)` 的引用必须都有定义（放行 `--mneme-chart-` 这个拼出来的前缀，其余一个都不能悬空）。第三条是**类别级**的守卫：这类「引用了一个没人定义的变量、回落到写死的白」的毛病，光靠改这一处治不了根，往后新写的 token 也会犯。变异自证三处各一次：拆掉 portal → 只红第一条；外部点击退回只认 `rootRef` → 只红第二条；底色退回 `--mneme-card-bg` → 只红第三条。
+
+  **真像素证据**（不只是「测试绿了」）。搭了一个最小宿主页，复刻顶栏那格的真实约束（`overflow: clip` + `mask-image` + 30px 高），用假 `__ModuleLoader__` 把 `client.js` 跑起来，判据是 `document.elementFromPoint()` 能不能取到菜单自己——被裁掉的元素在裁区外取不到自己，这比看截图更硬。修复前：底色 `rgb(255, 255, 255)`、文字 `rgb(243, 244, 246)`（白底白字，现象复现）、`parentElement: SPAN`、命中测试落到 `DIV#stage`、`HIT_INSIDE_MENU=false`，截图里菜单**一个像素都没有**。修复后：底色 `rgb(31, 32, 35)`、文字 `rgb(243, 244, 246)`、`parentElement: BODY`、`HIT_INSIDE_MENU=true`，菜单完整可见（224×154，位于按钮下方 6px）。
+
 ## [0.17.0] - 2026-11-22
 
 - **情绪注释偶尔出现双句号：句点类收口、语气符让位（#764）**。开着 `sleepAffectiveEnabled` + `affectiveInjectEnabled` 时，注入里会冒出「…按 occasion 处理。。这是场合性的，不要当作一贯表现。」——两个句号黏在一起。原因在渲染层：`affectiveNote` 的中文模板在 `${why}` 后无条件接一个「。」，而 `why` 是 sleep 侧模型写的理由，天然自带句末标点；英文模板同构（`; reason at the time: ${why}` 后面恒跟 `". Occasion-bound…"`，于是 `..`）。**改的是拼接，不是存储**：`metadata.why` 一个字不动，面板、导出、账本读到的还是原文。
