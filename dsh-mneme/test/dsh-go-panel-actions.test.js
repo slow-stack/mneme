@@ -836,6 +836,74 @@ test("冲突裁决按面板 scope 核对，别的面板选中的冲突不会被�
   assert.equal(world.writes.filter((item) => item.path === "/conflicts/resolve").length, 0);
 });
 
+// #761：裁决原因栏按短码引用记忆（「<ID-A> 为迁移完成后的实际路径记录…」），
+// 卡片上却没有 ID —— 用户只能反推哪张卡对应哪条，反馈原话是「只好两个都删或
+// 胡乱选一个」。这里锁住三件事：meta 行带前 8 位短码、短码取自各自那一侧、
+// 以及两侧不会互相串（A 卡拿到 B 的 id 比没有 id 更坏）。
+test("冲突卡片把记忆短码印在 meta 行上，与原因栏引用的 ID 对得上", async () => {
+  const world = makeWorld();
+  const def = mount(world);
+  world.routes["/api/dsh-mneme/conflicts"] = (req, res) => {
+    if (req.method !== "GET") return;
+    reply(res, 200, {
+      items: [
+        {
+          id: "c-1",
+          reason: "15ba6e8c 为迁移完成后的实际路径记录",
+          memory_a: { id: "15ba6e8c-bc05-4d2a-8697-274e00deec6c", title: "路径记录 A", type: "fact", importance: 3, content: "a" },
+          memory_b: { id: "16b7956c-d152-46f7-bbd8-9de2d7d34d17", title: "路径记录 B", type: "fact", importance: 2, content: "b" },
+        },
+      ],
+      total: 1,
+    });
+  };
+
+  await def.actions["conflict-pick-row"](SCOPE_A, { value: { id: "c-1" } });
+  const payload = await payloadOf(def);
+
+  const metas = [payload.conflictAMeta, payload.conflictBMeta];
+  for (const meta of metas) {
+    assert.ok(Array.isArray(meta), "每侧都要有 meta 行");
+    const idRow = meta.find((row) => row.label === "ID");
+    assert.ok(idRow, "meta 行必须带 ID（#761）");
+    assert.match(String(idRow.value), /^#[0-9a-f]{8}$/, "短码形态与 reason 栏一致：8 位十六进制");
+  }
+  assert.equal(metas[0].find((r) => r.label === "ID").value, "#15ba6e8c");
+  assert.equal(metas[1].find((r) => r.label === "ID").value, "#16b7956c");
+});
+
+// /conflicts 的真实字段名是 memory_a / memory_b（service.listConflictQueue）。
+// 面板曾按 a / b 取，列表行标题恒为「—」、详情页两侧标题与正文全空；而测试
+// stub 以前恒返回空队列，所以这个错配从来没被跑到过。这条直接锁字段名。
+test("冲突队列按 memory_a / memory_b 取标题，不再显示占位破折号", async () => {
+  const world = makeWorld();
+  const def = mount(world);
+  world.routes["/api/dsh-mneme/conflicts"] = (req, res) => {
+    if (req.method !== "GET") return;
+    reply(res, 200, {
+      items: [
+        {
+          id: "c-2",
+          reason: "相似度 0.92",
+          memory_a: { id: "aaaa1111-0000-0000-0000-000000000000", title: "A 侧标题", type: "fact", importance: 3, content: "a" },
+          memory_b: { id: "bbbb2222-0000-0000-0000-000000000000", title: "B 侧标题", type: "fact", importance: 2, content: "b" },
+        },
+      ],
+      total: 1,
+    });
+  };
+
+  await def.actions["conflict-pick-row"](SCOPE_A, { value: { id: "c-2" } });
+  const payload = await payloadOf(def);
+
+  assert.equal(payload.conflictRows[0].title, "A 侧标题");
+  assert.ok(!payload.conflictRows[0].subtitle.includes("—"), "副标题不该再是「A：— · B：—」");
+  assert.equal(payload.conflictATitle, "A 侧标题");
+  assert.equal(payload.conflictBTitle, "B 侧标题");
+  assert.equal(payload.conflictAContent, "a");
+  assert.equal(payload.conflictBContent, "b");
+});
+
 test("一个动作只推一次数据，内容就是它改的那块", async () => {
   const world = makeWorld();
   const def = mount(world);

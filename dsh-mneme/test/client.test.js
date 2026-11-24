@@ -2304,6 +2304,13 @@ test("conflict queue: expandable full text with decision metadata", () => {
   assert.ok(clientSource.includes('"memory.status.conflictQueue.chars"'), "each side must show its length");
   assert.ok(clientSource.includes('"memory.status.conflictQueue.updated"'), "each side must show which one is newer");
   assert.ok(clientSource.includes("copySide"), "each side must be copyable for external comparison");
+  // #761：裁决原因栏按短码引用记忆（「<ID-A> 为迁移完成后的实际路径记录…」），
+  // 卡片上却没有 ID，用户只能反推哪张卡对应哪条，最后「两个都删或胡乱选」。
+  // 锁住 ID 真的进到判读依据行：以 s.id 取前 8 位、整串进 title 便于复制比对。
+  assert.ok(/s\.id\s*\n?\s*\?\s*h\("span",\s*\{\s*className:\s*"mneme-conflict-metaid"/.test(clientSource),
+    "each side must print its own memory id short code (#761)");
+  assert.ok(clientSource.includes('String(s.id).slice(0, 8)'), "short code must be the first 8 chars of the uuid");
+  assert.ok(clientSource.includes('title: String(s.id)'), "full id must be reachable via title for copying");
   assert.ok(clientSource.includes("@container (max-width:560px){.mneme-conflict-pair{grid-template-columns:1fr}}"),
     "a narrow panel must fall back to one column instead of two unreadable halves");
   for (const key of [
@@ -2314,7 +2321,8 @@ test("conflict queue: expandable full text with decision metadata", () => {
     "memory.status.conflictQueue.importance",
     "memory.status.conflictQueue.chars",
     "memory.status.conflictQueue.updated",
-    "memory.status.conflictQueue.created"
+    "memory.status.conflictQueue.created",
+    "memory.status.conflictQueue.memId"
   ]) {
     const occurrences = clientSource.split(`"${key}"`).length - 1;
     assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);

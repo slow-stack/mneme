@@ -687,14 +687,14 @@ export function mountDshGoPanel(ctx, options = {}) {
     const items = Array.isArray(res?.items) ? res.items : [];
     state.conflictCount = num(res?.total, items.length);
     const rows = items.slice(0, 20).map((item) => ({
-      title: clip(item.a?.title ?? item.b?.title ?? item.id ?? "—", 40),
-      subtitle: `A：${clip(item.a?.title ?? "—", 20)} · B：${clip(item.b?.title ?? "—", 20)}`,
+      title: clip(item.memory_a?.title ?? item.memory_b?.title ?? item.id ?? "—", 40),
+      subtitle: `A：${clip(item.memory_a?.title ?? "—", 20)} · B：${clip(item.memory_b?.title ?? "—", 20)}`,
       tone: "warn",
       action: { id: "conflict-pick-row", args: { id: String(item.id ?? "") } },
     }));
     const selected = items.find((item) => item.id === state.conflictId) ?? null;
-    state.conflictA = selected?.a ?? null;
-    state.conflictB = selected?.b ?? null;
+    state.conflictA = selected?.memory_a ?? null;
+    state.conflictB = selected?.memory_b ?? null;
     state.conflictReady = selected !== null;
     const side = (memo) =>
       memo === null
@@ -702,6 +702,10 @@ export function mountDshGoPanel(ctx, options = {}) {
         : [
             { label: "类型", value: typeLabel(memo.type) },
             { label: "重要度", value: `★${memo.importance ?? 1}` },
+            // #761：裁决原因栏是按短码引用记忆的（「<ID-A> 为迁移完成后的实际
+            // 路径记录…」），卡片上却没有 ID，两张卡只能靠正文猜谁是谁。取前
+            // 8 位与实体关系页同口径（本文件 :425 的 edge.memory_id.slice(0, 8)）。
+            ...(memo.id ? [{ label: "ID", value: `#${String(memo.id).slice(0, 8)}` }] : []),
             { label: "更新", value: fmtTime(memo.updated_at ?? memo.created_at) },
           ];
     return {

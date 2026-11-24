@@ -1401,6 +1401,7 @@ window.__ModuleLoader__.load({
         "memory.status.conflictQueue.copySide": "复制本侧",
         "memory.status.conflictQueue.copiedSide": "本侧全文已复制",
         "memory.status.conflictQueue.importance": "重要度 {n}",
+        "memory.status.conflictQueue.memId": "ID {id}",
         "memory.status.conflictQueue.chars": "{n} 字符",
         "memory.status.conflictQueue.updated": "更新于 {time}",
         "memory.status.conflictQueue.created": "创建于 {time}",
@@ -2615,6 +2616,7 @@ window.__ModuleLoader__.load({
         "memory.status.conflictQueue.copySide": "Copy this side",
         "memory.status.conflictQueue.copiedSide": "Full text copied",
         "memory.status.conflictQueue.importance": "importance {n}",
+        "memory.status.conflictQueue.memId": "ID {id}",
         "memory.status.conflictQueue.chars": "{n} chars",
         "memory.status.conflictQueue.updated": "updated {time}",
         "memory.status.conflictQueue.created": "created {time}",
@@ -3434,6 +3436,7 @@ window.__ModuleLoader__.load({
       ".mneme-conflict-text{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;overflow-wrap:anywhere;max-height:28em;overflow-y:auto}",
       ".mneme-conflict-meta{display:flex;align-items:center;gap:var(--mneme-space-6);flex-wrap:wrap;font-size:11px;line-height:16px;color:var(--mneme-fg-dim)}",
       ".mneme-conflict-metaval{color:var(--dsw-alias-label-secondary)}",
+      ".mneme-conflict-metaid{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;user-select:all}",
       // 窄面板下并排会把每侧挤到无法阅读，退成单列（容器查询按面板实际宽度判）
       "@container (max-width:560px){.mneme-conflict-pair{grid-template-columns:1fr}}",
       ".mneme-conflict-mark{text-decoration:none;border-radius:var(--mneme-radius-4);padding:0 1px}",
@@ -8141,6 +8144,12 @@ window.__ModuleLoader__.load({
                 h("span", { className: "mneme-conflict-metaval" }, typeLabel(t, s.type)),
                 s.importance !== null && s.importance !== undefined
                   ? h("span", null, t("memory.status.conflictQueue.importance").replace("{n}", String(s.importance)))
+                  : null,
+                // #761：裁决原因栏按短码引用记忆，卡片上却没有 ID——用户只能
+                // 反推哪张卡对应「ID-A」。title 带完整 UUID 便于复制比对。
+                s.id
+                  ? h("span", { className: "mneme-conflict-metaid", title: String(s.id) },
+                      t("memory.status.conflictQueue.memId").replace("{id}", `#${String(s.id).slice(0, 8)}`))
                   : null,
                 h("span", null, t("memory.status.conflictQueue.chars").replace("{n}", String((s.content || "").length))),
                 h("span", null, (s.updated_at ? t("memory.status.conflictQueue.updated") : t("memory.status.conflictQueue.created"))
