@@ -17,6 +17,7 @@
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/license-MIT-EFE7D8?style=flat-square&label=license&labelColor=B03A2E&logoColor=1C1C1C"><img src="https://img.shields.io/badge/license-MIT-111111?style=flat-square&label=license&labelColor=B03A2E&logoColor=FFFFFF" alt="license"></picture>
 <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="Awesome"></a>
 <a href="https://hol.org/registry/plugins/slow-stack%2Fmneme"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fhol.org%2Fapi%2Fregistry%2Fbadges%2Fplugin%3Fslug%3Dslow-stack%252Fmneme%26metric%3Dverified%26style%3Dflat-square%26label%3DHOL%2520Guard" alt="HOL Guard"></a>
+<a href="https://glama.ai/mcp/servers/slow-stack/mneme"><img src="https://glama.ai/mcp/servers/slow-stack/mneme/badges/score.svg" alt="Glama"></a>
 </p>
 
 <p align="center">中文 · <a href="#english">English</a></p>
