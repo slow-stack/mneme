@@ -2685,3 +2685,73 @@ test("#755 复审：描述档开着时，正常会话照常出图描述", async 
   assert.equal(describeCalls.length, 1, "正常会话的图要真的描述一次");
   assert.ok(calls.length >= 1, "然后照常蒸馏");
 });
+
+// #712：传输类失败（流报错 / 流中止 / 真抛异常）过去只写 status 与 error_message，
+// metadata 整列留空。实测库里 2028 条 error 行 metadata 一律 NULL，全仓
+// failure_kind 只覆盖 5 条——于是「按失败形态分组」那条 SQL 对整类传输失败是盲的，
+// issue 里报的「94% 失败」只能靠 error_message 的字面量去猜。
+// 这三条锁的是「三种传输失败各自留下可分辨的 kind」，并锁住 error_message 不被顺手改掉
+// （那是既有读数口径，改它会让别人手上的旧统计对不上）。
+function auditMeta(audit) {
+  const m = audit?.metadata;
+  if (m == null) return {};
+  if (typeof m === "string") {
+    try { return JSON.parse(m); } catch { return {}; }
+  }
+  return m;
+}
+
+test("#712: a stream error finish leaves failure_kind so failures can be grouped", async () => {
+  const { events, store } = setup(RECORDS_ON, {
+    stream: () => (async function* () {
+      yield { type: "block-start", block: { type: "text" } };
+      yield { type: "finish", kind: "error", failure: { code: "server_error", message: "upstream exploded" } };
+    })()
+  });
+  const session = recordsSession("s712-stream-error", [userMessage("这轮会流失败", 1), { seq: 2, type: "turn/end" }]);
+  await eventHandler(events)(session, { seq: 2, type: "turn/end" });
+
+  const row = store.listLlmAudits({ source: "autoSummarize" })[0];
+  assert.equal(row.status, "error");
+  assert.equal(row.error_message, "llm stream error", "既有读数口径不变");
+  const meta = auditMeta(row);
+  assert.equal(meta.failure_kind, "stream-error", "没有这个键，按失败形态分组的统计就看不见它");
+  assert.equal(meta.stream_reason, "error");
+  assert.equal(meta.stream_cause, "server_error: upstream exploded",
+    "原因串本来只活在局部变量里，落进 metadata 才查得到是哪一种失败");
+});
+
+test("#712: an aborted stream is a separate kind from an errored one", async () => {
+  const { events, store } = setup(RECORDS_ON, {
+    stream: () => (async function* () {
+      yield { type: "block-start", block: { type: "text" } };
+      yield { type: "finish", kind: "aborted" };
+    })()
+  });
+  const session = recordsSession("s712-stream-aborted", [userMessage("这轮会被中止", 1), { seq: 2, type: "turn/end" }]);
+  await eventHandler(events)(session, { seq: 2, type: "turn/end" });
+
+  const row = store.listLlmAudits({ source: "autoSummarize" })[0];
+  assert.equal(row.error_message, "llm stream aborted");
+  const meta = auditMeta(row);
+  assert.equal(meta.failure_kind, "stream-aborted", "中止与报错混成一档，就分不出「模型挂了」和「被主动掐了」");
+  assert.equal(meta.stream_cause, undefined, "没有原因串时不编一个空键出来");
+});
+
+test("#712: a thrown transport error is recorded as stream-threw with the attempt count", async () => {
+  const { events, store } = setup(RECORDS_ON, {
+    stream: () => (async function* () {
+      yield { type: "block-start", block: { type: "text" } };
+      throw new Error("socket hang up");
+    })()
+  });
+  const session = recordsSession("s712-stream-threw", [userMessage("这轮会抛异常", 1), { seq: 2, type: "turn/end" }]);
+  await eventHandler(events)(session, { seq: 2, type: "turn/end" });
+
+  const row = store.listLlmAudits({ source: "autoSummarize" })[0];
+  assert.equal(row.status, "error");
+  assert.equal(row.error_message, "socket hang up");
+  const meta = auditMeta(row);
+  assert.equal(meta.failure_kind, "stream-threw", "抛异常与 finish 报错是两条代码路径，别归成一档");
+  assert.equal(meta.stream_attempts, 1, "非 429 首轮就抛，不该记成重试过");
+});
