@@ -8134,7 +8134,14 @@ window.__ModuleLoader__.load({
       const side = (s, label, sideClass, ops, diffSide, open, itemKey) => h("div", { className: `mneme-conflict-side ${sideClass}` },
         h("div", { className: "mneme-conflict-sidelabel" }, label),
         s.missing
-          ? h("div", { className: "mneme-conflict-missing" }, t("memory.status.conflictQueue.missing"))
+          // #761 评审：缺失侧同样要印短码——接口对已删除记忆仍返回 { id, missing: true }，
+          // 而裁决原因栏照旧按短码引用它；只写「已缺失」等于让用户没法对照。
+          ? h("div", { className: "mneme-conflict-missing" },
+              t("memory.status.conflictQueue.missing"),
+              s.id
+                ? h("span", { className: "mneme-conflict-metaid", title: String(s.id) },
+                    t("memory.status.conflictQueue.memId").replace("{id}", `#${String(s.id).slice(0, 8)}`))
+                : null)
           : h(react.Fragment, null,
               h("div", { className: "mneme-conflict-sidetitle", title: s.title }, s.title || "…"),
               // 判读依据行：类型 / 重要度 / 字数 / 新旧 + 单侧全文复制。报障者

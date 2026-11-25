@@ -2311,6 +2311,12 @@ test("conflict queue: expandable full text with decision metadata", () => {
     "each side must print its own memory id short code (#761)");
   assert.ok(clientSource.includes('String(s.id).slice(0, 8)'), "short code must be the first 8 chars of the uuid");
   assert.ok(clientSource.includes('title: String(s.id)'), "full id must be reachable via title for copying");
+  // 缺失侧也要有短码：接口对已删记忆仍回 { id, missing: true }，原因栏照旧按短码
+  // 引用它，只写「已缺失」会让用户没法对照。锁住缺失分支把 id 一起带出去。
+  assert.ok(
+    /s\.missing[\s\S]{0,400}?mneme-conflict-missing"[\s\S]{0,400}?String\(s\.id\)\.slice\(0, 8\)/.test(clientSource),
+    "the missing side must still print its id short code (#761)"
+  );
   assert.ok(clientSource.includes("@container (max-width:560px){.mneme-conflict-pair{grid-template-columns:1fr}}"),
     "a narrow panel must fall back to one column instead of two unreadable halves");
   for (const key of [
