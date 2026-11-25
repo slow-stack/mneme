@@ -36,9 +36,11 @@ function parseList(raw) {
 // 读侧损坏即回空对象——同一容错口径照 parseList（坏值不抛错、面板显示为空可重写）。
 // scenario / mesExample（#606）：对标 Character Card V2 的同名字段，是「人格卡能装
 // 下完整角色」所需的最小补充。两者都可选、都不写时渲染零输出（老用户逐字节不变）。
-const PERSONA_FIELDS = ["name", "personality", "replyStyle", "scenario", "mesExample", "enabled", "provenance"];
+// 导出给 src/settings-pack.js（#778 设置快照）：它要在干跑时算出「这张卡是新增还是
+// 覆盖」，必须用与写入面同一份解析器——另写一份裁剪逻辑就必然漂移。
+export const PERSONA_FIELDS = ["name", "personality", "replyStyle", "scenario", "mesExample", "enabled", "provenance"];
 
-function parsePersona(raw) {
+export function parsePersona(raw) {
   try {
     const value = JSON.parse(raw);
     if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
@@ -62,7 +64,7 @@ function parsePersona(raw) {
 // （所有 bot 会话都是 "standard"，实测 43/50），按 bot 名字建卡永远不命中。会话 id
 // 才是那个「一个 bot 一张卡」真正能分开的键。bySession 同样是纯加法：没有这个键
 // 的老数据读成 {}，注入文本逐字节不变。
-function parsePersonaStore(raw) {
+export function parsePersonaStore(raw) {
   try {
     const value = JSON.parse(raw);
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -848,6 +850,27 @@ export function createSettings(db) {
       } catch {
         return {};
       }
+    },
+    /**
+     * 逐键校验一组开关覆盖，**不写库**（#778 设置快照的干跑用）。
+     * 与 setFeatureFlags 的区别只在「不落盘」：同一个 validateFlag，同一套错误文案。
+     * 为什么需要它：导入别人的快照时，一个坏键不该拖垮整批——面板要能列出「这几个
+     * 键这台机器不认、那几条值越界」，而不是整包 400 之后什么都不知道。
+     */
+    validateFeatureFlags(patch) {
+      const ok = {};
+      const rejected = [];
+      if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
+        return { ok, rejected };
+      }
+      for (const [key, value] of Object.entries(patch)) {
+        try {
+          ok[key] = validateFlag(key, value);
+        } catch (error) {
+          rejected.push({ key, reason: String(error?.message ?? error) });
+        }
+      }
+      return { ok, rejected };
     },
     setFeatureFlags(patch) {
       if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
