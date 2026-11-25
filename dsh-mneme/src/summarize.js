@@ -1270,7 +1270,21 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           // 每次尝试重置审计状态：effort 拒收/429 的失败 attempt 会把 status 置
           // error，若后续重试成功，审计必须记录最终成功而不是残留第一次的失败
           // （否则「摘要成功但审计报失败」，污染 llm_audit_logs 统计）。
-          if (audit) audit.status = "success";
+          if (audit) {
+            audit.status = "success";
+            // #712 评审：失败分类是「这一次尝试」的属性，不是整轮的属性。降级重试
+            // （effort 被拒收后去掉字段重跑）若不清掉上一轮的结论，最终失败会顶着
+            // 前一次的 failure_kind——比如降级调用 socket hang up，却仍报 stream-error；
+            // 无原因的 aborted 也会继承旧的 stream_cause。除这四个键外一律保留
+            // （route/时间戳/用量等跨尝试共享的字段不能动）。
+            const kept = { ...(audit.metadata ?? {}) };
+            delete kept.failure_kind;
+            delete kept.stream_reason;
+            delete kept.stream_cause;
+            delete kept.stream_attempts;
+            audit.metadata = kept;
+            audit.errorMessage = null;
+          }
           const assembler = new BlockAssembler();
           let text = "";
           let aborted = false;

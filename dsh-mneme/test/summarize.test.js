@@ -2738,6 +2738,40 @@ test("#712: an aborted stream is a separate kind from an errored one", async () 
   assert.equal(meta.stream_cause, undefined, "没有原因串时不编一个空键出来");
 });
 
+test("#712: the downgrade retry does not inherit the previous attempt's failure kind", async () => {
+  // effort 被拒收后 withEffortFallback 会去掉字段重跑一次。失败分类是「这一次尝试」
+  // 的属性：不清掉上一轮结论，最终失败会顶着前一次的 failure_kind——降级调用抛
+  // "socket hang up"，台账却仍写 stream-error，归因直接指错对象。
+  let call = 0;
+  const { events, store, calls } = setup({ summarizeReasoningEffort: "low" }, {
+    stream: () => (async function* () {
+      call += 1;
+      yield { type: "block-start", block: { type: "text" } };
+      if (call === 1) {
+        yield {
+          type: "finish",
+          kind: "error",
+          failure: { code: "invalid_request_error", message: "UNSUPPORTED_REASONING_EFFORT: not supported" }
+        };
+        return;
+      }
+      throw new Error("socket hang up");
+    })()
+  });
+  const session = recordsSession("s712-effort-retry", [userMessage("这轮先被拒收再断连", 1), { seq: 2, type: "turn/end" }]);
+  await eventHandler(events)(session, { seq: 2, type: "turn/end" });
+
+  assert.equal(calls.length, 2, "带 effort 被拒收后应该去掉字段重跑一次");
+  const row = store.listLlmAudits({ source: "autoSummarize" })[0];
+  assert.equal(row.status, "error");
+  assert.equal(row.error_message, "socket hang up", "最终失败是断连，不是拒收");
+  const meta = auditMeta(row);
+  assert.equal(meta.failure_kind, "stream-threw", "分类必须描述最后一次尝试，不能残留上一轮的 stream-error");
+  assert.equal(meta.stream_reason, undefined, "上一轮的 reason 也要一起清掉");
+  assert.equal(meta.stream_cause, undefined, "上一轮的原因串不能挂到本轮失败上");
+  assert.equal(meta.stream_attempts, 1, "重跑后的这次是首轮尝试");
+});
+
 test("#712: a thrown transport error is recorded as stream-threw with the attempt count", async () => {
   const { events, store } = setup(RECORDS_ON, {
     stream: () => (async function* () {
