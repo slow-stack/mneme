@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- **后台 LLM 调用的 `purpose` 用了 `"compaction"`，被代理层当成 DSH 原生压缩永久 422 拒绝——巩固轮 9 天没成功过一次，画像事实维护跟着全停**。最初写 `purpose: "compaction"` 只是想借用「后台通道」的配额分类（这条字段在 DSH 的公开类型里就是个自由字符串 `purpose?: string`，没有枚举），结果撞上了代理层对 DSH 原生压缩的封堵：bili 的宿主半会把这个值塞进请求头 `x-bili-plugin-purpose`，代理半看到 `agent=dsh && purpose=compaction` 就认定这是「DSH 原生压缩调用」，返回 422 `dsh_compaction_refused`（理由是原生压缩落地的 checkpoint 会永久遮蔽原始历史、毁掉代理自己的压缩底座，bili #1729/#1772/#1206）。**这个拒绝是 terminal 的**，重试每一次都是同样的 422。
+
+  代价是静默的：本机实测 2026-11-18 起到 11-26，巩固轮 `dream_consolidate` **48 次全失败、0 次成功**，`llm_audit_logs` 里每条都是这个 422；而画像事实维护挂在巩固轮之后（`src/index.js` 的 `profileChain`，前一轮 `rep.ok === false` 就整段 `return`），于是 `profile_facts` 从 11-17 之后 **9 天零新增**——同期 `memories` 每天照常写（最多一天 230 条）。界面上看不出任何红字，配置开关也全是 true，只是这个功能再也产不出东西。`sleep` 相位不受影响（purpose 是 `sleep-conflict`/`sleep-pattern`/`sleep-affective`），所以「记忆还在整理」的观感还在，更掩盖了故障。
+
+  修法是把这个值换成一个插件自有、带前缀的名字，并收进一个常量：`src/llm-session.js` 新增 `BACKGROUND_PURPOSE = "dsh-mneme-background"`，6 处调用点（`src/dream.js` 的 narrative / consolidate / summarize 三条，加 `src/profile-digest.js`、`src/profile-extract.js`、`src/profile-facts.js` 各一条）全部改引用常量，不再写字面量。**换值不影响继续走后台通道**：代理侧判 side request 的条件是 `purpose !== undefined && purpose.length > 0`，只要求非空，不认具体值。DSH 侧也没有副作用——它读 purpose 只有一处 `requestIdentity.purpose === "compaction" ? { "x-deepseek-harness-compact": "1" } : {}`，换名只是不再带那个标记头。
+
+  **测试 3,787 → 3,788**。除了把 `test/llm-message-source.test.js:74` 的断言跟着改值，新增一条静态形状锁：正则 `/purpose:\s*["'`]compaction["'`]/` 扫 `src/` 全部 `.js`，命中即红。**为什么必须是静态锁而不是运行时断言**：6 个调用点里只有 dream 那条有测试桩覆盖，profile-digest / profile-extract / profile-facts 三条在测试里根本不会被调到——运行时锁不住新写法，而这次事故的形态恰恰是「新加的调用点照抄了老写法」。变异自证：把 `src/dream.js` 一处退回 `"compaction"`，形状锁立刻转红；改回后 6 条全绿。
+
 ## [0.17.1] - 2026-11-24
 
 - **新开的会话里找不到人格入口：那一行在 blank 相位整段不渲染**。人格按钮注册在 `conversation.session.header.actions`，而宿主 `ConversationHeader` 对 blank 会话传 `hideChrome = blank`，`ConversationSessionHeader` 里 `titleCluster`（含 `headerActions`）与 `headerUtilities` 又整段包在 `{!hideChrome && …}` 里——于是会话一新建，这个入口就没地方落，得先发一条消息才出现。界面上表现为「绑定不了人格」，其实是控件不在。

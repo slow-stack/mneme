@@ -12,7 +12,7 @@ import { scopeKeyOf } from "./scope.js";
 import { isInPeakWindow, nextOffPeakAt } from "./peak-hours.js";
 import { createHash, randomUUID } from "node:crypto";
 import { STR, langOf } from "./lang.js";
-import { withBackgroundSession } from "./llm-session.js";
+import { withBackgroundSession, BACKGROUND_PURPOSE } from "./llm-session.js";
 // 巩固读的是行池，而动行的写手不经汇流口：applyDecisions 归档败者直接走
 // service.setArchived（dream/decisions.js），所以「不许改写外来行」这条契约要在
 // 每个池子各挡一遍。清单与静态锁见 share-imported-guard.test.js。
@@ -632,7 +632,7 @@ async function generateNarratives({ ctx, service, config, route, language, effor
     }, (reportUsage) => streamText(ctx, {
       provider: route.provider,
       model: route.model,
-      purpose: "compaction",
+      purpose: BACKGROUND_PURPOSE,
       maxTokens: tokens,
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
@@ -1387,7 +1387,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     }, (reportUsage) => streamText(ctx, {
       provider: route.provider,
       model: route.model,
-      purpose: "compaction",
+      purpose: BACKGROUND_PURPOSE,
       maxTokens: tokens,
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [
@@ -1763,7 +1763,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
     }, (reportUsage) => streamText(ctx, {
       provider: summaryRoute.provider,
       model: summaryRoute.model,
-      purpose: "compaction",
+      purpose: BACKGROUND_PURPOSE,
       maxTokens: tokens,
       ...(withEffort && effort ? { reasoningEffort: effort } : {}),
       messages: [

@@ -24,6 +24,7 @@
 
 import { STR, langOf } from "./lang.js";
 import { describeStreamFailure, resolveRoute, runAuditedLlm, streamText } from "./dream.js";
+import { BACKGROUND_PURPOSE } from "./llm-session.js";
 // #493 补充 §③：与巩固/蒸馏同一份断链（src/fence.js）。画像条目同样是模型的可影响
 // 输入，一条写着「<<<记忆条目结束>>>」的记忆能提前闭合围栏。
 import { breakFenceMarkers } from "./fence.js";
@@ -138,7 +139,7 @@ export function createProfileExtractor({ ctx, service, config, logger }) {
     }, (reportUsage) => streamText(ctx, {
       provider: route.provider,
       model: route.model,
-      purpose: "compaction",
+      purpose: BACKGROUND_PURPOSE,
       messages: [
         { role: "system", content: [{ type: "text", text: STR.prompts.profileExtract[language] }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } },
         { role: "user", content: [{ type: "text", text: userText }], source: { kind: "plugin:dsh-mneme", plugin: "dsh-mneme" } }
