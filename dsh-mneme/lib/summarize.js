@@ -1270,7 +1270,21 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
           // 每次尝试重置审计状态：effort 拒收/429 的失败 attempt 会把 status 置
           // error，若后续重试成功，审计必须记录最终成功而不是残留第一次的失败
           // （否则「摘要成功但审计报失败」，污染 llm_audit_logs 统计）。
-          if (audit) audit.status = "success";
+          if (audit) {
+            audit.status = "success";
+            // #712 评审：失败分类是「这一次尝试」的属性，不是整轮的属性。降级重试
+            // （effort 被拒收后去掉字段重跑）若不清掉上一轮的结论，最终失败会顶着
+            // 前一次的 failure_kind——比如降级调用 socket hang up，却仍报 stream-error；
+            // 无原因的 aborted 也会继承旧的 stream_cause。除这四个键外一律保留
+            // （route/时间戳/用量等跨尝试共享的字段不能动）。
+            const kept = { ...(audit.metadata ?? {}) };
+            delete kept.failure_kind;
+            delete kept.stream_reason;
+            delete kept.stream_cause;
+            delete kept.stream_attempts;
+            audit.metadata = kept;
+            audit.errorMessage = null;
+          }
           const assembler = new BlockAssembler();
           let text = "";
           let aborted = false;
@@ -1303,6 +1317,18 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
                   if (audit) {
                     audit.status = "error";
                     audit.errorMessage = `llm stream ${reasonKind}`;
+                    // #712：以前这个分支只写 status/error_message，metadata 整列为空，
+                    // 于是「按 failure_kind 分组」那条 SQL 统计不到任何传输失败（实测
+                    // 库里 2028 条 error 行 metadata 一律 NULL，failure_kind 只覆盖 5 条）。
+                    // 归因需要回答「429 / 配额 / 鉴权 / 超时到底是哪一种」：原因串本来
+                    // 只存在局部变量 streamFailure 里，除了 run 台账没人取得到。errorMessage
+                    // 保持旧字面量不变——那是既有读数口径，改它会动到别人的统计。
+                    audit.metadata = {
+                      ...(audit.metadata ?? {}),
+                      failure_kind: `stream-${reasonKind}`,
+                      stream_reason: reasonKind,
+                      ...(streamFailure ? { stream_cause: streamFailure } : {})
+                    };
                   }
                   aborted = true;
                   break;
@@ -1331,9 +1357,16 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
               continue;
             }
             // 429 重试耗尽或非 429 错误：记 audit 后抛出，保持原失败路径。
+            // #712：这里与上面的 finish 分支同属「调用真的发出去、但没拿到结果」，
+            // 一样要留 failure_kind；否则按失败形态分组时整类传输失败都是盲的。
             if (audit) {
               audit.status = "error";
               audit.errorMessage = String(error?.message ?? error);
+              audit.metadata = {
+                ...(audit.metadata ?? {}),
+                failure_kind: audit.metadata?.failure_kind ?? "stream-threw",
+                stream_attempts: attempt + 1
+              };
             }
             throw error;
           }
@@ -1689,6 +1722,12 @@ export function createSummarizer(ctx, service, config, deps = {}, sessionGate = 
       if (audit) {
         audit.status = "error";
         audit.errorMessage = String(error?.message ?? error);
+        // #712：走到这里可能是流失败（内层已判定更细的 kind），也可能是写库/游标
+        // 那一层抛的（根本没碰模型）。只补空位，不覆盖内层结论。
+        audit.metadata = {
+          ...(audit.metadata ?? {}),
+          failure_kind: audit.metadata?.failure_kind ?? (abortedRun || controller.signal.aborted ? "disposed" : "threw")
+        };
       }
       throw error;
     } finally {
