@@ -71,7 +71,7 @@ test("dream: consolidation and summary messages carry source", async () => {
   const dream = createDreamScheduler({ onRun: () => Promise.resolve({ ok: true, skipped: true }) });
   const run = await dream.runDream(ctx, service, {});
   assert.equal(run.ok, true, "dream run succeeds against the strict provider stub");
-  assert.ok(calls.some((c) => c.purpose === "compaction"), "consolidation called the LLM");
+  assert.ok(calls.some((c) => c.purpose === "dsh-mneme-background"), "consolidation called the LLM");
   assert.ok(calls.length >= 2, "consolidation + summary both called");
   store.close();
 });
@@ -205,4 +205,42 @@ test("no writer emits the rejected bare kind: \"plugin\" (issue #326)", () => {
     );
   walk(srcDir);
   assert.deepEqual(offenders, [], `裸 kind: "plugin" 会被 V4 写入准入拒绝，改用生产者自有 kind（如 "plugin:dsh-mneme"）: ${offenders.join(", ")}`);
+});
+
+// ------------------------------------------------- purpose 形状锁
+
+// 2026-11-26 事故的形状锁：后台 LLM 调用的 `purpose` 曾被写成 `"compaction"`，
+// 想借用「后台通道」的配额分类，结果撞上代理层（billion-context）对 DSH 原生
+// 压缩调用的封堵——DSH 会把 purpose 塞进 `x-bili-plugin-purpose` 头，代理看到
+// `agent=dsh && purpose=compaction` 就认定这是原生压缩调用并返回 422
+// `dsh_compaction_refused`（termal，重试每次都一样）。
+//
+// 实测代价：2026-11-18 起 11-26，巩固轮 `dream_consolidate` 48 次全失败、0 次
+// 成功；画像事实维护挂在巩固轮之后（巩固失败整段跳过），于是 `profile_facts`
+// 从 11-17 之后 9 天零新增——界面看不出坏，只是再也产不出东西。
+//
+// 为什么是静态 grep 锁而不是运行时断言：purpose 散在 6 个调用点、4 个文件，
+// 只有 dream 那条有测试桩覆盖；profile-digest / profile-extract / profile-facts
+// 三条在测试里根本不会被调到，运行时锁不住新写法。静态锁盖全部。
+test("no writer reuses purpose: \"compaction\" for background calls (2026-11-26 事故)", () => {
+  const srcDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src");
+  const offenders = [];
+  const scanSource = (text, file) =>
+    text.split("\n").reduce(
+      (acc, line, i) => (/purpose:\s*["'`]compaction["'`]/.test(line) ? [...acc, `${file}:${i + 1}`] : acc),
+      []
+    );
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".js")) offenders.push(...scanSource(readFileSync(full, "utf8"), full));
+    }
+  };
+  walk(srcDir);
+  assert.deepEqual(
+    offenders,
+    [],
+    `purpose: "compaction" 会被代理层当成 DSH 原生压缩调用并永久 422（billion-context #1729），后台调用一律用 BACKGROUND_PURPOSE: ${offenders.join(", ")}`
+  );
 });
