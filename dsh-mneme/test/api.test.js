@@ -890,7 +890,9 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // NESTED_FLAG_PATHS 条目）= +1，故 141 + 1 = 142。
   // #780 新增 personaExcludeSubagents（委派型子代理不继承人格；顶层布尔键，走
   // BOOLEANS 表，不需要 NESTED_FLAG_PATHS 条目）= +1，故 142 + 1 = 143。
-  assert.equal(Object.keys(data.effective).length, 143);
+  // #786 新增 prefetchWaitMs（装配等向量预取的上限；int 键走 INT_RANGES 表）
+  // = +1，故 143 + 1 = 144。
+  assert.equal(Object.keys(data.effective).length, 144);
   // #718 判官路由默认值单独钉：默认空串 = 回落 agentDefaultModel（entity
   // 同款成对语义，计数锁钉不住空串缺省被翻转）。
   assert.equal(data.effective.preInjectGateProvider, "");
