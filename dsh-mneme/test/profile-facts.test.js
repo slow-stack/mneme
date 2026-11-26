@@ -57,12 +57,14 @@ function setup(chunks, opts = {}) {
   return { store, service, settings, facts, fake, logger };
 }
 
-/** 种记忆行；updated_at 由 save() 铸造（不接受传值），所以游标断言一律读行取值。 */
+/** 种记忆行；updated_at 由 save() 铸造（不接受传值），所以游标断言一律读行取值。
+ *  #602 起输入侧有 type 白名单（FACT_INPUT_TYPES 只含 preference），所以默认种
+ *  preference 行——想造「被白名单挡掉」的行要显式传 type。 */
 function seedRows(store, n, over = {}) {
   const ids = [];
   for (let i = 0; i < n; i++) {
     const id = `m-${over.agent_scope ?? "d"}-${i}`;
-    store.save({ id, type: "project", title: `行 ${i}`, content: `第 ${i} 行的正文`, ...over });
+    store.save({ id, type: "preference", title: `行 ${i}`, content: `第 ${i} 行的正文`, ...over });
     ids.push(id);
   }
   return ids;
@@ -490,4 +492,63 @@ test("strict 寻址：事实一张身份卡都没建时仍落 default（#587 例
   // 「有内容才算建过」就会被它拦住（Ephor 复核 #587 时指出，2026-11-06）。
   const closedOne = () => ({ default: ["默认卡事实"], byAgent: { botA: [] } });
   assert.equal(resolveFactsCard(closedOne(), "standard", { strict: true }).source, "none");
+});
+
+// ── #602：事实的输入是「关于人」的，不是「这张卡看得见的一切」 ──────────────
+
+test("#602 输入白名单：只把 preference 行交给维护轮，constraint/pitfall 一律不进窗口", () => {
+  const { store, facts, fake } = setup(okOps([]), {});
+  store.save({ id: "p1", type: "preference", title: "称呼", content: "用户希望被称呼为桉桉" });
+  store.save({ id: "c1", type: "constraint", title: "冻结", content: "考期冻结新功能" });
+  store.save({ id: "f1", type: "pitfall", title: "踩坑", content: "pwsh 的 $pid 只读" });
+  const rows = store.listFactInputRows("", {});
+  assert.deepEqual(rows.map((r) => r.id), ["p1"], "只有 preference 进输入");
+  // 直方图不受白名单影响：被挡掉的类型必须看得见，否则白名单过严没人发现
+  const kinds = store.countFactInputKinds("", {});
+  assert.equal(kinds.total, 3, "窗口总数按白名单之外的候选算");
+  assert.equal(kinds.kinds.preference, 1);
+  assert.equal(kinds.kinds.constraint, 1);
+  assert.equal(kinds.kinds.pitfall, 1);
+  assert.ok(fake.calls.length === 0, "读数不触发模型");
+  store.close();
+});
+
+test("#602 全窗被白名单挡掉：不谎报 noop，游标推到窗口末尾（否则每轮重扫同一批）", async () => {
+  const { store, facts } = setup(okOps([]), {});
+  store.save({ id: "c1", type: "constraint", title: "约束", content: "只修不修就耽误复习的故障" });
+  store.save({ id: "c2", type: "project", title: "项目", content: "mneme 仓库在 slow-stack" });
+  const receipt = await facts.runFor("", { trigger: "manual" });
+  assert.equal(receipt.status, "ok", "看过窗口但按口径一条都不收 ≠ 没有新记忆");
+  assert.equal(receipt.opsApplied, 0);
+  assert.equal(receipt.inputCount, 0, "交给模型的输入行是 0");
+  assert.deepEqual(receipt.detail.skippedByType, { constraint: 1, project: 1 });
+  const maxAt = store.db.prepare("SELECT MAX(updated_at) AS m FROM memories").get().m;
+  assert.equal(receipt.cursor, maxAt, "游标推进到窗口末尾");
+  assert.equal(store.profileFactsCursor(""), maxAt, "游标真的落库了");
+  // 第二轮：窗口已消费，这次才是真 noop
+  const second = await facts.runFor("", { trigger: "manual" });
+  assert.equal(second.status, "noop");
+  store.close();
+});
+
+test("#602 事实带出处类型：任一支撑记忆是 preference 就记 preference；注入按 preference 优先排序", () => {
+  const { store } = setup(okOps([]), {});
+  store.save({ id: "p1", type: "preference", title: "称呼", content: "用户希望被称呼为桉桉" });
+  store.save({ id: "c1", type: "constraint", title: "冻结", content: "考期冻结新功能" });
+  const at1 = "2026-11-01T00:00:00.000Z";
+  const at2 = "2026-11-20T00:00:00.000Z";
+  // 后写的 constraint 出处事实更新，旧排序下它会挤到前面去
+  store.insertProfileFact({ id: "f-constraint", agentKey: "", content: "这是关于机器的约束", sourceMemoryIds: ["c1"], at: at2 });
+  store.insertProfileFact({ id: "f-preference", agentKey: "", content: "用户希望被称呼为桉桉", sourceMemoryIds: ["p1"], at: at1 });
+  const kinds = store.listProfileFacts("", {}).reduce((m, f) => (m[f.id] = f.source_kind, m), {});
+  assert.equal(kinds["f-constraint"], "constraint");
+  assert.equal(kinds["f-preference"], "preference");
+  const grouped = store.listActiveFactsGrouped();
+  assert.equal(grouped.default[0], "用户希望被称呼为桉桉", "preference 出处的事实排在更新的 constraint 事实之前");
+  // update 换出处时重算类型；不换则保留
+  store.updateProfileFact("f-preference", { content: "用户希望被称呼为桉桉", at: "2026-11-21T00:00:00.000Z" });
+  assert.equal(store.getProfileFact("f-preference").source_kind, "preference", "出处没变时类型保留");
+  store.updateProfileFact("f-preference", { content: "改写", sourceMemoryIds: ["c1"], at: "2026-11-22T00:00:00.000Z" });
+  assert.equal(store.getProfileFact("f-preference").source_kind, "constraint", "出处换成 constraint 就跟着改");
+  store.close();
 });
