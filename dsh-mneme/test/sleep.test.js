@@ -1552,3 +1552,78 @@ test("sleep: an affective stream failure keeps its cause on the phase", async ()
     "同一份原因也要进日志，光靠返回值救不了已经过去的运行");
   store.close();
 });
+
+// -------------------------------------------------- #784 同名实体别名
+
+// 同名实体在库里裂成几行时，历史边可能挂在任何一行上。按 canonical 单个 id
+// 取历史边会判成「没有历史边」，于是同一场合被一遍遍写成新边（实测 4 条边
+// 里 3 条是同一件事）。合并必须在**同类型别名 id 集合**上找。
+test("sleep: #784 an edge parked on a sibling row still counts as the same occasion", async () => {
+  const { service, store } = setup();
+  // 同名两行，按 mention_count 决出 canonical——排序定死，canonical 是 row1。
+  const canonical = service.createEntity({ name: "桉桉", type: "person" });
+  store.updateEntity(canonical.id, { mention_count: 9, last_seen: "2026-11-01T00:00:00.000Z" });
+  const sibling = service.createEntity({ name: "桉桉", type: "person" });
+  store.updateEntity(sibling.id, { mention_count: 1 });
+  const target = service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前", "答辩前他很焦虑");
+  linkSession(service, mem.id, "session-A");
+  // 历史边挂在兄弟行上（#784 现场就是这样：上一轮解析到了另一个 id）。
+  service.saveRelation({
+    from_entity: sibling.id, to_entity: target.id, relation_type: "affective_context",
+    memory_id: mem.id, source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", sessionCount: 1, evidence: [mem.id] }
+  });
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "occasion", evidence: [mem.id] }
+  ]);
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  const phase = result.phases.affective;
+  assert.equal(phase.relations, 0, "兄弟行上的历史边要认出来，不能再写一条");
+  assert.ok(phase.merged >= 1, "认成同一场合，走合并");
+  const all = [...service.getRelations(canonical.id), ...service.getRelations(sibling.id)]
+    .filter((r) => r.relation_type === "affective_context");
+  assert.equal(all.length, 1, "库里仍只有一条边");
+  // 择优过就要记账：不是失败（不进 dropped），但要看得见「这个对象不唯一」。
+  assert.ok(Array.isArray(phase.ambiguous), "相位要带 ambiguous 账");
+  const noted = phase.ambiguous.find((a) => a.name.trim() === "桉桉");
+  assert.ok(noted, `同名对象要被记下来，实际 ${JSON.stringify(phase.ambiguous)}`);
+  assert.equal(noted.candidates.length, 2, "两个候选行都要列出来");
+  assert.equal(phase.dropped.filter((d) => String(d.reason).includes("ambiguous")).length, 0,
+    "择优不是失败，不该混进 dropped");
+  store.close();
+});
+
+// 升格要标在**全部别名行**的边上。只标 canonical 身上的边，下一轮模型又在
+// 兄弟行上补一条没打标的边，「这一场合已归入某个稳定倾向」的说法就断了。
+test("sleep: #784 trait promotion marks edges on sibling rows too", async () => {
+  const { service, store } = setup();
+  const canonical = service.createEntity({ name: "桉桉", type: "person" });
+  store.updateEntity(canonical.id, { mention_count: 9, last_seen: "2026-11-01T00:00:00.000Z" });
+  const sibling = service.createEntity({ name: "桉桉", type: "person" });
+  store.updateEntity(sibling.id, { mention_count: 1 });
+  const target = service.createEntity({ name: "答辩", type: "concept" });
+  const old = makeMemory(service, "旧的一次答辩", "答辩前他很焦虑");
+  linkSession(service, old.id, "session-0");
+  const parked = service.saveRelation({
+    from_entity: sibling.id, to_entity: target.id, relation_type: "affective_context",
+    memory_id: old.id, source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", sessionCount: 1, evidence: [old.id] }
+  });
+  const ids = [];
+  for (const session of ["s1", "s2", "s3"]) {
+    const mem = makeMemory(service, `答辩-${session}`, `第 ${session} 次答辩前都失眠`);
+    linkSession(service, mem.id, session);
+    ids.push(mem.id);
+  }
+  const ctx = affectiveCtx([
+    { person: "桉桉", target: "答辩", emotion: "焦虑", attribution: "trait", evidence: ids, why: "三次独立答辩前都这样" }
+  ]);
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  assert.equal(result.phases.affective.status, "ok");
+  assert.equal(result.phases.affective.applied, 1, "稳定倾向照常铸出来");
+  const after = service.getRelations(sibling.id).find((r) => r.id === parked.id);
+  assert.equal(after.metadata.promotedToTrait, true,
+    "兄弟行上的场合边也要标成已升格，否则下一轮还会多长一条没打标的边");
+  store.close();
+});
