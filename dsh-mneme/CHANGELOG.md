@@ -11,6 +11,15 @@
   审计口径随之上移：判据取的是路线而不是实测 RTT——装配路径上没有可用的延迟历史，现测一次等于白打一趟网络。
 
   测试 3,791 → **3,794**（`test/issue-786-prefetch-wait.test.js` 三条：远程 500 ms 往返等得到、本地 500 ms 照旧放弃、显式 100 ms 压过路线判据；三处变异各自只红对应那条）。
+- **同一件情绪被写成好几条边：喂给合并逻辑的实体 id 在同一个对象裂成多行时不稳定**（#784）。`sleep` 的情绪相位先把实体按名字收成一张 `Map`，同名多行时后者覆盖前者；而实体清单来自 `listEntities` 的 `ORDER BY last_seen DESC`，两个条件叠加，留下的反而是 last_seen **最旧**那行。last_seen 随每次抽取变化，于是同一个「助手」在不同轮次里解析到不同 id；合并逻辑按 `(from_id, to_id)` 找历史边，id 一漂就查不到，同一场合被一遍遍写成新边（报告者库里 4 条边有 3 条是同一件事，其中两条字面完全相同）。**合并逻辑本身是对的，错的是喂给它的 id。**
+
+  改法是把「按名字取一行」换成「按名字取全部候选行」（`src/store.js` 新增 `findEntitiesByName`，`ORDER BY mention_count DESC, last_seen DESC, type, id`，顺序定死所以 canonical 稳定 = 最强那行）。情绪相位据此拿 canonical 写新边，但**查历史边、查升格标记时遍历同类型的全部别名 id**——散在兄弟行上的边本来就是同一条边的历史。同类型才算同一个对象，同名不同类型是真的两个东西。
+
+  同名择优过的对象单列一份 `ambiguous`（名字 + 候选 id/type/mention_count）随相位返回，但**不混进 `dropped`**：`dropped` 记的是「没写成」，而这是「写成了、但不是唯一解」，两件事混在一起会让「降级不丢弃」的账读错。
+
+  顺带修了报告者指出的另一处：面板的「N 条证据」直接数 `metadata.evidence` 数组长度，被 `memory_delete` 永久删掉的 id 也算进去，于是显示 3 条、点开只剩 1 条。现在按现存记忆过滤（`src/store.js` 新增 `existingMemoryIds`，一次 `IN` 查询问完，不做 N 次往返），数的才是「还能点开的证据」。
+
+  测试 3,791 → 3,794（`test/sleep.test.js` 64→66 条、`test/graph-api.test.js` 30→31 条），三处变异各自只红对应那条：合并只走 canonical → 只红兄弟行合并那条；升格只标 canonical → 只红升格那条；`evidenceCount` 退回数组长度 → 只红证据计数那条。
 
 - **事实段记的大多不是「你」：输入侧终于有了主体判据**（#602）。画像事实的输入此前是「这张卡看得见的一切记忆」，只按 scope 分区，没有 type 维度。工作过程高频产出的是 constraint / pitfall / decision，它们的自然主体是机器、代码和工具——本机实测 `profile_facts` 1,389 行里，来源 type 前四名是 history 326 / project 274 / pitfall 232 / decision 223，而真正关于人的 preference 只有 42 条。此前 standard 卡 636 条活跃事实在 1200 字符帽下只进 6 条，全是 git 分支、worktree 路径、pwsh 变量名。
 

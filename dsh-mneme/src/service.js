@@ -3298,6 +3298,8 @@ export function createService({ store, mirror, config, onWrite, logger, document
     // #597：/list 的 typeCounts——同一份筛选、不带 type 的全库分布（面板分类栏数字源）。
     countByType: (opts) => store.countByType(opts),
     getById: (id) => store.getById(id),
+    // #784：证据里被永久删掉的 id 不该继续算进「N 条证据」。
+    existingMemoryIds: (ids) => store.existingMemoryIds(ids),
     remove: (id) => {
       store.remove(id);
       afterSync("write");
@@ -3476,6 +3478,9 @@ export function createService({ store, mirror, config, onWrite, logger, document
     saveAttr: (r) => store.saveAttr(r),
     createEntity: (r) => store.createEntity(r),
     findEntityByName: (n, t) => store.findEntityByName(n, t),
+    // #784：同名实体的全部候选行。写入侧只要一行（上面那条），情感相位要的是
+    // 「这个对象裂成了几行」——只拿一行就查不全散在兄弟行上的历史边。
+    findEntitiesByName: (n) => store.findEntitiesByName(n),
     findEntityById: (id) => store.findEntityById(id),
     getAttrsByMemory: (id) => store.getAttrsByMemory(id),
     // 记忆详情侧栏：一条记忆关联到的实体（entity_attrs.memory_id 反查，纯读）。

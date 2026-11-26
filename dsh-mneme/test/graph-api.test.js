@@ -988,3 +988,31 @@ test("#739 demote falls back to the title when the edge id points at a row that 
   assert.deepEqual(dem.body.archivedPatternIds, [mintedId]);
   assert.equal(service.getById(mintedId).archived, true);
 });
+
+// #784：证据清单里可能混着已被永久删掉的记忆 id。按数组长度报「N 条证据」，
+// 点开却只剩更少——面板在撒谎。evidenceCount 要说的是「还能点开几条」。
+test("#784 affective evidenceCount counts only memories that still exist", async () => {
+  const { routes, service, store } = setup();
+  const person = service.createEntity({ name: "桉桉", type: "person" });
+  const target = service.createEntity({ name: "答辩", type: "concept" });
+  const alive = service.saveWithDedupe({ type: "project", title: "答辩前", content: "答辩前他很焦虑", importance: 3 }).memory;
+  const doomed = service.saveWithDedupe({ type: "project", title: "答辩后", content: "答辩后他松了口气", importance: 3 }).memory;
+  service.saveRelation({
+    from_entity: person.id, to_entity: target.id, relation_type: "affective_context",
+    memory_id: alive.id, source: "llm",
+    metadata: { emotion: "焦虑", attribution: "occasion", sessionCount: 1, evidence: [alive.id, doomed.id] }
+  });
+  // 永久删除：evidence 里那个 id 从此指不到任何行。
+  service.remove(doomed.id);
+  assert.equal(service.getById(doomed.id), undefined, "记忆确实没了");
+  const res = new FakeRes();
+  await graphRoute(routes, "/api/dsh-mneme/semantic/graph/affective")
+    .handler(req("/api/dsh-mneme/semantic/graph/affective"), res);
+  assert.equal(res.statusCode, 200);
+  const data = JSON.parse(res.body);
+  const group = data.items.find((i) => i.target === "答辩");
+  assert.ok(group, "这一组要在");
+  assert.equal(group.evidenceCount, 1,
+    `只数还能点开的，实际 ${group.evidenceCount}（evidence 数组长度是 2）`);
+  store.close();
+});

@@ -1267,8 +1267,55 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
   const memories = [...pool].sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))).slice(0, limit);
   if (memories.length === 0) return { status: "skipped", reason: "no memories" };
   const scannedIds = new Set(memories.map((m) => m.id));
+  // #784：同名实体在库里可能裂成多行（#688 未收口时的常态：7812 个实体里 494 组
+  // 同名）。原来这里按名字建一张 Map，后者覆盖前者，配上 listEntities 的
+  // `ORDER BY last_seen DESC`，留下的反而是 last_seen **最旧**那行；而 last_seen
+  // 随每次抽取变化，同一个「助手」于是在两轮之间解析到不同 id。合并查询按
+  // (person.id, target.id) 取历史边，id 一漂就查不到，同一场合被一遍遍写成新边。
+  // 现在按名字取全部候选行：canonical 取最强那行（mention_count 优先），同类型的
+  // 其余行算它的别名——同类型才算同一个对象，同名不同类型是真的两个东西。
   const byName = new Map();
   for (const e of entities) byName.set(e.name.toLowerCase(), e);
+  const aliasCache = new Map();
+  const resolveEntity = (rawName) => {
+    const raw = String(rawName ?? "").trim();
+    if (!raw) return null;
+    const cacheKey = raw.toLowerCase();
+    if (aliasCache.has(cacheKey)) return aliasCache.get(cacheKey);
+    let rows = [];
+    try {
+      rows = service.findEntitiesByName?.(raw) ?? [];
+    } catch {
+      rows = [];
+    }
+    // 老 service（或无该查询的测试替身）退回到单行解析：行为与修复前一致，
+    // 不会因为拿不到候选集就整段失效。
+    if (rows.length === 0) {
+      const single = byName.get(cacheKey);
+      rows = single ? [single] : [];
+    }
+    if (rows.length === 0) {
+      aliasCache.set(cacheKey, null);
+      return null;
+    }
+    const canonical = rows[0];
+    const resolved = {
+      canonical,
+      // 同名同类型的全部 id（含 canonical 自己）。历史边可能落在任何一行上。
+      idsOfType: (type) => rows.filter((r) => r.type === type).map((r) => r.id),
+      candidates: rows.map((r) => ({ id: r.id, type: r.type, mention_count: r.mention_count }))
+    };
+    aliasCache.set(cacheKey, resolved);
+    return resolved;
+  };
+  // 同名裂成多行时，写边用的是 canonical，但历史边可能挂在兄弟行上。这种
+  // 自动择优不是失败，不该进 dropped（那是「没写成」的账）；单列一份，让
+  // 「这个对象在库里不唯一」看得见。
+  const ambiguous = [];
+  const noteAmbiguous = (group, rawName) => {
+    if (group.candidates.length <= 1) return;
+    ambiguous.push({ name: String(rawName ?? ""), candidates: group.candidates });
+  };
   const traitMinSessions = config.sleepAffectiveTraitMinSessions ?? 3;
   const maxRelations = config.sleepAffectiveMaxRelationsPerRun ?? 10;
   const maxTraits = config.sleepMaxPatternPerRun ?? 3;
@@ -1344,12 +1391,16 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
   for (const item of items) {
     if (signal?.aborted) break;
     if (!item || typeof item !== "object") continue;
-    const person = byName.get(String(item.person ?? "").toLowerCase());
-    const target = byName.get(String(item.target ?? "").toLowerCase());
-    if (!person || !target || person.id === target.id) {
+    const person = resolveEntity(item.person);
+    const target = resolveEntity(item.target);
+    if (!person || !target || person.canonical.id === target.canonical.id) {
       dropped.push({ reason: "unknown entity", person: item.person, target: item.target });
       continue;
     }
+    noteAmbiguous(person, item.person);
+    noteAmbiguous(target, item.target);
+    const personType = person.canonical.type;
+    const targetType = target.canonical.type;
     const evidence = (Array.isArray(item.evidence) ? item.evidence : []).filter((id) => scannedIds.has(id));
     if (evidence.length === 0) {
       dropped.push({ reason: "no real evidence", person: item.person, target: item.target });
@@ -1375,8 +1426,8 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
     const downgraded = claimedTrait && sessions.size < traitMinSessions;
     const attribution = claimedTrait && !downgraded ? "trait" : "occasion";
     const record = {
-      person: person.name,
-      target: target.name,
+      person: person.canonical.name,
+      target: target.canonical.name,
       emotion,
       attribution,
       evidence,
@@ -1408,9 +1459,20 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
     // 丢弃——被扩充的边记进 merged，让「这一轮其实补了证据」在返回值里看得见。
     // 这一步在 cap 之前：合并既有边不新增行，不该占名额。
     const currentSessions = sessions;
-    const priorEdges = (service.getRelations(person.id) ?? []).filter((r) =>
-      r.relation_type === "affective_context" && r.to_entity === target.id
-    );
+    // 历史边要在**同名同类型的全部 id** 上找，而不只是 canonical 那一个：
+    // 边是上一轮挂到兄弟行上的，只看 canonical 就会判成「没有历史边」。
+    const targetIds = new Set(target.idsOfType(targetType));
+    const priorEdges = [];
+    const seenEdgeIds = new Set();
+    for (const personId of person.idsOfType(personType)) {
+      for (const r of service.getRelations(personId) ?? []) {
+        if (r.relation_type !== "affective_context") continue;
+        if (!targetIds.has(r.to_entity)) continue;
+        if (seenEdgeIds.has(r.id)) continue;
+        seenEdgeIds.add(r.id);
+        priorEdges.push(r);
+      }
+    }
     let mergedInto = null;
     for (const edge of priorEdges) {
       const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : null;
@@ -1461,25 +1523,26 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
         service.updateRelationMetadata?.(edge.id, mergedMetadata);
         merges.push({
           id: edge.id,
-          from: person.name,
-          to: target.name,
+          from: person.canonical.name,
+          to: target.canonical.name,
           emotion,
           evidence: unionEvidence.length,
           sessionCount: unionSessions.size
         });
       } catch (error) {
-        logger?.warn?.(`dsh-mneme sleep: affective relation merge ${person.name}/${target.name} failed: ${String(error)}`);
+        logger?.warn?.(`dsh-mneme sleep: affective relation merge ${person.canonical.name}/${target.canonical.name} failed: ${String(error)}`);
       }
       continue;
     }
     if (relations.length >= maxRelations) {
-      dropped.push({ reason: "relation cap", person: person.name, target: target.name });
+      dropped.push({ reason: "relation cap", person: person.canonical.name, target: target.canonical.name });
       continue;
     }
     try {
       const saved = service.saveRelation({
-        from_entity: person.id,
-        to_entity: target.id,
+        // 写回 canonical：库里的边继续往「最强那行」上聚，兄弟行不再继续长边。
+        from_entity: person.canonical.id,
+        to_entity: target.canonical.id,
         relation_type: "affective_context",
         memory_id: evidence[0],
         source: "llm",
@@ -1497,9 +1560,9 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
           runId
         }
       });
-      relations.push({ id: saved?.id, from: person.name, to: target.name, emotion, attribution, ...(record.downgradedFrom ? { downgradedFrom: record.downgradedFrom } : {}) });
+      relations.push({ id: saved?.id, from: person.canonical.name, to: target.canonical.name, emotion, attribution, ...(record.downgradedFrom ? { downgradedFrom: record.downgradedFrom } : {}) });
     } catch (error) {
-      logger?.warn?.(`dsh-mneme sleep: affective relation ${person.name}/${target.name} failed: ${String(error)}`);
+      logger?.warn?.(`dsh-mneme sleep: affective relation ${person.canonical.name}/${target.canonical.name} failed: ${String(error)}`);
     }
   }
   // Traits ride the standard decision channel so they inherit every existing cap
@@ -1547,11 +1610,24 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       // means one observed occasion, and `promotedToTrait` says that occasion is
       // now part of a confirmed disposition.
       for (const trait of traits.slice(0, maxTraits)) {
-        const person = byName.get(String(trait.person ?? "").toLowerCase());
-        const target = byName.get(String(trait.target ?? "").toLowerCase());
-        if (!person || !target || person.id === target.id) continue;
-        for (const edge of service.getRelations(person.id) ?? []) {
-          if (edge.relation_type !== "affective_context" || edge.to_entity !== target.id) continue;
+        const person = resolveEntity(trait.person);
+        const target = resolveEntity(trait.target);
+        if (!person || !target || person.canonical.id === target.canonical.id) continue;
+        // 与合并同一条道理：升格要标在**全部别名行**的边上，否则下一轮又在
+        // 兄弟行上多出一条没打标的边。
+        const traitTargetIds = new Set(target.idsOfType(target.canonical.type));
+        const traitEdges = [];
+        const traitSeen = new Set();
+        for (const personId of person.idsOfType(person.canonical.type)) {
+          for (const edge of service.getRelations(personId) ?? []) {
+            if (edge.relation_type !== "affective_context") continue;
+            if (!traitTargetIds.has(edge.to_entity)) continue;
+            if (traitSeen.has(edge.id)) continue;
+            traitSeen.add(edge.id);
+            traitEdges.push(edge);
+          }
+        }
+        for (const edge of traitEdges) {
           const meta = edge.metadata && typeof edge.metadata === "object" ? edge.metadata : null;
           if (String(meta?.emotion ?? "").trim() !== trait.emotion) continue;
           if (meta?.promotedToTrait === true) continue;
@@ -1585,6 +1661,8 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       refreshedTraits,
       traits: traits.length,
       downgraded: downgradedCount,
+      // 同名裂成多行、按 strongest 行择优过的对象。不是失败，单列出来。
+      ambiguous,
       dropped
     };
   }
@@ -1601,6 +1679,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
       refreshedTraits,
       traits: traits.length,
       downgraded: downgradedCount,
+      ambiguous,
       dropped
     };
   }
@@ -1624,6 +1703,7 @@ async function phaseAffective(ctx, service, config, logger, runId, signal = null
     conflicts,
     traits: traits.length,
     downgraded: downgradedCount,
+    ambiguous,
     dropped
   };
 }

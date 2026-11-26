@@ -2132,6 +2132,21 @@ export function createStore(path) {
    * 走 idx_memories_share_external（部分索引，非 NULL 那一侧），等值 seek。
    * 本地行这一格恒 NULL，因此本函数永远不会误命中本地记忆。
    */
+  /**
+   * #784：一批 id 里哪些记忆还真的在。面板的「N 条证据」直接数 metadata.evidence
+   * 的长度会把已被 memory_delete 永久删掉的 id 也算进去，于是同一条边显示 3 条证据、
+   * 点开只剩 1 条。按现存行过滤才是「能点开的证据数」。
+   * 走主键 IN，一次性问完，不做 N 次往返。
+   */
+  function existingMemoryIds(ids) {
+    const list = Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id) : [];
+    if (list.length === 0) return [];
+    const unique = [...new Set(list)];
+    const placeholders = unique.map(() => "?").join(", ");
+    const rows = db.prepare(`SELECT id FROM memories WHERE id IN (${placeholders})`).all(...unique);
+    return rows.map((row) => row.id);
+  }
+
   function getByShareExternalId(externalId) {
     if (typeof externalId !== "string" || !externalId) return undefined;
     return toRow(db.prepare("SELECT * FROM memories WHERE share_external_id = ?").get(externalId));
@@ -4919,6 +4934,28 @@ export function createStore(path) {
   }
 
   /**
+   * #784：按归一名字取**全部**候选行，而不只是最近那一条。
+   *
+   * findEntityByName 回答的是「这个提及指哪个实体」，返回单行，够写入侧用；
+   * 情感相位要的是另一件事：同一个对象在库里裂成了几行、历史边散落在哪些 id 上。
+   * 只拿一行就只能查出那一行身上的边，散在兄弟行上的全被当成「没有历史边」，
+   * 于是同一场合被一遍遍写成新边，sessionCount 跟着失真。
+   *
+   * 排序定死为 mention_count DESC, last_seen DESC, type, id：同一份数据永远返回
+   * 同一顺序，第一行就是「最强的那行」。调用方拿它当 canonical，再按 type 分出
+   * 别名集合——同类型才算同一个对象，同名不同类型是真的两个东西。
+   */
+  function findEntitiesByName(name) {
+    if (name === undefined || name === null) return [];
+    const needle = String(name).trim();
+    if (needle === "") return [];
+    return db.prepare(
+      `SELECT * FROM entities WHERE lower(trim(name)) = lower(trim(?))
+        ORDER BY mention_count DESC, last_seen DESC, type, id`
+    ).all(needle).map(toEntity);
+  }
+
+  /**
    * Apply a partial update to an entity, always refreshing last_seen. The
    * mention counter increments on every sighting unless the caller overrides
    * it explicitly via patch.mention_count (e.g. to correct a count).
@@ -6550,6 +6587,7 @@ export function createStore(path) {
     count,
     countByType,
     getById,
+    existingMemoryIds,
     // 车道 C：外来行身份的两个读口（幂等键 / 整包清点）。
     getByShareExternalId,
     listBySharePackId,
@@ -6703,6 +6741,7 @@ export function createStore(path) {
     listBm25Corpus,
     createEntity,
     findEntityByName,
+    findEntitiesByName,
     findEntityById,
     listEntities,
     countEntities,

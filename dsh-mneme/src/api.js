@@ -2186,6 +2186,19 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           return;
         }
         const edges = service.relationsByType("affective_context", edgeCap) ?? [];
+        // #784：证据清单里可能混着已被永久删掉的记忆 id，面板却按数组长度报
+        // 「N 条证据」，点开只剩更少。一次问清「这批 id 里哪些还真的在」，
+        // 聚合时只数存在的——一个 IN 查询，不是每条边一次。
+        const evidencePool = new Set();
+        for (const e of edges) {
+          const meta = e.metadata && typeof e.metadata === "object" ? e.metadata : null;
+          if (Array.isArray(meta?.evidence)) {
+            for (const id of meta.evidence) if (typeof id === "string" && id) evidencePool.add(id);
+          }
+        }
+        const aliveEvidence = evidencePool.size > 0 && typeof service.existingMemoryIds === "function"
+          ? new Set(service.existingMemoryIds([...evidencePool]) ?? [])
+          : null;
         const groups = new Map();
         for (const e of edges) {
           const meta = e.metadata && typeof e.metadata === "object" ? e.metadata : {};
@@ -2221,7 +2234,12 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
               promotedToTrait: meta.promotedToTrait === true,
               sessionCount: Number.isFinite(meta.sessionCount) ? meta.sessionCount : null,
               traitSessionCount: Number.isFinite(meta.traitSessionCount) ? meta.traitSessionCount : null,
-              evidenceCount: Array.isArray(meta.evidence) ? meta.evidence.length : (e.memory_id ? 1 : 0),
+              // #784：数「还能点开的证据」，不是数数组长度。
+              evidenceCount: (() => {
+                if (!Array.isArray(meta.evidence)) return e.memory_id ? 1 : 0;
+                if (!aliveEvidence) return meta.evidence.length;
+                return meta.evidence.filter((id) => aliveEvidence.has(id)).length;
+              })(),
               firstSeen: e.created_at ?? null,
               lastSeen: e.created_at ?? null,
               // 相位写 metadata 时 why 截 200 字、降级留痕；此前到这层被丢掉。
