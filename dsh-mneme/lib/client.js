@@ -545,6 +545,26 @@ window.__ModuleLoader__.load({
         "memory.persona.readFailed": "读不到人格库（请求失败或后端版本过旧），这里不显示猜测的内容。",
         "memory.persona.loading": "读取中…",
         "memory.persona.factsLinked": "自动事实与人格卡同域：这里的身份分区，也是「Agent 眼中的你」的分区。",
+        "memory.persona.packTitle": "配置快照（搬到另一台机器）",
+        "memory.persona.packHint": "把人格卡、与人格/注入相关的开关、规则打成一小段 JSON。换台机器粘回来就能接着用——只搬配置，不搬记忆。",
+        "memory.persona.packCopy": "复制配置",
+        "memory.persona.packCopied": "已复制",
+        "memory.persona.packCopyFailed": "复制没成功：请手动选中下面的 JSON 复制。",
+        "memory.persona.packPasteLabel": "粘贴别人的配置",
+        "memory.persona.packPlaceholder": "把另一台机器上复制的那段 JSON 贴在这里",
+        "memory.persona.packDryRun": "先看会改什么",
+        "memory.persona.packApply": "确认导入",
+        "memory.persona.packNoChange": "这台机器和包里一模一样，没有要写的东西。",
+        "memory.persona.packDone": "已导入。开关类改动要重启宿主才生效。",
+        "memory.persona.packFailed": "导入失败",
+        "memory.persona.packBadJson": "这段文本不是合法的 JSON 包",
+        "memory.persona.packPlanPersona": "人格卡：默认卡{def}；身份卡新增 {add}、覆盖 {replace}",
+        "memory.persona.packDefaultSame": "不变",
+        "memory.persona.packDefaultChanged": "改写（{fields}）",
+        "memory.persona.packPlanFlags": "开关：{changed} 个会变",
+        "memory.persona.packPlanRules": "规则：整份替换（增加 {added}、删除 {removed}）",
+        "memory.persona.packUnmatched": "这几张身份卡在这台机器上对不上任何会话：{names}。会照原样写入，等同名身份出现才生效。",
+        "memory.persona.packRejected": "这几个开关这台机器不认，已跳过：{names}",
         "memory.settings.factsTitle": "自动事实（Agent 眼中的你）",
         "memory.settings.factsHint": "Agent 在巩固（dream）后从新记忆里提炼的「对你的了解」，按会话身份分卡，与人格卡同域，注在预览里手填画像之后。这里可以逐条修正；删除只是归档，随时可恢复。你自己填的用户画像不受影响。",
         "memory.settings.factsEmpty": "这张卡还没有事实。有新的对话记忆并跑过巩固后，Agent 对你的了解会出现在这里；也可以在下面手动添加。",
@@ -1796,6 +1816,26 @@ window.__ModuleLoader__.load({
         "memory.persona.readFailed": "Could not read the persona store (request failed or backend too old). Nothing is guessed here.",
         "memory.persona.loading": "Loading…",
         "memory.persona.factsLinked": "Auto facts live in the same domain as persona cards: the identity split here is the split in “you, as the agent sees you”.",
+        "memory.persona.packTitle": "Config snapshot (move to another machine)",
+        "memory.persona.packHint": "Packs the persona cards, the persona/injection flags and the rules into one small JSON blob. Paste it on the other machine and carry on — config only, never memories.",
+        "memory.persona.packCopy": "Copy config",
+        "memory.persona.packCopied": "Copied",
+        "memory.persona.packCopyFailed": "Copy failed: select the JSON below and copy it manually.",
+        "memory.persona.packPasteLabel": "Paste someone else's config",
+        "memory.persona.packPlaceholder": "Paste the JSON copied on the other machine",
+        "memory.persona.packDryRun": "Show what would change",
+        "memory.persona.packApply": "Import for real",
+        "memory.persona.packNoChange": "This machine already matches the pack; nothing to write.",
+        "memory.persona.packDone": "Imported. Flag changes take effect after the host restarts.",
+        "memory.persona.packFailed": "Import failed",
+        "memory.persona.packBadJson": "That text is not a valid pack",
+        "memory.persona.packPlanPersona": "Persona cards: default {def}; identity cards {add} added, {replace} replaced",
+        "memory.persona.packDefaultSame": "unchanged",
+        "memory.persona.packDefaultChanged": "rewritten ({fields})",
+        "memory.persona.packPlanFlags": "Flags: {changed} would change",
+        "memory.persona.packPlanRules": "Rules: replaced wholesale ({added} added, {removed} removed)",
+        "memory.persona.packUnmatched": "These identity cards match no session on this machine: {names}. They are written as-is and only take effect once an identity of that name shows up.",
+        "memory.persona.packRejected": "This machine rejects these flags; they were skipped: {names}",
         "memory.settings.factsTitle": "Auto facts (you, as the agent sees you)",
         "memory.settings.factsHint": "What the agent learned about you, distilled from new memories after each dream run — split into cards by session identity (same domain as persona cards) and injected after your handwritten profile in the preview. Fix entries here one by one; deleting only archives a fact and can be undone. The User Profile you wrote yourself is never touched.",
         "memory.settings.factsEmpty": "No facts on this card yet. After new conversation memories go through a dream run, what the agent picked up about you shows up here; you can also add one below.",
@@ -13534,6 +13574,18 @@ window.__ModuleLoader__.load({
       // promise 还没落地时又提取出草稿 B，A 的回调就会在 B 上打勾或报错——B 一个字都没被
       // 复制过。用递增序号做票据：换草稿或重新复制都换票，旧票的回调直接丢弃。
       const profileCopyTicket = react.useRef(0);
+      // #778 设置快照：搬人格卡用的那一段 JSON。四个状态分开存，因为它们的生命周期
+      // 不同——粘贴的文本由用户控制、计划由服务端给、结论只活一轮、票据防串台。
+      const [packText, setPackText] = react.useState("");
+      const [packBusy, setPackBusy] = react.useState(false);
+      const [packPlan, setPackPlan] = react.useState(null);   // 干跑回体里的 plan
+      const [packHasChanges, setPackHasChanges] = react.useState(false);
+      const [packNote, setPackNote] = react.useState(null);   // {tone:"ok"|"bad", text}
+      const [packCopied, setPackCopied] = react.useState(false);
+      const [packCopyFailed, setPackCopyFailed] = react.useState(false);
+      // 与 profileCopyTicket 同一个理由：粘贴区在异步请求飞行途中被改掉，回来的结果
+      // 就不再属于屏上这段文本——旧结果盖上去等于把 A 的判定挂到 B 头上。
+      const packTicket = react.useRef(0);
       // 保存失败要可见（persona 那条一直有，画像这条以前是静默 catch）。
       const [profileError, setProfileError] = react.useState("");
       // 画像的读取：搬过来时从设置页的 load() 里摘出来单独放着——那张卡现在住在这里，
@@ -13651,6 +13703,141 @@ window.__ModuleLoader__.load({
 
       // 没有 Clipboard API（非安全上下文 / 内嵌 webview 未授权）时的退路：
       // 临时 textarea + execCommand("copy")。失败返回 false，由调用方说话。
+      // #778：把本机配置打成一段 JSON 复制出去。走 GET /settings-pack（open 读面，
+      // 与 /persona、/features 同一条），不传 sections 就三段全带。
+      //
+      // 不复用 copyProfileDraft 的票据——那是「草稿」的票据，一次提取一份草稿；
+      // 这里是「配置」的票据，每次复制都换票。两者混用会让一次导出的延迟回调
+      // 把另一处界面的成功态点亮。
+      function copySettingsPack() {
+        setPackCopyFailed(false);
+        const ticket = ++packTicket.current;
+        const current = () => ticket === packTicket.current;
+        const ok = () => {
+          if (!current()) return;
+          setPackCopied(true);
+          announce(t("memory.persona.packCopied"));
+          setTimeout(() => { if (current()) setPackCopied(false); }, 1500);
+        };
+        const failed = () => {
+          if (!current()) return;
+          setPackCopied(false);
+          setPackCopyFailed(true);
+          announce(t("memory.persona.packCopyFailed"));
+        };
+        apiFetch("/api/dsh-mneme/settings-pack")
+          .then((res) => (res.ok ? res.json() : null))
+          .then((j) => {
+            if (!current()) return;
+            if (!j || !j.pack) { setPackNote({ tone: "bad", text: t("memory.persona.packFailed") }); return; }
+            // 落进粘贴区一份，顺手复制一份：剪贴板失败时用户手上还有这段文本可选中复制。
+            const text = JSON.stringify(j.pack, null, 2);
+            setPackText(text);
+            if (navigator.clipboard?.writeText) {
+              navigator.clipboard.writeText(text).then(ok, () => copyProfileDraftFallback(text) ? ok() : failed());
+            } else {
+              copyProfileDraftFallback(text) ? ok() : failed();
+            }
+          })
+          .catch(() => { if (current()) setPackNote({ tone: "bad", text: t("memory.persona.packFailed") }); });
+      }
+
+      // 干跑与真写走同一个 POST，只差 confirm 一个布尔——后端就是照这个设计的
+      // （#778 的三条纪律之一：预览与落库共用同一份计划）。所以这里不去解析粘贴的
+      // JSON，直接原样递过去：能在面板里解析的包，后端也一定能解析，两套解析器
+      // 只会给出两套结论。
+      function submitSettingsPack(confirm) {
+        const text = packText.trim();
+        if (!text) return;
+        setPackBusy(true);
+        setPackNote(null);
+        const ticket = ++packTicket.current;
+        const current = () => ticket === packTicket.current;
+        let body = null;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          setPackBusy(false);
+          setPackNote({ tone: "bad", text: t("memory.persona.packBadJson") });
+          return;
+        }
+        apiFetch("/api/dsh-mneme/settings-pack", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ pack: body, confirm: confirm === true, dropUnmatched: false })
+        })
+          .then((res) => (res.ok ? res.json().then((j) => ({ ok: true, j })) : res.json().then((j) => ({ ok: false, j })).catch(() => ({ ok: false, j: null }))))
+          .then((r) => {
+            if (!current()) return;
+            setPackBusy(false);
+            if (!r.ok) {
+              const reason = r.j && r.j.error ? String(r.j.error) : "";
+              setPackNote({ tone: "bad", text: t("memory.persona.packFailed") + (reason ? " (" + reason + ")" : "") });
+              return;
+            }
+            const j = r.j || {};
+            setPackPlan(j.plan || null);
+            const hasChanges = j.hasChanges === true;
+            setPackHasChanges(hasChanges);
+            if (!confirm) {
+              // 干跑：没变化就直说，不催人点「确认导入」。
+              setPackNote(hasChanges ? null : { tone: "ok", text: t("memory.persona.packNoChange") });
+              return;
+            }
+            if (j.noop === true) {
+              setPackNote({ tone: "ok", text: t("memory.persona.packNoChange") });
+              return;
+            }
+            setPackNote({ tone: "ok", text: t("memory.persona.packDone") });
+            // 开关是「下次启动才生效」的那类键，写完必须重读本页依赖的两样：
+            // 卡（tick）与严格寻址的生效值（features 在 tick 里一起读）。
+            setTick((n) => n + 1);
+          })
+          .catch(() => {
+            if (!current()) return;
+            setPackBusy(false);
+            setPackNote({ tone: "bad", text: t("memory.persona.packFailed") });
+          });
+      }
+
+      // 把计划翻成人话。只报「会变的地方」，一条不变的地方都不提——把 14 个开关
+      // 全列出来，用户就得自己在一屏里找那一个真的会改的。
+      function packPlanLines(plan) {
+        if (!plan || !plan.sections) return [];
+        const lines = [];
+        const p = plan.sections.persona;
+        if (p) {
+          const def = p.default && p.default.action === "replace"
+            ? t("memory.persona.packDefaultChanged").replace("{fields}", (p.default.changedFields || []).join("、"))
+            : t("memory.persona.packDefaultSame");
+          const agent = p.byAgent || {};
+          const add = (agent.add || []).length;
+          const replace = (agent.replace || []).length;
+          lines.push(t("memory.persona.packPlanPersona")
+            .replace("{def}", def)
+            .replace("{add}", String(add))
+            .replace("{replace}", String(replace)));
+          const unmatched = [...(agent.unmatched || []), ...(p.dropUnmatched || [])];
+          if (unmatched.length) {
+            lines.push(t("memory.persona.packUnmatched").replace("{names}", unmatched.join("、")));
+          }
+        }
+        const f = plan.sections.featureFlags;
+        if (f) {
+          const changed = (f.keys || []).filter((k) => k.action === "change").length;
+          if (changed) lines.push(t("memory.persona.packPlanFlags").replace("{changed}", String(changed)));
+          const rejected = (f.rejected || []).map((r) => r.key);
+          if (rejected.length) lines.push(t("memory.persona.packRejected").replace("{names}", rejected.join("、")));
+        }
+        const r = plan.sections.rules;
+        if (r && r.action && r.action !== "unchanged") {
+          lines.push(t("memory.persona.packPlanRules")
+            .replace("{added}", String((r.added || []).length))
+            .replace("{removed}", String((r.removed || []).length)));
+        }
+        return lines;
+      }
+
       function copyProfileDraftFallback(text) {
         try {
           const ta = document.createElement("textarea");
@@ -14378,6 +14565,53 @@ window.__ModuleLoader__.load({
         // 上面是这三张卡，这一块独占下方可滚动的区域，不与卡片选择器抢横向空间。
         about = h("div", { className: "mneme-persona-about" },
           h("div", { className: "mneme-persona-label" }, t("memory.persona.about")),
+          // 配置快照（#778）放在最上面：它说的是「换台机器怎么接上」，是这一页
+          // 唯一一件与「这张卡写了什么」无关的事，放中间会被当成卡的一部分。
+          h("section", { className: "mneme-set-card" },
+            h("div", { className: "mneme-set-title" }, t("memory.persona.packTitle")),
+            h("div", { className: "mneme-set-desc" }, t("memory.persona.packHint")),
+            h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" } },
+              h("button", { type: "button", className: "mneme-btn", onClick: copySettingsPack },
+                packCopied ? t("memory.persona.packCopied") : t("memory.persona.packCopy")),
+              packCopyFailed ? h("span", { className: "mneme-set-desc", role: "alert", style: { color: "var(--mneme-danger)" } },
+                t("memory.persona.packCopyFailed")) : null),
+            h("label", { className: "mneme-persona-label", htmlFor: "mneme-persona-pack" }, t("memory.persona.packPasteLabel")),
+            h("textarea", {
+              id: "mneme-persona-pack",
+              className: "mneme-set-input mneme-set-input--area",
+              style: { minHeight: 64, fontFamily: "ui-monospace,SFMono-Regular,Consolas,monospace", fontSize: 12 },
+              value: packText,
+              placeholder: t("memory.persona.packPlaceholder"),
+              onChange: (e) => {
+                packTicket.current += 1;   // 换了文本，飞行中的请求结果就作废
+                setPackText(e.target.value);
+                setPackPlan(null);
+                setPackHasChanges(false);
+                setPackNote(null);
+              }
+            }),
+            h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+              h("button", {
+                type: "button", className: "mneme-btn",
+                disabled: packBusy || !packText.trim(),
+                onClick: () => submitSettingsPack(false)
+              }, t("memory.persona.packDryRun")),
+              // 确认键在干跑之前是灰的：没看过会改什么就落库，正是这个功能要防的事。
+              h("button", {
+                type: "button", className: "mneme-btn",
+                disabled: packBusy || !packPlan || !packHasChanges,
+                onClick: () => submitSettingsPack(true)
+              }, t("memory.persona.packApply"))),
+            packNote ? h("div", {
+              className: packNote.tone === "bad" ? "mneme-diary-warn" : "mneme-diary-ok",
+              role: packNote.tone === "bad" ? "alert" : undefined,
+              style: { marginTop: 6 }
+            }, packNote.text) : null,
+            packPlanLines(packPlan).length
+              ? h("div", { style: { marginTop: 6 } },
+                  packPlanLines(packPlan).map((line, i) =>
+                    h("div", { key: i, className: "mneme-set-desc" }, "· " + line)))
+              : null),
           h("section", { className: "mneme-set-card" },
             h("div", { className: "mneme-set-title" }, t("memory.settings.profile")),
             h("div", { className: "mneme-set-desc" }, t("memory.settings.profileHint")),

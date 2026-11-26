@@ -43,6 +43,9 @@ import { rotateStandaloneToken } from "./standalone-registry.js";
 // 把 kbGate 与基础设施递进去。**不在这里登记任何 /kb/* 路径**——registrar 对重复的
 // kind+path 直接抛，插件会起不来。
 import { registerKbRoutes } from "./kb/routes.js";
+// 设置快照（#778）：人格卡 + 相关开关 + 规则的复制粘贴搬运。纯转换在那一份模块里，
+// 本文件只负责路由与「哪些身份在本机真的会命中」这两个只有它能拿到的东西。
+import { buildSettingsPack, parseSettingsPack, planSettingsPack, planHasChanges, applySettingsPack } from "./settings-pack.js";
 import { readPipelineDoc, loadPipelines, projectPipelineDir } from "./pipeline.js";
 import { loadRunsById, runsDir, RUNS_SUFFIX } from "./pipeline-runs.js";
 import { observationDir, loadObservationsById } from "./pipeline-observations.js";
@@ -3403,6 +3406,144 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           });
         }
         sendJson(res, 200, featureSnapshot());
+      } catch {
+        sendJson(res, 500, { error: "internal" });
+      }
+    }
+  });
+
+  // --- 设置快照（#778）：人格卡 + 相关开关 + 规则的复制粘贴搬运 ---------------
+  // 三个动作共用一条路由（GET 导出 / POST 干跑 / POST confirm 落库），理由：
+  // 三者读的都是同一份「本包负责哪些字段」的白名单，拆三条路由就有三份。
+  //
+  // GET 是开放读（token-write 的读侧照例免 token，与 /persona、/features 同一条面）：
+  // 它返回的就是那三处各自已经开放读的内容拼在一起，没有新增可达面。
+  // 写侧要 token——与 /persona、/features 完全一致。
+  //
+  // dry-run 缺省为 true：与 /receive 同一个脾气，没带 confirm 就只报「会改什么」。
+  // 这不是为了好看——搬运场景里「对方机器上已有一张同名卡」是常态，先看再写是
+  // 唯一能避免覆盖掉别人人格的做法。
+  const settingsPackKnownAgents = () => {
+    // byAgent 的键是本机真会命中的身份名。两个来源取并集：
+    // - agentBySession 的值（本进程见过的会话身份，最近 200 个）
+    // - diary.knownAgents()（写日记时落下的账本，跨进程留在磁盘上）
+    // 拿不到任一个就当「不知道」（null），此时面板只能显示「无法判断」而不是
+    // 假装全都对不上。
+    const out = new Set();
+    let usable = false;
+    try {
+      for (const name of agentBySession.values()) {
+        if (typeof name === "string" && name.trim()) {
+          out.add(name.trim());
+          usable = true;
+        }
+      }
+    } catch { /* 观测失败不影响导入，最多少一条提示 */ }
+    try {
+      if (typeof diary?.knownAgents === "function") {
+        for (const name of diary.knownAgents()) {
+          if (typeof name === "string" && name.trim()) {
+            out.add(name.trim());
+            usable = true;
+          }
+        }
+      }
+    } catch { /* 同上 */ }
+    if (lastAgentPreset) {
+      out.add(lastAgentPreset);
+      usable = true;
+    }
+    return usable ? [...out] : null;
+  };
+
+  register({
+    kind: "exact",
+    path: "/api/dsh-mneme/settings-pack",
+    policy: "token-write",
+    handler(req, res) {
+      try {
+        if (req.method === "GET") {
+          // 导出。include 可以点名不要某一段（?sections=persona,rules）——
+          // 面板的勾选框就靠它，缺省全带。
+          const url = new URL(req.url, "http://localhost");
+          const raw = url.searchParams.get("sections");
+          let include = null;
+          if (raw) {
+            const wanted = new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
+            include = {
+              persona: wanted.has("persona"),
+              featureFlags: wanted.has("featureFlags") || wanted.has("flags"),
+              rules: wanted.has("rules")
+            };
+            if (!wanted.size) include = null;
+          }
+          const pack = buildSettingsPack({
+            settings,
+            include,
+            effectiveFlags: featureSnapshot().effective
+          });
+          sendJson(res, 200, { pack, knownAgents: settingsPackKnownAgents() });
+          return;
+        }
+        if (req.method !== "POST") {
+          sendJson(res, 405, { error: "method-not-allowed" });
+          return;
+        }
+        return readBody(req, res).then((text) => {
+          if (text === null) return; // readBody 已经答过 413
+          const body = parseBody(text);
+          const parsed = parseSettingsPack(
+            typeof body?.pack === "string" ? body.pack : body?.pack ?? body
+          );
+          if (!parsed.ok) {
+            sendJson(res, 400, { error: parsed.error });
+            return;
+          }
+          const effectiveFlags = featureSnapshot().effective;
+          const knownAgents = settingsPackKnownAgents();
+          const plan = planSettingsPack({ settings, pack: parsed.pack, knownAgents, effectiveFlags });
+          const confirm = body?.confirm === true;
+          const dropUnmatched = body?.dropUnmatched === true;
+          if (!confirm) {
+            sendJson(res, 200, {
+              dryRun: true,
+              pack: parsed.pack,
+              plan,
+              hasChanges: planHasChanges(plan),
+              warnings: parsed.warnings,
+              knownAgents
+            });
+            return;
+          }
+          if (!planHasChanges(plan) && !body?.force) {
+            // 已经一模一样就不是「导入成功」，说清楚，免得用户以为搬了东西。
+            sendJson(res, 200, {
+              dryRun: false,
+              noop: true,
+              plan,
+              warnings: parsed.warnings,
+              knownAgents
+            });
+            return;
+          }
+          const applied = applySettingsPack({
+            settings,
+            pack: parsed.pack,
+            dropUnmatched,
+            knownAgents,
+            effectiveFlags
+          });
+          sendJson(res, 200, {
+            dryRun: false,
+            applied,
+            plan,
+            warnings: parsed.warnings,
+            knownAgents,
+            // 回写一份新的 features 快照：开关是「下次启动才生效」的那类键，
+            // 面板刚写完就要显示 pendingRestart，否则用户以为立刻变了。
+            features: featureSnapshot()
+          });
+        }).catch(() => sendJson(res, 500, { error: "internal" }));
       } catch {
         sendJson(res, 500, { error: "internal" });
       }

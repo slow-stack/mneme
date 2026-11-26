@@ -2289,6 +2289,67 @@ test("mcp card: mount snippet is copyable and token-keyed to the external API", 
 // 锁四件事：展开切换存在且默认收起（折叠态仍走 140 字预览，既有布局不回归）；
 // 展开态渲染未截断全文并去掉 diff 的行数钳制；判读依据行（类型/重要度/字数/
 // 新旧 + 单侧复制）在位；窄容器降级单列。缺任何一条，报障就复发。
+// #778 设置快照：人格页上那一段「复制配置 / 粘贴导入」。这一块最容易被悄悄改坏
+// 的方式不是渲染坏了，而是**少了防呆**：确认键在没干跑过时就能点，用户会在没看见
+// 「会改什么」的情况下把别人的卡覆盖上去。所以除了文案齐备，还要锁住这四条结构。
+test("settings pack: dry run before apply, and the apply key stays disabled until then", () => {
+  // 只切「这一块代码」的那一段：从导出函数到渲染结束。整份 bundle 里还有多处
+  // 同名字符串（两张 i18n 表），按字符串切会切到词表而不是逻辑。
+  const fnStart = clientSource.indexOf("function copySettingsPack(");
+  const fnEnd = clientSource.indexOf("return h(\"div\", { className: \"mneme-persona\" }, head, body, about);", fnStart);
+  assert.ok(fnStart > 0 && fnEnd > fnStart, "设置快照那一段必须存在于人格页组件里");
+  const region = clientSource.slice(fnStart, fnEnd);
+  assert.ok(region.includes("copySettingsPack"), "导出按钮必须真的接了一个会发请求的函数");
+
+  // 1. 干跑与真写共用同一段提交逻辑，只差一个 confirm 布尔。两条各写一遍的实现
+  //    迟早给出两套结论（预览说改三处、实际改四处）。
+  assert.ok(/function submitSettingsPack\(confirm\)/.test(region),
+    "干跑与真写必须是同一个 submitSettingsPack(confirm)");
+  assert.ok(/submitSettingsPack\(false\)/.test(region), "干跑按钮传 false");
+  assert.ok(/submitSettingsPack\(true\)/.test(region), "确认按钮传 true");
+  // 路径在前、method 在后（apiFetch(path, { method: ... })），顺序写反这条会假红。
+  assert.ok(/settings-pack"[\s\S]{0,80}?method: "POST"/.test(region),
+    "两个按钮都要真的打到 /settings-pack 上，且是 POST");
+
+  // 2. 没有计划、或计划里没有变化时，确认键必须是灰的。
+  assert.ok(/disabled: packBusy \|\| !packPlan \|\| !packHasChanges/.test(region),
+    "确认导入必须在干跑过、且确实有变化之后才可用");
+
+  // 3. 「无变化」不许说成「已导入」：noop 与 done 是两句不同的话。
+  assert.ok(region.includes('"memory.persona.packNoChange"') || clientSource.includes('"memory.persona.packNoChange"'),
+    "noop 要有一句独立的话，不能拿「已导入」冒充");
+  assert.ok(clientSource.includes('"memory.persona.packDone"'), "真导入成功另有一句");
+
+  // 4. 复制失败必须看得见（剪贴板是异步的，静默失败会让人以为复制成功）。
+  assert.ok(/packCopyFailed \? h\("span"/.test(region), "复制失败要有屏幕上看得见的红字");
+
+  for (const key of [
+    "memory.persona.packTitle",
+    "memory.persona.packHint",
+    "memory.persona.packCopy",
+    "memory.persona.packCopied",
+    "memory.persona.packCopyFailed",
+    "memory.persona.packPasteLabel",
+    "memory.persona.packPlaceholder",
+    "memory.persona.packDryRun",
+    "memory.persona.packApply",
+    "memory.persona.packNoChange",
+    "memory.persona.packDone",
+    "memory.persona.packFailed",
+    "memory.persona.packBadJson",
+    "memory.persona.packPlanPersona",
+    "memory.persona.packDefaultSame",
+    "memory.persona.packDefaultChanged",
+    "memory.persona.packPlanFlags",
+    "memory.persona.packPlanRules",
+    "memory.persona.packUnmatched",
+    "memory.persona.packRejected"
+  ]) {
+    const occurrences = clientSource.split(`"${key}"`).length - 1;
+    assert.ok(occurrences >= 2, `i18n key ${key} must exist in both zh and en (got ${occurrences})`);
+  }
+});
+
 test("conflict queue: expandable full text with decision metadata", () => {
   assert.ok(clientSource.includes('"memory.status.conflictQueue.expand"'), "collapsed state must offer 展开全文");
   assert.ok(clientSource.includes('"memory.status.conflictQueue.collapse"'), "expanded state must offer 收起全文");
