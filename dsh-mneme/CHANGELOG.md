@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-11-27
+
 - **远程 embedding 用户的记忆块在 step 1 里一直是空的**（#786）。装配时等「查询向量预取」的上限原先写死 `PREFETCH_WAIT_MS = 250`（`src/inject.js`）。本地 ONNX 是进程内前向，250 ms 绰绰有余；但 `embedProvider: "openai"` 走的是远程 HTTP，实测 RTT 400~600 ms、抖动到 1 s，于是 step 1 几乎每次都在超时后放手、退回纯 BM25 或规则兜底，只有 step 2 才切到语义召回——**单步问答整轮用不上向量**，还让 step 1 与 step 2 的 runtime-context 多变一次（报告者的 `recall_runs`：15 次召回里 11 次如此）。
 
   改成按 embedding 路线取默认（`resolvePrefetchWaitMs`）：本地 / ollama 保持 250 ms（快端点行为逐字节不变），远程 `"openai"` 放宽到 1200 ms，覆盖 RTT 上沿加抖动。新增 `prefetchWaitMs`（0–5000，默认 `0` = 按路线自动）让用户自己压过判据；给了正数就一档作数，写小于 250 的值也照办。
