@@ -767,6 +767,7 @@ CREATE TABLE IF NOT EXISTS profile_facts (
   content           TEXT NOT NULL,
   status            TEXT NOT NULL DEFAULT 'active',  -- active | archived
   source_memory_ids TEXT NOT NULL DEFAULT '[]',      -- JSON：这条事实的出处记忆 id
+  source_kind       TEXT,                            -- 出处记忆的 type（#602）；NULL = 还没定过
   created_at        TEXT NOT NULL,
   updated_at        TEXT NOT NULL
 );
@@ -896,6 +897,13 @@ export const TYPES = new Set(["preference", "project", "decision", "history", "s
   // #230：agent 产长文档的指针行（摘要 + doc_path + evidence）。铸造口唯一
   // （registerDocument）——saveWithDedupe/updateMemory 另有守卫拒绝旁路铸造。
   "document"]);
+
+// #602：画像事实（user-profile 段）的输入 type 白名单。放 store 侧而不是 profile-facts
+// 侧，是因为「哪些记忆能变成事实」最终落成两条 SQL（listFactInputRows /
+// countFactInputRows），白名单必须与查询同一份，否则自动轮判「有输入」、实际却什么都收
+// 不到，每轮空转还推游标。只收 preference 的理由见 listFactInputRows 的注释。
+export const FACT_INPUT_TYPES = Object.freeze(["preference"]);
+
 
 // #249 N3：连续性提案的 pending 队列上限。「队列满则弃新」是形态约定的一半——满时丢
 // 掉本次触发，**不是**淘汰旧行：旧行是别的会话还没转正的活状态，用"更近的边缘"把它挤
@@ -1752,6 +1760,40 @@ export function createStore(path) {
   addColumn("conflict_pending", "similarity", "ALTER TABLE conflict_pending ADD COLUMN similarity REAL");
   // 索引建在加列之后（同 idx_memory_provenance_run 的理由）：老库打开时列才刚加上。
   db.exec("CREATE INDEX IF NOT EXISTS idx_conflict_pending_similarity ON conflict_pending(similarity DESC, created_at DESC);");
+
+  // #602：事实的出处类型。加列本身幂等（addColumn），存量回填用 applied_migrations
+  // 登记——回填语句跑完之后**恒不命中**（WHERE source_kind IS NULL），但每次打开库都
+  // 要全表扫一遍才能证明不命中；登记表把它变成一次主键 seek。
+  //
+  // 回填取值口径：一条事实可能由多条记忆支撑（source_memory_ids 是数组）。只要其中
+  // **任意一条是 preference**，就把这条事实记为 preference——「有偏好作为依据」是
+  // 「这条事实确实关于人」的最强信号，也是注入排序要用的判据（见 listActiveFactsGrouped）。
+  // 其余情况取任意一条的 type：这个值只用于排序与回执直方图，不参与「收不收」的判定，
+  // 所以不需要逐条精确到唯一类型。多类型叠加时偏好优先的语义写在下面这条 SELECT 里。
+  addColumn("profile_facts", "source_kind", "ALTER TABLE profile_facts ADD COLUMN source_kind TEXT");
+  {
+    const MIGRATION_ID = "2026-11-profile-facts-source-kind";
+    const applied = db.prepare("SELECT 1 FROM applied_migrations WHERE id = ?").get(MIGRATION_ID);
+    if (!applied) {
+      runAtomically(() => {
+        db.prepare(
+          `UPDATE profile_facts
+              SET source_kind = (
+                SELECT m.type FROM memories m
+                 WHERE m.id IN (SELECT value FROM json_each(profile_facts.source_memory_ids))
+                 ORDER BY (m.type = 'preference') DESC, m.updated_at DESC
+                 LIMIT 1
+              )
+            WHERE source_kind IS NULL`
+        ).run();
+        db.prepare("INSERT OR IGNORE INTO applied_migrations (id, applied_at) VALUES (?, ?)")
+          .run(MIGRATION_ID, new Date().toISOString());
+      });
+    }
+  }
+  // 注入排序的热路径列：没有它，preference 优先的分组就是全表扫 + 临时排序。
+  db.exec("CREATE INDEX IF NOT EXISTS idx_profile_facts_kind ON profile_facts(status, source_kind);");
+
 
   // Audit peer F: a legacy DB may hold a non-integer generation/applied_generation
   // (pre-v0.3.9 the JS gate truncated with Math.trunc and SQLite's CHECK only
@@ -6116,10 +6158,19 @@ export function createStore(path) {
     return rows.map((r) => ({ ...r, source_memory_ids: parseFactIds(r.source_memory_ids) }));
   }
 
-  /** 全库活跃事实按卡分组（注入 provider 的读口，见 src/profile-facts.js）。 */
+  /** 全库活跃事实按卡分组（注入 provider 的读口，见 src/profile-facts.js）。
+   *
+   * #602：排序改「preference 优先，再按最近更新」。此前只有 `ORDER BY updated_at DESC`，
+   * 而维护轮高频产出的是 constraint/pitfall/decision，preference 写过一次就不再动——
+   * 本机实测 standard 卡 636 条活跃事实里 16 条来自 preference，注入窗口（1200 字符）
+   * 截断后进去 0 条。事实块的价值判据是「关于人」，preference 是最强的那个信号，
+   * 所以它优先占窗口，同档内仍按最近更新排（新事实不该被埋没）。
+   */
   function listActiveFactsGrouped() {
     const rows = db.prepare(
-      "SELECT agent_key, content FROM profile_facts WHERE status = 'active' ORDER BY updated_at DESC"
+      `SELECT agent_key, content FROM profile_facts
+        WHERE status = 'active'
+        ORDER BY (source_kind = 'preference') DESC, updated_at DESC`
     ).all();
     const grouped = { default: [], byAgent: {} };
     for (const r of rows) {
@@ -6134,10 +6185,27 @@ export function createStore(path) {
     return r ? { ...r, source_memory_ids: parseFactIds(r.source_memory_ids) } : undefined;
   }
 
+  /**
+   * 一条事实的出处类型：任一条支撑记忆是 preference 就记 preference，否则取清单里
+   * 第一条有类型的（#602）。只供排序与回执直方图，不参与「收不收」的判定——判定在
+   * 输入侧白名单（FACT_INPUT_TYPES），已经挡住了机器/工具类主体。
+   */
+  function factSourceKind(sourceMemoryIds) {
+    const types = memoryTypesById(sourceMemoryIds);
+    let first = null;
+    for (const id of sourceMemoryIds ?? []) {
+      const t = types.get(id);
+      if (!t) continue;
+      if (t === "preference") return "preference";
+      if (!first) first = t;
+    }
+    return first;
+  }
+
   function insertProfileFact({ id, agentKey, content, sourceMemoryIds = [], at }) {
     db.prepare(
-      "INSERT INTO profile_facts (id, agent_key, content, status, source_memory_ids, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, ?)"
-    ).run(id, agentKey, String(content), JSON.stringify(sourceMemoryIds ?? []), at, at);
+      "INSERT INTO profile_facts (id, agent_key, content, status, source_memory_ids, source_kind, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, ?, ?)"
+    ).run(id, agentKey, String(content), JSON.stringify(sourceMemoryIds ?? []), factSourceKind(sourceMemoryIds), at, at);
   }
 
   /** 返回更新后的行；id 不存在返回 undefined，由调用方记入 failures。 */
@@ -6148,10 +6216,12 @@ export function createStore(path) {
       content: content ?? cur.content,
       status: status ?? cur.status,
       source_memory_ids: sourceMemoryIds ?? cur.source_memory_ids,
+      // 出处变了就重算类型；没变就保留原值（存量行迁移时已回填过）。
+      source_kind: sourceMemoryIds === undefined ? cur.source_kind : factSourceKind(sourceMemoryIds),
       updated_at: at
     };
-    db.prepare("UPDATE profile_facts SET content = ?, status = ?, source_memory_ids = ?, updated_at = ? WHERE id = ?")
-      .run(next.content, next.status, JSON.stringify(next.source_memory_ids), next.updated_at, id);
+    db.prepare("UPDATE profile_facts SET content = ?, status = ?, source_memory_ids = ?, source_kind = ?, updated_at = ? WHERE id = ?")
+      .run(next.content, next.status, JSON.stringify(next.source_memory_ids), next.source_kind ?? null, next.updated_at, id);
     return { ...cur, ...next };
   }
 
@@ -6254,31 +6324,80 @@ export function createStore(path) {
    * 逻辑必填，与 list() 的 excludeImported 同一个坑）+ 严格 scope 分区——agent 卡
    * 只吃 agent_scope=自己 的行，default 卡只吃 agent_scope IS NULL 的行。
    * updated_at 是 ISO 串，字典序即时间序，`>` 即「游标之后」（单调时间戳纪律）。
+   *
+   * #602：再叠一层 **type 白名单**。事实块（「关于用户的观察记录」）此前的输入是
+   * 「这张卡看得见的一切记忆」，而工作过程高频产出 constraint / pitfall / decision，
+   * 它们的自然主体是机器、代码和工具，不是人——本机实测 1,389 条事实里 24/37 抽样
+   * 主体是环境，真关于人的 preference 有 42 条却几乎进不了注入窗口。判据因此上移
+   * 到输入定义：只有 preference 是第一等的「关于人」信号，先只收它（history 与
+   * decision 要逐条判主体是不是人，误收风险大于收益，留待后续按需开）。
    */
-  function listFactInputRows(agentKey, { since = null, limit = 120 } = {}) {
+  function listFactInputRows(agentKey, { since = null, limit = 120, types = FACT_INPUT_TYPES } = {}) {
     const scopeClause = agentKey ? "agent_scope = ?" : "agent_scope IS NULL";
-    const params = [IMPORTED_SOURCE, ...(agentKey ? [agentKey] : [])];
+    const typeClause = types && types.length ? `AND type IN (${types.map(() => "?").join(",")})` : "";
+    const params = [IMPORTED_SOURCE, ...(agentKey ? [agentKey] : []), ...(types && types.length ? types : [])];
     if (since) params.push(since);
     params.push(limit);
     return db.prepare(
       `SELECT id, type, title, content, importance, updated_at FROM memories
        WHERE forgotten = 0 AND archived = 0 AND (source IS NULL OR source <> ?)
          AND ${scopeClause}
+         ${typeClause}
          ${since ? "AND updated_at > ?" : ""}
        ORDER BY updated_at DESC LIMIT ?`
     ).all(...params);
   }
 
-  function countFactInputRows(agentKey, { since = null } = {}) {
+  function countFactInputRows(agentKey, { since = null, types = FACT_INPUT_TYPES } = {}) {
     const scopeClause = agentKey ? "agent_scope = ?" : "agent_scope IS NULL";
-    const params = [IMPORTED_SOURCE, ...(agentKey ? [agentKey] : [])];
+    const typeClause = types && types.length ? `AND type IN (${types.map(() => "?").join(",")})` : "";
+    const params = [IMPORTED_SOURCE, ...(agentKey ? [agentKey] : []), ...(types && types.length ? types : [])];
     if (since) params.push(since);
     return db.prepare(
       `SELECT COUNT(*) AS n FROM memories
        WHERE forgotten = 0 AND archived = 0 AND (source IS NULL OR source <> ?)
          AND ${scopeClause}
+         ${typeClause}
          ${since ? "AND updated_at > ?" : ""}`
     ).get(...params).n;
+  }
+
+  /** 同一窗口里的候选**按 type 分布**（不过白名单）：回执直方图用，回答「这轮被挡掉的
+   *  是不是真的都是机器/工具类维护件」。白名单本身不该让用户看不见被排除的东西。
+   *
+   *  同时给出窗口的 `total` 与 `maxUpdatedAt`：白名单挡掉整窗口时，游标必须照样
+   *  推进到窗口末尾——否则「这一窗全是 constraint」会让游标永远停在原地，每轮 dream
+   *  都重扫同一批明知不可用的行，回执里那串 noop 永远长得一样。 */
+  function countFactInputKinds(agentKey, { since = null } = {}) {
+    const scopeClause = agentKey ? "agent_scope = ?" : "agent_scope IS NULL";
+    const params = [IMPORTED_SOURCE, ...(agentKey ? [agentKey] : [])];
+    if (since) params.push(since);
+    const rows = db.prepare(
+      `SELECT type, COUNT(*) AS n, MAX(updated_at) AS max_at FROM memories
+       WHERE forgotten = 0 AND archived = 0 AND (source IS NULL OR source <> ?)
+         AND ${scopeClause}
+         ${since ? "AND updated_at > ?" : ""}
+       GROUP BY type`
+    ).all(...params);
+    const kinds = {};
+    let total = 0;
+    let maxUpdatedAt = null;
+    for (const r of rows) {
+      kinds[String(r.type ?? "null")] = r.n;
+      total += r.n;
+      if (r.max_at && (!maxUpdatedAt || String(r.max_at) > maxUpdatedAt)) maxUpdatedAt = String(r.max_at);
+    }
+    return { kinds, total, maxUpdatedAt };
+  }
+
+  /** 一批记忆的 type（出处判定的原料）：op.source_ids → 这条事实该记哪种 source_kind。 */
+  function memoryTypesById(ids) {
+    const list = Array.isArray(ids) ? ids.filter((x) => typeof x === "string" && x) : [];
+    if (!list.length) return new Map();
+    const rows = db.prepare(
+      `SELECT id, type FROM memories WHERE id IN (${list.map(() => "?").join(",")})`
+    ).all(...list);
+    return new Map(rows.map((r) => [r.id, r.type]));
   }
 
   /**
@@ -6673,6 +6792,8 @@ export function createStore(path) {
     profileFactsCursor,
     listFactInputRows,
     countFactInputRows,
+    countFactInputKinds,
+    memoryTypesById,
     listFactCardKeys,
     close() {
       db.close();

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+- **事实段记的大多不是「你」：输入侧终于有了主体判据**（#602）。画像事实的输入此前是「这张卡看得见的一切记忆」，只按 scope 分区，没有 type 维度。工作过程高频产出的是 constraint / pitfall / decision，它们的自然主体是机器、代码和工具——本机实测 `profile_facts` 1,389 行里，来源 type 前四名是 history 326 / project 274 / pitfall 232 / decision 223，而真正关于人的 preference 只有 42 条。此前 standard 卡 636 条活跃事实在 1200 字符帽下只进 6 条，全是 git 分支、worktree 路径、pwsh 变量名。
+
+  三处一起改，缺一处都不成立：
+
+  1. **输入白名单**（`src/store.js` `FACT_INPUT_TYPES`）：`listFactInputRows` / `countFactInputRows` 只收 `preference`。放 store 侧是因为白名单必须与查询同一份，否则自动轮判「有输入」、实际收不到东西，每轮空转还推游标。history 与 decision 暂不收——判「主体是不是人」要逐条过一遍 LLM，误收风险大于收益。
+  2. **出处类型**（`profile_facts.source_kind`，新增列 + `applied_migrations` 回填）：任一条支撑记忆是 preference 就记 preference，其余取第一条有类型的。只用于排序与回执直方图，不参与收不收的判定。`insertProfileFact` / `updateProfileFact` 都维护它（update 换了出处才重算）。
+  3. **排序**（`listActiveFactsGrouped`）：`ORDER BY (source_kind = 'preference') DESC, updated_at DESC`。此前只有 `updated_at DESC`，「最近被动过的」永远排前，而 preference 写过一次就不再动，于是被更新的工作类事实永久压住。
+
+  prompt 侧同步加了主体硬约束（`src/lang.js`，中英各一份）：「一条事实必须关于用户本人；主体是机器、代码、工具、仓库、某次工作过程的，一律不写；材料里没有关于用户的新信息就输出空 ops」，并把 add 的括注从「新偏好、新进展、新约束」改成「主要是偏好与习惯」。
+
+  两个容易漏的回执问题一并处理：全窗候选都被白名单挡掉时不报 `noop` 而是 `ok` + `cursorOnly`，游标推到窗口末尾——否则游标（只认 ok 轮）永远停在原地，每轮 dream 重扫同一批明知不可用的行，回执还谎称「没有新记忆」；被挡掉的 type 分布记进 `detail.skippedByType` / `detail.inputKinds`，白名单过严时看得见。
+
+  本机同一库同 standard 卡的前后对照：改前注入 8 条（出处含 preference 0 条，内容全是 git/worktree/pwsh）；改后 12 条，**出处全部含 preference**，内容如「称呼用『你』不用『您』」「推远端分支与开 PR 必须先经本人当轮同意」「机械改动与功能改动分开提 PR」「导出要有进度显示」。测试 3,787 → 3,790（`test/profile-facts.test.js` 22 条），三处变异各自只红对应那条。
+
 - **后台 LLM 调用的 `purpose` 用了 `"compaction"`，被代理层当成 DSH 原生压缩永久 422 拒绝——巩固轮 9 天没成功过一次，画像事实维护跟着全停**。最初写 `purpose: "compaction"` 只是想借用「后台通道」的配额分类（这条字段在 DSH 的公开类型里就是个自由字符串 `purpose?: string`，没有枚举），结果撞上了代理层对 DSH 原生压缩的封堵：bili 的宿主半会把这个值塞进请求头 `x-bili-plugin-purpose`，代理半看到 `agent=dsh && purpose=compaction` 就认定这是「DSH 原生压缩调用」，返回 422 `dsh_compaction_refused`（理由是原生压缩落地的 checkpoint 会永久遮蔽原始历史、毁掉代理自己的压缩底座，bili #1729/#1772/#1206）。**这个拒绝是 terminal 的**，重试每一次都是同样的 422。
 
   代价是静默的：本机实测 2026-11-18 起到 11-26，巩固轮 `dream_consolidate` **48 次全失败、0 次成功**，`llm_audit_logs` 里每条都是这个 422；而画像事实维护挂在巩固轮之后（`src/index.js` 的 `profileChain`，前一轮 `rep.ok === false` 就整段 `return`），于是 `profile_facts` 从 11-17 之后 **9 天零新增**——同期 `memories` 每天照常写（最多一天 230 条）。界面上看不出任何红字，配置开关也全是 true，只是这个功能再也产不出东西。`sleep` 相位不受影响（purpose 是 `sleep-conflict`/`sleep-pattern`/`sleep-affective`），所以「记忆还在整理」的观感还在，更掩盖了故障。

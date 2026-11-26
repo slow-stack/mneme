@@ -255,9 +255,26 @@ export function createProfileFacts({ ctx, service, store, config, logger }) {
     const cursor = store.profileFactsCursor(key);
     const { rows, truncated } = collectInputRows(store, key, cursor);
     const facts = store.listProfileFacts(key, { includeArchived: false });
+    // #602：本轮窗口里**候选按 type 的分布**（不过白名单）。白名单本身不该让用户看
+    // 不见被排除的东西——回执要能回答「这轮没动作，是因为真没新记忆，还是被挡掉的
+    // 都是机器/工具类维护件」。
+    const windowKinds = store.countFactInputKinds(key, { since: cursor });
     // 没有增量输入就没有本轮：连回执都记成 noop（面板能看到「没有新记忆」），
     // 游标不动——下一次有新行时窗口从旧游标接续。
     if (!rows.length) {
+      // 窗口里有候选、但没有一条过白名单：这不是「没新记忆」，而是「看过了，按既定
+      // 口径一条都不该收」。此时若仍报 noop，游标（只认 ok 轮）永远停在原地，每轮
+      // dream 重扫同一批明知不可用的行，回执还谎称「没有新记忆」。所以如实记 ok +
+      // opsApplied 0 并把游标推到窗口末尾，与「op 为空但窗口已看过」的既有语义一致；
+      // 被挡掉的 type 分布一并留档，供回看白名单是否过严。
+      if (windowKinds.total > 0) {
+        return finish("ok", {
+          cursor: windowKinds.maxUpdatedAt || cursor,
+          inputCount: 0,
+          opsApplied: 0,
+          detail: { cursorOnly: true, skippedByType: windowKinds.kinds }
+        });
+      }
       return finish("noop", { inputCount: 0, cursor });
     }
 
@@ -334,7 +351,10 @@ export function createProfileFacts({ ctx, service, store, config, logger }) {
         opsProposed: ops.length,
         opsSliced: ops.length - sliced.length,
         dupsSkipped,
-        failures
+        failures,
+        // #602：本轮候选按 type 的分布，含被白名单挡掉的部分。验收与排障都靠这张
+        // 直方图看「窗口里还有什么」，而不是只看进来的那几行。
+        inputKinds: windowKinds.kinds
       }
     });
     store.pruneProfileFactJournal(key);
