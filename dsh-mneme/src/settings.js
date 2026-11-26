@@ -380,6 +380,8 @@ const FEATURE_FLAG_INT_RANGES = {
   dreamMaxMergePerRun: [1, 200],
   // Issue #164①：注入单条正文截断上限（默认 300 = 既有行为）。
   injectContentMaxChars: [60, 4000],
+  // Issue #786：装配时等查询向量预取的上限（0 = 按 embedding 路线自动，见 config.js）。
+  prefetchWaitMs: [0, 5000],
   // Issue #164：叙述条成簇门槛（共享同一 tag 的记忆数下限）。
   dreamNarrativeMinCluster: [2, 20],
   // Issue #230：document 摘要行的注入预算（次优先档内最多几条指针行）。

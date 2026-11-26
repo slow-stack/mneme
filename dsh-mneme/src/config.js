@@ -146,6 +146,15 @@ export const Config = z.object({
   // 提示：上限/原长/全文 memory_get 指引（BUDGET_EXCEEDED 原则——绝不静默）。
   // 默认 300 = 与既有行为一致。
   injectContentMaxChars: z.natural().min(60).max(4000).default(300),
+  // Issue #786：装配时等「在飞的查询向量预取」的上限（毫秒）。0 = 按 embedding
+  // 路线自动（本地/ollama 250ms、远程 HTTP 1200ms）；≥1 = 显式上限。
+  // 背景：原值写死 250ms。本地 ONNX 是进程内前向（10ms 量级），250 够用；而远程
+  // OpenAI 兼容 embedding 的 RTT 实测 400~600ms、抖动可达 1s，于是 step 1 几乎每
+  // 次都在超时后落空、退回纯 BM25 或规则兜底，只有 step 2 才用上向量——单步问答
+  // 整轮等于没有语义召回（#786 的 recall_runs：15 次召回里 11 次 step 1 没等到）。
+  // 等待只发生在「这一帧确实没向量、且确有一趟预取在飞」时，正常步与工具轮零延迟；
+  // 上限的作用是给慢端点兜底，而不是给快端点加延迟（预取先回来就立刻放行）。
+  prefetchWaitMs: z.natural().min(0).max(5000).default(0),
   // Issue #34（v0.7.2 引入；v0.7.11 误删后随 #333 恢复）：对话开始注入一次当前
   // 时间。默认关 = 与既有行为一致；格式与键名不变，存量 feature_flags 恢复即生效。
   injectTimePrefix: z.boolean().default(false),

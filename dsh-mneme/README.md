@@ -428,6 +428,7 @@ dsh web
 | `injectUncertaintyAdaptive` | `false` | 注入条数的查询自适应：确定性强的话题把条数收缩到一半（下限 1），模糊话题（回指/时间线索，或极短查询）维持 `maxInjectedItems` 上限；**只做单向收缩**，判据只看查询本身、不做额外检索（#239 第 5 项） |
 | `injectRotationTurns` | `0` | 注入位跨轮轮换：同一条记忆在最近 N 个查询轮次注入过后本轮不再优先（新鲜优先、不足回填，槽位数不变；会话边界自动重置；`0` = 关闭保持现状） |
 | `injectContentMaxChars` | `300` | 注入单条正文截断上限（60-4000，原硬编码 300，#164①/#225）：截断尾部带上限/原长/全文 `memory_get` 指引；块预算 `Math.max(1500, 上限+600)` 随上限放大 |
+| `prefetchWaitMs` | `0` | 装配时等查询向量预取的上限（0-5000 ms，#786）：原写死 250 ms，远程 OpenAI 兼容 embedding 的 RTT 400-600 ms 导致 step 1 几乎每次落空、退回纯词法，只有 step 2 才用上向量。`0` = 按路线自动（本地/ollama 250、远程 1200），正的毫秒数一档压过；预取先回来就立刻放行，不为快端点加延迟 |
 | `importanceThreshold` | `3` | 注入的最低重要性（1-5） |
 | `autoDream` | `true` | 自动记忆整理开关 |
 | `dreamThresholdCount` | `10` | 触发整理的记忆条数阈值 |

@@ -53,6 +53,7 @@ const PERSONA_FLAG_KEYS = [
   "selectiveInjectEnabled",
   "hybridInject",
   "injectContentMaxChars",
+  "prefetchWaitMs",
   "pinnedInjectBudget",
   "injectRotationTurns",
   // 画像面（「Agent 眼中的你」是人格的补充读物）

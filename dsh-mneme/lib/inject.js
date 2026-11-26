@@ -703,7 +703,26 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
   // system-prompt/assemble 这条异步瀑布：它在各 context 求值之后、装配结果被拿去
   // 渲染消息之前跑，而且返回值就是权威文本（dsh-system-prompt 的
   // src/index.ts:685）。所以流程是「等 → 用同一份渲染体重算这一块 → 交给下游」。
-  const PREFETCH_WAIT_MS = 250;
+  // Issue #786：这个上限原先是写死的 250ms。本地 ONNX 是进程内前向，250 够用；
+  // 但远程 OpenAI 兼容 embedding 的 RTT 实测 400~600ms、抖动到 1s，于是 step 1
+  // 几乎每次都在超时后落空、退回纯 BM25 或规则兜底，只有 step 2 才用得上向量——
+  // 单步问答整轮等于没有语义召回（报告者 recall_runs：15 次里 11 次如此）。
+  //
+  // 默认按 embedding 路线分档：本地/ollama 保持 250ms（行为不变），远程 HTTP 放宽
+  // 到 1200ms（覆盖 RTT 上沿 + 抖动）。`prefetchWaitMs` 显式给了正数就一档压过，
+  // 0 = 仍按路线自动。这不是「给快端点加延迟」：预取先回来就立刻放行，上限只在
+  // 慢端点且这一帧确实没向量时才吃满。
+  const PREFETCH_WAIT_LOCAL_MS = 250;
+  const PREFETCH_WAIT_REMOTE_MS = 1200;
+  function resolvePrefetchWaitMs(conf) {
+    const explicit = conf?.prefetchWaitMs;
+    if (typeof explicit === "number" && Number.isFinite(explicit) && explicit > 0) return explicit;
+    // "openai" 是 bundle 里唯一走远程 HTTP 的 embedProvider（local=进程内 ONNX、
+    // ollama=本机端点）。判据取路线而不是实测 RTT：装配路径上没有可用的延迟历史，
+    // 现测一次等于多打一趟网络。
+    return conf?.embedProvider === "openai" ? PREFETCH_WAIT_REMOTE_MS : PREFETCH_WAIT_LOCAL_MS;
+  }
+  const PREFETCH_WAIT_MS = resolvePrefetchWaitMs(config);
   const sleepUnref = (ms) => new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
     if (typeof timer?.unref === "function") timer.unref();

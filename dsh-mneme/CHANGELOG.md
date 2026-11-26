@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- **远程 embedding 用户的记忆块在 step 1 里一直是空的**（#786）。装配时等「查询向量预取」的上限原先写死 `PREFETCH_WAIT_MS = 250`（`src/inject.js`）。本地 ONNX 是进程内前向，250 ms 绰绰有余；但 `embedProvider: "openai"` 走的是远程 HTTP，实测 RTT 400~600 ms、抖动到 1 s，于是 step 1 几乎每次都在超时后放手、退回纯 BM25 或规则兜底，只有 step 2 才切到语义召回——**单步问答整轮用不上向量**，还让 step 1 与 step 2 的 runtime-context 多变一次（报告者的 `recall_runs`：15 次召回里 11 次如此）。
+
+  改成按 embedding 路线取默认（`resolvePrefetchWaitMs`）：本地 / ollama 保持 250 ms（快端点行为逐字节不变），远程 `"openai"` 放宽到 1200 ms，覆盖 RTT 上沿加抖动。新增 `prefetchWaitMs`（0–5000，默认 `0` = 按路线自动）让用户自己压过判据；给了正数就一档作数，写小于 250 的值也照办。
+
+  这不是「为了保险统统加延迟」：等待只发生在「这一帧确实没向量、且确有一趟预取在飞」时，预取先回来就立刻放行；正常步、工具轮、压缩、admission 刷新都命中不了这两个条件，零延迟。
+
+  审计口径随之上移：判据取的是路线而不是实测 RTT——装配路径上没有可用的延迟历史，现测一次等于白打一趟网络。
+
+  测试 3,791 → **3,794**（`test/issue-786-prefetch-wait.test.js` 三条：远程 500 ms 往返等得到、本地 500 ms 照旧放弃、显式 100 ms 压过路线判据；三处变异各自只红对应那条）。
+
 - **事实段记的大多不是「你」：输入侧终于有了主体判据**（#602）。画像事实的输入此前是「这张卡看得见的一切记忆」，只按 scope 分区，没有 type 维度。工作过程高频产出的是 constraint / pitfall / decision，它们的自然主体是机器、代码和工具——本机实测 `profile_facts` 1,389 行里，来源 type 前四名是 history 326 / project 274 / pitfall 232 / decision 223，而真正关于人的 preference 只有 42 条。此前 standard 卡 636 条活跃事实在 1200 字符帽下只进 6 条，全是 git 分支、worktree 路径、pwsh 变量名。
 
   三处一起改，缺一处都不成立：
