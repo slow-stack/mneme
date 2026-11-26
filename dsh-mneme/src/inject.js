@@ -515,9 +515,37 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
     }
   }
 
-  // 一次取全三个寻址键。分开取值、各自兜错：一个失败不该让另一个也丢。
+  // 会话来源两字段（#780 委派型子代理判据）：origin 只有 "subagent" 一个合法值，
+  // isSeeded 是 header 的必需布尔键。刻意与 parentSessionIdOf 分开取值、各自兜错——
+  // 这两个是「关人格」的判据，取不到时宁可变 null（= 不触发排除，维持历史行为），
+  // 也不要因为一次 accessor 抛错就把整块人格关掉。
+  function sessionOriginOf(ctx) {
+    try {
+      const origin = ctx?.agent?.session?.header?.origin;
+      return typeof origin === "string" && origin.trim() ? origin.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function sessionSeededOf(ctx) {
+    try {
+      const seeded = ctx?.agent?.session?.header?.isSeeded;
+      return typeof seeded === "boolean" ? seeded : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // 一次取全五个寻址键。分开取值、各自兜错：一个失败不该让另一个也丢。
   function sessionIdentity(ctx) {
-    return { agentId: sessionAgentId(ctx), sessionId: sessionIdOf(ctx), parentSessionId: parentSessionIdOf(ctx) };
+    return {
+      agentId: sessionAgentId(ctx),
+      sessionId: sessionIdOf(ctx),
+      parentSessionId: parentSessionIdOf(ctx),
+      origin: sessionOriginOf(ctx),
+      isSeeded: sessionSeededOf(ctx)
+    };
   }
 
   // User profile + rules: injected ahead of the memory block because they are
@@ -530,9 +558,17 @@ export function createInjector(ctx, service, settings, config, gate = null, sess
   function renderUserSettings(ctx) {
     // factsInject 是 profile-facts 域的读口（index.js 接线，面板预览路由传同一份）：
     // 开关与事实有无的判定都在 renderUserSettingsBlock 内部，「关」等于零读数。
-    const { agentId, sessionId, parentSessionId } = sessionIdentity(ctx);
-    return renderUserSettingsBlock({ settings, config, agentId, sessionId, parentSessionId, factsProvider: factsInject })
-      .text;
+    const { agentId, sessionId, parentSessionId, origin, isSeeded } = sessionIdentity(ctx);
+    return renderUserSettingsBlock({
+      settings,
+      config,
+      agentId,
+      sessionId,
+      parentSessionId,
+      origin,
+      isSeeded,
+      factsProvider: factsInject
+    }).text;
   }
 
   // #249 能力说明的系统提示段。order 150 = 插件指引段的既有惯例

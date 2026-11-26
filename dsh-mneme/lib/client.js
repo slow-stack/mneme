@@ -598,6 +598,8 @@ window.__ModuleLoader__.load({
         "memory.features.personaEnabled.hint": "把人格卡注入每轮对话；与卡内开关同时开才生效。",
         "memory.features.personaStrictAddressing": "严格寻址",
         "memory.features.personaStrictAddressing.hint": "身份没有对应人格卡时不注入，默认卡只兜解析不到的会话。",
+        "memory.features.personaExcludeSubagents": "派出去的子代理不继承人格",
+        "memory.features.personaExcludeSubagents.hint": "委派型子代理只交结果、不做对话，人设里的交流方式对它正好是反的。fork 出来的分支不受影响。",
         "memory.features.profileExtractEnabled": "画像提取草稿",
         "memory.features.profileExtractEnabled.hint": "从记忆生成「Agent 眼中的你」草稿，只出副本。",
         "memory.features.profileFactsEnabled": "自动事实",
@@ -1847,6 +1849,8 @@ window.__ModuleLoader__.load({
         "memory.features.personaEnabled.hint": "Injects persona cards each turn; the card switch must be on too.",
         "memory.features.personaStrictAddressing": "Strict addressing",
         "memory.features.personaStrictAddressing.hint": "No persona card means no injection; the default card covers unresolvable sessions only.",
+        "memory.features.personaExcludeSubagents": "Delegated subagents skip persona",
+        "memory.features.personaExcludeSubagents.hint": "Delegated subagents return a result and never hold a conversation, so conversational persona defeats them. Forked branches are unaffected.",
         "memory.features.profileExtractEnabled": "Profile draft",
         "memory.features.profileExtractEnabled.hint": "Generates a draft profile from memories — copy only, never auto-applied.",
         "memory.features.profileFactsEnabled": "Auto facts",
@@ -4950,7 +4954,7 @@ window.__ModuleLoader__.load({
       { key: "group.retrieve", items: ["hotMemoryEnabled", "injectTimePrefix", "rerankEnabled", "bm25SearchEnabled", "searchSemanticDedup", "heatEnabled", "resilientModelDownload"] },
       // 个性化（beta 区）：人格注入总闸 + 严格寻址 + 画像草稿 + 自动事实。
       // 人格内容在「个性化」页的人格卡，这里只有开关。
-      { key: "group.persona", items: ["personaEnabled", "personaStrictAddressing", "profileExtractEnabled", "profileFactsEnabled", "profileDigestEnabled"] },
+      { key: "group.persona", items: ["personaEnabled", "personaStrictAddressing", "personaExcludeSubagents", "profileExtractEnabled", "profileFactsEnabled", "profileDigestEnabled"] },
       // M.O. 已下架（v0.13.x）：那一组连同首屏位一起摘掉，不是「折进全部设置」。
       // 反转的是 v0.9.0 时产品主人「别藏在里面」的点名——主人明确要求下架，
       // 所以反向操作。三个键仍在 config schema 与 settings 白名单里，座位闸门那条

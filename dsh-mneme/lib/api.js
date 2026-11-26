@@ -723,6 +723,16 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           // 父会话 id（子 agent 继承人格卡用）：面板若要复现子代理看到的那一帧，
           // 传父会话 id 即可，与注入器同一寻址次序——预览不许比注入更乐观。
           parentSessionId: url.searchParams.get("parent"),
+          // #780：会话来源两字段。面板可以传 ?origin=subagent&seeded=0 复现
+          // 「委派型子代理被关掉人格」的那一帧；seeded 只认 "1"/"0"，
+          // 其余一律 null（= 缺省不触发排除，与注入器取不到头时的行为一致）。
+          origin: url.searchParams.get("origin"),
+          isSeeded: (() => {
+            const raw = url.searchParams.get("seeded");
+            if (raw === "1") return true;
+            if (raw === "0") return false;
+            return null;
+          })(),
           // 事实段与注入共用同一渲染函数（user-settings.js 的同源纪律）：装配了
           // profile-facts 就传读口，开关与有无的判定在渲染函数内部（关=零读数）。
           factsProvider: typeof facts?.factsProvider === "function" ? facts.factsProvider : null
@@ -749,11 +759,16 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
     path: "/api/dsh-mneme/persona/session",
     policy: "token-write",
     handler(req, res) {
-      const sourceOf = (agentId, sessionId, parentSessionId) => {
+      const sourceOf = (agentId, sessionId, parentSessionId, origin = null, isSeeded = null) => {
         const resolved = resolvePersonaCard(settings, agentId, {
           strict: config?.personaStrictAddressing === true,
           sessionId,
-          parentSessionId
+          parentSessionId,
+          // #780：与注入器同一条判据——面板问「这个会话现在用的是谁的人格」时，
+          // 委派型子代理必须回 none，否则面板会显示一张实际没注入的卡。
+          excludeSubagents: config?.personaExcludeSubagents === true,
+          origin,
+          isSeeded
         });
         const card = resolved.card ?? {};
         let key = null;
@@ -770,10 +785,17 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           enabled: config?.personaEnabled === true
         };
       };
-      const reply = (sessionId, agentId, parentSessionId) => sendJson(res, 200, {
+      const reply = (sessionId, agentId, parentSessionId, origin = null, isSeeded = null) => sendJson(res, 200, {
         sessionId,
-        ...sourceOf(agentId, sessionId, parentSessionId)
+        ...sourceOf(agentId, sessionId, parentSessionId, origin, isSeeded)
       });
+      // #780：GET 侧也认 ?origin= / ?seeded=，与 /persona 预览同一套解析。
+      const seededParam = () => {
+        const raw = new URL(req.url, "http://localhost").searchParams.get("seeded");
+        if (raw === "1") return true;
+        if (raw === "0") return false;
+        return null;
+      };
       try {
         const url = new URL(req.url, "http://localhost");
         if (req.method === "PUT" || req.method === "POST") {
@@ -829,7 +851,9 @@ export function createApi(ctx, service, settings, commands, embedder, semantic =
           return reply(
             sessionId,
             url.searchParams.get("agent"),
-            url.searchParams.get("parent")
+            url.searchParams.get("parent"),
+            url.searchParams.get("origin"),
+            seededParam()
           );
         }
         res.writeHead(405, { Allow: "GET, PUT, POST" });

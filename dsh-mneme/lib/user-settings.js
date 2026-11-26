@@ -61,8 +61,29 @@ export function escapePromptVars(config, text) {
 export function resolvePersonaCard(
   settings,
   agentId,
-  { strict = false, sessionId = null, parentSessionId = null } = {}
+  {
+    strict = false,
+    sessionId = null,
+    parentSessionId = null,
+    excludeSubagents = false,
+    origin = null,
+    isSeeded = null
+  } = {}
 ) {
+  // #780：委派型子代理整层不参与寻址（含 default）。
+  //
+  // 为什么判据不是光看 origin：宿主给它派生的**每一类**会话都写 origin: "subagent"，
+  // 包括 sessions.fork() 造出来的主会话分支（那是用户自己的并行对话，人设该跟着走）。
+  // 真正的委派型子代理同时满足 isSeeded === false —— fork 分支带 isSeeded: true，
+  // 因为它的上下文是从父会话播种过去的；而 spawn 出去干活的子代理不带种子。
+  // 判据写严格等于 false 而不是 !== true：老宿主可能只写 origin 不写 isSeeded，
+  // 那种取不到的情况（null）得按「不是委派型」处理，否则会把 fork 分支一起关掉。
+  //
+  // 这一条排在所有维度之前：开着它时子代理连自己那张 bySession 卡都不该拿，
+  // 否则「子代理不继承人格」只挡住了 default 那一路，用户给子代理单独建的卡照样生效。
+  if (excludeSubagents && origin === "subagent" && isSeeded === false) {
+    return { card: {}, source: "none" };
+  }
   const store = settings.getPersona();
   const id = typeof agentId === "string" && agentId.trim() ? agentId.trim() : "";
   const sid = typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : "";
@@ -125,6 +146,10 @@ export function renderUserSettingsBlock({
   agentId = null,
   sessionId = null,
   parentSessionId = null,
+  // #780：会话来源两字段，只给「委派型子代理不继承人格」这一条判据用。
+  // 与 agentId / sessionId 一样，取不到就传 null——缺省下整条分支不生效。
+  origin = null,
+  isSeeded = null,
   factsProvider = null
 }) {
   const language = langOf(config);
@@ -133,7 +158,14 @@ export function renderUserSettingsBlock({
   const enabled = config?.personaEnabled === true;
   const strict = config?.personaStrictAddressing === true;
   const resolved = enabled
-    ? resolvePersonaCard(settings, agentId, { strict, sessionId, parentSessionId })
+    ? resolvePersonaCard(settings, agentId, {
+        strict,
+        sessionId,
+        parentSessionId,
+        excludeSubagents: config?.personaExcludeSubagents === true,
+        origin,
+        isSeeded
+      })
     : { card: {}, source: "default" };
   const persona = resolved.card;
   // 段（#600）：每一行都带上它的 kind 与写回所需的定位信息，供面板按段读、按段改。
