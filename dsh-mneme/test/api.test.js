@@ -888,7 +888,9 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   // sessionGateSessions 同表），所以它不在这笔账里。
   // 「Agent 眼中的你」阅读面摘要新增 profileDigestEnabled（顶层布尔键，不需要
   // NESTED_FLAG_PATHS 条目）= +1，故 141 + 1 = 142。
-  assert.equal(Object.keys(data.effective).length, 142);
+  // #780 新增 personaExcludeSubagents（委派型子代理不继承人格；顶层布尔键，走
+  // BOOLEANS 表，不需要 NESTED_FLAG_PATHS 条目）= +1，故 142 + 1 = 143。
+  assert.equal(Object.keys(data.effective).length, 143);
   // #718 判官路由默认值单独钉：默认空串 = 回落 agentDefaultModel（entity
   // 同款成对语义，计数锁钉不住空串缺省被翻转）。
   assert.equal(data.effective.preInjectGateProvider, "");
@@ -965,6 +967,8 @@ test("GET /api/dsh-mneme/features returns empty overrides and effective config d
   assert.equal(data.effective.personaEnabled, false);
   // 人格寻址口径：默认关 = 历史兜底行为不变（升级后不许有人格静默消失或新增）。
   assert.equal(data.effective.personaStrictAddressing, false);
+  // #780 默认关：升级后任何会话的注入文本都不许变，要关子代理那层的人自己勾。
+  assert.equal(data.effective.personaExcludeSubagents, false);
   // 画像提取默认关：面板按钮在用户没开启前不该偷偷花一次 LLM 调用。
   assert.equal(data.effective.profileExtractEnabled, false);
   assert.equal(data.effective.sessionGateEnabled, false);

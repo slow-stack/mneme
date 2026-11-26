@@ -305,6 +305,11 @@ const FEATURE_FLAG_BOOLEANS = [
   // 人格寻址口径（上一条打开时才有意义）：开 = 身份没建卡/卡被关时不注入人格，
   // default 只兜解析不到身份的会话。默认关（历史行为，升级零变化）。
   "personaStrictAddressing",
+  // 委派型子代理不继承人格（#780）。上一条只管「没卡时兜不兜底」，这一条管「子代理
+  // 这一格要不要参与寻址」——开着时委派型子代理一层都不查（含 default），整段人格
+  // 行不注入。默认关（历史行为，升级零变化）。顶层扁平键，与 config.js schema 成对
+  // 出现（计数锁 test/api.test.js 钉住）。
+  "personaExcludeSubagents",
   // Issue #497：画像提取草稿（POST /profile/extract）。默认关——每次调用一次 LLM 且
   // 读上百行记忆；产物只回草稿，绝不写 user_settings。进 LIGHT_MODE_OFF（预设关）。
   "profileExtractEnabled",

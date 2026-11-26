@@ -1280,6 +1280,16 @@ export const Config = z.object({
   // 且它本身只在 personaEnabled 打开时才起作用（同 scopeState 的定性）。
   personaStrictAddressing: z.boolean().default(false),
 
+  // 委派型子代理不继承人格（#780）。开着 personaEnabled + default 卡时，宿主派出去
+  // 的子代理会拿到整份对话人设——而委派型子代理是「一个任务→一个结果」的原子执行
+  // 体，人设里「开放式讨论优先承接用户想法、不要急于总结」这类话对它正好是反的。
+  // 默认关：不改任何现有用户的注入文本（升级零变化），要关这层的人自己勾。
+  // 判据不是光看 origin——宿主 fork 出的主会话分支同样写 origin: "subagent"，
+  // 只按 origin 关会把用户自己的并行分支也一起关掉。真正的委派型子代理是
+  // origin === "subagent" 且 isSeeded !== true（fork 分支带 isSeeded: true）。
+  // 不进 LIGHT_MODE_OFF：它只是取卡时的一个分支，不引入常驻文本与后台路径。
+  personaExcludeSubagents: z.boolean().default(false),
+
   // Issue #497：从活跃记忆反向提取「助手眼中的用户」画像**草稿**（POST
   // /api/dsh-mneme/profile/extract）。默认关有三层理由：① 它每次点一次就是一次 LLM
   // 调用并读上百行记忆，成本与 dream/summarize 同级，不该在没人要求时挂在面上；
