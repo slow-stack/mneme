@@ -48,7 +48,7 @@ ctx.provide("llm", {
       text = JSON.stringify([
         { type: "preference", title: "语言偏好", content: "用户偏好使用中文交流", importance: 4 }
       ]);
-    } else if (options.purpose === "compaction" && userText.includes("id=")) {
+    } else if (options.purpose === "dsh-mneme-background" && userText.includes("id=")) {
       // 从传入的记忆清单解析 id 与类型，动态构造有效决策：优先演示 merge，其余 keep
       const entries = [...userText.matchAll(/id=([^\s|]+).*?type=(\w+)/g)].map((m) => ({ id: m[1], type: m[2] }));
       const byType = {};
@@ -68,7 +68,7 @@ ctx.provide("llm", {
         if (!claimed.has(e.id)) decisions.push({ action: "keep", ids: [e.id] });
       }
       text = JSON.stringify(decisions);
-    } else if (options.purpose === "compaction") {
+    } else if (options.purpose === "dsh-mneme-background") {
       text = "记忆库总览：用户偏好中文交流；工作偏好（上午深度工作）；项目采用 SQLite 存储。";
     }
     yield { type: "block-start", index: 0, blockType: "text" };
