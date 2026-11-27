@@ -475,6 +475,36 @@ const FEATURE_FLAG_STRINGS = [
 // URL 字符串开关：trim 后必须为空或合法 http/https URL（new URL() 校验协议，
 // 拒绝其余协议——这是 SSRF 防线的一部分）。
 const FEATURE_FLAG_URLS = ["ollamaBaseUrl"];
+// #792：字符串开关里「空串 = 跟随默认」的那一批（provider/model 路由键）。
+// 与 "summarizePeakHours" 这类**空串本身就是一档设置**（关掉错峰）的键必须分开：
+// 后者清空是用户真的想关，前者清空只是「没配」，不该反过来把配置文件里写好的路由
+// 吃掉。按后缀认，新增路由键自动落进这里，不用再维护第二张表。
+export const FEATURE_FLAG_ROUTE_STRINGS = FEATURE_FLAG_STRINGS.filter((key) => /(?:Provider|Model)$/.test(key));
+
+/**
+ * #792 方向 A：找出「配置文件写了、面板也写了、两边不一样」的路由键。
+ *
+ * 合并顺序是 kv 压过 bundle（`src/index.js` 的启动装配，有意如此：面板是运行时
+ * 覆盖层）。问题不在优先级，而在此前**一个字都不说**——改 yml 的人只会觉得
+ * 「我明明改了」。这里只转述事实，不改任何值：告警点自己决定怎么念。
+ *
+ * @param {object} rawCfg bundle 配置（cordis.patch.yml 的 config:）
+ * @param {object} flatFlags 面板写入的 kv 覆盖（尚未做空串过滤的原始那份）
+ * @returns {Array<{key: string, fileValue: string, panelValue: string, cleared: boolean}>}
+ */
+export function routeKeyOverrides(rawCfg, flatFlags) {
+  const out = [];
+  if (!rawCfg || typeof rawCfg !== "object" || !flatFlags || typeof flatFlags !== "object") return out;
+  for (const key of FEATURE_FLAG_ROUTE_STRINGS) {
+    const fileValue = typeof rawCfg[key] === "string" ? rawCfg[key].trim() : "";
+    if (!fileValue) continue; // 配置文件没写 = 无从被覆盖
+    if (!Object.prototype.hasOwnProperty.call(flatFlags, key)) continue;
+    const panelValue = typeof flatFlags[key] === "string" ? flatFlags[key].trim() : String(flatFlags[key] ?? "");
+    if (panelValue === fileValue) continue;
+    out.push({ key, fileValue, panelValue, cleared: panelValue === "" });
+  }
+  return out;
+}
 // 枚举开关（与 config.js 的 z.union(z.const(...)) 对齐）：仅允许列出的值。
 const FEATURE_FLAG_ENUMS = {
   embedProvider: ["openai", "local", "ollama"],
