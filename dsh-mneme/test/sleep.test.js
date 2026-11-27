@@ -1627,3 +1627,54 @@ test("sleep: #784 trait promotion marks edges on sibling rows too", async () => 
     "兄弟行上的场合边也要标成已升格，否则下一轮还会多长一条没打标的边");
   store.close();
 });
+
+// ---------------------------------------------------- #791 整轮原因落库
+
+// sleep 的 dream_runs.error 列以前从来没人写：失败一轮之后那一列是 NULL，与
+// 「跑过、没出错」在表里长得一模一样，事后只能去 llm_audit_logs 里手工捞。
+// 下面两条钉住新契约：有相位失败就必须在整轮 error 上说出来（带相位名），
+// 干净的轮必须保持 NULL（不制造噪声，面板上「出错」不该恒亮）。
+test("sleep: #791 a failed phase leaves its cause on the run's error column", async () => {
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  const mem = makeMemory(service, "答辩前一天", "明天答辩，他很焦虑");
+  linkSession(service, mem.id, "session-A");
+
+  const ctx = affectiveCtx([]);
+  // 只让 affective 失败，别的相位照常回 "[]"，这样断言的是「某一路断了」而不是整轮炸
+  ctx.llm.stream = async function* (options) {
+    if (options.purpose === "sleep-affective") {
+      yield { type: "finish", reason: { kind: "error", failure: { code: "SERVER", message: "502: upstream fetch failed" } } };
+      return;
+    }
+    yield { type: "text-delta", index: 0, text: "[]" };
+    yield { type: "finish", reason: { kind: "stop" } };
+  };
+
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  const runs = service.listDreamRuns();
+  const last = runs.find((r) => r.id === result.runId);
+  assert.ok(last, "本轮审计行要在");
+  // 带相位名：同一次 run 里可能不止一处失败，光有一句原因分不清哪条路断的
+  assert.match(String(last.error ?? ""), /^affective: /,
+    `整轮 error 要以相位名开头，实际 ${JSON.stringify(last.error)}`);
+  assert.ok(String(last.error).includes("502"),
+    `整轮 error 要带上游原文，实际 ${JSON.stringify(last.error)}`);
+  store.close();
+});
+
+test("sleep: #791 a clean run keeps the error column NULL", async () => {
+  const { service, store } = setup();
+  service.createEntity({ name: "桉桉", type: "person" });
+  service.createEntity({ name: "答辩", type: "concept" });
+  makeMemory(service, "答辩准备", "今天开始准备答辩");
+
+  const ctx = affectiveCtx([]);
+  const result = await runSleep(ctx, service, affectiveConfig(), ctx.logger, { embedder, vectorIndex: null }, null);
+  const last = service.listDreamRuns().find((r) => r.id === result.runId);
+  assert.ok(last, "本轮审计行要在");
+  assert.equal(last.error ?? null, null,
+    "干净的轮error 必须留空——null 与「有错」要在表里可区分");
+  store.close();
+});

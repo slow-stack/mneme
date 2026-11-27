@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- **`dream_runs.error` 永远是 `llm failed`：真因在审计表里，落库那一列是常量**（#791）。巩固与总览失败时三处调用点各自硬写 `error: "llm failed"`（`src/dream.js` 的 catch、`decisionText === undefined` 分支、总览 catch），而流失败的真实原因（`CONTEXT_WINDOW_EXCEEDED`、`dsh_compaction_refused: upstream proxy returned 422` 这类）早就由 `describeStreamFailure` 拼好了——它只喂给 `llm_audit_logs`，一列之隔。
+
+  修法是让原因走完最后那一段：新增 `describeRunError(error, failure)` 在 `finish` 落库时拼成 `llm failed: CODE: message`，**返回值仍是 `llm failed`**（`test/reasoning-effort.test.js` 明确锁着它，且面板/审计按前缀分类）。三处调用点各自把现场的 `streamFailure` / `summaryStreamFailure`（catch 分支退回 `error?.message ?? error`）带进来。前缀保留，`LIKE 'llm failed%'` 的既有查询一条不破；没有 failure 时逐字节仍是 `llm failed`。
+
+  sleep 侧顺带补齐：整轮 `dream_runs.error` 此前**根本不写**（只有各相位的 `phases[].error`），现在从 `phases` 聚合出 `affective: CODE: message; ...`（超过三条折叠成 `+N more`）。ok / noop / aborted 轮仍是 NULL，与改前逐字节一致。
+
+  测试 3,797 → **3,804**（`test/dream-error-detail.test.js` 五条：只有 code、code+message、message 已含 code 不重复拼、空 failure 逐字节一致、流失败但已写决策时 `decisions`/`outcome`/`applied` 均未被新 error 串挤掉；`test/sleep.test.js` 追加两条：失败相位把原因留在整轮列、干净轮保持 NULL）。三处变异各自只红对应那条。
 ## [0.17.2] - 2026-11-27
 
 - **远程 embedding 用户的记忆块在 step 1 里一直是空的**（#786）。装配时等「查询向量预取」的上限原先写死 `PREFETCH_WAIT_MS = 250`（`src/inject.js`）。本地 ONNX 是进程内前向，250 ms 绰绰有余；但 `embedProvider: "openai"` 走的是远程 HTTP，实测 RTT 400~600 ms、抖动到 1 s，于是 step 1 几乎每次都在超时后放手、退回纯 BM25 或规则兜底，只有 step 2 才切到语义召回——**单步问答整轮用不上向量**，还让 step 1 与 step 2 的 runtime-context 多变一次（报告者的 `recall_runs`：15 次召回里 11 次如此）。
