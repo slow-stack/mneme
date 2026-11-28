@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+- **`dream_runs.error` 永远是 `llm failed`：真因在审计表里，落库那一列是常量**（#791）。巩固与总览失败时三处调用点各自硬写 `error: "llm failed"`（`src/dream.js` 的 catch、`decisionText === undefined` 分支、总览 catch），而流失败的真实原因（`CONTEXT_WINDOW_EXCEEDED`、`dsh_compaction_refused: upstream proxy returned 422` 这类）早就由 `describeStreamFailure` 拼好了——它只喂给 `llm_audit_logs`，一列之隔。
+
+  修法是让原因走完最后那一段：新增 `describeRunError(error, failure)` 在 `finish` 落库时拼成 `llm failed: CODE: message`，**返回值仍是 `llm failed`**（`test/reasoning-effort.test.js` 明确锁着它，且面板/审计按前缀分类）。三处调用点各自把现场的 `streamFailure` / `summaryStreamFailure`（catch 分支退回 `error?.message ?? error`）带进来。前缀保留，`LIKE 'llm failed%'` 的既有查询一条不破；没有 failure 时逐字节仍是 `llm failed`。
+
+  sleep 侧顺带补齐：整轮 `dream_runs.error` 此前**根本不写**（只有各相位的 `phases[].error`），现在从 `phases` 聚合出 `affective: CODE: message; ...`（超过三条折叠成 `+N more`）。ok / noop / aborted 轮仍是 NULL，与改前逐字节一致。
+
+  测试 3,797 → **3,804**（`test/dream-error-detail.test.js` 五条：只有 code、code+message、message 已含 code 不重复拼、空 failure 逐字节一致、流失败但已写决策时 `decisions`/`outcome`/`applied` 均未被新 error 串挤掉；`test/sleep.test.js` 追加两条：失败相位把原因留在整轮列、干净轮保持 NULL）。三处变异各自只红对应那条。
+- **面板里设的路由键被静默覆盖：配置文件写一套、面板存一套，实际走的是后者且毫无提示**（#792）。`src/index.js` 合并 `cfg` 时 kv 的 feature flags 有意压过 bundle 配置（`{...rawCfg, ...flatFlags}`），但压掉之后一个字都不说；更隐蔽的是面板清空某个键时存的是空串（`sanitizeFlags` 认为「空串合法 = 跟随默认」，于是照样保留），合并后 `cfg.dreamProvider === ""` 让 `resolveRoute` 判假，静默退回 agent 默认模型。
+
+  两处一起改，都只动可观察性、不改合并语义：新增 `routeKeyOverrides(rawCfg, flatFlags)`（`src/settings.js`，按 `/(?:Provider|Model)$/` 认路由键，新增键自动纳入；`summarizePeakHours` 那种「空串 = 关掉」的键不在其中）在合并前对账，同键两边都有且值不同就逐条 `logger.warn`，说明面板值与配置文件值、以及最终生效的是哪个；`flatFlags` 构造时把路由键的空串当「不覆盖」跳过（`FEATURE_FLAG_ROUTE_STRINGS`），于是**面板清空 = 回到配置文件的值**，正是清空的语义。没有同键冲突时一条 warn 都不出。
+
+  `.default("")` 那条**刻意没做**：`test/config-keys-routes.test.js` 硬锁 `describeConfigKeys().undefaulted === ["dreamModel","dreamProvider"]`，补默认值会连带改 keys 契约与面板 effective 口径，属可观察变化，留作单独一次说明。
+
+  测试 3,804 → **3,810**（`test/route-override-observability.test.js` 六条：方向 A 覆盖告警、方向 B 空串 cleared 且合并时被跳过、两边都没配不出 warn、纯空白差异不算、按后缀认键、以及接线锁 `reconcile < cfg 合并 < warn < gate` 且告警块不得改 `cfg`）。两处变异各自只红对应那条。
+
 ## [0.17.2] - 2026-11-27
 
 - **远程 embedding 用户的记忆块在 step 1 里一直是空的**（#786）。装配时等「查询向量预取」的上限原先写死 `PREFETCH_WAIT_MS = 250`（`src/inject.js`）。本地 ONNX 是进程内前向，250 ms 绰绰有余；但 `embedProvider: "openai"` 走的是远程 HTTP，实测 RTT 400~600 ms、抖动到 1 s，于是 step 1 几乎每次都在超时后放手、退回纯 BM25 或规则兜底，只有 step 2 才切到语义召回——**单步问答整轮用不上向量**，还让 step 1 与 step 2 的 runtime-context 多变一次（报告者的 `recall_runs`：15 次召回里 11 次如此）。

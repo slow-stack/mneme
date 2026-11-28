@@ -38,7 +38,7 @@ import { runChoroT0 } from "./wiki/t0.js";
 // T1 后台任务账（契约 §3.2）：面板点「补语义正文」走 HTTP 起一个 spawn 子进程，
 // 进程账不能住在 api.js（HTTP 面刻意不摸 child_process），装配点在这里。
 import { createT1Jobs } from "./wiki/t1-jobs.js";
-import { createSettings } from "./settings.js";
+import { createSettings, FEATURE_FLAG_ROUTE_STRINGS, routeKeyOverrides } from "./settings.js";
 // 「Agent 眼中的你」自动事实（2026-11-06）：逐卡事实清单 + dream 后自动维护轮。
 import { createProfileFacts } from "./profile-facts.js";
 import { createProfileDigest } from "./profile-digest.js";
@@ -253,6 +253,15 @@ export const apply = (ctx, config) => {
   // 嵌套对象开关按首个点号拆开（kv 里平铺存的 "memoryQualityFilter.enabled" →
   // cfg.memoryQualityFilter.enabled），点号键不原样留在 cfg 顶层属性里。
   const flags = settings.getFeatureFlags();
+  // #792 方向 B：面板把路由输入框清空后，kv 里留下的是 `""`。字符串白名单里空串
+  // 合法（= 跟随默认），于是合并阶段它会**压掉**配置文件里写好的路由，用户配的
+  // 模型被一个空值吃掉，全程无人吭声。这里在合并前就把「空串的路由键」当未配置：
+  // 只有 provider/model 这类键吃这条规则——`summarizePeakHours` 那种「空串 = 关掉
+  // 错峰」的键必须原样保留，否则用户永远关不掉错峰。
+  //
+  // 对账要在过滤之前算：被清空的那一条本身也要有话说（「面板清空了这个键，
+  // 实际回到配置文件的值」），过滤之后再算就什么都看不到了。
+  const routeOverrides = routeKeyOverrides(rawCfg, flags);
   const flatFlags = {};
   const nestedFlags = {};
   for (const [key, value] of Object.entries(flags)) {
@@ -262,6 +271,7 @@ export const apply = (ctx, config) => {
       const subKey = key.slice(dot + 1);
       nestedFlags[objKey] = { ...(nestedFlags[objKey] ?? {}), [subKey]: value };
     } else {
+      if (value === "" && FEATURE_FLAG_ROUTE_STRINGS.includes(key)) continue;
       flatFlags[key] = value;
     }
   }
@@ -280,6 +290,16 @@ export const apply = (ctx, config) => {
     ctx.logger?.warn?.(
       `[dsh-mneme] ${key} "${spec}" 不是合法的高峰时段串，将按未配置处理（错峰不生效、全天候运行）。` +
       `写法：09:00-18:00，多段用逗号分隔，可带星期前缀（mon-fri 08:00-12:00），支持跨零点；24:00 越界请写 00:00`
+    );
+  }
+  // #792 方向 A：面板值压过配置文件值时出声。优先级本身不动（面板是运行时覆盖层，
+  // 这条语义是对的），要修的是「压掉了却不说」——改 yml 的人只看到「我明明改了」。
+  // 逐键一条，与上面那段错峰告警同款：只 log，不改 cfg。
+  for (const { key, fileValue, panelValue, cleared } of routeOverrides) {
+    ctx.logger?.warn?.(
+      cleared
+        ? `[dsh-mneme] ${key}：面板清空了这个键，实际回到配置文件里的 "${fileValue}"（空值不再覆盖配置文件）。`
+        : `[dsh-mneme] ${key}：面板值 "${panelValue}" 覆盖了配置文件值 "${fileValue}"，实际生效 "${panelValue}"。`
     );
   }
   const sessionGate = createSessionGate(cfg);

@@ -1191,7 +1191,7 @@ async function phasePatterns(ctx, service, config, logger, runId, signal = null)
   const text = await withMaxTokensFallback(ctx, config.sleepMaxTokens ?? 2048, (tokens) => withEffortFallback(ctx, sleepEffort, () => runPattern(true, tokens), () => runPattern(false, tokens), () => patternStreamFailure), () => patternStreamFailure);
   if (text === undefined) {
     if (patternStreamFailure) ctx.logger?.warn?.(`dsh-mneme sleep: pattern stream aborted or errored (${patternStreamFailure})`);
-    return { status: "failed", error: "llm failed" };
+    return { status: "failed", error: "llm failed", failure: patternStreamFailure || undefined };
   }
   const decisions = parseJsonArray(text);
   if (!decisions || decisions.length === 0) return { status: "skipped", reason: "no patterns found" };
@@ -1885,6 +1885,21 @@ export async function runSleep(ctx, service, config, logger, semantic = null, si
   await attempt("affectiveTtl", () => phaseAffectiveTtl(ctx, service, config, logger, runId, signal));
 
   const status = deriveStatus(phases);
+  // #791：整轮 error 列以前从来没人写——sleep 失败了，dream_runs 上那一列是 NULL，
+  // 与「跑过、没出错」在表里长得一样，运维只能去 llm_audit_logs 里手工捞原因。
+  // 这里从相位表里聚合第一手原因：优先 `failure`（流层 `CODE: message` 原文），
+  // 退回相位自己的 `error`（`invalid decisions: ...` 这类结构化判决）。带相位名，
+  // 因为同一次 run 里可能不止一处失败；最多取前三条，超过就截断并记总数——
+  // 这一列是给人读的一行，不是日志转储。
+  const phaseFailures = Object.entries(phases)
+    .filter(([, p]) => p?.status === "failed" || p?.status === "error")
+    .map(([name, p]) => {
+      const detail = String(p?.failure ?? p?.error ?? "").trim();
+      return detail ? `${name}: ${detail}` : name;
+    });
+  const runError = phaseFailures.length
+    ? [...phaseFailures.slice(0, 3), ...(phaseFailures.length > 3 ? [`+${phaseFailures.length - 3} more`] : [])].join("; ")
+    : undefined;
   const route = resolveSleepRoute(ctx, config, logger);
   // #619: a phase may write rows that are not "applied decisions" — the
   // affective phase inserts relation edges directly — and it may also extend an
@@ -1936,6 +1951,10 @@ export async function runSleep(ctx, service, config, logger, semantic = null, si
       // 不该计入重启后的 sleep 冷却种子。
       created_at: new Date(sleepStartedAt).toISOString(),
       status,
+      // #791：只有真有相位失败时才落原因——degraded（有产出但也报了错）同样落，
+      // 那正是「面板说这轮跑了，但有一条路断了」唯一能事后回答的地方。ok / noop /
+      // aborted / 全 skipped 的轮保持 NULL，与改前逐字节一致。
+      error: runError,
       provider: route?.provider,
       model: route?.model,
       snapshot_hash: snapshotHash,

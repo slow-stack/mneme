@@ -313,6 +313,21 @@ async function streamText(ctx, options, onUsage, onStreamError) {
   return text;
 }
 
+/**
+ * #791：审计行的 `error` 列带上真实失败原因。
+ * 返回值（`result.error`）刻意保持 `"llm failed"` 这个稳定短串——面板、退避与
+ * 既有断言都按它判定；「为什么失败」只进落库副本，形如
+ * `llm failed: CONTEXT_WINDOW_EXCEEDED: ...`。保留原前缀，`LIKE 'llm failed%'`
+ * 的既有查询不受影响。
+ */
+function describeRunError(error, failure) {
+  const base = error === undefined || error === null ? "" : String(error);
+  const detail = failure === undefined || failure === null ? "" : String(failure).trim();
+  if (!detail) return base || undefined;
+  if (!base) return detail;
+  return detail.startsWith(base) ? detail : `${base}: ${detail}`;
+}
+
 /** One-line human-readable cause from a finish-chunk failure reason. */
 function describeStreamFailure(reason) {
   const failure = reason?.failure ?? reason ?? {};
@@ -1252,7 +1267,9 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
           // 重启后的间隔种子，落完成时刻会让 run 耗时白白计入下一轮最小间隔。
           created_at: new Date(dreamStartedAt).toISOString(),
           status,
-          error: result.error,
+          // #791：落库副本带上真实原因（`result.failure` 由调用点在失败分支补上），
+          // 返回值口径不变。没有 failure 时行为与改前逐字节一致。
+          error: describeRunError(result.error, result.failure),
           provider: route?.provider,
           model: route?.model,
           snapshot_hash: snapshotHash,
@@ -1403,11 +1420,11 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       decisionText = await withMaxTokensFallback(ctx, config.dreamMaxTokens ?? 4096, (tokens) => withEffortFallback(ctx, effort, () => runConsolidation(true, tokens), () => runConsolidation(false, tokens), () => streamFailure), () => streamFailure);
     } catch (error) {
       logger?.warn?.(`dsh-mneme dream: consolidation llm call failed: ${String(error)}`);
-      return finish({ ok: false, error: "llm failed", summary: false });
+      return finish({ ok: false, error: "llm failed", failure: streamFailure || String(error?.message ?? error), summary: false });
     }
     if (decisionText === undefined) {
       logger?.warn?.(`dsh-mneme dream: consolidation llm stream aborted or errored${streamFailure ? ` (${streamFailure})` : ""}`);
-      return finish({ ok: false, error: "llm failed", summary: false });
+      return finish({ ok: false, error: "llm failed", failure: streamFailure, summary: false });
     }
     // #534 建议 3 的接线点：审计行已由 runAuditedLlm 落库（status=error 也只说明
     // 「调用层这轮不算成功」），把校验层的判决补回去，两张表才说同一件事。
@@ -1810,7 +1827,7 @@ export function createDreamScheduler({ onRun, thresholdCount = 10, thresholdChar
       summaryText = await withMaxTokensFallback(ctx, config.dreamMaxTokens ?? 2048, (tokens) => withEffortFallback(ctx, effort, () => runSummary(true, tokens), () => runSummary(false, tokens), () => summaryStreamFailure), () => summaryStreamFailure);
     } catch (error) {
       logger?.warn?.(`dsh-mneme dream: summary llm call failed: ${String(error)}`);
-      return finish({ ok: false, error: "llm failed", applied, decisions: auditDecisions, outcome, frozen: frozenCount, summary: false });
+      return finish({ ok: false, error: "llm failed", applied, decisions: auditDecisions, outcome, frozen: frozenCount, summary: false, failure: summaryStreamFailure || String(error?.message ?? error) });
     }
     let summaryStored = false;
     if (summaryText !== undefined && summaryText.trim()) {
